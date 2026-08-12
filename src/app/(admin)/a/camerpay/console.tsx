@@ -53,25 +53,81 @@ function ResultLine({ result }: { result: ProbeResult }) {
 }
 
 /**
- * Starting points for the raw console.
+ * Starting points for the raw console — a real payload for every call, so the
+ * job is replacing 6XXXXXXXX with a number rather than writing JSON by hand.
  *
- * The DATA shapes for `login` and `token` come straight from the docs. The two
- * registration calls are left EMPTY on purpose — the docs do not publish their
- * fields, and a plausible-looking guess sitting in the box would be mistaken
- * for documentation.
+ * Placeholders are deliberately obvious (`6XXXXXXXX`, `MOT_DE_PASSE_FORT`).
+ * A preset carrying a plausible REAL-looking number is one mis-click away from
+ * charging somebody.
  */
-const PRESETS = [
-  { label: "inscription", service: "authentification", action: "inscription", data: "", authenticated: false },
-  { label: "validation", service: "authentification", action: "validation", data: "", authenticated: false },
+const PRESETS: {
+  label: string;
+  service: string;
+  action: string;
+  data: string;
+  authenticated: boolean;
+  /** True when the call needs the PROVISIONAL token, not the session one. */
+  needsToken?: boolean;
+}[] = [
+  {
+    label: "inscription",
+    service: "authentification",
+    action: "inscription",
+    data: '{ "numero": "6XXXXXXXX", "parrain": "6YYYYYYYY", "pass": "MOT_DE_PASSE_FORT" }',
+    authenticated: false,
+  },
+  {
+    label: "inscription (no sponsor)",
+    service: "authentification",
+    action: "inscription",
+    data: '{ "numero": "6XXXXXXXX", "pass": "MOT_DE_PASSE_FORT" }',
+    authenticated: false,
+  },
+  {
+    label: "validation",
+    service: "authentification",
+    action: "validation",
+    data: '{ "code": "1234" }',
+    authenticated: false,
+    needsToken: true,
+  },
   {
     label: "login",
     service: "authentification",
     action: "login",
-    data: '{ "numero": "6XXXXXXXX", "pass": "your-password" }',
+    data: '{ "numero": "6XXXXXXXX", "pass": "MOT_DE_PASSE_FORT" }',
     authenticated: false,
   },
   { label: "balance", service: "account", action: "balance", data: "", authenticated: true },
-  { label: "rotate token", service: "account", action: "change_token", data: "", authenticated: true },
+  {
+    label: "identifier",
+    service: "transaction",
+    action: "identifier",
+    data: '{ "numero": "6XXXXXXXX" }',
+    authenticated: true,
+  },
+  {
+    label: "retrait (charge)",
+    service: "transaction",
+    action: "retrait",
+    data: '{ "numeroClient": "6XXXXXXXX", "montant": 500 }',
+    authenticated: true,
+  },
+  {
+    label: "change_callback",
+    service: "account",
+    action: "change_callback",
+    data: '{ "url": "https://your-domain.cm/api/webhooks/camerpay" }',
+    authenticated: true,
+  },
+  { label: "change_token", service: "account", action: "change_token", data: "", authenticated: true },
+  {
+    label: "rapport",
+    service: "rapport",
+    action: "transaction",
+    data: '{ "limit": 10 }',
+    authenticated: true,
+  },
 ];
 
 /** Probes that take no input, so they can be dispatched by key. */
@@ -102,6 +158,8 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
   const [rawAction, setRawAction] = useState("inscription");
   const [rawData, setRawData] = useState("");
   const [rawAuthed, setRawAuthed] = useState(false);
+  const [rawToken, setRawToken] = useState("");
+  const [rawNeedsToken, setRawNeedsToken] = useState(false);
 
   function run(key: string, fn: () => Promise<ProbeResult>) {
     setRunning(key);
@@ -363,12 +421,16 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
               />
             </Field>
 
-            <Field label="Sponsor number" htmlFor="su-parrain" required hint="The existing CamerPay account referring this one.">
+            <Field
+              label="Sponsor number"
+              htmlFor="su-parrain"
+              hint="Optional. The existing CamerPay account referring this one — leave empty if you have none."
+            >
               <Input
                 id="su-parrain"
                 value={suParrain}
                 onChange={(e) => setSuParrain(e.target.value)}
-                placeholder="6YYYYYYYY"
+                placeholder="6YYYYYYYY (optional)"
                 inputMode="numeric"
               />
             </Field>
@@ -391,7 +453,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
 
           <Button
             className="self-start"
-            disabled={pending || !suNumero.trim() || !suParrain.trim() || suPass.length < 6}
+            disabled={pending || !suNumero.trim() || suPass.length < 6}
             loading={running === "signup"}
             onClick={() =>
               run("signup", async () => {
@@ -496,6 +558,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                   setRawAction(preset.action);
                   setRawData(preset.data);
                   setRawAuthed(preset.authenticated);
+                  setRawNeedsToken(Boolean(preset.needsToken));
                 }}
               >
                 <span>{preset.label}</span>
@@ -542,6 +605,20 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
             />
           </Field>
 
+          <Field
+            label="Token override"
+            htmlFor="raw-token"
+            hint="For validation, paste the provisional token from inscription. Leave empty to use the logged-in session."
+          >
+            <Input
+              id="raw-token"
+              value={rawToken}
+              onChange={(e) => setRawToken(e.target.value)}
+              placeholder={rawNeedsToken ? "TOKEN_PROVISOIRE — required for this action" : "(optional)"}
+              className={rawNeedsToken && !rawToken.trim() ? "border-warning" : undefined}
+            />
+          </Field>
+
           <Checkbox
             label="Send with a token (log in first)"
             checked={rawAuthed}
@@ -567,6 +644,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                   action: rawAction,
                   dataJson: rawData,
                   authenticated: rawAuthed,
+                  token: rawToken,
                 }),
               )
             }

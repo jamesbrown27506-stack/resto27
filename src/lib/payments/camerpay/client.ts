@@ -231,7 +231,8 @@ export interface RegistrationAccepted {
  */
 export async function registerAccount(input: {
   numero: string;
-  parrain: string;
+  /** OPTIONAL — see below. */
+  parrain?: string;
   pass: string;
 }): Promise<CamerPayResponse<{ code: string }>> {
   const numero = normalisePhone(input.numero);
@@ -239,18 +240,28 @@ export async function registerAccount(input: {
     throw new Error(`Invalid account number "${input.numero}". Expected 9 digits starting with 6.`);
   }
 
-  const parrain = normalisePhone(input.parrain);
-  if (!parrain) {
-    throw new Error(`Invalid sponsor number "${input.parrain}". Expected 9 digits starting with 6.`);
-  }
-
   if (!input.pass || input.pass.length < 6) {
     throw new Error("The password is too short for a payment account.");
   }
 
+  /**
+   * `parrain` IS OPTIONAL, and this used to refuse to send without one.
+   *
+   * That was a guess made from the docs' example, which happens to include a
+   * sponsor — and it meant anyone without a referring CamerPay account could
+   * not register at all, with the rejection coming from us before a request
+   * was ever made. An empty sponsor is now OMITTED FROM THE PAYLOAD rather
+   * than sent blank, because `"parrain": ""` is a different claim from "no
+   * sponsor" and only one of them is true.
+   */
+  const parrain = input.parrain?.trim() ? normalisePhone(input.parrain) : null;
+  if (input.parrain?.trim() && !parrain) {
+    throw new Error(`Invalid sponsor number "${input.parrain}". Expected 9 digits starting with 6.`);
+  }
+
   // No token: there is no account to authenticate against yet.
   return call<{ code: string }>("authentification", "inscription", {
-    data: { numero, parrain, pass: input.pass },
+    data: { numero, pass: input.pass, ...(parrain ? { parrain } : {}) },
   });
 }
 
@@ -328,8 +339,19 @@ export async function rawCall<T = unknown>(
   service: CamerPayService,
   action: string,
   data: unknown,
-  options: { authenticated?: boolean } = {},
+  options: { authenticated?: boolean; token?: string } = {},
 ): Promise<CamerPayResponse<T>> {
+  /**
+   * An explicit token wins over the session.
+   *
+   * `validation` must carry the PROVISIONAL token from `inscription`, and
+   * `authed()` would attach the logged-in session token instead — or try to
+   * log in with credentials that do not exist yet. Without this the raw
+   * console could send every call except the one it was built for.
+   */
+  if (options.token?.trim()) {
+    return call<T>(service, action, { data, token: options.token.trim() });
+  }
   if (options.authenticated === false) {
     return call<T>(service, action, { data });
   }

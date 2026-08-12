@@ -65,6 +65,8 @@ export async function probeRaw(input: {
   action: string;
   dataJson: string;
   authenticated: boolean;
+  /** Overrides the session token — needed for `validation`. */
+  token?: string;
 }): Promise<ProbeResult> {
   const admin = await requireRole("admin");
 
@@ -91,7 +93,7 @@ export async function probeRaw(input: {
       input.service as CamerPayService,
       input.action.trim(),
       data,
-      { authenticated: input.authenticated },
+      { authenticated: input.authenticated, token: input.token },
     );
 
     // Logged without the payload: a registration call carries a password, and
@@ -136,7 +138,7 @@ export interface RegistrationResult extends ProbeResult {
  */
 export async function submitRegistration(input: {
   numero: string;
-  parrain: string;
+  parrain?: string;
   pass: string;
 }): Promise<RegistrationResult> {
   const admin = await requireRole("admin");
