@@ -144,6 +144,7 @@ const baseFr = {
   "home.alt.branches": "Salle de restaurant avec plusieurs tables",
   "home.alt.payment": "Paiement par téléphone mobile",
 
+  "hero.popular": "Envie de :",
   "hero.mode.order": "Commander",
   "hero.mode.book": "Réserver",
   "hero.mode.explore": "Explorer",
@@ -732,6 +733,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "home.alt.branches": "A restaurant dining room with several tables",
   "home.alt.payment": "Paying by mobile phone",
 
+  "hero.popular": "Craving:",
   "hero.mode.order": "Order",
   "hero.mode.book": "Book",
   "hero.mode.explore": "Explore",

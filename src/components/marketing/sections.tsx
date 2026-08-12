@@ -40,34 +40,38 @@ export function SectionHeader({
 
 /* ── Stats strip ───────────────────────────────────────────────────────── */
 
+/**
+ * Rendered directly under the full-bleed hero, OVERLAPPING its bottom edge —
+ * the negative margin is the design, not a spacing bug. A floating card reads
+ * as "the numbers that vouch for the photo above", where the old flat green
+ * band read as a separator. Token-driven, so it holds in both themes.
+ */
 export function StatStrip({
   items,
 }: {
   items: { value: string; label: string; icon: React.ReactNode }[];
 }) {
   return (
-    <section className="bg-primary py-14 text-primary-fg">
-      <div className="container-page">
-        <dl className="mx-auto grid max-w-4xl grid-cols-2 gap-y-8 sm:grid-cols-4">
-          {items.map((item, i) => (
-            <div
-              key={item.label}
-              className={cn(
-                "px-4 text-center",
-                i < items.length - 1 && "sm:border-r sm:border-primary-fg/15",
-              )}
+    <section className="container-page relative z-10 -mt-14 lg:-mt-20">
+      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border shadow-lg lg:grid-cols-4">
+        {items.map((item) => (
+          <div
+            key={item.label}
+            className="flex flex-col items-center gap-2 bg-surface px-4 py-7 text-center"
+          >
+            <span
+              className="grid size-10 place-items-center rounded-full bg-primary-light text-primary [&>svg]:size-4.5"
+              aria-hidden
             >
-              <span className="inline-flex text-accent [&>svg]:size-5" aria-hidden>
-                {item.icon}
-              </span>
-              <dd className="tnum mt-2 font-display text-4xl leading-none font-bold">
-                {item.value}
-              </dd>
-              <dt className="mt-1.5 text-sm font-medium opacity-60">{item.label}</dt>
-            </div>
-          ))}
-        </dl>
-      </div>
+              {item.icon}
+            </span>
+            <dd className="tnum font-display text-3xl leading-none font-bold text-text sm:text-4xl">
+              {item.value}
+            </dd>
+            <dt className="text-sm font-medium text-text-secondary">{item.label}</dt>
+          </div>
+        ))}
+      </dl>
     </section>
   );
 }
