@@ -1,0 +1,96 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { updateSession } from "@/lib/supabase/middleware";
+
+/**
+ * Root proxy — refreshes the Supabase session and does the cheap redirect.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  WHAT THIS LAYER IS AND IS NOT FOR
+ *
+ *  It runs at the edge, before the page, and knows one thing: is there a
+ *  verified session. That makes it the right place to bounce an anonymous
+ *  visitor off /m before rendering anything, and to keep a signed-in user off
+ *  /login.
+ *
+ *  It is NOT authorization. It cannot see `profiles.status`, the platform
+ *  role, or the per-branch capability — those need the database. Every
+ *  protected area re-checks server-side in its own layout, and a Server Action
+ *  reached directly never passes through here at all.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * Areas that require a session. Prefix match.
+ *
+ * `/browse` and `/cart` are deliberately absent. §14.3 marks browse as
+ * customer-only, but §2 is emphatic that GUESTS HAVE A CART which merges on
+ * sign-in — "forcing registration before someone can see a total is the single
+ * biggest drop-off point in food ordering". A guest who cannot reach the page
+ * with the add-to-cart button has no way to build one. Checkout is where the
+ * account becomes necessary, and that is protected.
+ */
+const PROTECTED = [
+  "/account",
+  "/orders",
+  "/checkout",
+  "/reservations",
+  "/favorites",
+  "/addresses",
+  "/loyalty",
+  "/reviews",
+  "/profile",
+  "/settings",
+  "/m",
+  "/a",
+];
+
+/** Signed-in users have no business here. */
+const AUTH_ONLY = ["/login", "/register", "/forgot-password"];
+
+function matches(pathname: string, prefixes: string[]): boolean {
+  return prefixes.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+export async function proxy(request: NextRequest) {
+  const { supabaseResponse, user } = await updateSession(request);
+  const { pathname, search } = request.nextUrl;
+
+  // /a/health is a machine endpoint for uptime monitoring — it must answer
+  // without a session, or the monitor reports the site down whenever it is up.
+  if (pathname === "/a/health") return supabaseResponse;
+
+  if (!user && matches(pathname, PROTECTED)) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
+    url.search = "";
+    // Carry the destination so sign-in returns them where they were going,
+    // rather than dumping everyone on the same dashboard.
+    url.searchParams.set("next", `${pathname}${search}`);
+    return NextResponse.redirect(url);
+  }
+
+  if (user && matches(pathname, AUTH_ONLY)) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/account";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+
+  return supabaseResponse;
+}
+
+export const config = {
+  matcher: [
+    /*
+     * Everything except:
+     *   _next/static, _next/image  — build output, no session needed
+     *   favicon / images / fonts   — static assets
+     *   robots.txt, sitemap.xml    — crawled anonymously
+     *
+     * Excluding assets matters: this runs per request, and each run is a
+     * network call to the auth server. Matching every .svg would triple the
+     * request count on the homepage for nothing.
+     */
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|woff2?)$).*)",
+  ],
+};

@@ -1,0 +1,203 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Bike, Check, ChefHat, Clock, Store, ShoppingBag } from "lucide-react";
+import { formatElapsed, formatTime, minutesSince } from "@/lib/format/datetime";
+import { nextStatus } from "@/lib/format/order-status";
+import { advanceOrder } from "@/lib/data/order-actions";
+import { useToast } from "@/components/ui/toast";
+import { useLocale } from "@/lib/i18n/use-locale";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
+import type { ManagerOrder } from "@/lib/data/orders";
+import { cn } from "@/lib/utils";
+
+const TYPE_ICON = { delivery: Bike, pickup: ShoppingBag, dine_in: Store } as const;
+
+/**
+ * Thresholds at which a ticket changes colour. A chef should see a late order
+ * from across the room without reading the timer.
+ */
+const AMBER_AFTER_MIN = 15;
+const RED_AFTER_MIN = 25;
+
+/** Fast poll — this screen IS the queue, and it hangs on a wall untouched. */
+const POLL_MS = 15_000;
+
+/**
+ * THE KITCHEN DISPLAY (§14.4).
+ *
+ * Confirmed + preparing, OLDEST FIRST, one-tap advance. Large type, high
+ * contrast, minimal chrome — the design constraint is "read from across a
+ * kitchen", not "looks good in a screenshot".
+ *
+ * Deliberately absent: prices, customer addresses, payment state. None of it
+ * helps someone cooking, and all of it competes for the same glance.
+ *
+ * Advancing calls the SAME server action as /m/orders, so the two screens can
+ * never disagree about what a transition means. Supabase Realtime replaces
+ * the poll later (B.4); the poll stays as its fallback.
+ */
+export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: string }) {
+  const { t } = useLocale();
+  const { toast } = useToast();
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    const timer = window.setInterval(() => router.refresh(), POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [router]);
+
+  function advance(order: ManagerOrder) {
+    startTransition(async () => {
+      const result = await advanceOrder(order.id);
+      if (!result.ok) toast(result.error, "error");
+    });
+  }
+
+  const clock = new Date(now);
+
+  return (
+    <div className="flex min-h-dvh flex-col">
+      <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
+        <div className="flex items-center gap-4">
+          <Link
+            href="/m"
+            aria-label={t("mk.back")}
+            className="grid size-10 place-items-center rounded-full text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
+          >
+            <ArrowLeft className="size-5" aria-hidden />
+          </Link>
+          <h1 className="flex items-center gap-2.5 font-display text-2xl font-bold">
+            <ChefHat className="size-6 text-primary" aria-hidden />
+            <span>{t("m.kitchen.title")}</span>
+          </h1>
+        </div>
+
+        <div className="flex items-center gap-6">
+          <p className="tnum text-right">
+            <span className="block font-display text-3xl leading-none font-bold">
+              {orders.length}
+            </span>
+            <span className="text-xs tracking-wide text-text-light uppercase">
+              {t("mk.tickets")}
+            </span>
+          </p>
+          <p className="tnum font-display text-3xl font-bold text-text-secondary">
+            {formatTime(clock)}
+          </p>
+        </div>
+      </header>
+
+      {orders.length === 0 ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+          <Check className="size-16 text-success" aria-hidden />
+          <p className="font-display text-3xl font-bold">{t("mk.allServed")}</p>
+          <p className="text-lg text-text-secondary">{t("mk.allServedBody")}</p>
+        </div>
+      ) : (
+        <ul className="grid flex-1 auto-rows-min gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {orders.map((order) => {
+            const minutes = minutesSince(order.createdAt, clock);
+            const late = minutes >= RED_AFTER_MIN;
+            const warning = !late && minutes >= AMBER_AFTER_MIN;
+            const Icon = TYPE_ICON[order.type];
+            const next = nextStatus(order.status);
+
+            return (
+              <li
+                key={order.id}
+                className={cn(
+                  "flex flex-col overflow-hidden rounded-lg border-2 bg-surface",
+                  late ? "border-error" : warning ? "border-warning" : "border-border",
+                )}
+              >
+                <div
+                  className={cn(
+                    "flex items-center justify-between gap-3 px-4 py-3",
+                    late
+                      ? "bg-error text-white"
+                      : warning
+                        ? "bg-warning text-white"
+                        : "bg-surface-2",
+                  )}
+                >
+                  <span className="tnum font-display text-xl font-bold">
+                    {order.reference.split("-").pop()}
+                  </span>
+                  <span className="tnum flex items-center gap-1.5 text-lg font-bold">
+                    <Clock className="size-4" aria-hidden />
+                    <span>{formatElapsed(order.createdAt, clock)}</span>
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-sm font-semibold text-text-secondary">
+                  <Icon className="size-4 text-primary" aria-hidden />
+                  <span>{t(`order.type.${order.type}` as TranslationKey)}</span>
+                  {order.tableNumber && (
+                    <span>
+                      · {t("mo.table")} {order.tableNumber}
+                    </span>
+                  )}
+                  <span
+                    className={cn(
+                      "ml-auto rounded-full px-2 py-0.5 text-xs",
+                      order.status === "preparing"
+                        ? "bg-warning/20 text-warning"
+                        : "bg-info/20 text-info",
+                    )}
+                  >
+                    {order.status === "preparing" ? t("mk.inProgress") : t("mk.toStart")}
+                  </span>
+                </div>
+
+                {/* The ticket body. Big type, generous spacing — this is the
+                    part that has to be legible at three metres. */}
+                <ul className="flex flex-1 flex-col gap-3 p-4">
+                  {order.items.map((item) => (
+                    <li key={item.id}>
+                      <p className="text-lg leading-tight font-bold">
+                        <span className="tnum mr-1.5 text-primary">{item.quantity}×</span>
+                        <span>{item.name}</span>
+                      </p>
+                      {item.optionsLabel && (
+                        <p className="mt-0.5 text-base leading-snug text-text-secondary">
+                          {item.optionsLabel}
+                        </p>
+                      )}
+                      {item.notes && (
+                        <p className="mt-1 rounded bg-warning/15 px-2 py-1 text-base font-semibold text-warning">
+                          {item.notes}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+
+                {order.notes && (
+                  <p className="mx-4 mb-3 rounded bg-surface-2 px-3 py-2 text-base text-text-secondary">
+                    {order.notes}
+                  </p>
+                )}
+
+                {next && (
+                  <button
+                    type="button"
+                    disabled={pending}
+                    onClick={() => advance(order)}
+                    // Tall tap target — this is used with wet or gloved hands.
+                    className="w-full bg-primary px-4 py-4 text-lg font-bold text-primary-fg transition-colors hover:bg-primary-hover active:brightness-95 disabled:opacity-70"
+                  >
+                    {t(`order.next.${next}` as TranslationKey)}
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,61 @@
+import type { Metadata } from "next";
+import { DashboardView } from "./dashboard-view";
+import { SUBSCRIPTION_STATE_META } from "@/lib/format/subscription";
+import { requireBranch } from "@/lib/auth/branch";
+import { fetchBranchOverview, fetchReservations } from "@/lib/data/manager";
+import { fetchPlanLimits } from "@/lib/data/billing";
+import { DICTIONARIES } from "@/lib/i18n/dictionaries";
+import { getLocale } from "@/lib/i18n/locale-server";
+
+/** The browser tab is a user-visible string too, so it follows the locale. */
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await getLocale();
+  return { title: DICTIONARIES[locale]["nav.m.dashboard"] };
+}
+
+/**
+ * The restaurant dashboard — server half.
+ *
+ * Does every read, then hands plain numbers to a Client Component that owns
+ * the copy. That split exists because a Server Component cannot call
+ * useLocale, which is why this page stayed French whatever the toggle said.
+ */
+export default async function ManagerDashboard() {
+  const { active, profile } = await requireBranch();
+
+  const [overview, upcoming, limits] = await Promise.all([
+    fetchBranchOverview(active.restaurantId),
+    fetchReservations(active.restaurantId, { from: new Date(), status: "pending" }),
+    fetchPlanLimits(),
+  ]);
+
+  const stateMeta = SUBSCRIPTION_STATE_META[active.subscriptionState];
+
+  // A locked tenant drops to Starter limits (§5) — existing rows keep working.
+  const tier = active.subscriptionState === "locked" ? "starter" : active.planTier;
+  const limit = limits.get(tier) ?? limits.get("starter") ?? null;
+
+  return (
+    <DashboardView
+      firstName={profile.name.split(" ")[0] ?? profile.name}
+      branch={{
+        restaurantName: active.restaurantName,
+        branchLabel: active.branchLabel,
+        status: active.status,
+        role: active.role,
+      }}
+      planLabel={`${active.planName} · ${stateMeta.label}`}
+      // `tone: null` on an active subscription means "no banner needed" — it is
+      // not a Badge tone. Neutral is the right chip for a healthy plan.
+      planTone={stateMeta.tone ?? "neutral"}
+      overview={overview}
+      upcoming={upcoming.map((r) => ({
+        id: r.id,
+        guestName: r.guestName,
+        partySize: r.partySize,
+        reservedFor: r.reservedFor,
+      }))}
+      menuItemLimit={limit?.menuItemLimit ?? null}
+    />
+  );
+}

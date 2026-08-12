@@ -1,0 +1,323 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DARK MODE VARIANT
+   Driven by [data-theme] on <html>, not prefers-color-scheme, because the
+   theme is a stored user_preference (§3) that must survive a reload and be
+   togglable. The inline script in layout.tsx stamps the attribute before
+   first paint so there is no flash.
+   ═══════════════════════════════════════════════════════════════════════ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS
+   Palette carried over from the PHP homepage — sage / cream / tan. It reads
+   as hospitality rather than generic SaaS and is worth preserving exactly.
+   What is new: semantic states (success/warning/info) which the original
+   lacked beyond --error, and a full dark theme.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  /* Surfaces */
+  --bg: #f7f4ed;
+  --surface: #ffffff;
+  --surface-2: #fdfbf7;
+  --border: #e4ddd0;
+  --border-strong: #d5cbb8;
+
+  /* Text */
+  --text: #1c1c1c;
+  --text-secondary: #5a5a52;
+  --text-light: #9a9488;
+
+  /* Brand */
+  --primary: #5f7257;
+  --primary-hover: #3d4f38;
+  --primary-light: #eff5ee;
+  --primary-fg: #ffffff;
+  --accent: #d4a373;
+  --accent-hover: #b07d4e;
+  --accent-fg: #ffffff;
+
+  /* Semantic — the original had only --error */
+  --success: #4a7c59;
+  --success-light: #eaf3ec;
+  --warning: #c98a3c;
+  --warning-light: #fbf1e3;
+  --info: #4a6e8a;
+  --info-light: #eaf1f6;
+  --error: #e04848;
+  --error-light: #fdecec;
+
+  /* Radii — raw tokens are --r-*; @theme maps them onto rounded-* utilities.
+     They must not share a name with the Tailwind namespace or the mapping
+     becomes self-referential and resolves to nothing. */
+  --r-sm: 6px;
+  --r-md: 12px;
+  --r-lg: 20px;
+  --r-xl: 32px;
+
+  /* Shadows — same naming rule as radii. */
+  --sh-sm: 0 2px 8px rgb(0 0 0 / 0.06);
+  --sh-md: 0 6px 24px rgb(0 0 0 / 0.1);
+  --sh-lg: 0 16px 48px rgb(0 0 0 / 0.14);
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #131410;
+  --surface: #1c1e17;
+  --surface-2: #23261d;
+  --border: #32362a;
+  --border-strong: #454a3a;
+
+  --text: #f2efe6;
+  --text-secondary: #b6b3a6;
+  --text-light: #8e8b7c;
+
+  /* Sage lightened so it carries contrast on a dark surface. The dark
+     theme is not an inversion — the mid-tone brand colour has to move or
+     every button fails contrast. */
+  --primary: #8fa383;
+  --primary-hover: #a3b697;
+  --primary-light: #232b20;
+  --primary-fg: #16180f;
+  --accent: #d8ae7e;
+  --accent-hover: #e0bc93;
+  --accent-fg: #1c1710;
+
+  --success: #7fb18c;
+  --success-light: #1b2620;
+  --warning: #e0ac6b;
+  --warning-light: #2a2317;
+  --info: #86aac4;
+  --info-light: #1a2229;
+  --error: #f07a7a;
+  --error-light: #2b1a1a;
+
+  --sh-sm: 0 2px 8px rgb(0 0 0 / 0.4);
+  --sh-md: 0 6px 24px rgb(0 0 0 / 0.5);
+  --sh-lg: 0 16px 48px rgb(0 0 0 / 0.6);
+
+  color-scheme: dark;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   TAILWIND THEME MAPPING
+   `@theme inline` emits var(--token) into the utilities instead of the
+   resolved value, which is what lets [data-theme] override them at runtime.
+   Using plain `@theme` here would bake the light values in and dark mode
+   would silently do nothing.
+   ═══════════════════════════════════════════════════════════════════════ */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-text: var(--text);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-light: var(--text-light);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-light: var(--primary-light);
+  --color-primary-fg: var(--primary-fg);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+
+  --color-success: var(--success);
+  --color-success-light: var(--success-light);
+  --color-warning: var(--warning);
+  --color-warning-light: var(--warning-light);
+  --color-info: var(--info);
+  --color-info-light: var(--info-light);
+  --color-error: var(--error);
+  --color-error-light: var(--error-light);
+
+  --font-display: var(--font-playfair), Georgia, serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+
+  --shadow-sm: var(--sh-sm);
+  --shadow-md: var(--sh-md);
+  --shadow-lg: var(--sh-lg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BASE
+   ═══════════════════════════════════════════════════════════════════════ */
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    /* Fixed headers are 64px; without this an anchor jump hides the target
+       under the bar. */
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    line-height: 1.18;
+    text-wrap: balance;
+  }
+
+  /* One visible focus treatment for the whole app. Never remove it —
+     keyboard users have no other way to know where they are. */
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: var(--primary);
+    color: var(--primary-fg);
+  }
+
+  /* Tabular figures everywhere money or counts appear, so columns of
+     numbers line up and a changing total does not jitter. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MOTION
+   The PHP version ran blob pulses, an autoplay progress bar and scroll
+   fade-ins unconditionally. That is a vestibular trigger, not a taste
+   preference — it must be switchable off at the OS level.
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   UTILITIES
+   ═══════════════════════════════════════════════════════════════════════ */
+@utility container-page {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: 1.5rem;
+}
+
+@utility container-wide {
+  width: 100%;
+  max-width: 1560px;
+  margin-inline: auto;
+  padding-inline: 1.5rem;
+}
+
+/* Skip link — visible only when focused. */
+@utility skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 9999;
+  padding: 0.75rem 1.25rem;
+  background: var(--primary);
+  color: var(--primary-fg);
+  border-radius: 0 0 var(--radius-md) 0;
+  font-weight: 600;
+
+  &:focus {
+    left: 0;
+  }
+}
+
+/* Entrance animations. Both are neutralised by the reduced-motion block. */
+@keyframes rl-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes rl-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Hero autoplay progress. Runs only while the timer is actually running, and
+   is neutralised entirely by the reduced-motion block below. */
+@keyframes rl-progress {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+@utility animate-rise {
+  animation: rl-rise 0.25s ease both;
+}
+
+@utility animate-fade {
+  animation: rl-fade 0.2s ease both;
+}
+
+/* Hide scrollbars on horizontal chip rows without losing scrollability. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PRINT — thermal tickets and invoices (§14.4)
+   ═══════════════════════════════════════════════════════════════════════ */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+    color: #000;
+  }
+}

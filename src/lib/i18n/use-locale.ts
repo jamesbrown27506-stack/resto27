@@ -1,0 +1,44 @@
+"use client";
+
+import { useCallback, useContext } from "react";
+import { DICTIONARIES, type Locale, type TranslationKey } from "./dictionaries";
+import { LocaleContext } from "./locale-provider";
+
+export const DEFAULT_LOCALE: Locale = "fr";
+
+/**
+ * Read and change the interface language.
+ *
+ * The value comes from context, which the root layout seeds from a cookie
+ * resolved on the server — see lib/i18n/locale-server.ts for why it is not
+ * localStorage. Consumers are unchanged from the old external-store version;
+ * only where the value originates has moved.
+ */
+export function useLocale() {
+  const { locale, setLocale } = useContext(LocaleContext);
+
+  /**
+   * Translate. Falls back to the key itself rather than to French, so a
+   * missing string is visible in review instead of silently shipping the
+   * wrong language.
+   */
+  const t = useCallback(
+    (key: TranslationKey, vars?: Record<string, string | number>): string => {
+      let value: string = DICTIONARIES[locale][key] ?? key;
+      if (vars) {
+        for (const [name, replacement] of Object.entries(vars)) {
+          value = value.replaceAll(`{${name}}`, String(replacement));
+        }
+      }
+      return value;
+    },
+    [locale],
+  );
+
+  return { locale, setLocale, t };
+}
+
+/** Locale-aware Intl tag, for dates and numbers. */
+export function intlLocale(locale: Locale): string {
+  return locale === "en" ? "en-CM" : "fr-CM";
+}
