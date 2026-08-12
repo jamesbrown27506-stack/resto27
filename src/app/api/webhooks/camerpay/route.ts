@@ -48,6 +48,14 @@ export async function GET() {
     ok: true,
     endpoint: "camerpay-callback",
     expects: "POST",
+    /**
+     * WHICH COMMIT IS SERVING. Three watcher fixes were tested against a
+     * deployment that turned out to still be running the previous build, and
+     * nothing on any screen could say so. Vercel injects the SHA; exposing
+     * seven characters of a public repo's commit id costs nothing and ends
+     * that class of confusion — open this URL, compare to `git log`.
+     */
+    build: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "local-dev",
     note: "Alive. CamerPay should POST callbacks here; a GET only proves the URL resolves.",
   });
 }

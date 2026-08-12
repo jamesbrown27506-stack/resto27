@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, Clock, RefreshCw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { checkTransaction, type TransactionStatus } from "./actions";
@@ -11,29 +11,37 @@ import { cn } from "@/lib/utils";
  * Watch one transaction until CamerPay gives a final answer.
  *
  * ─────────────────────────────────────────────────────────────────────────
- *  BOTH ROUTES, BECAUSE NEITHER IS SUFFICIENT ALONE.
+ *  ONE SELF-DRIVING LOOP. NOTHING FOR REACT TO CANCEL.
  *
- *  The callback is fast but can be lost — delivered to a URL that was briefly
- *  down, or never sent at all. Polling always arrives but wastes calls if it
- *  is the only mechanism. So this polls, the callback settles things sooner
- *  when it works, and both end at the same verification against CamerPay.
+ *  This component has now been broken twice by the same family of bug:
  *
- *  It stops on its own. A poller with no ceiling is a poller that is still
- *  running tomorrow against a transaction nobody remembers, and on a provider
- *  with rate limits that is how the account gets throttled.
+ *   1. `hint` (an object literal at the call site) sat in a dependency list,
+ *      so every parent render rebuilt the callback, re-ran the effect, and
+ *      the cleanup cancelled the timer before it could fire.
+ *   2. The poll ran inside `startTransition(async () => …)`, and the state
+ *      updates queued after the `await` were swallowed with the transition —
+ *      the panel showed a fetched result while the counter swore no check
+ *      had ever run.
+ *
+ *  Both were the scheduling being spread across reactive machinery — a
+ *  useCallback feeding a useEffect feeding a timer, each hop something React
+ *  may legitimately rebuild, cancel, or defer. So the loop is now ONE effect
+ *  whose dependencies are primitives, driving itself with its own local
+ *  counter and its own setTimeout chain. React can interrupt it at exactly
+ *  one point — unmount — and that is the one point where stopping is correct.
  * ─────────────────────────────────────────────────────────────────────────
+ *
+ *  The callback and this poll are two halves of one mechanism: the callback
+ *  is fast but can be lost; the poll always arrives. Both end at the same
+ *  verification against CamerPay, so no status is believed rather than
+ *  checked.
  */
 
 /**
- * Backing off rather than a fixed interval.
- *
- * The FIRST check is immediate — a prompt is often answered before the operator
- * has looked up, and a three-second countdown before anything happens is what
- * makes a working poller feel broken.
- *
- * A mobile-money prompt is usually answered within about thirty seconds, so
- * the early checks are close together where the answer probably is. After
- * that the customer is distracted or gone and hammering the API buys nothing.
+ * The first check is immediate — a mobile-money prompt is often answered
+ * before the operator has looked up, and a countdown before anything happens
+ * is what makes a working poller feel broken. Then tight while the PIN prompt
+ * is plausibly on screen, stretching out once the customer has wandered off.
  */
 const SCHEDULE_MS = [0, 3_000, 3_000, 4_000, 5_000, 6_000, 8_000, 10_000, 15_000, 20_000, 30_000];
 
@@ -47,9 +55,9 @@ function delayFor(attempt: number): number {
 export function TransactionWatcher({
   replyTo,
   /**
-   * What we know about the request. REQUIRED in practice: CamerPay's report
-   * does not echo the tracking id, so without the number, amount and
-   * direction there is nothing to match a row on.
+   * What we know about the request. Needed in practice: CamerPay's report
+   * does not echo the tracking id, so a row is found by number, amount,
+   * direction and the report counter as it stood before we asked.
    */
   hint,
   /** Called once, when a terminal answer arrives. */
@@ -59,101 +67,113 @@ export function TransactionWatcher({
   hint?: TransactionHint;
   onSettled?: (status: TransactionStatus) => void;
 }) {
-  /**
-   * ─────────────────────────────────────────────────────────────────────────
-   *  DESTRUCTURED TO PRIMITIVES, AND THAT IS THE WHOLE FIX.
-   *
-   *  `hint` is written at the call site as an object literal, so it has a new
-   *  identity on every parent render. With the object itself in the dependency
-   *  list, `check` was rebuilt each time, the effect re-ran, and its cleanup
-   *  cancelled the pending timer — which was then rescheduled from zero. The
-   *  counter sat at "check 0 / 10" because no check ever actually fired.
-   *
-   *  Primitives compare by value, so the identity churn stops here.
-   * ─────────────────────────────────────────────────────────────────────────
-   */
-  const hintPhone = hint?.phone;
-  const hintAmount = hint?.amount;
-  const hintDirection = hint?.direction;
-  const hintStartedAt = hint?.startedAt;
-  const hintAfterId = hint?.afterId;
+  // Primitives, never the object — `hint` is a literal at the call site and
+  // changes identity every parent render. Primitives compare by value, so the
+  // loop below restarts only when the transaction itself changes.
+  const phone = hint?.phone;
+  const amount = hint?.amount;
+  const direction = hint?.direction;
+  const startedAt = hint?.startedAt;
+  const afterId = hint?.afterId;
 
   const [result, setResult] = useState<TransactionStatus | null>(null);
   const [attempts, setAttempts] = useState(0);
-  const [auto, setAuto] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [auto, setAuto] = useState(true);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
 
-  /** Guards against setting state after the panel has gone. */
-  const alive = useRef(true);
+  /** Set on a terminal answer, readable by BOTH the loop and a manual check. */
+  const doneRef = useRef(false);
+
+  /** Latest callback without it being a reason to restart the loop. */
+  const onSettledRef = useRef(onSettled);
   useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
+    onSettledRef.current = onSettled;
+  }, [onSettled]);
 
   const settled = result?.status === "success" || result?.status === "failed";
-  const exhausted = attempts >= MAX_ATTEMPTS;
+  const exhausted = attempts >= MAX_ATTEMPTS && !settled;
+
+  useEffect(() => {
+    if (!auto) return;
+
+    let cancelled = false;
+    let timer = 0;
+    // The loop's own counter. Local, so no render cycle sits between one tick
+    // and the scheduling of the next; the state copy exists only for display.
+    let attempt = 0;
+
+    doneRef.current = false;
+
+    const tick = async () => {
+      if (cancelled || doneRef.current) return;
+
+      setBusy(true);
+      let next: TransactionStatus | null = null;
+      try {
+        next = await checkTransaction(replyTo, { phone, amount, direction, startedAt, afterId });
+      } catch {
+        // A failed CHECK is not a failed PAYMENT. The attempt still counts,
+        // so the schedule keeps moving instead of freezing on a blip.
+      }
+      if (cancelled) return;
+
+      attempt += 1;
+      setAttempts(attempt);
+      setBusy(false);
+      setCheckedAt(new Date().toLocaleTimeString());
+
+      if (next) {
+        setResult(next);
+        if (next.status !== "pending") {
+          doneRef.current = true;
+          onSettledRef.current?.(next);
+          return;
+        }
+      }
+
+      if (attempt >= MAX_ATTEMPTS) return;
+      timer = window.setTimeout(() => void tick(), delayFor(attempt));
+    };
+
+    // Deferred one macrotask so no setState fires synchronously inside the
+    // effect body — and the very first check still lands near-immediately.
+    timer = window.setTimeout(() => void tick(), 0);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [auto, replyTo, phone, amount, direction, startedAt, afterId]);
 
   /**
-   * ─────────────────────────────────────────────────────────────────────────
-   *  NO useTransition, DELIBERATELY.
-   *
-   *  This polled inside `startTransition(async () => …)`. React treats work
-   *  after an `await` in an async transition as outside that transition, and
-   *  the counter never left "check 0 / 10" while the transaction it watched
-   *  had visibly settled — the one number that would have shown the poll was
-   *  dead was itself the thing that was broken.
-   *
-   *  A plain async function with its own `busy` flag has none of that
-   *  subtlety. A progress indicator that cannot be trusted is worse than
-   *  none: it reads as "still working" when nothing is working at all.
-   * ─────────────────────────────────────────────────────────────────────────
+   * Manual check — plain async, no transition, nothing shared with the loop
+   * except the terminal flag. Every payment console has this button, because
+   * an operator watching a customer's face needs the answer now, not at the
+   * next tick.
    */
-  const check = useCallback(async () => {
+  async function checkNow() {
     setBusy(true);
     try {
       const next = await checkTransaction(replyTo, {
-        phone: hintPhone,
-        amount: hintAmount,
-        direction: hintDirection,
-        startedAt: hintStartedAt,
-        afterId: hintAfterId,
+        phone,
+        amount,
+        direction,
+        startedAt,
+        afterId,
       });
-      if (!alive.current) return;
-
       setResult(next);
       setCheckedAt(new Date().toLocaleTimeString());
       if (next.status !== "pending") {
+        doneRef.current = true;
         setAuto(false);
-        onSettled?.(next);
+        onSettledRef.current?.(next);
       }
-    } catch {
-      // A failed check is not a failed payment. The attempt still counts so
-      // the schedule keeps moving.
     } finally {
-      if (alive.current) {
-        // In `finally`, so the counter advances even when the request threw.
-        // A stuck counter is exactly the symptom that hid the last bug.
-        setAttempts((n) => n + 1);
-        setBusy(false);
-      }
+      setAttempts((n) => n + 1);
+      setBusy(false);
     }
-  }, [replyTo, hintPhone, hintAmount, hintDirection, hintStartedAt, hintAfterId, onSettled]);
-
-  useEffect(() => {
-    if (!auto || settled || exhausted || busy) return;
-
-    /**
-     * setState happens inside the timer callback, never in the effect body —
-     * the React Compiler rejects the latter, and scheduling rather than firing
-     * immediately is also what makes the first check land after a delay
-     * instead of racing the 202 that created this transaction.
-     */
-    const timer = window.setTimeout(() => void check(), delayFor(attempts));
-    return () => window.clearTimeout(timer);
-  }, [auto, settled, exhausted, busy, attempts, check]);
+  }
 
   const tone = settled
     ? result?.status === "success"
@@ -199,10 +219,23 @@ export function TransactionWatcher({
               · check {attempts}/{MAX_ATTEMPTS}
             </span>
             {checkedAt && <span> · last {checkedAt}</span>}
-            {hintAfterId !== undefined && <span> · after #{hintAfterId}</span>}
+            {afterId !== undefined && <span> · after #{afterId}</span>}
+            {/* v3 — so a screenshot of this panel says which watcher it is.
+                Chasing a fixed bug through a stale deploy cost an afternoon. */}
+            <span> · v3</span>
           </p>
 
-          {exhausted && !settled && (
+          {/* Without these there is nothing to match a report row on, and the
+              check can only ever say pending. Saying so beats looking busy. */}
+          {amount === undefined && (
+            <p className="mt-1 text-xs font-semibold opacity-90">
+              <span>
+                No amount was captured for this transaction, so its report row cannot be matched.
+              </span>
+            </p>
+          )}
+
+          {exhausted && (
             <p className="mt-1 text-xs opacity-90">
               <span>
                 No answer after {MAX_ATTEMPTS} checks. That does not mean it failed — check again,
@@ -213,10 +246,7 @@ export function TransactionWatcher({
           )}
 
           <div className="mt-2 flex flex-wrap gap-2">
-            {/* Manual check, always available — every payment console has one,
-                and an operator watching a customer's face needs an answer now
-                rather than at the next tick. */}
-            <Button variant="outline" size="sm" loading={busy} onClick={() => void check()}>
+            <Button variant="outline" size="sm" loading={busy} onClick={() => void checkNow()}>
               <RefreshCw className="size-3.5" aria-hidden />
               <span>Check now</span>
             </Button>
@@ -226,6 +256,8 @@ export function TransactionWatcher({
                 variant="ghost"
                 size="sm"
                 onClick={() => {
+                  // Resuming restarts the schedule from the top — the effect
+                  // re-runs on `auto` and its local counter starts at zero.
                   if (!auto) setAttempts(0);
                   setAuto((on) => !on);
                 }}

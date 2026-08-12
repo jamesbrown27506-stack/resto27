@@ -232,7 +232,13 @@ const SIMPLE_PROBES = {
   notifications: () => probeReport("notification"),
 } satisfies Record<string, () => Promise<ProbeResult>>;
 
-export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: string }) {
+export function CamerPayConsole({
+  suggestedCallback,
+  build,
+}: {
+  suggestedCallback: string;
+  build: string;
+}) {
   const [section, setSection] = useState<SectionId>("auth");
   const [pending, startTransition] = useTransition();
   const [results, setResults] = useState<Record<string, ProbeResult>>({});
@@ -331,6 +337,11 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
+      {/* Which commit is actually serving this page. */}
+      <p className="font-mono text-[11px] text-text-light">
+        <span>build {build}</span>
+      </p>
+
       {/* ── The warning that matters most ────────────────────────────── */}
       <Card className="border-error/30 bg-error-light">
         <CardBody className="flex items-start gap-3">
