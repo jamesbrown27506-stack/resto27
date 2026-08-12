@@ -412,11 +412,13 @@ export async function probeConfirm(replyTo: string): Promise<ProbeResult> {
       label: "Confirm",
       detail:
         result.status === "success"
-          ? `CamerPay reports SUCCESS${result.amount ? ` for ${result.amount} FCFA` : ""}.`
+          ? `CamerPay confirms this settled${result.amount ? ` — ${result.amount} FCFA` : ""}.`
           : result.status === "failed"
-            ? "CamerPay reports FAILED."
-            : "Still pending — CamerPay has no final result for this replyTo yet.",
-      payload: result.raw,
+            ? "CamerPay reports this transaction FAILED."
+            : "Still pending — no matching row in CamerPay's report yet. The rows searched are below; if the transaction is visibly there, its id is under a field name we are not matching on.",
+      // On a miss this is the whole report, which is exactly what is needed to
+      // see WHY nothing matched.
+      payload: result.raw ?? result.searched,
     };
   } catch (error) {
     return fail("Confirm", error);

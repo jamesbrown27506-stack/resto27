@@ -634,16 +634,65 @@ export async function listNotifications(
  */
 export async function confirmTransaction(
   replyTo: string,
-): Promise<{ status: "success" | "failed" | "pending"; amount?: number; raw?: unknown }> {
+): Promise<{
+  status: "success" | "failed" | "pending";
+  amount?: number;
+  raw?: unknown;
+  /** The report actually returned, so an unmatched id can be diagnosed. */
+  searched?: unknown;
+}> {
   const report = await listTransactions({ limit: 100 });
 
-  if (!report.etat || !Array.isArray(report.data)) return { status: "pending" };
+  if (!report.etat || !Array.isArray(report.data)) {
+    return { status: "pending", searched: report.data ?? report.message };
+  }
 
-  const match = report.data.find((entry) => entry.replyTo === replyTo);
-  if (!match) return { status: "pending" };
+  /**
+   * MATCHED ON MORE THAN `replyTo`.
+   *
+   * The report rows do not reliably carry the tracking id under that name —
+   * the notification feed, for one, returns `{date, numero, title, message,
+   * id}` with the reference buried in prose ("Réf. Transaction : 18319340864")
+   * and no `replyTo` at all. Matching only on the field the docs imply meant a
+   * transaction that had visibly succeeded still read as "pending" for ever.
+   *
+   * So: the documented field first, then any string field on the row that
+   * contains the id. Deliberately still a CONTAINS check against known fields
+   * rather than a blind scan of the whole payload — the aim is to find the row
+   * CamerPay is describing, not to match something coincidental.
+   */
+  const needle = replyTo.trim();
+  const match = report.data.find((entry) => {
+    if (entry.replyTo === needle) return true;
+    if (entry.id !== undefined && String(entry.id) === needle) return true;
+    return typeof entry.message === "string" && entry.message.includes(needle);
+  });
+
+  if (!match) {
+    // The report is returned so the caller can see WHAT was searched. "Not
+    // found" and "found and still running" are different facts, and only one
+    // of them means waiting will help.
+    return { status: "pending", searched: report.data };
+  }
 
   if (match.etat === true) return { status: "success", amount: match.montant, raw: match };
   if (match.etat === false) return { status: "failed", amount: match.montant, raw: match };
+
+  /**
+   * No `etat` on the row. Fall back to the message, which is how the feed
+   * actually reports an outcome ("Retrait MobileMoney validé avec succès").
+   * A French success phrase is weak evidence, so it is used ONLY when the
+   * structured field is absent — never to override an explicit `etat: false`.
+   */
+  if (typeof match.message === "string") {
+    const text = match.message.toLowerCase();
+    if (text.includes("succès") || text.includes("success") || text.includes("validé")) {
+      return { status: "success", amount: match.montant, raw: match };
+    }
+    if (text.includes("échec") || text.includes("echec") || text.includes("annul")) {
+      return { status: "failed", amount: match.montant, raw: match };
+    }
+  }
 
   return { status: "pending", raw: match };
 }
