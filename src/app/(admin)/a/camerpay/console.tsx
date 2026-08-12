@@ -209,6 +209,8 @@ interface RecentTx {
   at: string;
   /** The same instant, machine-readable, for matching the report row. */
   startedAt: string;
+  /** Report counter before the call — the reliable way to find our row. */
+  afterId?: number;
 }
 
 /** The five jobs this console does, in the order you do them. */
@@ -838,6 +840,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                     amount: amountValue,
                     at: now.toLocaleTimeString(),
                     startedAt: now.toISOString(),
+                    afterId: result.afterId,
                   };
                   setWatching(tx);
                   // Prefilled, so "check this one" never means retyping a
@@ -862,6 +865,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                 amount: watching.amount,
                 direction: watching.kind,
                 startedAt: watching.startedAt,
+                afterId: watching.afterId,
               }}
             />
           )}
@@ -906,6 +910,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                         amount: known.amount,
                         direction: known.kind,
                         startedAt: known.startedAt,
+                        afterId: known.afterId,
                       }
                     : // Fall back to whatever is typed into the charge fields —
                       // without a number and an amount there is nothing to
@@ -988,6 +993,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                     amount: payoutValue,
                     at: now.toLocaleTimeString(),
                     startedAt: now.toISOString(),
+                    afterId: result.afterId,
                   };
                   setWatchingPayout(tx);
                   setReplyTo(id);
@@ -1011,6 +1017,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                 amount: watchingPayout.amount,
                 direction: watchingPayout.kind,
                 startedAt: watchingPayout.startedAt,
+                afterId: watchingPayout.afterId,
               }}
             />
           )}

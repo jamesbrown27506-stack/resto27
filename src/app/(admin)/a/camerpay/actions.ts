@@ -6,6 +6,7 @@ import {
   getBalance,
   identifyNumber,
   listNotifications,
+  latestTransactionId,
   listTransactions,
   login,
   maskToken,
@@ -35,6 +36,8 @@ export interface ProbeResult {
   ok: boolean;
   label: string;
   detail: string;
+  /** Report counter as it stood BEFORE the call — see TransactionHint.afterId. */
+  afterId?: number;
   payload?: unknown;
   /**
    * The exact request that was sent, secrets redacted — for pasting into a
@@ -204,6 +207,7 @@ export async function checkTransaction(
 export async function probePayout(phone: string, amount: number): Promise<ProbeResult> {
   const admin = await requireRole("admin");
   try {
+    const afterId = await latestTransactionId();
     const response = await sendPayout(phone, amount);
 
     if (response.httpStatus === 202 || response.etat) {
@@ -215,6 +219,7 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
         detail: `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — money is on its way OUT of your balance. Watch it settle below.`,
         payload: response.data,
         request: response.request,
+        afterId: afterId ?? undefined,
       };
     }
 
@@ -476,6 +481,9 @@ export async function registerCallback(url: string): Promise<ProbeResult> {
 export async function probeCollection(phone: string, amount: number): Promise<ProbeResult> {
   const admin = await requireRole("admin");
   try {
+    // Read the counter BEFORE charging. The row this creates is the first one
+    // above it, which identifies it without trusting a timezone-less date.
+    const afterId = await latestTransactionId();
     const response = await requestCollection(phone, amount);
 
     if (response.httpStatus === 202 || response.etat) {
@@ -487,6 +495,7 @@ export async function probeCollection(phone: string, amount: number): Promise<Pr
         detail: `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — the customer must now approve on their handset. This is NOT a completed payment.`,
         payload: response.data,
         request: response.request,
+        afterId: afterId ?? undefined,
       };
     }
 

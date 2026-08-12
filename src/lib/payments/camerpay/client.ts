@@ -644,6 +644,16 @@ export interface TransactionHint {
   direction?: "collect" | "payout";
   /** ISO instant the request was accepted. */
   startedAt?: string;
+  /**
+   * The highest report `id` that existed BEFORE the request was sent.
+   *
+   * This is the reliable half of the match. CamerPay's `date` carries no
+   * timezone — "2026-08-12T16:02:11.000" is parsed as local time, so on a UTC
+   * server a Cameroon (UTC+1) timestamp lands an hour out and a time window
+   * either rejects the right row or admits a stale one. `id` counts up and
+   * needs no clock: our row is the first one above this number.
+   */
+  afterId?: number;
 }
 
 export async function listTransactions(
@@ -705,6 +715,23 @@ function matchesDirection(action: string | undefined, direction: "collect" | "pa
  * returns the rows it saw. Guessing "the newest row is probably yours" would
  * settle an invoice against somebody else's payment.
  */
+/**
+ * The newest report id right now.
+ *
+ * Taken immediately BEFORE a charge so the row it creates can be identified
+ * without trusting a timestamp. Returns null on failure — matching then falls
+ * back to number/amount/direction, which is weaker but not wrong.
+ */
+export async function latestTransactionId(): Promise<number | null> {
+  try {
+    const report = await listTransactions({ limit: 1 });
+    if (!report.etat || !Array.isArray(report.data) || report.data.length === 0) return null;
+    return report.data[0].id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function confirmTransaction(
   replyTo: string,
   hint: TransactionHint = {},
@@ -741,9 +768,21 @@ export async function confirmTransaction(
           }
           if (hint.amount !== undefined && (row.Amount ?? row.montant) !== hint.amount) return false;
           if (hint.direction && !matchesDirection(row.action, hint.direction)) return false;
-          if (startedAt && row.date) {
-            // A minute of slack for clock skew between us and CamerPay.
-            if (new Date(row.date).getTime() < startedAt - 60_000) return false;
+
+          // The precise test, when we have it: our row is above the counter as
+          // it stood before we asked.
+          if (hint.afterId !== undefined && (row.id ?? 0) <= hint.afterId) return false;
+
+          /**
+           * The date is only a COARSE guard, and only when there is no
+           * afterId. CamerPay sends no timezone, so this is generous by hours
+           * on purpose — its job is to exclude last week, not last minute.
+           * Tightening it is how a correct row gets rejected on a server whose
+           * clock sits in a different zone from Douala.
+           */
+          if (hint.afterId === undefined && startedAt && row.date) {
+            const TOLERANCE_MS = 6 * 60 * 60_000;
+            if (new Date(row.date).getTime() < startedAt - TOLERANCE_MS) return false;
           }
           return true;
         })

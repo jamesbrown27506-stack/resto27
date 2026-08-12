@@ -55,6 +55,25 @@ export function TransactionWatcher({
   hint?: TransactionHint;
   onSettled?: (status: TransactionStatus) => void;
 }) {
+  /**
+   * ─────────────────────────────────────────────────────────────────────────
+   *  DESTRUCTURED TO PRIMITIVES, AND THAT IS THE WHOLE FIX.
+   *
+   *  `hint` is written at the call site as an object literal, so it has a new
+   *  identity on every parent render. With the object itself in the dependency
+   *  list, `check` was rebuilt each time, the effect re-ran, and its cleanup
+   *  cancelled the pending timer — which was then rescheduled from zero. The
+   *  counter sat at "check 0 / 10" because no check ever actually fired.
+   *
+   *  Primitives compare by value, so the identity churn stops here.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const hintPhone = hint?.phone;
+  const hintAmount = hint?.amount;
+  const hintDirection = hint?.direction;
+  const hintStartedAt = hint?.startedAt;
+  const hintAfterId = hint?.afterId;
+
   const [result, setResult] = useState<TransactionStatus | null>(null);
   const [attempts, setAttempts] = useState(0);
   const [auto, setAuto] = useState(true);
@@ -65,7 +84,13 @@ export function TransactionWatcher({
 
   const check = useCallback(() => {
     startTransition(async () => {
-      const next = await checkTransaction(replyTo, hint ?? {});
+      const next = await checkTransaction(replyTo, {
+        phone: hintPhone,
+        amount: hintAmount,
+        direction: hintDirection,
+        startedAt: hintStartedAt,
+        afterId: hintAfterId,
+      });
       setResult(next);
       setAttempts((n) => n + 1);
       if (next.status !== "pending") {
@@ -73,7 +98,7 @@ export function TransactionWatcher({
         onSettled?.(next);
       }
     });
-  }, [replyTo, hint, onSettled]);
+  }, [replyTo, hintPhone, hintAmount, hintDirection, hintStartedAt, hintAfterId, onSettled]);
 
   useEffect(() => {
     if (!auto || settled || exhausted) return;
