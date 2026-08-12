@@ -10,6 +10,7 @@ import {
   KeyRound,
   Link2,
   Play,
+  RefreshCw,
   ScrollText,
   ShieldAlert,
   XCircle,
@@ -198,6 +199,16 @@ const PRESETS: {
   },
 ];
 
+/** One transaction started from this console. */
+interface RecentTx {
+  replyTo: string;
+  kind: "collect" | "payout";
+  phone: string;
+  amount: number;
+  /** Formatted when it happened — reading a clock during render is impure. */
+  at: string;
+}
+
 /** The five jobs this console does, in the order you do them. */
 const SECTIONS = [
   { id: "auth", label: "Authentication", icon: KeyRound },
@@ -230,6 +241,16 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
   const [payoutPhone, setPayoutPhone] = useState("");
   const [payoutAmount, setPayoutAmount] = useState("500");
   const [watchingPayout, setWatchingPayout] = useState<string | null>(null);
+
+  /**
+   * Everything charged or sent from this console, newest first.
+   *
+   * Session-scoped and deliberately so: it is a worktop for the person testing
+   * right now, not an audit trail. The durable record is CamerPay's own report
+   * and payment_webhook_events — this exists so a replyTo never has to be
+   * copied out of a result box by hand.
+   */
+  const [recent, setRecent] = useState<RecentTx[]>([]);
   const [callback, setCallback] = useState(suggestedCallback);
 
   const [suNumero, setSuNumero] = useState("");
@@ -276,6 +297,19 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
     </Button>
   );
 
+  /** Newest first, capped — a testing worktop, not a ledger. */
+  function remember(tx: RecentTx) {
+    setRecent((current) => [tx, ...current.filter((t) => t.replyTo !== tx.replyTo)].slice(0, 8));
+  }
+
+  /** Bring an earlier transaction back under the watcher. */
+  function reopen(tx: RecentTx) {
+    setReplyTo(tx.replyTo);
+    setSection(tx.kind === "payout" ? "withdraw" : "collect");
+    if (tx.kind === "payout") setWatchingPayout(tx.replyTo);
+    else setWatching(tx.replyTo);
+  }
+
   /** Login, but asking for the token in full so it can be copied. */
   const revealLogin = () =>
     run("reveal", async () => {
@@ -319,6 +353,74 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
       </Card>
 
       {/* ── 1. Authentication ────────────────────────────────────────── */}
+      {/*
+        Appears only once something has been sent, and disappears with the
+        session. A permanently visible empty "no recent transactions" box is
+        furniture; a list that shows up the moment it has something to say is
+        an answer.
+      */}
+      {recent.length > 0 && (
+        <Card className="border-primary/30">
+          <CardBody>
+            <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
+              This session
+            </p>
+
+            <ul className="mt-3 flex flex-col divide-y divide-border">
+              {recent.map((tx) => (
+                <li
+                  key={tx.replyTo}
+                  className="flex flex-col gap-2 py-2.5 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:gap-4"
+                >
+                  <span
+                    className={cn(
+                      "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold",
+                      tx.kind === "collect"
+                        ? "bg-success-light text-success"
+                        : "bg-warning-light text-warning",
+                    )}
+                  >
+                    {tx.kind === "collect" ? (
+                      <ArrowDownToLine className="size-3.5" aria-hidden />
+                    ) : (
+                      <ArrowUpFromLine className="size-3.5" aria-hidden />
+                    )}
+                    <span>{tx.kind === "collect" ? "In" : "Out"}</span>
+                  </span>
+
+                  <span className="tnum min-w-0 flex-1 text-sm">
+                    <span className="font-semibold">{tx.amount.toLocaleString("fr-CM")} FCFA</span>
+                    <span className="text-text-secondary"> · {tx.phone}</span>
+                    <span className="block font-mono text-[11px] break-all text-text-light">
+                      {tx.replyTo}
+                    </span>
+                  </span>
+
+                  <span className="tnum shrink-0 text-xs text-text-light">{tx.at}</span>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0"
+                    onClick={() => reopen(tx)}
+                  >
+                    <RefreshCw className="size-3.5" aria-hidden />
+                    <span>Check</span>
+                  </Button>
+                </li>
+              ))}
+            </ul>
+
+            <p className="mt-3 text-xs text-text-light">
+              <span>
+                The newest is already filled into &ldquo;Check a transaction&rdquo; and is being
+                watched automatically. Press Check on any older one to bring it back.
+              </span>
+            </p>
+          </CardBody>
+        </Card>
+      )}
+
       {/* ── Sections ─────────────────────────────────────────────────────
           The page was ten panels in one column, and "Pay money out" sat
           between account creation and the raw console where nobody found it.
@@ -727,7 +829,16 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                 const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
                 if (result.ok && id) {
                   setWatching(id);
+                  // Prefilled, so "check this one" never means retyping a
+                  // tracking id off the screen above it.
                   setReplyTo(id);
+                  remember({
+                    replyTo: id,
+                    kind: "collect",
+                    phone,
+                    amount: amountValue,
+                    at: new Date().toLocaleTimeString(),
+                  });
                 }
                 return result;
               })
@@ -836,7 +947,17 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
               run("payout", async () => {
                 const result = await probePayout(payoutPhone, payoutValue);
                 const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
-                if (result.ok && id) setWatchingPayout(id);
+                if (result.ok && id) {
+                  setWatchingPayout(id);
+                  setReplyTo(id);
+                  remember({
+                    replyTo: id,
+                    kind: "payout",
+                    phone: payoutPhone,
+                    amount: payoutValue,
+                    at: new Date().toLocaleTimeString(),
+                  });
+                }
                 return result;
               })
             }
