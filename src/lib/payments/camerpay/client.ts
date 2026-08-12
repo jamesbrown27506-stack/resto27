@@ -78,14 +78,40 @@ export function isPayableAmount(amount: number): boolean {
 let cachedToken: { value: string; at: number } | null = null;
 const TOKEN_TTL_MS = 12 * 60_000; // Under the ~15 min server-side expiry.
 
+/**
+ * A token issued by CamerPay directly, instead of one earned by logging in.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THERE ARE TWO WAYS TO AUTHENTICATE, AND ONLY ONE NEEDED A PASSWORD.
+ *
+ *  This client assumed the login route: account number + password, exchanged
+ *  for a session token. But CamerPay also hands out a standing API token —
+ *  the reference integration reads it straight from `CAMERPAY_TOKEN` and
+ *  never calls `login` at all.
+ *
+ *  That matters when `inscription` is unavailable to you: support can issue a
+ *  token for an account opened on their side, and everything downstream works
+ *  with no password anywhere in the environment.
+ *
+ *  When set, this wins. `authentification/token` can still refresh it, and a
+ *  401 still triggers one retry.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+function presetToken(): string | null {
+  const token = process.env.CAMERPAY_TOKEN?.trim();
+  if (!token || token.includes("REPLACE_ME")) return null;
+  return token;
+}
+
 function credentials(): { account: string; password: string } {
   const account = process.env.CAMERPAY_ACCOUNT_NUMBER;
   const password = process.env.CAMERPAY_PASSWORD;
 
   if (!account || !password || account.includes("REPLACE_ME")) {
     throw new Error(
-      "CAMERPAY_ACCOUNT_NUMBER / CAMERPAY_PASSWORD are not set in .env.local. " +
-        "Get them from your CamerPay account, then restart the dev server.",
+      "No CamerPay credentials. Set either CAMERPAY_TOKEN (a token issued by " +
+        "CamerPay), or CAMERPAY_ACCOUNT_NUMBER + CAMERPAY_PASSWORD to log in. " +
+        "Restart after changing them — environment variables are read at startup.",
     );
   }
   return { account, password };
@@ -170,9 +196,22 @@ export async function login(): Promise<string> {
 
 /** A valid token, logging in only when the cached one is missing or stale. */
 export async function getToken(forceRefresh = false): Promise<string> {
+  // A token issued by CamerPay needs no login and does not go stale on our
+  // clock — if it lapses, the 401 retry in `authed()` refreshes it.
+  const preset = presetToken();
+  if (preset && !forceRefresh) return cachedToken?.value ?? preset;
+
   if (!forceRefresh && cachedToken && Date.now() - cachedToken.at < TOKEN_TTL_MS) {
     return cachedToken.value;
   }
+
+  if (preset) {
+    // Refresh the standing token rather than logging in with a password that
+    // may not exist in this deployment at all.
+    cachedToken = { value: preset, at: Date.now() };
+    return refreshSession();
+  }
+
   return login();
 }
 
@@ -298,13 +337,22 @@ export async function validateAccount(input: {
  * Falls back to a full login when there is no token to refresh.
  */
 export async function refreshSession(): Promise<string> {
-  if (!cachedToken) return login();
+  const current = cachedToken?.value ?? presetToken();
+  if (!current) return login();
 
-  const response = await call<unknown>("authentification", "token", {
-    token: cachedToken.value,
-  });
+  const response = await call<unknown>("authentification", "token", { token: current });
 
-  if (!response.etat || !response.token) return login();
+  if (!response.etat || !response.token) {
+    // A standing token that will not refresh is a support problem, not a
+    // reason to try a password that may not be configured.
+    if (presetToken() && !process.env.CAMERPAY_PASSWORD) {
+      throw new Error(
+        `CAMERPAY_TOKEN was refused (${response.message ?? `HTTP ${response.httpStatus}`}). ` +
+          "Ask CamerPay to reissue it, or set CAMERPAY_ACCOUNT_NUMBER and CAMERPAY_PASSWORD instead.",
+      );
+    }
+    return login();
+  }
 
   cachedToken = { value: response.token, at: Date.now() };
   return response.token;

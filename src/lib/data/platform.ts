@@ -550,17 +550,35 @@ export async function runHealthChecks(): Promise<HealthGroup[]> {
       status: "warn",
     },
     {
+      /**
+       * EITHER route counts. A standing CAMERPAY_TOKEN needs no password, and
+       * reporting "not configured" for a perfectly working token deployment
+       * would send someone hunting for credentials they deliberately do not
+       * have.
+       */
       name: "Payment provider credentials",
-      detail: process.env.CAMERPAY_ACCOUNT_NUMBER?.includes("REPLACE_ME")
-        ? "CamerPay credentials are still placeholders. Payments cannot run."
-        : process.env.CAMERPAY_ACCOUNT_NUMBER
-          ? "CamerPay credentials set."
-          : "Not configured.",
-      status:
-        process.env.CAMERPAY_ACCOUNT_NUMBER &&
-        !process.env.CAMERPAY_ACCOUNT_NUMBER.includes("REPLACE_ME")
-          ? "pass"
-          : "warn",
+      detail: (() => {
+        const token = process.env.CAMERPAY_TOKEN?.trim();
+        const account = process.env.CAMERPAY_ACCOUNT_NUMBER?.trim();
+
+        if (token && !token.includes("REPLACE_ME")) {
+          return "CAMERPAY_TOKEN set — authenticating with a token issued by CamerPay, no login call.";
+        }
+        if (account && !account.includes("REPLACE_ME")) {
+          return process.env.CAMERPAY_PASSWORD
+            ? `Account ${account} set — a session is fetched by login.`
+            : `Account ${account} set but CAMERPAY_PASSWORD is missing, so login cannot run.`;
+        }
+        return "Neither CAMERPAY_TOKEN nor CAMERPAY_ACCOUNT_NUMBER is set. Payments cannot run.";
+      })(),
+      status: (() => {
+        const token = process.env.CAMERPAY_TOKEN?.trim();
+        if (token && !token.includes("REPLACE_ME")) return "pass";
+
+        const account = process.env.CAMERPAY_ACCOUNT_NUMBER?.trim();
+        const usable = account && !account.includes("REPLACE_ME") && process.env.CAMERPAY_PASSWORD;
+        return usable ? "pass" : "warn";
+      })(),
     },
   ];
 
