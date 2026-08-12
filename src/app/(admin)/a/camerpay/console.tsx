@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { AlertTriangle, CheckCircle2, KeyRound, Loader2, Play, ShieldAlert, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, KeyRound, Loader2, Play, ShieldAlert, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";
@@ -48,7 +48,61 @@ function ResultLine({ result }: { result: ProbeResult }) {
           {JSON.stringify(result.payload, null, 2)}
         </pre>
       )}
+
+      {result.request != null && <SupportReport result={result} />}
     </div>
+  );
+}
+
+/**
+ * The exchange, formatted for a support thread.
+ *
+ * When CamerPay answers 502 the first thing support asks is "show me the
+ * request you sent" — and reconstructing it from memory is how the wrong
+ * thing gets debugged. This is the real one, captured as it went out, with
+ * the token and any password replaced by a visible «redacted» marker so it
+ * can be pasted into a chat without leaking a credential.
+ */
+function SupportReport({ result }: { result: ProbeResult }) {
+  const [copied, setCopied] = useState(false);
+
+  const report = JSON.stringify(
+    { request: result.request, response: result.response ?? result.payload },
+    null,
+    2,
+  );
+
+  return (
+    <details className="mt-3 rounded-md border border-border bg-surface">
+      <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-text-secondary">
+        <span>Request &amp; response — for CamerPay support</span>
+      </summary>
+
+      <div className="border-t border-border p-3">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              navigator.clipboard.writeText(report).then(
+                () => setCopied(true),
+                () => setCopied(false),
+              );
+            }}
+          >
+            <Copy className="size-3.5" aria-hidden />
+            <span>{copied ? "Copied" : "Copy for support"}</span>
+          </Button>
+          <span className="text-xs text-text-light">
+            Token and password are replaced by «redacted».
+          </span>
+        </div>
+
+        <pre className="max-h-80 overflow-auto rounded bg-surface-2 p-2 font-mono text-[11px] break-all whitespace-pre-wrap text-text-secondary">
+          {report}
+        </pre>
+      </div>
+    </details>
   );
 }
 
@@ -153,6 +207,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
   const [suPass, setSuPass] = useState("");
   const [suToken, setSuToken] = useState("");
   const [suCode, setSuCode] = useState("");
+  const [issuedToken, setIssuedToken] = useState("");
 
   const [rawService, setRawService] = useState("authentification");
   const [rawAction, setRawAction] = useState("inscription");
@@ -505,9 +560,14 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                 disabled={pending || !suCode.trim()}
                 loading={running === "validate"}
                 onClick={() =>
-                  run("validate", () =>
-                    submitValidation({ code: suCode, provisionalToken: suToken }),
-                  )
+                  run("validate", async () => {
+                    const result = await submitValidation({
+                      code: suCode,
+                      provisionalToken: suToken,
+                    });
+                    if (result.provisionalToken) setIssuedToken(result.provisionalToken);
+                    return result;
+                  })
                 }
               >
                 <Play className="size-4" aria-hidden />
@@ -515,6 +575,49 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
               </Button>
 
               {results.validate && <ResultLine result={results.validate} />}
+
+              {/*
+                Shown in full, once, on purpose. It is a live credential — but
+                an account whose token you cannot read is an account you cannot
+                use, and this console is admin-only.
+              */}
+              {issuedToken && (
+                <div className="rounded-md border-2 border-success/40 bg-success-light p-3">
+                  <p className="text-xs font-bold tracking-[0.08em] text-success uppercase">
+                    Your authorisation token
+                  </p>
+                  <pre className="mt-2 overflow-auto rounded bg-surface p-2 font-mono text-xs break-all whitespace-pre-wrap">
+                    {issuedToken}
+                  </pre>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => navigator.clipboard.writeText(issuedToken)}
+                    >
+                      <Copy className="size-3.5" aria-hidden />
+                      <span>Copy token</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        navigator.clipboard.writeText(`CAMERPAY_TOKEN=${issuedToken}`)
+                      }
+                    >
+                      <Copy className="size-3.5" aria-hidden />
+                      <span>Copy as env line</span>
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-success/90">
+                    <span>
+                      Set it as <code className="font-mono">CAMERPAY_TOKEN</code> in Vercel and in{" "}
+                      <code className="font-mono">.env.local</code>, then redeploy. No account
+                      number or password is needed when a token is set.
+                    </span>
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

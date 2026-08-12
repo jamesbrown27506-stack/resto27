@@ -34,6 +34,13 @@ export interface ProbeResult {
   label: string;
   detail: string;
   payload?: unknown;
+  /**
+   * The exact request that was sent, secrets redacted — for pasting into a
+   * CamerPay support thread. Present on any probe that reached the API.
+   */
+  request?: unknown;
+  /** The raw response body, so support sees both halves of the exchange. */
+  response?: unknown;
 }
 
 function fail(label: string, error: unknown): ProbeResult {
@@ -115,6 +122,8 @@ export async function probeRaw(input: {
       // The whole response, token included — this console is admin-only and
       // seeing the provisional token is the entire point of `inscription`.
       payload: response,
+      request: response.request,
+      response: { ...response, request: undefined },
     };
   } catch (error) {
     return fail("Raw call", error);
@@ -151,6 +160,8 @@ export async function submitRegistration(input: {
         label: "Inscription",
         detail: response.message ?? `Refused with HTTP ${response.httpStatus}`,
         payload: response.data,
+        request: response.request,
+        response: { ...response, request: undefined },
       };
     }
 
@@ -164,6 +175,7 @@ export async function submitRegistration(input: {
         "Registration accepted. Confirm the code below to finish opening the account.",
       provisionalToken: response.token,
       code: response.data?.code,
+      request: response.request,
       // Deliberately not the whole response — it holds the provisional token,
       // which is a live credential and is already carried in its own field.
       payload: { code: response.data?.code },
@@ -173,11 +185,25 @@ export async function submitRegistration(input: {
   }
 }
 
-/** Step 2 — confirm the code against the provisional token. */
+/**
+ * Step 2 — confirm the code against the provisional token.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE TOKEN IT RETURNS IS THE WHOLE POINT, AND THIS USED TO DISCARD IT.
+ *
+ *  CamerPay answers "Inscription réussie. Veuillez vous connecter avec votre
+ *  token d'autorisation" — and the token is on the response. Returning only
+ *  `response.data` dropped it, leaving an account that had been created
+ *  successfully and no way to authenticate to it.
+ *
+ *  It is shown in full, once, deliberately. It is a live credential and this
+ *  console is admin-only; the alternative is an account you cannot use.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
 export async function submitValidation(input: {
   code: string;
   provisionalToken: string;
-}): Promise<ProbeResult> {
+}): Promise<RegistrationResult> {
   const admin = await requireRole("admin");
   try {
     const response = await validateAccount(input);
@@ -188,18 +214,35 @@ export async function submitValidation(input: {
         label: "Validation",
         detail: response.message ?? `Refused with HTTP ${response.httpStatus}`,
         payload: response.data,
+        request: response.request,
+        response: { ...response, request: undefined },
       };
     }
 
     console.info("[camerpay] account validated by", admin.email);
 
+    /**
+     * The authorisation token can arrive at the root or inside `data`
+     * depending on the action, so both are checked. Its ABSENCE is reported
+     * rather than glossed over — an account with no token is not usable, and
+     * saying "validated" while leaving that out is how someone spends an hour
+     * looking for a value that was never sent.
+     */
+    const issued =
+      response.token ??
+      (response.data as { token?: string } | undefined)?.token ??
+      null;
+
     return {
       ok: true,
       label: "Validation",
-      detail:
-        (response.message ?? "Account validated.") +
-        " Put the account number and password into CAMERPAY_ACCOUNT_NUMBER and CAMERPAY_PASSWORD, then restart.",
+      detail: issued
+        ? `${response.message ?? "Account validated."} Copy the token below into CAMERPAY_TOKEN, then redeploy.`
+        : `${response.message ?? "Account validated."} No token was returned here — run Login below with your number and password to fetch one, or ask support to issue one.`,
+      provisionalToken: issued ?? undefined,
       payload: response.data,
+      request: response.request,
+      response: { ...response, request: undefined },
     };
   } catch (error) {
     return fail("Validation", error);
@@ -265,6 +308,7 @@ export async function probeIdentify(phone: string): Promise<ProbeResult> {
         label: "Identify",
         detail: `Accepted (HTTP 202)${replyTo ? `, replyTo ${replyTo}` : ""}. The identified name arrives on the callback, not here — use Confirm with that replyTo.`,
         payload: response.data,
+        request: response.request,
       };
     }
 
@@ -277,6 +321,8 @@ export async function probeIdentify(phone: string): Promise<ProbeResult> {
           ? "Number identified."
           : "Not identified. CamerPay only detects Orange and MTN, and the number must have an active Mobile Money wallet."),
       payload: response.data,
+      request: response.request,
+      response: { ...response, request: undefined },
     };
   } catch (error) {
     return fail("Identify", error);
@@ -321,6 +367,7 @@ export async function probeCollection(phone: string, amount: number): Promise<Pr
         label: "Collection",
         detail: `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — the customer must now approve on their handset. This is NOT a completed payment.`,
         payload: response.data,
+        request: response.request,
       };
     }
 
@@ -329,6 +376,8 @@ export async function probeCollection(phone: string, amount: number): Promise<Pr
       label: "Collection",
       detail: response.message ?? `Refused with HTTP ${response.httpStatus}`,
       payload: response.data,
+      request: response.request,
+      response: { ...response, request: undefined },
     };
   } catch (error) {
     return fail("Collection", error);

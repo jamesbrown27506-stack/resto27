@@ -38,6 +38,27 @@ const BASE_URL = process.env.CAMERPAY_BASE_URL ?? "https://api.camerpay.net";
 
 export type CamerPayService = "authentification" | "account" | "transaction" | "rapport";
 
+/**
+ * Exactly what went over the wire, for showing to CamerPay support.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  SECRETS ARE REDACTED, AND THE REDACTION IS VISIBLE.
+ *
+ *  This is built to be pasted into a support conversation, so a live token or
+ *  a real password must not travel with it — but a field silently missing
+ *  would have support debugging a request that was never sent. So anything
+ *  removed is replaced by an obvious marker rather than dropped: they can see
+ *  the field was present and that we withheld its value.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export interface CamerPayRequestTrace {
+  method: "GET";
+  url: string;
+  headers: Record<string, string>;
+  /** The DATA header, parsed back out for readability. */
+  data?: unknown;
+}
+
 export interface CamerPayResponse<T = unknown> {
   /** Logical success. Independent of the HTTP status. */
   etat: boolean;
@@ -49,6 +70,33 @@ export interface CamerPayResponse<T = unknown> {
   data?: T;
   /** HTTP status, added by us — callers need it to tell 202 from 200. */
   httpStatus: number;
+  /** The request that produced this. Added by us; never sent by CamerPay. */
+  request?: CamerPayRequestTrace;
+}
+
+/** Keys whose values must never reach a support thread. */
+const SECRET_DATA_KEYS = new Set(["pass", "motDePasse", "password", "pin", "code_secret"]);
+
+function redactTrace(
+  headers: Record<string, string>,
+  data: unknown,
+): CamerPayRequestTrace {
+  const safeHeaders: Record<string, string> = { ...headers };
+  if (safeHeaders.token) safeHeaders.token = `«redacted: ${maskToken(safeHeaders.token)}»`;
+  // The DATA header is echoed in `data` below, parsed — no need to carry the
+  // unredacted string twice.
+  delete safeHeaders.DATA;
+
+  let safeData: unknown = data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    safeData = Object.fromEntries(
+      Object.entries(data as Record<string, unknown>).map(([key, value]) =>
+        SECRET_DATA_KEYS.has(key) ? [key, "«redacted»"] : [key, value],
+      ),
+    );
+  }
+
+  return { method: "GET", url: BASE_URL, headers: safeHeaders, data: safeData };
 }
 
 /** Phone numbers must be exactly 9 digits starting with 6, no +237 prefix. */
@@ -153,7 +201,14 @@ async function call<T>(
     // 5xx pages are sometimes HTML. Keep the status, drop the body.
   }
 
-  return { ...(body as object), httpStatus: response.status } as CamerPayResponse<T>;
+  return {
+    ...(body as object),
+    httpStatus: response.status,
+    // Attached to EVERY call, success or failure. A 502 is exactly when
+    // somebody needs to see the request, and building the trace only on
+    // failure means the one you want is the one you did not capture.
+    request: redactTrace(headers, options.data),
+  } as CamerPayResponse<T>;
 }
 
 /** Log-safe rendering of a token. Never print the whole thing. */
