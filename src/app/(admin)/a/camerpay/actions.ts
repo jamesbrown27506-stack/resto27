@@ -246,10 +246,34 @@ export async function probeIdentify(phone: string): Promise<ProbeResult> {
       };
     }
     const response = await identifyNumber(normalised);
+
+    /**
+     * `identifier` lives under the TRANSACTION service, and every transaction
+     * call is asynchronous: HTTP 202 means accepted, and the identified name
+     * arrives on the callback rather than in this response.
+     *
+     * Reading `etat` as the verdict — which this did — reports a perfectly
+     * good acceptance as a failure, and sends you debugging a number that was
+     * never the problem.
+     */
+    if (response.httpStatus === 202) {
+      const replyTo = (response.data as { replyTo?: string } | undefined)?.replyTo;
+      return {
+        ok: true,
+        label: "Identify",
+        detail: `Accepted (HTTP 202)${replyTo ? `, replyTo ${replyTo}` : ""}. The identified name arrives on the callback, not here — use Confirm with that replyTo.`,
+        payload: response.data,
+      };
+    }
+
     return {
       ok: response.etat,
       label: "Identify",
-      detail: response.message ?? (response.etat ? "Number identified." : "Not identified."),
+      detail:
+        response.message ??
+        (response.etat
+          ? "Number identified."
+          : "Not identified. CamerPay only detects Orange and MTN, and the number must have an active Mobile Money wallet."),
       payload: response.data,
     };
   } catch (error) {

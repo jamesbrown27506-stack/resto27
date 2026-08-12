@@ -28,13 +28,20 @@ function ResultLine({ result }: { result: ProbeResult }) {
         result.ok ? "border-success/30 bg-success-light" : "border-error/30 bg-error-light",
       )}
     >
+      {/* The label, not just the message. Several panels can fail with copy
+          that reads alike — "Impossible d'identifier le numéro" could come
+          from the identify probe or from registration rejecting the number,
+          and those are different problems. */}
       <p className={cn("flex items-start gap-2 font-medium", result.ok ? "text-success" : "text-error")}>
         {result.ok ? (
           <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden />
         ) : (
           <XCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
         )}
-        <span>{result.detail}</span>
+        <span>
+          <span className="opacity-70">{result.label}: </span>
+          <span>{result.detail}</span>
+        </span>
       </p>
       {result.payload != null && (
         <pre className="mt-2 max-h-48 overflow-auto rounded bg-surface p-2 font-mono text-[11px] text-text-secondary">
