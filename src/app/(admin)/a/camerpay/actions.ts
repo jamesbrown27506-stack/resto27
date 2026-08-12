@@ -13,6 +13,7 @@ import {
   rawCall,
   registerAccount,
   requestCollection,
+  sendPayout,
   setCallbackUrl,
   validateAccount,
   type CamerPayService,
@@ -127,6 +128,102 @@ export async function probeRaw(input: {
     };
   } catch (error) {
     return fail("Raw call", error);
+  }
+}
+
+/* ── Watching a transaction settle ─────────────────────────────────────── */
+
+export interface TransactionStatus {
+  status: "success" | "failed" | "pending";
+  detail: string;
+  amount?: number;
+  raw?: unknown;
+}
+
+/**
+ * One poll. Cheap, idempotent, and safe to call as often as you like.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  POLLING IS NOT A WORKAROUND FOR THE CALLBACK — IT IS THE OTHER HALF.
+ *
+ *  A callback is fast but unreliable: it can be lost, delayed, or delivered
+ *  to a URL that was briefly down. When one goes missing the customer has
+ *  been debited while the invoice still reads unpaid, and nothing else in the
+ *  system will ever notice.
+ *
+ *  So the callback tells us to look EARLY, and this tells us what is TRUE.
+ *  Both routes end at `confirmTransaction`, which asks CamerPay directly —
+ *  there is no path where a status is believed rather than verified.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function checkTransaction(replyTo: string): Promise<TransactionStatus> {
+  await requireRole("admin");
+
+  const trimmed = replyTo.trim();
+  if (!trimmed) return { status: "pending", detail: "No transaction reference to check." };
+
+  try {
+    const result = await confirmTransaction(trimmed);
+
+    return {
+      status: result.status,
+      amount: result.amount,
+      raw: result.raw ?? result.searched,
+      detail:
+        result.status === "success"
+          ? `Settled${result.amount ? ` — ${result.amount} FCFA` : ""}.`
+          : result.status === "failed"
+            ? "CamerPay reports this transaction failed. No money moved."
+            : "Waiting for CamerPay. The customer may not have approved on their handset yet.",
+    };
+  } catch (error) {
+    // A network blip must not read as "failed" — that is the one status that
+    // would have us tell a customer their payment did not go through when it
+    // may well have.
+    return {
+      status: "pending",
+      detail: error instanceof Error ? error.message : "Could not reach CamerPay.",
+    };
+  }
+}
+
+/* ── Paying money OUT ──────────────────────────────────────────────────── */
+
+/**
+ * Send money from the CamerPay balance to a wallet — `depot`.
+ *
+ * THE OPPOSITE DIRECTION FROM probeCollection, and the reason those two names
+ * no longer contain the word "deposit" on both sides. This spends the balance
+ * that collections built up: refunds, payouts to a restaurant, withdrawing to
+ * your own number.
+ */
+export async function probePayout(phone: string, amount: number): Promise<ProbeResult> {
+  const admin = await requireRole("admin");
+  try {
+    const response = await sendPayout(phone, amount);
+
+    if (response.httpStatus === 202 || response.etat) {
+      const replyTo = response.data?.replyTo ?? "(none returned)";
+      console.info("[camerpay] payout requested", replyTo, amount, "by", admin.email);
+      return {
+        ok: true,
+        label: "Payout",
+        detail: `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — money is on its way OUT of your balance. Watch it settle below.`,
+        payload: response.data,
+        request: response.request,
+      };
+    }
+
+    return {
+      ok: false,
+      label: "Payout",
+      detail: response.message ?? `Refused with HTTP ${response.httpStatus}`,
+      payload: response.data,
+      request: response.request,
+      response: { ...response, request: undefined },
+    };
+  } catch (error) {
+    return fail("Payout", error);
   }
 }
 

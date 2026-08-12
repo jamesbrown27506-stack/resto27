@@ -11,6 +11,7 @@ import {
   probeCollection,
   probeIdentify,
   probeLogin,
+  probePayout,
   probeRaw,
   probeReport,
   submitRegistration,
@@ -18,6 +19,7 @@ import {
   registerCallback,
   type ProbeResult,
 } from "./actions";
+import { TransactionWatcher } from "./transaction-watcher";
 import { cn } from "@/lib/utils";
 
 function ResultLine({ result }: { result: ProbeResult }) {
@@ -200,6 +202,10 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
   const [phone, setPhone] = useState("");
   const [amount, setAmount] = useState("500");
   const [replyTo, setReplyTo] = useState("");
+  const [watching, setWatching] = useState<string | null>(null);
+  const [payoutPhone, setPayoutPhone] = useState("");
+  const [payoutAmount, setPayoutAmount] = useState("500");
+  const [watchingPayout, setWatchingPayout] = useState<string | null>(null);
   const [callback, setCallback] = useState(suggestedCallback);
 
   const [suNumero, setSuNumero] = useState("");
@@ -253,6 +259,10 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
       if (result.provisionalToken) setRevealedToken(result.provisionalToken);
       return result;
     });
+
+  const payoutValue = Number(payoutAmount);
+  const payoutValid =
+    Number.isInteger(payoutValue) && payoutValue >= 500 && payoutValue <= 500_000;
 
   const amountValue = Number(amount);
   const amountValid = Number.isInteger(amountValue) && amountValue >= 500 && amountValue <= 500_000;
@@ -402,12 +412,26 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
             className="mt-4"
             disabled={pending || !amountValid || phone.trim().length < 9}
             loading={running === "collect"}
-            onClick={() => run("collect", () => probeCollection(phone, amountValue))}
+            onClick={() =>
+              run("collect", async () => {
+                const result = await probeCollection(phone, amountValue);
+                // Verification starts on its own the moment a charge is
+                // accepted — the operator should never have to remember to
+                // go and ask whether it worked.
+                const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
+                if (result.ok && id) {
+                  setWatching(id);
+                  setReplyTo(id);
+                }
+                return result;
+              })
+            }
           >
             <Play className="size-3.5" aria-hidden />
             <span>Charge {amount} FCFA for real</span>
           </Button>
           {results.collect && <ResultLine result={results.collect} />}
+          {watching && <TransactionWatcher key={watching} replyTo={watching} />}
         </CardBody>
       </Panel>
 
@@ -436,7 +460,12 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
             className="mt-4"
             disabled={pending || !replyTo.trim()}
             loading={running === "confirm"}
-            onClick={() => run("confirm", () => probeConfirm(replyTo))}
+            onClick={() => {
+              // A one-shot answer AND the watcher, because the usual reason
+              // to paste a replyTo in here is that it was pending last time.
+              setWatching(replyTo.trim() || null);
+              run("confirm", () => probeConfirm(replyTo));
+            }}
           >
             <Play className="size-3.5" aria-hidden />
             <span>Ask CamerPay</span>
@@ -702,6 +731,72 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
               CamerPay support gives you — no code change needed.
             </span>
           </p>
+        </CardBody>
+      </Panel>
+
+      {/* ── Paying money out ─────────────────────────────────────────── */}
+      <Panel
+        title="Pay money out"
+        description="`depot` — the opposite direction. Money leaves YOUR balance."
+      >
+        <CardBody className="flex flex-col gap-4">
+          <div className="rounded-md border-2 border-error/30 bg-error-light p-3 text-sm text-error">
+            <p className="font-bold">This spends your balance.</p>
+            <p className="mt-1 opacity-90">
+              <span>
+                Collections (<code className="font-mono text-xs">retrait</code>) pull money IN from
+                a customer. This sends it back OUT — a refund, a payout to a restaurant, or moving
+                your own money to your own wallet. Same 500&ndash;500 000 FCFA limits, same absence
+                of a sandbox.
+              </span>
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Destination number" htmlFor="po-phone" required hint="9 digits, starts with 6.">
+              <Input
+                id="po-phone"
+                value={payoutPhone}
+                onChange={(e) => setPayoutPhone(e.target.value)}
+                placeholder="6XXXXXXXX"
+                inputMode="numeric"
+              />
+            </Field>
+
+            <Field label="Amount (FCFA)" htmlFor="po-amount" required hint="500 minimum, 500 000 maximum.">
+              <Input
+                id="po-amount"
+                type="number"
+                min={500}
+                max={500000}
+                step={1}
+                inputMode="numeric"
+                value={payoutAmount}
+                onChange={(e) => setPayoutAmount(e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <Button
+            variant="danger"
+            className="self-start"
+            disabled={pending || !payoutPhone.trim() || !payoutValid}
+            loading={running === "payout"}
+            onClick={() =>
+              run("payout", async () => {
+                const result = await probePayout(payoutPhone, payoutValue);
+                const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
+                if (result.ok && id) setWatchingPayout(id);
+                return result;
+              })
+            }
+          >
+            <Play className="size-4" aria-hidden />
+            <span>Send {payoutValid ? payoutValue.toLocaleString("fr-CM") : "…"} FCFA</span>
+          </Button>
+
+          {results.payout && <ResultLine result={results.payout} />}
+          {watchingPayout && <TransactionWatcher key={watchingPayout} replyTo={watchingPayout} />}
         </CardBody>
       </Panel>
 
