@@ -171,7 +171,7 @@ const PRESETS: {
     label: "change_callback",
     service: "account",
     action: "change_callback",
-    data: '{ "url": "https://your-domain.cm/api/webhooks/camerpay" }',
+    data: '{ "callbackURL": "https://your-domain.cm/api/webhooks/camerpay" }',
     authenticated: true,
   },
   { label: "change_token", service: "account", action: "change_token", data: "", authenticated: true },
@@ -208,6 +208,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
   const [suToken, setSuToken] = useState("");
   const [suCode, setSuCode] = useState("");
   const [issuedToken, setIssuedToken] = useState("");
+  const [revealedToken, setRevealedToken] = useState("");
 
   const [rawService, setRawService] = useState("authentification");
   const [rawAction, setRawAction] = useState("inscription");
@@ -244,6 +245,14 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
       <span>{label}</span>
     </Button>
   );
+
+  /** Login, but asking for the token in full so it can be copied. */
+  const revealLogin = () =>
+    run("reveal", async () => {
+      const result = await probeLogin(true);
+      if (result.provisionalToken) setRevealedToken(result.provisionalToken);
+      return result;
+    });
 
   const amountValue = Number(amount);
   const amountValid = Number.isInteger(amountValue) && amountValue >= 500 && amountValue <= 500_000;
@@ -458,6 +467,70 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
           Calling CamerPay…
         </p>
       )}
+
+      {/* ── The session token, in full, on request ───────────────────── */}
+      <Panel
+        title="Get your token"
+        description="Only needed if you want to set CAMERPAY_TOKEN. Login already works without it."
+      >
+        <CardBody className="flex flex-col gap-3">
+          <p className="text-sm leading-relaxed text-text-secondary">
+            <span>
+              While <code className="font-mono text-xs">CAMERPAY_ACCOUNT_NUMBER</code> and{" "}
+              <code className="font-mono text-xs">CAMERPAY_PASSWORD</code> are set, the app fetches
+              a session itself and <strong className="text-text">no token variable is required</strong>.
+              Reveal one only if you would rather deploy with a token and no password.
+            </span>
+          </p>
+
+          <Button
+            variant="outline"
+            className="self-start"
+            disabled={pending}
+            loading={running === "reveal"}
+            onClick={revealLogin}
+          >
+            <KeyRound className="size-4" aria-hidden />
+            <span>Reveal my token</span>
+          </Button>
+
+          {results.reveal && <ResultLine result={results.reveal} />}
+
+          {revealedToken && (
+            <div className="rounded-md border-2 border-warning/40 bg-warning-light p-3">
+              <p className="text-xs font-bold tracking-[0.08em] text-warning uppercase">
+                Live credential — do not screenshot
+              </p>
+              <pre className="mt-2 overflow-auto rounded bg-surface p-2 font-mono text-xs break-all whitespace-pre-wrap">
+                {revealedToken}
+              </pre>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigator.clipboard.writeText(revealedToken)}
+                >
+                  <Copy className="size-3.5" aria-hidden />
+                  <span>Copy token</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    navigator.clipboard.writeText(`CAMERPAY_TOKEN=${revealedToken}`)
+                  }
+                >
+                  <Copy className="size-3.5" aria-hidden />
+                  <span>Copy as env line</span>
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setRevealedToken("")}>
+                  <span>Hide</span>
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardBody>
+      </Panel>
 
       {/* ── Open an account ──────────────────────────────────────────── */}
       <Panel

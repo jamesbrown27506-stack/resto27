@@ -249,12 +249,30 @@ export async function submitValidation(input: {
   }
 }
 
-export async function probeLogin(): Promise<ProbeResult> {
+/**
+ * `reveal` exists because a masked token cannot be copied into an env var.
+ *
+ * Masking is right by default — this is the one screen where a live credential
+ * would otherwise sit waiting to be screenshotted. But refusing ever to show it
+ * makes the console unable to hand over the one value the deployment needs, so
+ * the operator can ask for it deliberately.
+ *
+ * Worth knowing: if login works, CAMERPAY_TOKEN is not required at all. The
+ * client fetches a session itself from the number and password already in the
+ * environment.
+ */
+export async function probeLogin(reveal = false): Promise<RegistrationResult> {
   await requireRole("admin");
   try {
     const token = await login();
-    // Masked. A token in a log or a screenshot is a live credential.
-    return { ok: true, label: "Login", detail: `Authenticated. Token ${maskToken(token)}` };
+    return {
+      ok: true,
+      label: "Login",
+      detail: reveal
+        ? "Authenticated. Token below — CAMERPAY_TOKEN is optional while the number and password work."
+        : `Authenticated. Token ${maskToken(token)}`,
+      provisionalToken: reveal ? token : undefined,
+    };
   } catch (error) {
     return fail("Login", error);
   }

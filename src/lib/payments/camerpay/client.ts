@@ -461,12 +461,41 @@ export async function rawCall<T = unknown>(
   return authed<T>(service, action, data);
 }
 
-/** Registers the HTTPS URL CamerPay will POST callbacks to. */
+/**
+ * Registers the HTTPS URL CamerPay will POST callbacks to.
+ *
+ * The DATA key is `callbackURL`, not `url`. CamerPay's own rejection spells it
+ * out — "format DATA {"callbackURL": "https://name.domaine"}" — and with the
+ * wrong key the request is well-formed, carries no URL it recognises, and comes
+ * back as "the callbackURL provided is invalid", which reads as a problem with
+ * the address rather than with the field holding it.
+ */
 export async function setCallbackUrl(url: string): Promise<CamerPayResponse> {
-  if (!url.startsWith("https://")) {
-    throw new Error("CamerPay requires an HTTPS callback URL. localhost will not work — use a tunnel.");
+  const trimmed = url.trim();
+
+  if (!trimmed.startsWith("https://")) {
+    throw new Error("CamerPay requires an HTTPS callback URL. localhost will not work — deploy first.");
   }
-  return authed("account", "change_callback", { url });
+
+  // Rejected for being "complète et accessible" otherwise: a fragment or a
+  // private host fails on their side, so catch it here where the message can
+  // say which rule was broken.
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`"${trimmed}" is not a valid URL.`);
+  }
+  if (parsed.hash) {
+    throw new Error("CamerPay rejects a callback URL containing a #fragment.");
+  }
+  if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(parsed.hostname)) {
+    throw new Error(
+      `"${parsed.hostname}" is not reachable from the internet. CamerPay must be able to POST to it — use your deployed domain.`,
+    );
+  }
+
+  return authed("account", "change_callback", { callbackURL: trimmed });
 }
 
 /* ── Transactions ──────────────────────────────────────────────────────── */
