@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Clock, RefreshCw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { checkTransaction, type TransactionStatus } from "./actions";
@@ -27,11 +27,15 @@ import { cn } from "@/lib/utils";
 /**
  * Backing off rather than a fixed interval.
  *
+ * The FIRST check is immediate — a prompt is often answered before the operator
+ * has looked up, and a three-second countdown before anything happens is what
+ * makes a working poller feel broken.
+ *
  * A mobile-money prompt is usually answered within about thirty seconds, so
  * the early checks are close together where the answer probably is. After
  * that the customer is distracted or gone and hammering the API buys nothing.
  */
-const SCHEDULE_MS = [3_000, 3_000, 4_000, 5_000, 6_000, 8_000, 10_000, 15_000, 20_000, 30_000];
+const SCHEDULE_MS = [0, 3_000, 3_000, 4_000, 5_000, 6_000, 8_000, 10_000, 15_000, 20_000, 30_000];
 
 /** Roughly two minutes of automatic watching. */
 const MAX_ATTEMPTS = SCHEDULE_MS.length;
@@ -77,13 +81,39 @@ export function TransactionWatcher({
   const [result, setResult] = useState<TransactionStatus | null>(null);
   const [attempts, setAttempts] = useState(0);
   const [auto, setAuto] = useState(true);
-  const [checking, startTransition] = useTransition();
+  const [busy, setBusy] = useState(false);
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
+
+  /** Guards against setting state after the panel has gone. */
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const settled = result?.status === "success" || result?.status === "failed";
   const exhausted = attempts >= MAX_ATTEMPTS;
 
-  const check = useCallback(() => {
-    startTransition(async () => {
+  /**
+   * ─────────────────────────────────────────────────────────────────────────
+   *  NO useTransition, DELIBERATELY.
+   *
+   *  This polled inside `startTransition(async () => …)`. React treats work
+   *  after an `await` in an async transition as outside that transition, and
+   *  the counter never left "check 0 / 10" while the transaction it watched
+   *  had visibly settled — the one number that would have shown the poll was
+   *  dead was itself the thing that was broken.
+   *
+   *  A plain async function with its own `busy` flag has none of that
+   *  subtlety. A progress indicator that cannot be trusted is worse than
+   *  none: it reads as "still working" when nothing is working at all.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  const check = useCallback(async () => {
+    setBusy(true);
+    try {
       const next = await checkTransaction(replyTo, {
         phone: hintPhone,
         amount: hintAmount,
@@ -91,17 +121,29 @@ export function TransactionWatcher({
         startedAt: hintStartedAt,
         afterId: hintAfterId,
       });
+      if (!alive.current) return;
+
       setResult(next);
-      setAttempts((n) => n + 1);
+      setCheckedAt(new Date().toLocaleTimeString());
       if (next.status !== "pending") {
         setAuto(false);
         onSettled?.(next);
       }
-    });
+    } catch {
+      // A failed check is not a failed payment. The attempt still counts so
+      // the schedule keeps moving.
+    } finally {
+      if (alive.current) {
+        // In `finally`, so the counter advances even when the request threw.
+        // A stuck counter is exactly the symptom that hid the last bug.
+        setAttempts((n) => n + 1);
+        setBusy(false);
+      }
+    }
   }, [replyTo, hintPhone, hintAmount, hintDirection, hintStartedAt, hintAfterId, onSettled]);
 
   useEffect(() => {
-    if (!auto || settled || exhausted) return;
+    if (!auto || settled || exhausted || busy) return;
 
     /**
      * setState happens inside the timer callback, never in the effect body —
@@ -109,9 +151,9 @@ export function TransactionWatcher({
      * immediately is also what makes the first check land after a delay
      * instead of racing the 202 that created this transaction.
      */
-    const timer = window.setTimeout(check, delayFor(attempts));
+    const timer = window.setTimeout(() => void check(), delayFor(attempts));
     return () => window.clearTimeout(timer);
-  }, [auto, settled, exhausted, attempts, check]);
+  }, [auto, settled, exhausted, busy, attempts, check]);
 
   const tone = settled
     ? result?.status === "success"
@@ -129,13 +171,13 @@ export function TransactionWatcher({
             <XCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
           )
         ) : (
-          <Clock className={cn("mt-0.5 size-4 shrink-0", checking && "animate-spin")} aria-hidden />
+          <Clock className={cn("mt-0.5 size-4 shrink-0", busy && "animate-spin")} aria-hidden />
         )}
 
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">
             {settled ? (
-              <span>{result?.status === "success" ? "Settled" : "Failed"}</span>
+              <span>{result?.status === "success" ? "Settled" : "Not confirmed"}</span>
             ) : exhausted ? (
               <span>Stopped watching</span>
             ) : (
@@ -152,7 +194,12 @@ export function TransactionWatcher({
 
           <p className="mt-1 font-mono text-[11px] break-all opacity-75">
             <span>replyTo {replyTo}</span>
-            <span> · check {attempts}/{MAX_ATTEMPTS}</span>
+            <span>
+              {" "}
+              · check {attempts}/{MAX_ATTEMPTS}
+            </span>
+            {checkedAt && <span> · last {checkedAt}</span>}
+            {hintAfterId !== undefined && <span> · after #{hintAfterId}</span>}
           </p>
 
           {exhausted && !settled && (
@@ -169,7 +216,7 @@ export function TransactionWatcher({
             {/* Manual check, always available — every payment console has one,
                 and an operator watching a customer's face needs an answer now
                 rather than at the next tick. */}
-            <Button variant="outline" size="sm" loading={checking} onClick={check}>
+            <Button variant="outline" size="sm" loading={busy} onClick={() => void check()}>
               <RefreshCw className="size-3.5" aria-hidden />
               <span>Check now</span>
             </Button>
