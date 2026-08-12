@@ -142,6 +142,12 @@ export function OrderCard({ order, now }: { order: Order; now?: Date }) {
             <span translate="no">{order.reference}</span> · {ORDER_TYPE_LABEL[order.type]} ·{" "}
             <time dateTime={isoAttr(order.createdAt)}>{formatRelative(order.createdAt, now)}</time>
           </p>
+          {order.scheduledFor && (
+            <p className="mt-0.5 text-xs font-medium text-primary">
+              Prévue pour{" "}
+              <time dateTime={isoAttr(order.scheduledFor)}>{formatRelative(order.scheduledFor, now)}</time>
+            </p>
+          )}
         </div>
         <OrderStatusBadge status={order.status} />
       </div>

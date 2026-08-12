@@ -57,6 +57,9 @@ const ORDER_REASONS: Record<string, string> = {
   nameRequired: "Indiquez le nom du destinataire.",
   phoneRequired: "Indiquez un numéro de téléphone.",
   addressRequired: "Indiquez une adresse de livraison.",
+  badSchedule: "La date de programmation est invalide.",
+  scheduleTooSoon: "Choisissez un horaire à plus d'une minute.",
+  scheduleTooFar: "La programmation est limitée à 7 jours.",
   failed: "La commande n'a pas pu être enregistrée. Réessayez.",
 };
 
@@ -83,6 +86,8 @@ export function CheckoutClient({
   const [deliveryLandmark, setDeliveryLandmark] = useState("");
   const [payment, setPayment] = useState<PaymentMethod>("cash_on_delivery");
   const [schedule, setSchedule] = useState("asap");
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
   const [notes, setNotes] = useState("");
   const [placing, setPlacing] = useState(false);
 
@@ -108,6 +113,10 @@ export function CheckoutClient({
   const restaurant = lines[0];
 
   async function submit() {
+    if (schedule === "later" && (!scheduleDate || !scheduleTime)) {
+      toast("Choisissez une date et une heure pour la programmation.", "error");
+      return;
+    }
     setPlacing(true);
 
     const chosen = addresses.find((a) => a.id === addressId);
@@ -130,6 +139,10 @@ export function CheckoutClient({
       loyaltyPoints: loyaltyPointsUsed,
       paymentMethod: payment,
       notes: notes.trim() || null,
+      scheduledFor:
+        schedule === "later"
+          ? new Date(`${scheduleDate}T${scheduleTime}:00+01:00`).toISOString()
+          : null,
     };
 
     const result = await placeOrder(input);
@@ -349,10 +362,20 @@ export function CheckoutClient({
             {schedule === "later" && (
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Field label="Date" htmlFor="ck-date">
-                  <Input id="ck-date" type="date" />
+                  <Input
+                    id="ck-date"
+                    type="date"
+                    value={scheduleDate}
+                    onChange={(e) => setScheduleDate(e.target.value)}
+                  />
                 </Field>
                 <Field label="Heure" htmlFor="ck-time">
-                  <Input id="ck-time" type="time" />
+                  <Input
+                    id="ck-time"
+                    type="time"
+                    value={scheduleTime}
+                    onChange={(e) => setScheduleTime(e.target.value)}
+                  />
                 </Field>
               </div>
             )}

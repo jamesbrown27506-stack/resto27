@@ -54,11 +54,14 @@ export interface ManagerOrder {
   cancelledReason: string | null;
   createdAt: string;
 
+  /** ISO timestamp for a scheduled order, null for ASAP (checkout page). */
+  scheduledFor: string | null;
+
   items: OrderItemRow[];
 }
 
 const ORDER_COLUMNS =
-  "id, reference, status, type, payment_method, is_paid, subtotal, discount_amount, service_charge, delivery_fee, delivery_fee_set_at, total, delivery_name, delivery_phone, delivery_address, delivery_quartier, delivery_landmark, table_number, notes, cancelled_reason, created_at";
+  "id, reference, status, type, payment_method, is_paid, subtotal, discount_amount, service_charge, delivery_fee, delivery_fee_set_at, total, delivery_name, delivery_phone, delivery_address, delivery_quartier, delivery_landmark, table_number, notes, cancelled_reason, scheduled_for, created_at";
 
 interface DbOrder {
   id: string;
@@ -81,6 +84,7 @@ interface DbOrder {
   table_number: string | null;
   notes: string | null;
   cancelled_reason: string | null;
+  scheduled_for: string | null;
   created_at: string;
 }
 
@@ -106,6 +110,7 @@ function shape(o: DbOrder, items: OrderItemRow[]): ManagerOrder {
     tableNumber: o.table_number,
     notes: o.notes,
     cancelledReason: o.cancelled_reason,
+    scheduledFor: o.scheduled_for,
     createdAt: o.created_at,
     items,
   };

@@ -54,6 +54,8 @@ export interface CheckoutInput {
   loyaltyPoints?: number;
   paymentMethod?: string;
   notes?: string | null;
+  /** ISO timestamp — when the customer wants the order delivered/picked up. */
+  scheduledFor?: string | null;
 }
 
 /** Reason CODES, not prose — checkout is bilingual and the client translates. */
@@ -302,6 +304,16 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   if (!deliveryPhone) return { ok: false, reason: "phoneRequired" };
   if (input.type === "delivery" && !addressLine) return { ok: false, reason: "addressRequired" };
 
+  // ── Scheduling ──────────────────────────────────────────────────────────
+  let scheduledFor: string | null = null;
+  if (input.scheduledFor) {
+    const when = new Date(input.scheduledFor);
+    if (Number.isNaN(when.getTime())) return { ok: false, reason: "badSchedule" };
+    if (when.getTime() <= Date.now() + 60_000) return { ok: false, reason: "scheduleTooSoon" };
+    if (when.getTime() > Date.now() + 7 * 86_400_000) return { ok: false, reason: "scheduleTooFar" };
+    scheduledFor = when.toISOString();
+  }
+
   // ── Write ───────────────────────────────────────────────────────────────
   const reference = `CMD-${randomUUID().slice(0, 6).toUpperCase()}`;
 
@@ -331,6 +343,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       delivery_landmark: input.type === "delivery" ? landmark : null,
       payment_method: input.paymentMethod === "mobile_money" ? "mobile_money" : "cash_on_delivery",
       notes: input.notes?.trim() || null,
+      scheduled_for: scheduledFor,
     })
     .select("id, reference")
     .single();

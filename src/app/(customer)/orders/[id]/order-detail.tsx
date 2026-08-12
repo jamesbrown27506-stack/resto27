@@ -91,6 +91,11 @@ export function OrderDetail({ order }: { order: Order }) {
             {order.reference} · {ORDER_TYPE_LABEL[order.type]} ·{" "}
             <time dateTime={isoAttr(order.createdAt)}>{formatDateTime(order.createdAt)}</time>
           </p>
+          {order.scheduledFor && (
+            <p className="tnum mt-1 text-sm font-medium text-primary">
+              Prévue pour <time dateTime={isoAttr(order.scheduledFor)}>{formatDateTime(order.scheduledFor)}</time>
+            </p>
+          )}
         </div>
 
         <div className="flex flex-wrap gap-2">

@@ -165,6 +165,16 @@ export function OrdersQueue({ orders, now }: { orders: ManagerOrder[]; now: stri
                           {order.reference}
                         </Link>
                         <OrderStatusBadge status={order.status} size="sm" />
+                        {order.scheduledFor && (
+                          <span
+                            className="tnum text-xs font-medium text-primary"
+                            title={t("mo.scheduledFor", {
+                              time: formatElapsed(order.scheduledFor, new Date(now)),
+                            })}
+                          >
+                            {t("mo.scheduled")}
+                          </span>
+                        )}
                         <span className="text-xs text-text-light">
                           {t(`order.type.${order.type}` as TranslationKey)} ·{" "}
                           {t("mo.ago", { elapsed: formatElapsed(order.createdAt, new Date(now)) })}

@@ -3,6 +3,15 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactCompiler: true,
 
+  images: {
+    remotePatterns: [
+      // Marketing photos on the landing page and hero (ephemeral until real
+      // restaurant photography exists). Only the homepage references this
+      // host — customer and manager uploads live in Supabase Storage.
+      { protocol: "https", hostname: "images.unsplash.com" },
+    ],
+  },
+
   experimental: {
     serverActions: {
       /**

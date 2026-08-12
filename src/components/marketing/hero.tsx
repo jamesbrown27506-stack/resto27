@@ -24,6 +24,7 @@ import { usePrefersReducedMotion } from "@/lib/hooks/use-prefers-reduced-motion"
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
+import type { PublicStats } from "@/lib/data/public";
 
 /**
  * The hero.
@@ -56,7 +57,7 @@ interface Slide {
   titleAccent: TranslationKey;
   subtitle: TranslationKey;
   Art: typeof OrderArt;
-  badge: { icon: typeof Bike; title: string; body: string };
+  badge: { icon: typeof Bike };
 }
 
 const SLIDES: Slide[] = [
@@ -69,7 +70,7 @@ const SLIDES: Slide[] = [
     titleAccent: "hero.order.titleAccent",
     subtitle: "hero.order.subtitle",
     Art: OrderArt,
-    badge: { icon: Bike, title: "32 min", body: "Bonapriso" },
+    badge: { icon: Bike },
   },
   {
     mode: "book",
@@ -80,7 +81,7 @@ const SLIDES: Slide[] = [
     titleAccent: "hero.book.titleAccent",
     subtitle: "hero.book.subtitle",
     Art: BookArt,
-    badge: { icon: CalendarCheck, title: "19:30", body: "Table 4 · 2 pers." },
+    badge: { icon: CalendarCheck },
   },
   {
     mode: "explore",
@@ -91,16 +92,18 @@ const SLIDES: Slide[] = [
     titleAccent: "hero.explore.titleAccent",
     subtitle: "hero.explore.subtitle",
     Art: ExploreArt,
-    badge: { icon: Compass, title: "61", body: "Douala" },
+    badge: { icon: Compass },
   },
 ];
 
 export function Hero({
   cuisines,
   quartiers,
+  stats,
 }: {
   cuisines: string[];
   quartiers: string[];
+  stats: PublicStats;
 }) {
   const router = useRouter();
   const { t } = useLocale();
@@ -119,6 +122,22 @@ export function Hero({
 
   const slide = SLIDES[index];
   const autoplay = !reducedMotion && !paused && !userTook;
+  const numberFormat = new Intl.NumberFormat("fr-FR");
+
+  function badgeFor(mode: Mode) {
+    if (mode === "order") {
+      return {
+        title: `${Math.round(stats.averageDeliveryMinutes)} min`,
+        body: quartiers[0] ?? "Douala",
+      };
+    }
+    if (mode === "explore") {
+      return { title: numberFormat.format(stats.restaurantCount), body: "Douala" };
+    }
+    return { title: "19:30", body: "Table 4 · 2 pers." };
+  }
+
+  const badge = badgeFor(slide.mode);
 
   useEffect(() => {
     if (!autoplay) return;
@@ -336,18 +355,24 @@ export function Hero({
             </p>
           </div>
 
-          <ul className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-text-secondary">
-            <li className="inline-flex items-center gap-1.5">
-              <Star className="size-3.5 fill-accent text-accent" aria-hidden />
-              <strong className="tnum font-semibold text-text">4,6/5</strong>
-              {t("hero.trust.rating")}
-            </li>
-            <li className="inline-flex items-center gap-1.5">
-              <UtensilsCrossed className="size-3.5 text-primary" aria-hidden />
-              <strong className="tnum font-semibold text-text">61</strong>
-              {t("hero.trust.restaurants")}
-            </li>
-          </ul>
+            <ul className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-text-secondary">
+              <li className="inline-flex items-center gap-1.5">
+                <Star className="size-3.5 fill-accent text-accent" aria-hidden />
+                <strong className="tnum font-semibold text-text">
+                  {stats.averageRating > 0
+                    ? `${stats.averageRating.toFixed(1).replace(".", ",")}/5`
+                    : "—"}
+                </strong>
+                {t("hero.trust.rating")}
+              </li>
+              <li className="inline-flex items-center gap-1.5">
+                <UtensilsCrossed className="size-3.5 text-primary" aria-hidden />
+                <strong className="tnum font-semibold text-text">
+                  {numberFormat.format(stats.restaurantCount)}
+                </strong>
+                {t("hero.trust.restaurants")}
+              </li>
+            </ul>
         </div>
 
         {/* ── Right: illustration ────────────────────────────────────────── */}
@@ -377,9 +402,9 @@ export function Hero({
               </span>
               <span className="text-xs leading-tight">
                 <strong className="tnum block text-sm font-bold text-text">
-                  {slide.badge.title}
+                  {badge.title}
                 </strong>
-                <span className="text-text-secondary">{slide.badge.body}</span>
+                <span className="text-text-secondary">{badge.body}</span>
               </span>
             </div>
 

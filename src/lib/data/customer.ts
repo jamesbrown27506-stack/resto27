@@ -59,6 +59,8 @@ export interface CustomerOrder {
   promoCode: string | null;
   cancelledReason: string | null;
   deliveryRating: number | null;
+  /** ISO timestamp for a scheduled order, null for ASAP. */
+  scheduledFor: string | null;
 
   items: CustomerOrderItem[];
   history: { status: string; at: string; byName: string | null }[];
@@ -66,7 +68,7 @@ export interface CustomerOrder {
 }
 
 const ORDER_COLUMNS =
-  "id, reference, restaurant_id, customer_id, status, type, payment_method, is_paid, subtotal, discount_amount, service_charge_percent, service_charge, delivery_fee, delivery_fee_set_at, loyalty_value, total, delivery_name, delivery_phone, delivery_address, delivery_quartier, delivery_landmark, table_number, notes, promo_code, cancelled_reason, delivery_rating, created_at, restaurants ( name, slug )";
+  "id, reference, restaurant_id, customer_id, status, type, payment_method, is_paid, subtotal, discount_amount, service_charge_percent, service_charge, delivery_fee, delivery_fee_set_at, loyalty_value, total, delivery_name, delivery_phone, delivery_address, delivery_quartier, delivery_landmark, table_number, notes, promo_code, cancelled_reason, delivery_rating, scheduled_for, created_at, restaurants ( name, slug )";
 
 interface DbOrder {
   id: string;
@@ -95,6 +97,7 @@ interface DbOrder {
   promo_code: string | null;
   cancelled_reason: string | null;
   delivery_rating: number | null;
+  scheduled_for: string | null;
   created_at: string;
   restaurants: { name: string; slug: string }[] | null;
 }
@@ -132,6 +135,7 @@ function shapeOrder(
     promoCode: o.promo_code,
     cancelledReason: o.cancelled_reason,
     deliveryRating: o.delivery_rating,
+    scheduledFor: o.scheduled_for,
     items,
     history,
     createdAt: o.created_at,

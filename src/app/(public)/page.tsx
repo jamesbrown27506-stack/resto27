@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { HomeContent } from "./home-content";
 import { getBranding } from "@/lib/branding";
-import { fetchPopularDishes, fetchActiveRestaurants, fetchCuisineNames, fetchQuartierNames } from "@/lib/data/public";
+import { fetchPopularDishes, fetchActiveRestaurants, fetchCuisineNames, fetchQuartierNames, fetchPublicStats, fetchFeaturedReviews } from "@/lib/data/public";
 import { listPublicPlans } from "@/lib/data/plans";
 
 /**
@@ -65,14 +65,17 @@ function jsonLd(brand: { name: string; logoUrl: string | null }) {
 }
 
 export default async function HomePage() {
-  const [brand, plans, restaurants, dishes, cuisines, quartiers] = await Promise.all([
-    getBranding(),
-    listPublicPlans(),
-    fetchActiveRestaurants(),
-    fetchPopularDishes(),
-    fetchCuisineNames(),
-    fetchQuartierNames(),
-  ]);
+  const [brand, plans, restaurants, dishes, cuisines, quartiers, stats, testimonials] =
+    await Promise.all([
+      getBranding(),
+      listPublicPlans(),
+      fetchActiveRestaurants(),
+      fetchPopularDishes(),
+      fetchCuisineNames(),
+      fetchQuartierNames(),
+      fetchPublicStats(),
+      fetchFeaturedReviews(),
+    ]);
   const JSON_LD = jsonLd(brand);
 
   return (
@@ -87,6 +90,8 @@ export default async function HomePage() {
         dishes={dishes}
         cuisines={cuisines}
         quartiers={quartiers}
+        stats={stats}
+        testimonials={testimonials}
       />
     </>
   );

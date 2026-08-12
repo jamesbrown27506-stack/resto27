@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { Bike, ChefHat, CreditCard, Search, ShoppingBag, Star, Store } from "lucide-react";
 import { Hero } from "@/components/marketing/hero";
 import { Faq } from "@/components/marketing/faq";
@@ -18,7 +19,7 @@ import { RestaurantCard, RestaurantGrid } from "@/components/restaurant/restaura
 import { DishCard } from "@/components/menu/dish-card";
 import { buttonClasses } from "@/components/ui/button";
 import { useLocale } from "@/lib/i18n/use-locale";
-import type { PopularDish, PublicRestaurant } from "@/lib/data/public";
+import type { PopularDish, PublicRestaurant, PublicStats, FeaturedReview } from "@/lib/data/public";
 
 /**
  * Homepage body.
@@ -37,26 +38,47 @@ export function HomeContent({
   dishes,
   cuisines,
   quartiers,
+  stats,
+  testimonials,
 }: {
   plans: PublicPlan[];
   restaurants: PublicRestaurant[];
   dishes: PopularDish[];
   cuisines: string[];
   quartiers: string[];
+  stats: PublicStats;
+  testimonials: FeaturedReview[];
 }) {
   const { t } = useLocale();
   const featured = restaurants.slice(0, 6);
+  const numberFormat = new Intl.NumberFormat("fr-FR");
 
   return (
     <>
-      <Hero cuisines={cuisines} quartiers={quartiers} />
+      <Hero cuisines={cuisines} quartiers={quartiers} stats={stats} />
 
       <StatStrip
         items={[
-          { value: "61", label: t("home.stats.restaurants"), icon: <Store /> },
-          { value: "12 400", label: t("home.stats.orders"), icon: <ShoppingBag /> },
-          { value: "4,6", label: t("home.stats.rating"), icon: <Star /> },
-          { value: "32 min", label: t("home.stats.delivery"), icon: <Bike /> },
+          {
+            value: numberFormat.format(stats.restaurantCount),
+            label: t("home.stats.restaurants"),
+            icon: <Store />,
+          },
+          {
+            value: numberFormat.format(stats.deliveredOrderCount),
+            label: t("home.stats.orders"),
+            icon: <ShoppingBag />,
+          },
+          {
+            value: stats.averageRating.toFixed(1).replace(".", ","),
+            label: t("home.stats.rating"),
+            icon: <Star />,
+          },
+          {
+            value: `${Math.round(stats.averageDeliveryMinutes)} min`,
+            label: t("home.stats.delivery"),
+            icon: <Bike />,
+          },
         ]}
       />
 
@@ -88,6 +110,15 @@ export function HomeContent({
             title={t("home.popular.title")}
             subtitle={t("home.popular.subtitle")}
           />
+          <div className="relative mb-12 h-56 overflow-hidden rounded-xl sm:h-72 lg:h-80">
+            <Image
+              src="https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1600&q=80"
+              alt="Assortiment de plats typiques camerouns"
+              fill
+              sizes="100vw"
+              className="object-cover"
+            />
+          </div>
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {dishes.map(({ item, restaurantSlug, restaurantName }) => (
               <DishCard
@@ -147,8 +178,14 @@ export function HomeContent({
               bullets={[t("home.kitchen.b1"), t("home.kitchen.b2"), t("home.kitchen.b3")]}
               cta={{ href: "/register/restaurant", label: t("home.kitchen.cta") }}
               visual={
-                <div className="grid size-full place-items-center bg-primary-light text-primary">
-                  <ChefHat className="size-20 opacity-30" aria-hidden />
+                <div className="relative size-full">
+                  <Image
+                    src="https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&w=1200&q=80"
+                    alt="Cuisine de restaurant en activité"
+                    fill
+                    sizes="(min-width: 1024px) 50vw, 100vw"
+                    className="object-cover"
+                  />
                 </div>
               }
             />
@@ -161,8 +198,14 @@ export function HomeContent({
               bullets={[t("home.branches.b1"), t("home.branches.b2"), t("home.branches.b3")]}
               cta={{ href: "/pricing", label: t("home.branches.cta") }}
               visual={
-                <div className="grid size-full place-items-center bg-surface">
-                  <Store className="size-20 text-primary opacity-25" aria-hidden />
+                <div className="relative size-full">
+                  <Image
+                    src="https://images.unsplash.com/photo-1517248135467-9df32ab5c56e?auto=format&fit=crop&w=1200&q=80"
+                    alt="Salle de restaurant avec plusieurs tables"
+                    fill
+                    sizes="(min-width: 1024px) 50vw, 100vw"
+                    className="object-cover"
+                  />
                 </div>
               }
             />
@@ -174,8 +217,14 @@ export function HomeContent({
               bullets={[t("home.payment.b1"), t("home.payment.b2"), t("home.payment.b3")]}
               cta={{ href: "/pricing", label: t("home.payment.cta") }}
               visual={
-                <div className="grid size-full place-items-center bg-primary-light text-primary">
-                  <CreditCard className="size-20 opacity-30" aria-hidden />
+                <div className="relative size-full">
+                  <Image
+                    src="https://images.unsplash.com/photo-1556742098-b5536fc942f8?auto=format&fit=crop&w=1200&q=80"
+                    alt="Paiement par téléphone mobile"
+                    fill
+                    sizes="(min-width: 1024px) 50vw, 100vw"
+                    className="object-cover"
+                  />
                 </div>
               }
             />
@@ -183,32 +232,20 @@ export function HomeContent({
         </div>
       </section>
 
-      {/* ── Testimonials ───────────────────────────────────────────────── */}
-      <section className="container-page py-20">
-        <SectionHeader tag={t("home.testimonials.tag")} title={t("home.testimonials.title")} />
-        <TestimonialGrid
-          items={[
-            {
-              body: t("home.testimonials.t1"),
-              name: "Marie Ngo",
-              meta: t("home.testimonials.t1meta"),
-              rating: 5,
-            },
-            {
-              body: t("home.testimonials.t2"),
-              name: "Paul Mbarga",
-              meta: t("home.testimonials.t2meta"),
-              rating: 5,
-            },
-            {
-              body: t("home.testimonials.t3"),
-              name: "Estelle Manga",
-              meta: t("home.testimonials.t3meta"),
-              rating: 4,
-            },
-          ]}
-        />
-      </section>
+      {/* ── Testimonials — the platform's best real reviews ─────────────── */}
+      {testimonials.length > 0 && (
+        <section className="container-page py-20">
+          <SectionHeader tag={t("home.testimonials.tag")} title={t("home.testimonials.title")} />
+          <TestimonialGrid
+            items={testimonials.map((r) => ({
+              body: r.body,
+              name: r.name,
+              meta: r.meta,
+              rating: r.rating,
+            }))}
+          />
+        </section>
+      )}
 
       {/* ── Pricing ────────────────────────────────────────────────────── */}
       <section className="bg-surface-2 py-20">

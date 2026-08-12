@@ -310,3 +310,105 @@ export async function fetchQuartierNames(): Promise<string[]> {
 
   return ((data ?? []) as { name: string }[]).map((q) => q.name);
 }
+
+/* ── Homepage stats and testimonials ─────────────────────────────────────── */
+
+export interface PublicStats {
+  /** Active restaurants, for the "restaurants" figure on the homepage. */
+  restaurantCount: number;
+  /** Delivered orders, for the "orders" figure — the only honest count. */
+  deliveredOrderCount: number;
+  /** Mean rating across active restaurants (their public ratings). */
+  averageRating: number;
+  /** Mean delivery estimate across active restaurants that deliver. */
+  averageDeliveryMinutes: number;
+}
+
+/**
+ * The homepage stat strip, computed from what is really in the database.
+ *
+ * Delivered orders is deliberately the count: cancelled and pending orders
+ * never happened from a diner's point of view, and counting them on the
+ * marketing page would be a lie the first time it matters.
+ */
+export async function fetchPublicStats(): Promise<PublicStats> {
+  const supabase = createAdminClient();
+
+  const [restaurants, delivered, ratingRows, estimateRows] = await Promise.all([
+    supabase
+      .from("restaurants")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "active"),
+    supabase
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "delivered"),
+    supabase.from("restaurants").select("rating").eq("status", "active"),
+    supabase
+      .from("restaurants")
+      .select("delivery_estimate_min")
+      .eq("status", "active")
+      .eq("accepts_delivery", true),
+  ]);
+
+  const ratings = (ratingRows.data ?? []) as { rating: number }[];
+  const estimates = (estimateRows.data ?? []) as { delivery_estimate_min: number }[];
+
+  return {
+    restaurantCount: restaurants.count ?? 0,
+    deliveredOrderCount: delivered.count ?? 0,
+    averageRating: ratings.length
+      ? ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length
+      : 0,
+    averageDeliveryMinutes: estimates.length
+      ? estimates.reduce((sum, e) => sum + e.delivery_estimate_min, 0) / estimates.length
+      : 0,
+  };
+}
+
+export interface FeaturedReview {
+  body: string;
+  /** Snapshot from the review — the name it was written under. */
+  name: string;
+  /** The restaurant it was left at. */
+  meta: string;
+  rating: number;
+}
+
+/**
+ * The testimonials row on the homepage: the platform's best recent reviews.
+ *
+ * Real reviews, real names (snapshotted at write time, like every review
+ * screen), from restaurants that are actually open. Reported and removed
+ * reviews never surface here.
+ */
+export async function fetchFeaturedReviews(limit = 3): Promise<FeaturedReview[]> {
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("reviews")
+    .select("body, rating, customer_name, created_at, restaurants!inner ( name )")
+    .is("removed_at", null)
+    .gte("rating", 4)
+    .eq("restaurants.status", "active")
+    .order("rating", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("[public:fetchFeaturedReviews]", error.message);
+    return [];
+  }
+
+  return ((data ?? []) as unknown as {
+    body: string;
+    rating: number;
+    customer_name: string;
+    restaurants: { name: string }[];
+  }[]).map((r) => ({
+    body: r.body,
+    name: r.customer_name,
+    meta: r.restaurants[0]?.name ?? "",
+    rating: r.rating,
+  }));
+}

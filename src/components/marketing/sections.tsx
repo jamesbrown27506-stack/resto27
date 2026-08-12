@@ -20,8 +20,8 @@ export function SectionHeader({
   return (
     <div
       className={cn(
-        "mb-12 flex flex-wrap items-end gap-4",
-        align === "center" ? "flex-col text-center" : "justify-between",
+        "mb-12 flex flex-wrap gap-4",
+        align === "center" ? "flex-col items-center text-center" : "items-end justify-between",
       )}
     >
       <div className={cn(align === "center" && "flex flex-col items-center")}>
