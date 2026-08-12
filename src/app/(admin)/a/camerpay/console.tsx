@@ -1,7 +1,19 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { AlertTriangle, CheckCircle2, Copy, KeyRound, Loader2, Play, ShieldAlert, XCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  CheckCircle2,
+  Copy,
+  KeyRound,
+  Link2,
+  Play,
+  ScrollText,
+  ShieldAlert,
+  XCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
 import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";
@@ -186,6 +198,17 @@ const PRESETS: {
   },
 ];
 
+/** The five jobs this console does, in the order you do them. */
+const SECTIONS = [
+  { id: "auth", label: "Authentication", icon: KeyRound },
+  { id: "setup", label: "Setup", icon: Link2 },
+  { id: "collect", label: "Collect from a client", icon: ArrowDownToLine },
+  { id: "withdraw", label: "Withdraw to a wallet", icon: ArrowUpFromLine },
+  { id: "tools", label: "Reports & raw calls", icon: ScrollText },
+] as const;
+
+type SectionId = (typeof SECTIONS)[number]["id"];
+
 /** Probes that take no input, so they can be dispatched by key. */
 const SIMPLE_PROBES = {
   login: probeLogin,
@@ -195,6 +218,7 @@ const SIMPLE_PROBES = {
 } satisfies Record<string, () => Promise<ProbeResult>>;
 
 export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: string }) {
+  const [section, setSection] = useState<SectionId>("auth");
   const [pending, startTransition] = useTransition();
   const [results, setResults] = useState<Record<string, ProbeResult>>({});
   const [running, setRunning] = useState<string | null>(null);
@@ -295,7 +319,45 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
       </Card>
 
       {/* ── 1. Authentication ────────────────────────────────────────── */}
-      <Panel title="1 · Authentication" description="Log in and read the account balance.">
+      {/* ── Sections ─────────────────────────────────────────────────────
+          The page was ten panels in one column, and "Pay money out" sat
+          between account creation and the raw console where nobody found it.
+          Tabs put each job — prove who you are, point the callback, take
+          money, send money, look at history — behind its own heading. Same
+          pattern as /a/settings, on purpose: two control rooms that behave
+          alike take half the learning. */}
+      <div
+        role="tablist"
+        aria-label="CamerPay sections"
+        className="no-scrollbar -mb-2 flex gap-1 overflow-x-auto border-b border-border"
+      >
+        {SECTIONS.map((tab) => {
+          const isActive = tab.id === section;
+          return (
+            <button
+              key={tab.id}
+              role="tab"
+              type="button"
+              aria-selected={isActive}
+              onClick={() => setSection(tab.id)}
+              className={cn(
+                "-mb-px inline-flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-sm font-semibold transition-colors",
+                isActive
+                  ? "border-primary text-primary"
+                  : "border-transparent text-text-secondary hover:text-text",
+              )}
+            >
+              <tab.icon className="size-4" aria-hidden />
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {section === "auth" && (
+        <>
+
+      <Panel title="Prove the credentials" description="Log in and read the balance. Start here — everything else needs a session.">
         <CardBody>
           <p className="text-sm text-text-secondary">
             Credentials come from <code className="font-mono text-xs">CAMERPAY_ACCOUNT_NUMBER</code>{" "}
@@ -312,256 +374,6 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
         </CardBody>
       </Panel>
 
-      {/* ── 2. Callback registration ─────────────────────────────────── */}
-      <Panel
-        title="2 · Callback URL"
-        description="Where CamerPay posts transaction outcomes."
-      >
-        <CardBody>
-          <Field
-            label="HTTPS callback URL"
-            htmlFor="cp-callback"
-            hint="Must be HTTPS. localhost will not work — use a tunnel such as ngrok while developing."
-          >
-            <Input
-              id="cp-callback"
-              value={callback}
-              onChange={(e) => setCallback(e.target.value)}
-              placeholder="https://your-domain.cm/api/webhooks/camerpay"
-            />
-          </Field>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-4"
-            disabled={pending || !callback.startsWith("https://")}
-            loading={running === "callback"}
-            onClick={() => run("callback", () => registerCallback(callback))}
-          >
-            <KeyRound className="size-3.5" aria-hidden />
-            <span>Register with CamerPay</span>
-          </Button>
-          {results.callback && <ResultLine result={results.callback} />}
-        </CardBody>
-      </Panel>
-
-      {/* ── 3. Identify ──────────────────────────────────────────────── */}
-      <Panel title="3 · Identify a number" description="Free. Confirms the operator before charging.">
-        <CardBody>
-          <Field
-            label="Customer phone"
-            htmlFor="cp-phone"
-            hint="9 digits starting with 6. +237 and spaces are stripped automatically."
-          >
-            <Input
-              id="cp-phone"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="677889900"
-              inputMode="tel"
-            />
-          </Field>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-4"
-            disabled={pending || phone.trim().length < 9}
-            loading={running === "identify"}
-            onClick={() => run("identify", () => probeIdentify(phone))}
-          >
-            <Play className="size-3.5" aria-hidden />
-            <span>Identify</span>
-          </Button>
-          {results.identify && <ResultLine result={results.identify} />}
-        </CardBody>
-      </Panel>
-
-      {/* ── 4. Collection ────────────────────────────────────────────── */}
-      <Panel
-        title="4 · Charge a number"
-        description="A real collection — `retrait`. Money leaves the wallet above and lands in your CamerPay balance."
-      >
-        <CardBody>
-          <div className="flex items-start gap-2.5 rounded-md border border-warning/30 bg-warning-light p-3 text-sm text-warning">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-            <span>
-              This debits the wallet for real. Use the smallest amount that proves the flow — 500
-              FCFA.
-            </span>
-          </div>
-
-          <Field
-            label="Amount"
-            htmlFor="cp-amount"
-            className="mt-4"
-            hint="Between 500 and 500 000 FCFA. Whole francs — XAF has no decimals."
-            error={amount !== "" && !amountValid ? "Outside CamerPay's accepted range." : undefined}
-          >
-            <Input
-              id="cp-amount"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              inputMode="numeric"
-              suffix="FCFA"
-            />
-          </Field>
-
-          <Button
-            variant="danger"
-            size="sm"
-            className="mt-4"
-            disabled={pending || !amountValid || phone.trim().length < 9}
-            loading={running === "collect"}
-            onClick={() =>
-              run("collect", async () => {
-                const result = await probeCollection(phone, amountValue);
-                // Verification starts on its own the moment a charge is
-                // accepted — the operator should never have to remember to
-                // go and ask whether it worked.
-                const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
-                if (result.ok && id) {
-                  setWatching(id);
-                  setReplyTo(id);
-                }
-                return result;
-              })
-            }
-          >
-            <Play className="size-3.5" aria-hidden />
-            <span>Charge {amount} FCFA for real</span>
-          </Button>
-          {results.collect && <ResultLine result={results.collect} />}
-          {watching && <TransactionWatcher key={watching} replyTo={watching} />}
-        </CardBody>
-      </Panel>
-
-      {/* ── 5. Confirm ───────────────────────────────────────────────── */}
-      <Panel
-        title="5 · Confirm an outcome"
-        description="The only thing that proves a payment settled."
-      >
-        <CardBody>
-          <p className="text-sm text-text-secondary">
-            Because callbacks are unsigned, this is the trust anchor: it asks CamerPay directly what
-            happened to a <code className="font-mono text-xs">replyTo</code>. The reconciler uses
-            exactly this call to sweep payments whose callback never arrived.
-          </p>
-          <Field label="replyTo" htmlFor="cp-replyto" className="mt-4">
-            <Input
-              id="cp-replyto"
-              value={replyTo}
-              onChange={(e) => setReplyTo(e.target.value)}
-              placeholder="Paste the replyTo returned by step 4"
-            />
-          </Field>
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-4"
-            disabled={pending || !replyTo.trim()}
-            loading={running === "confirm"}
-            onClick={() => {
-              // A one-shot answer AND the watcher, because the usual reason
-              // to paste a replyTo in here is that it was pending last time.
-              setWatching(replyTo.trim() || null);
-              run("confirm", () => probeConfirm(replyTo));
-            }}
-          >
-            <Play className="size-3.5" aria-hidden />
-            <span>Ask CamerPay</span>
-          </Button>
-          {results.confirm && <ResultLine result={results.confirm} />}
-        </CardBody>
-      </Panel>
-
-      {/* ── 6. Reports ───────────────────────────────────────────────── */}
-      <Panel title="6 · Reports" description="Raw transaction and notification history.">
-        <CardBody>
-          <div className="flex flex-wrap gap-2">
-            {action("transactions", "Transactions")}
-            {action("notifications", "Notifications")}
-          </div>
-          {results.transactions && <ResultLine result={results.transactions} />}
-          {results.notifications && <ResultLine result={results.notifications} />}
-        </CardBody>
-      </Panel>
-
-      {pending && (
-        <p
-          role="status"
-          className="flex items-center gap-2 text-sm font-medium text-primary"
-          aria-live="polite"
-        >
-          <Loader2 className="size-4 animate-spin" aria-hidden />
-          Calling CamerPay…
-        </p>
-      )}
-
-      {/* ── The session token, in full, on request ───────────────────── */}
-      <Panel
-        title="Get your token"
-        description="Only needed if you want to set CAMERPAY_TOKEN. Login already works without it."
-      >
-        <CardBody className="flex flex-col gap-3">
-          <p className="text-sm leading-relaxed text-text-secondary">
-            <span>
-              While <code className="font-mono text-xs">CAMERPAY_ACCOUNT_NUMBER</code> and{" "}
-              <code className="font-mono text-xs">CAMERPAY_PASSWORD</code> are set, the app fetches
-              a session itself and <strong className="text-text">no token variable is required</strong>.
-              Reveal one only if you would rather deploy with a token and no password.
-            </span>
-          </p>
-
-          <Button
-            variant="outline"
-            className="self-start"
-            disabled={pending}
-            loading={running === "reveal"}
-            onClick={revealLogin}
-          >
-            <KeyRound className="size-4" aria-hidden />
-            <span>Reveal my token</span>
-          </Button>
-
-          {results.reveal && <ResultLine result={results.reveal} />}
-
-          {revealedToken && (
-            <div className="rounded-md border-2 border-warning/40 bg-warning-light p-3">
-              <p className="text-xs font-bold tracking-[0.08em] text-warning uppercase">
-                Live credential — do not screenshot
-              </p>
-              <pre className="mt-2 overflow-auto rounded bg-surface p-2 font-mono text-xs break-all whitespace-pre-wrap">
-                {revealedToken}
-              </pre>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigator.clipboard.writeText(revealedToken)}
-                >
-                  <Copy className="size-3.5" aria-hidden />
-                  <span>Copy token</span>
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    navigator.clipboard.writeText(`CAMERPAY_TOKEN=${revealedToken}`)
-                  }
-                >
-                  <Copy className="size-3.5" aria-hidden />
-                  <span>Copy as env line</span>
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setRevealedToken("")}>
-                  <span>Hide</span>
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardBody>
-      </Panel>
-
-      {/* ── Open an account ──────────────────────────────────────────── */}
       <Panel
         title="Open a CamerPay account"
         description="inscription, then validation. The order is not optional."
@@ -734,9 +546,247 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
         </CardBody>
       </Panel>
 
-      {/* ── Paying money out ─────────────────────────────────────────── */}
       <Panel
-        title="Pay money out"
+        title="Get your token"
+        description="Only needed if you want to set CAMERPAY_TOKEN. Login already works without it."
+      >
+        <CardBody className="flex flex-col gap-3">
+          <p className="text-sm leading-relaxed text-text-secondary">
+            <span>
+              While <code className="font-mono text-xs">CAMERPAY_ACCOUNT_NUMBER</code> and{" "}
+              <code className="font-mono text-xs">CAMERPAY_PASSWORD</code> are set, the app fetches
+              a session itself and <strong className="text-text">no token variable is required</strong>.
+              Reveal one only if you would rather deploy with a token and no password.
+            </span>
+          </p>
+
+          <Button
+            variant="outline"
+            className="self-start"
+            disabled={pending}
+            loading={running === "reveal"}
+            onClick={revealLogin}
+          >
+            <KeyRound className="size-4" aria-hidden />
+            <span>Reveal my token</span>
+          </Button>
+
+          {results.reveal && <ResultLine result={results.reveal} />}
+
+          {revealedToken && (
+            <div className="rounded-md border-2 border-warning/40 bg-warning-light p-3">
+              <p className="text-xs font-bold tracking-[0.08em] text-warning uppercase">
+                Live credential — do not screenshot
+              </p>
+              <pre className="mt-2 overflow-auto rounded bg-surface p-2 font-mono text-xs break-all whitespace-pre-wrap">
+                {revealedToken}
+              </pre>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigator.clipboard.writeText(revealedToken)}
+                >
+                  <Copy className="size-3.5" aria-hidden />
+                  <span>Copy token</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    navigator.clipboard.writeText(`CAMERPAY_TOKEN=${revealedToken}`)
+                  }
+                >
+                  <Copy className="size-3.5" aria-hidden />
+                  <span>Copy as env line</span>
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setRevealedToken("")}>
+                  <span>Hide</span>
+                </Button>
+              </div>
+            </div>
+          )}
+        </CardBody>
+      </Panel>
+
+        </>
+      )}
+
+      {section === "setup" && (
+        <>
+
+      <Panel
+        title="Where CamerPay calls back"
+        description="Where CamerPay posts transaction outcomes."
+      >
+        <CardBody>
+          <Field
+            label="HTTPS callback URL"
+            htmlFor="cp-callback"
+            hint="Must be HTTPS. localhost will not work — use a tunnel such as ngrok while developing."
+          >
+            <Input
+              id="cp-callback"
+              value={callback}
+              onChange={(e) => setCallback(e.target.value)}
+              placeholder="https://your-domain.cm/api/webhooks/camerpay"
+            />
+          </Field>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-4"
+            disabled={pending || !callback.startsWith("https://")}
+            loading={running === "callback"}
+            onClick={() => run("callback", () => registerCallback(callback))}
+          >
+            <KeyRound className="size-3.5" aria-hidden />
+            <span>Register with CamerPay</span>
+          </Button>
+          {results.callback && <ResultLine result={results.callback} />}
+        </CardBody>
+      </Panel>
+
+        </>
+      )}
+
+      {section === "collect" && (
+        <>
+
+      <Panel title="Identify a number" description="Free. Confirms the operator before charging.">
+        <CardBody>
+          <Field
+            label="Customer phone"
+            htmlFor="cp-phone"
+            hint="9 digits starting with 6. +237 and spaces are stripped automatically."
+          >
+            <Input
+              id="cp-phone"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="677889900"
+              inputMode="tel"
+            />
+          </Field>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-4"
+            disabled={pending || phone.trim().length < 9}
+            loading={running === "identify"}
+            onClick={() => run("identify", () => probeIdentify(phone))}
+          >
+            <Play className="size-3.5" aria-hidden />
+            <span>Identify</span>
+          </Button>
+          {results.identify && <ResultLine result={results.identify} />}
+        </CardBody>
+      </Panel>
+
+      <Panel
+        title="Charge a client"
+        description="A real collection — `retrait`. Money leaves the wallet above and lands in your CamerPay balance."
+      >
+        <CardBody>
+          <div className="flex items-start gap-2.5 rounded-md border border-warning/30 bg-warning-light p-3 text-sm text-warning">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
+            <span>
+              This debits the wallet for real. Use the smallest amount that proves the flow — 500
+              FCFA.
+            </span>
+          </div>
+
+          <Field
+            label="Amount"
+            htmlFor="cp-amount"
+            className="mt-4"
+            hint="Between 500 and 500 000 FCFA. Whole francs — XAF has no decimals."
+            error={amount !== "" && !amountValid ? "Outside CamerPay's accepted range." : undefined}
+          >
+            <Input
+              id="cp-amount"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              inputMode="numeric"
+              suffix="FCFA"
+            />
+          </Field>
+
+          <Button
+            variant="danger"
+            size="sm"
+            className="mt-4"
+            disabled={pending || !amountValid || phone.trim().length < 9}
+            loading={running === "collect"}
+            onClick={() =>
+              run("collect", async () => {
+                const result = await probeCollection(phone, amountValue);
+                // Verification starts on its own the moment a charge is
+                // accepted — the operator should never have to remember to
+                // go and ask whether it worked.
+                const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
+                if (result.ok && id) {
+                  setWatching(id);
+                  setReplyTo(id);
+                }
+                return result;
+              })
+            }
+          >
+            <Play className="size-3.5" aria-hidden />
+            <span>Charge {amount} FCFA for real</span>
+          </Button>
+          {results.collect && <ResultLine result={results.collect} />}
+          {watching && <TransactionWatcher key={watching} replyTo={watching} />}
+        </CardBody>
+      </Panel>
+
+      <Panel
+        title="Check a transaction"
+        description="The only thing that proves a payment settled."
+      >
+        <CardBody>
+          <p className="text-sm text-text-secondary">
+            Because callbacks are unsigned, this is the trust anchor: it asks CamerPay directly what
+            happened to a <code className="font-mono text-xs">replyTo</code>. The reconciler uses
+            exactly this call to sweep payments whose callback never arrived.
+          </p>
+          <Field label="replyTo" htmlFor="cp-replyto" className="mt-4">
+            <Input
+              id="cp-replyto"
+              value={replyTo}
+              onChange={(e) => setReplyTo(e.target.value)}
+              placeholder="Paste the replyTo returned by step 4"
+            />
+          </Field>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-4"
+            disabled={pending || !replyTo.trim()}
+            loading={running === "confirm"}
+            onClick={() => {
+              // A one-shot answer AND the watcher, because the usual reason
+              // to paste a replyTo in here is that it was pending last time.
+              setWatching(replyTo.trim() || null);
+              run("confirm", () => probeConfirm(replyTo));
+            }}
+          >
+            <Play className="size-3.5" aria-hidden />
+            <span>Ask CamerPay</span>
+          </Button>
+          {results.confirm && <ResultLine result={results.confirm} />}
+        </CardBody>
+      </Panel>
+
+        </>
+      )}
+
+      {section === "withdraw" && (
+        <>
+
+      <Panel
+        title="Withdraw to a wallet"
         description="`depot` — the opposite direction. Money leaves YOUR balance."
       >
         <CardBody className="flex flex-col gap-4">
@@ -800,9 +850,25 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
         </CardBody>
       </Panel>
 
-      {/* ── Account creation & raw calls ─────────────────────────────── */}
+        </>
+      )}
+
+      {section === "tools" && (
+        <>
+
+      <Panel title="History" description="Raw transaction and notification history.">
+        <CardBody>
+          <div className="flex flex-wrap gap-2">
+            {action("transactions", "Transactions")}
+            {action("notifications", "Notifications")}
+          </div>
+          {results.transactions && <ResultLine result={results.transactions} />}
+          {results.notifications && <ResultLine result={results.notifications} />}
+        </CardBody>
+      </Panel>
+
       <Panel
-        title="Open an account, or send any call by hand"
+        title="Send any call by hand"
         description="For actions whose payload CamerPay does not publish."
       >
         <CardBody className="flex flex-col gap-4">
@@ -927,6 +993,10 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
           {results.raw && <ResultLine result={results.raw} />}
         </CardBody>
       </Panel>
+
+        </>
+      )}
+
 
     </div>
   );
