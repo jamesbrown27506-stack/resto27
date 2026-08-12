@@ -2,17 +2,19 @@
 
 import { useState, useTransition } from "react";
 import { AlertTriangle, CheckCircle2, KeyRound, Loader2, Play, ShieldAlert, XCircle } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
-import { Field, Input } from "@/components/ui/input";
+import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/input";
 import {
   probeBalance,
   probeConfirm,
-  probeDeposit,
+  probeCollection,
   probeIdentify,
   probeLogin,
+  probeRaw,
   probeReport,
+  submitRegistration,
+  submitValidation,
   registerCallback,
   type ProbeResult,
 } from "./actions";
@@ -43,6 +45,28 @@ function ResultLine({ result }: { result: ProbeResult }) {
   );
 }
 
+/**
+ * Starting points for the raw console.
+ *
+ * The DATA shapes for `login` and `token` come straight from the docs. The two
+ * registration calls are left EMPTY on purpose — the docs do not publish their
+ * fields, and a plausible-looking guess sitting in the box would be mistaken
+ * for documentation.
+ */
+const PRESETS = [
+  { label: "inscription", service: "authentification", action: "inscription", data: "", authenticated: false },
+  { label: "validation", service: "authentification", action: "validation", data: "", authenticated: false },
+  {
+    label: "login",
+    service: "authentification",
+    action: "login",
+    data: '{ "numero": "6XXXXXXXX", "pass": "your-password" }',
+    authenticated: false,
+  },
+  { label: "balance", service: "account", action: "balance", data: "", authenticated: true },
+  { label: "rotate token", service: "account", action: "change_token", data: "", authenticated: true },
+];
+
 /** Probes that take no input, so they can be dispatched by key. */
 const SIMPLE_PROBES = {
   login: probeLogin,
@@ -60,6 +84,17 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
   const [amount, setAmount] = useState("500");
   const [replyTo, setReplyTo] = useState("");
   const [callback, setCallback] = useState(suggestedCallback);
+
+  const [suNumero, setSuNumero] = useState("");
+  const [suParrain, setSuParrain] = useState("");
+  const [suPass, setSuPass] = useState("");
+  const [suToken, setSuToken] = useState("");
+  const [suCode, setSuCode] = useState("");
+
+  const [rawService, setRawService] = useState("authentification");
+  const [rawAction, setRawAction] = useState("inscription");
+  const [rawData, setRawData] = useState("");
+  const [rawAuthed, setRawAuthed] = useState(false);
 
   function run(key: string, fn: () => Promise<ProbeResult>) {
     setRunning(key);
@@ -103,7 +138,7 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
             <p className="font-bold">CamerPay has no sandbox, and no signed callbacks.</p>
             <ul className="mt-2 flex list-disc flex-col gap-1 pl-4 opacity-90">
               <li>
-                Every deposit below moves <strong>real money</strong> from a real wallet. Minimum
+                Every charge below moves <strong>real money</strong> out of a real wallet. Minimum
                 500 FCFA.
               </li>
               <li>
@@ -202,10 +237,10 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
         </CardBody>
       </Panel>
 
-      {/* ── 4. Deposit ───────────────────────────────────────────────── */}
+      {/* ── 4. Collection ────────────────────────────────────────────── */}
       <Panel
-        title="4 · Request a deposit"
-        description="A real collection. The number above is charged."
+        title="4 · Charge a number"
+        description="A real collection — `retrait`. Money leaves the wallet above and lands in your CamerPay balance."
       >
         <CardBody>
           <div className="flex items-start gap-2.5 rounded-md border border-warning/30 bg-warning-light p-3 text-sm text-warning">
@@ -237,13 +272,13 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
             size="sm"
             className="mt-4"
             disabled={pending || !amountValid || phone.trim().length < 9}
-            loading={running === "deposit"}
-            onClick={() => run("deposit", () => probeDeposit(phone, amountValue))}
+            loading={running === "collect"}
+            onClick={() => run("collect", () => probeCollection(phone, amountValue))}
           >
             <Play className="size-3.5" aria-hidden />
             <span>Charge {amount} FCFA for real</span>
           </Button>
-          {results.deposit && <ResultLine result={results.deposit} />}
+          {results.collect && <ResultLine result={results.collect} />}
         </CardBody>
       </Panel>
 
@@ -304,25 +339,239 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
         </p>
       )}
 
-      <Card className="bg-surface-2">
-        <CardBody>
-          <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
-            Account creation
+      {/* ── Open an account ──────────────────────────────────────────── */}
+      <Panel
+        title="Open a CamerPay account"
+        description="inscription, then validation. The order is not optional."
+      >
+        <CardBody className="flex flex-col gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="New account number" htmlFor="su-numero" required hint="9 digits, starts with 6, no +237.">
+              <Input
+                id="su-numero"
+                value={suNumero}
+                onChange={(e) => setSuNumero(e.target.value)}
+                placeholder="6XXXXXXXX"
+                inputMode="numeric"
+              />
+            </Field>
+
+            <Field label="Sponsor number" htmlFor="su-parrain" required hint="The existing CamerPay account referring this one.">
+              <Input
+                id="su-parrain"
+                value={suParrain}
+                onChange={(e) => setSuParrain(e.target.value)}
+                placeholder="6YYYYYYYY"
+                inputMode="numeric"
+              />
+            </Field>
+          </div>
+
+          <Field
+            label="Password"
+            htmlFor="su-pass"
+            required
+            hint="You will paste this into CAMERPAY_PASSWORD. It is never logged."
+          >
+            <Input
+              id="su-pass"
+              type="password"
+              value={suPass}
+              onChange={(e) => setSuPass(e.target.value)}
+              placeholder="A strong password"
+            />
+          </Field>
+
+          <Button
+            className="self-start"
+            disabled={pending || !suNumero.trim() || !suParrain.trim() || suPass.length < 6}
+            loading={running === "signup"}
+            onClick={() =>
+              run("signup", async () => {
+                const result = await submitRegistration({
+                  numero: suNumero,
+                  parrain: suParrain,
+                  pass: suPass,
+                });
+                // Carried straight into step 2 — the provisional token is a
+                // credential and re-typing it from a screen invites a typo.
+                if (result.provisionalToken) setSuToken(result.provisionalToken);
+                if (result.code) setSuCode(result.code);
+                return result;
+              })
+            }
+          >
+            <Play className="size-4" aria-hidden />
+            <span>1 · Register</span>
+          </Button>
+
+          {results.signup && <ResultLine result={results.signup} />}
+
+          {suToken && (
+            <div className="flex flex-col gap-4 border-t border-border pt-4">
+              <p className="text-sm text-text-secondary">
+                <span>
+                  Provisional token held. It is used automatically for the confirmation below and is
+                  not shown — it is a live credential.
+                </span>
+              </p>
+
+              <Field
+                label="Confirmation code"
+                htmlFor="su-code"
+                required
+                hint="Returned by the registration step, or sent to the number."
+              >
+                <Input
+                  id="su-code"
+                  value={suCode}
+                  onChange={(e) => setSuCode(e.target.value)}
+                  placeholder="1234"
+                  inputMode="numeric"
+                />
+              </Field>
+
+              <Button
+                className="self-start"
+                disabled={pending || !suCode.trim()}
+                loading={running === "validate"}
+                onClick={() =>
+                  run("validate", () =>
+                    submitValidation({ code: suCode, provisionalToken: suToken }),
+                  )
+                }
+              >
+                <Play className="size-4" aria-hidden />
+                <span>2 · Confirm the code</span>
+              </Button>
+
+              {results.validate && <ResultLine result={results.validate} />}
+            </div>
+          )}
+
+          <p className="rounded-md border border-border bg-surface-2 p-3 text-xs leading-relaxed text-text-secondary">
+            <span>
+              The confirmation step&apos;s payload is <strong className="text-text">inferred</strong>,
+              not published: the docs say only &ldquo;valide le code re&ccedil;u avec le token
+              provisoire&rdquo;. If it is refused, use the raw console below to send the exact shape
+              CamerPay support gives you — no code change needed.
+            </span>
           </p>
-          <p className="mt-2 text-sm leading-relaxed text-text-secondary">
-            CamerPay exposes <code className="font-mono text-xs">authentification/inscription</code>{" "}
-            and <code className="font-mono text-xs">validation</code> for opening an account
-            programmatically. It is deliberately not wired here: creating the merchant account is a
-            one-time commercial step involving identity documents, and putting a button on it in an
-            admin panel invites someone to create a second account nobody is tracking. Do it on
-            CamerPay&apos;s own site, then paste the credentials into{" "}
-            <code className="font-mono text-xs">.env.local</code>.
-          </p>
-          <Badge tone="neutral" className="mt-3">
-            Intentionally out of scope
-          </Badge>
         </CardBody>
-      </Card>
+      </Panel>
+
+      {/* ── Account creation & raw calls ─────────────────────────────── */}
+      <Panel
+        title="Open an account, or send any call by hand"
+        description="For actions whose payload CamerPay does not publish."
+      >
+        <CardBody className="flex flex-col gap-4">
+          <p className="text-sm leading-relaxed text-text-secondary">
+            <span>
+              The docs name <code className="font-mono text-xs">authentification/inscription</code>{" "}
+              and <code className="font-mono text-xs">validation</code> — &ldquo;cr&eacute;e un compte
+              puis valide le code re&ccedil;u avec le token provisoire&rdquo; — but they do{" "}
+              <strong className="text-text">not publish the DATA fields</strong> either one takes.
+              Rather than guess field names and get failures nothing can explain, type the payload
+              here. Ask CamerPay support for the exact shape, paste it in, and send.
+            </span>
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            {PRESETS.map((preset) => (
+              <Button
+                key={preset.label}
+                variant="outline"
+                size="sm"
+                disabled={pending}
+                onClick={() => {
+                  setRawService(preset.service);
+                  setRawAction(preset.action);
+                  setRawData(preset.data);
+                  setRawAuthed(preset.authenticated);
+                }}
+              >
+                <span>{preset.label}</span>
+              </Button>
+            ))}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Service" htmlFor="raw-service">
+              <Select
+                id="raw-service"
+                value={rawService}
+                onChange={(e) => setRawService(e.target.value)}
+              >
+                <option value="authentification">authentification</option>
+                <option value="account">account</option>
+                <option value="transaction">transaction</option>
+                <option value="rapport">rapport</option>
+              </Select>
+            </Field>
+
+            <Field label="Action" htmlFor="raw-action">
+              <Input
+                id="raw-action"
+                value={rawAction}
+                onChange={(e) => setRawAction(e.target.value)}
+                placeholder="inscription"
+              />
+            </Field>
+          </div>
+
+          <Field
+            label="DATA (JSON)"
+            htmlFor="raw-data"
+            hint="Sent as the DATA header, serialised. Leave empty to send none."
+          >
+            <Textarea
+              id="raw-data"
+              rows={4}
+              className="font-mono text-xs"
+              value={rawData}
+              onChange={(e) => setRawData(e.target.value)}
+              placeholder='{"numero":"6XXXXXXXX","pass":"..."}'
+            />
+          </Field>
+
+          <Checkbox
+            label="Send with a token (log in first)"
+            checked={rawAuthed}
+            onChange={(e) => setRawAuthed(e.target.checked)}
+          />
+          {!rawAuthed && (
+            <p className="-mt-2 text-xs text-text-light">
+              <span>
+                Unauthenticated — correct for <code className="font-mono">inscription</code>, where
+                there is no account to log in to yet.
+              </span>
+            </p>
+          )}
+
+          <Button
+            className="self-start"
+            disabled={pending || !rawAction.trim()}
+            loading={running === "raw"}
+            onClick={() =>
+              run("raw", () =>
+                probeRaw({
+                  service: rawService,
+                  action: rawAction,
+                  dataJson: rawData,
+                  authenticated: rawAuthed,
+                }),
+              )
+            }
+          >
+            <Play className="size-4" aria-hidden />
+            <span>Send</span>
+          </Button>
+
+          {results.raw && <ResultLine result={results.raw} />}
+        </CardBody>
+      </Panel>
+
     </div>
   );
 }

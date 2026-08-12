@@ -141,8 +141,17 @@ export function maskToken(token: string | undefined): string {
 export async function login(): Promise<string> {
   const { account, password } = credentials();
 
+  /**
+   * `numero` and `pass` — NOT `numeroCompte` / `motDePasse`.
+   *
+   * Those were the field names this sent originally, and they are not the ones
+   * the API accepts: doc.camerpay.net specifies
+   * `{"numero":"6XXXXXXXX","pass":"VOTRE_MOT_DE_PASSE"}`. With the wrong keys
+   * the request is well-formed and simply never authenticates, which reads as
+   * "wrong credentials" and sends you looking in the wrong place.
+   */
   const response = await call<unknown>("authentification", "login", {
-    data: { numeroCompte: account, motDePasse: password },
+    data: { numero: account, pass: password },
   });
 
   if (!response.etat || !response.token) {
@@ -196,6 +205,137 @@ export async function getBalance(): Promise<CamerPayResponse<{ credit: number }>
   return authed<{ credit: number }>("account", "balance");
 }
 
+/* ── Opening an account ────────────────────────────────────────────────── */
+
+export interface RegistrationAccepted {
+  /** The provisional token. `validateAccount` must be called with THIS. */
+  token: string;
+  /** The confirmation code CamerPay returns, echoed back by validation. */
+  code: string;
+}
+
+/**
+ * Step 1 of 2 — create the account.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE ORDER IS NOT OPTIONAL. `inscription` then `validation`, and the
+ *  validation call must carry the PROVISIONAL token this returns — not the
+ *  session token from `login`, which does not exist yet.
+ *
+ *  Neither call may use `authed()` for that reason: it would attach a cached
+ *  session token, or try to log in with credentials that are not yet valid.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * `parrain` is the sponsoring account — the existing CamerPay number that
+ * refers the new one. Sent as given; the API decides whether it is acceptable.
+ */
+export async function registerAccount(input: {
+  numero: string;
+  parrain: string;
+  pass: string;
+}): Promise<CamerPayResponse<{ code: string }>> {
+  const numero = normalisePhone(input.numero);
+  if (!numero) {
+    throw new Error(`Invalid account number "${input.numero}". Expected 9 digits starting with 6.`);
+  }
+
+  const parrain = normalisePhone(input.parrain);
+  if (!parrain) {
+    throw new Error(`Invalid sponsor number "${input.parrain}". Expected 9 digits starting with 6.`);
+  }
+
+  if (!input.pass || input.pass.length < 6) {
+    throw new Error("The password is too short for a payment account.");
+  }
+
+  // No token: there is no account to authenticate against yet.
+  return call<{ code: string }>("authentification", "inscription", {
+    data: { numero, parrain, pass: input.pass },
+  });
+}
+
+/**
+ * Step 2 of 2 — confirm the code, using the provisional token.
+ *
+ * The DATA shape here is INFERRED, not published: the docs say only "valide le
+ * code reçu avec le token provisoire", and `inscription` hands back exactly a
+ * token and a `data.code`. Sending that code back under that token is the only
+ * reading that fits — but if CamerPay names the field something other than
+ * `code`, the raw console on /a/camerpay sends any payload you like without a
+ * code change. That is what it is there for.
+ */
+export async function validateAccount(input: {
+  code: string;
+  provisionalToken: string;
+}): Promise<CamerPayResponse> {
+  if (!input.code.trim()) throw new Error("The confirmation code is required.");
+  if (!input.provisionalToken.trim()) {
+    throw new Error("The provisional token from the inscription step is required.");
+  }
+
+  return call("authentification", "validation", {
+    data: { code: input.code.trim() },
+    token: input.provisionalToken.trim(),
+  });
+}
+
+/**
+ * Refresh the session against an existing token.
+ *
+ * `authentification/token` is the documented way back from a 401 — it costs
+ * less than a full login and is what the docs recommend at service start-up.
+ * Falls back to a full login when there is no token to refresh.
+ */
+export async function refreshSession(): Promise<string> {
+  if (!cachedToken) return login();
+
+  const response = await call<unknown>("authentification", "token", {
+    token: cachedToken.value,
+  });
+
+  if (!response.etat || !response.token) return login();
+
+  cachedToken = { value: response.token, at: Date.now() };
+  return response.token;
+}
+
+/**
+ * Rotate the API token.
+ *
+ * The new value arrives in `data.token` and REPLACES the old one immediately —
+ * the previous token stops working, so the cache is updated in the same breath
+ * to avoid a window where every call 401s.
+ */
+export async function rotateToken(): Promise<CamerPayResponse<{ token: string }>> {
+  const response = await authed<{ token: string }>("account", "change_token");
+  const next = response.data?.token;
+  if (response.etat && next) cachedToken = { value: next, at: Date.now() };
+  return response;
+}
+
+/**
+ * An escape hatch for actions whose payload the public docs do not specify.
+ *
+ * `inscription` and `validation` are named at doc.camerpay.net but their DATA
+ * fields are not published, and guessing them here would produce calls that
+ * fail for reasons no log could explain. This lets the CamerPay console send a
+ * hand-written payload the moment support supplies the real shape, without
+ * waiting on a code change.
+ *
+ * Deliberately NOT used by any automatic code path — it is a console tool.
+ */
+export async function rawCall<T = unknown>(
+  service: CamerPayService,
+  action: string,
+  data: unknown,
+  options: { authenticated?: boolean } = {},
+): Promise<CamerPayResponse<T>> {
+  if (options.authenticated === false) {
+    return call<T>(service, action, { data });
+  }
+  return authed<T>(service, action, data);
+}
+
 /** Registers the HTTPS URL CamerPay will POST callbacks to. */
 export async function setCallbackUrl(url: string): Promise<CamerPayResponse> {
   if (!url.startsWith("https://")) {
@@ -206,22 +346,46 @@ export async function setCallbackUrl(url: string): Promise<CamerPayResponse> {
 
 /* ── Transactions ──────────────────────────────────────────────────────── */
 
-export interface DepositAccepted {
+export interface TransactionAccepted {
   /** CamerPay's tracking id. Store it — the callback is matched on it. */
   replyTo: string;
 }
 
 /**
- * Request a deposit (a collection from the customer's mobile money wallet).
+ * ─────────────────────────────────────────────────────────────────────────
+ *  `retrait` COLLECTS. `depot` PAYS OUT. GETTING THIS BACKWARDS COSTS MONEY.
+ *
+ *  This function used to call `depot` while its own comment claimed it was
+ *  "a collection from the customer's mobile money wallet". It is not.
+ *  doc.camerpay.net is explicit about the direction:
+ *
+ *    depot   — "Envoie de la valeur vers le compte Mobile Money du client"
+ *              money leaves our balance and lands in theirs.
+ *    retrait — "Initie un retrait depuis le compte Mobile Money du client"
+ *              money leaves their wallet and lands in ours.
+ *
+ *  So charging a restaurant for its subscription with `depot` would have PAID
+ *  THE RESTAURANT the amount of its own invoice, and then marked the invoice
+ *  paid. CamerPay has NO SANDBOX — the first test would have moved real money
+ *  in the wrong direction, minimum 500 FCFA a go.
+ *
+ *  The two directions now have names that cannot be confused, and the payout
+ *  side is deliberately not exported until something actually needs to refund.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * CHARGE a customer — pulls from their Mobile Money wallet into our account.
+ * This is what an invoice payment uses.
  *
  * Returns HTTP 202 and a `replyTo` on success. THAT IS NOT A PAYMENT. The
  * customer still has to approve on their handset, and the outcome arrives
  * later — via callback, or via the reconciler asking.
  */
-export async function requestDeposit(
+export async function requestCollection(
   phone: string,
   amount: number,
-): Promise<CamerPayResponse<DepositAccepted>> {
+): Promise<CamerPayResponse<TransactionAccepted>> {
   const numeroClient = normalisePhone(phone);
   if (!numeroClient) {
     throw new Error(`Invalid phone number "${phone}". Expected 9 digits starting with 6.`);
@@ -232,7 +396,31 @@ export async function requestDeposit(
     );
   }
 
-  return authed<DepositAccepted>("transaction", "depot", { numeroClient, montant: amount });
+  return authed<TransactionAccepted>("transaction", "retrait", { numeroClient, montant: amount });
+}
+
+/**
+ * PAY OUT to a customer — sends money from our balance to their wallet.
+ *
+ * Nothing calls this yet. It exists so that the day a refund is built, the
+ * correct action is already named and documented rather than being reached for
+ * in a hurry beside a function called "deposit".
+ */
+export async function sendPayout(
+  phone: string,
+  amount: number,
+): Promise<CamerPayResponse<TransactionAccepted>> {
+  const numeroClient = normalisePhone(phone);
+  if (!numeroClient) {
+    throw new Error(`Invalid phone number "${phone}". Expected 9 digits starting with 6.`);
+  }
+  if (!isPayableAmount(amount)) {
+    throw new Error(
+      `Amount ${amount} is outside CamerPay's ${MIN_AMOUNT_XAF}–${MAX_AMOUNT_XAF} FCFA range.`,
+    );
+  }
+
+  return authed<TransactionAccepted>("transaction", "depot", { numeroClient, montant: amount });
 }
 
 /** Look up which operator a number belongs to, before charging it. */
