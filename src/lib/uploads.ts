@@ -1,41 +1,60 @@
 import "server-only";
-import { mkdir, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { createAdminClient } from "@/lib/supabase/server";
 
 /**
- * Local file uploads.
+ * File uploads, into Supabase Storage.
  *
  * ─────────────────────────────────────────────────────────────────────────
  *  VALIDATED BY CONTENT, NEVER BY EXTENSION OR MIME TYPE (§9).
  *
  *  `file.type` comes from the browser and `file.name` comes from the user.
  *  Both are attacker-controlled. Trusting either is how a .php renamed to
- *  .jpg — or a .jpg whose bytes are a script — ends up executable on your
- *  server.
+ *  .jpg — or a .jpg whose bytes are a script — ends up served from our origin.
  *
  *  So every upload is sniffed: the first bytes must match a known image
- *  signature, and the extension we write is derived from THOSE BYTES, not
+ *  signature, and the extension we store is derived from THOSE BYTES, not
  *  from whatever the file was called.
  * ─────────────────────────────────────────────────────────────────────────
  *
- *  Files land in public/uploads/, served directly by Next as static assets.
+ * ─────────────────────────────────────────────────────────────────────────
+ *  WHY THIS IS NO LONGER `writeFile(public/uploads/…)`
  *
- *  NOTE FOR DEPLOYMENT: this writes to the local filesystem, which works on a
- *  VPS or under XAMPP but NOT on Vercel, where the filesystem is read-only and
- *  ephemeral. Moving to object storage means changing `persist()` below and
- *  nothing else.
+ *  It used to be, and that works under XAMPP and nowhere else. On Vercel —
+ *  and on any container that redeploys — the filesystem is READ-ONLY apart
+ *  from an ephemeral /tmp that is never web-served, so `mkdir` threw EROFS and
+ *  every upload on the platform failed.
+ *
+ *  Worse, and quieter: `public/uploads/*` is gitignored, so files uploaded
+ *  before a deploy were not in the build at all. Their URLs stayed in the
+ *  database and turned into 404s — a broken-image icon where the logo used to
+ *  be, with nothing in any log to explain it. Migration 0016 clears those dead
+ *  paths so the defaults render instead.
+ *
+ *  The bucket is PUBLIC, which is right for what goes in it: logos, dish
+ *  photos, avatars — all of it is shown to anonymous visitors anyway. Writes
+ *  are not public; they happen here, with the service-role key.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 
-export type UploadKind = "branding" | "avatars" | "restaurants" | "menu";
+export type UploadKind = "branding" | "avatars" | "restaurants" | "menu" | "appearance";
+
+/**
+ * Created by migration 0016.
+ *
+ * Exported so the health check can name the bucket it is looking for without
+ * a second literal that could drift away from this one.
+ */
+export const UPLOAD_BUCKET = "assets";
+const BUCKET = UPLOAD_BUCKET;
 
 const MAX_BYTES = 2 * 1024 * 1024; // 2 MB
 
 /**
  * Magic-byte signatures.
  *
- * SVG is deliberately absent. It is XML, it can carry <script>, and it is
- * served from our own origin — which makes an uploaded SVG a stored XSS with
- * extra steps. PNG covers every favicon case that matters.
+ * SVG is deliberately absent. It is XML, it can carry <script>, and it would
+ * be served from a domain we control — which makes an uploaded SVG a stored
+ * XSS with extra steps. PNG covers every favicon case that matters.
  */
 const SIGNATURES: { ext: string; mime: string; bytes: number[]; offset?: number }[] = [
   { ext: "png", mime: "image/png", bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
@@ -59,7 +78,7 @@ function detect(buffer: Buffer): { ext: string; mime: string } | null {
 
 export interface UploadResult {
   ok: true;
-  /** Public URL path, e.g. /uploads/branding/ab12….png */
+  /** Absolute public URL on the Supabase CDN. */
   url: string;
   mime: string;
   bytes: number;
@@ -96,23 +115,59 @@ export async function saveUpload(
     };
   }
 
-  // Filename comes from us, never from the upload. A user-supplied name can
-  // contain path traversal, null bytes, or a second extension.
-  const filename = `${crypto.randomUUID()}.${detected.ext}`;
-  const directory = path.join(process.cwd(), "public", "uploads", kind);
+  // The object path comes from us, never from the upload. A user-supplied name
+  // can contain traversal segments, null bytes, or a second extension.
+  const objectPath = `${kind}/${crypto.randomUUID()}.${detected.ext}`;
 
-  try {
-    await mkdir(directory, { recursive: true });
-    await writeFile(path.join(directory, filename), buffer);
-  } catch (error) {
-    console.error("[upload] write failed", error);
-    return { ok: false, error: "Could not save the file to disk." };
+  const supabase = createAdminClient();
+
+  const { error } = await supabase.storage.from(BUCKET).upload(objectPath, buffer, {
+    contentType: detected.mime,
+    // Every object has a UUID name, so a given URL's bytes never change and it
+    // can be cached for a year. Replacing an image produces a NEW url, which
+    // is also why no cache-busting query string is needed anywhere.
+    cacheControl: "31536000",
+    // Never overwrite. With a random name a collision means something is very
+    // wrong, and silently replacing someone else's file would be worse.
+    upsert: false,
+  });
+
+  if (error) {
+    console.error("[upload] storage rejected the object", error.message);
+    return {
+      ok: false,
+      error:
+        "Could not store the file. If this is a fresh deployment, check that migration 0016 has been run — it creates the storage bucket.",
+    };
   }
 
-  return {
-    ok: true,
-    url: `/uploads/${kind}/${filename}`,
-    mime: detected.mime,
-    bytes: buffer.length,
-  };
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(BUCKET).getPublicUrl(objectPath);
+
+  return { ok: true, url: publicUrl, mime: detected.mime, bytes: buffer.length };
+}
+
+/**
+ * Remove a previously stored object, given the public URL we handed out.
+ *
+ * Best-effort by design: callers use it to tidy up after replacing an image,
+ * and a failure here must never fail the operation that succeeded. An orphaned
+ * object costs a fraction of a cent; a failed save costs the user their work.
+ */
+export async function deleteUpload(publicUrl: string | null | undefined): Promise<void> {
+  if (!publicUrl) return;
+
+  // Only ever delete things that look like ours. A URL from anywhere else —
+  // including the Unsplash defaults — must not reach a delete call.
+  const marker = `/storage/v1/object/public/${BUCKET}/`;
+  const index = publicUrl.indexOf(marker);
+  if (index === -1) return;
+
+  const objectPath = publicUrl.slice(index + marker.length);
+  if (!objectPath) return;
+
+  const supabase = createAdminClient();
+  const { error } = await supabase.storage.from(BUCKET).remove([objectPath]);
+  if (error) console.warn("[upload] could not remove", objectPath, error.message);
 }

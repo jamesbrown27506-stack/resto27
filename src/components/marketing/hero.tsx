@@ -17,7 +17,7 @@ import {
   UtensilsCrossed,
   Users,
 } from "lucide-react";
-import { BookArt, ExploreArt, OrderArt } from "./hero-art";
+import { HeroPhoto } from "./hero-art";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
 import { usePrefersReducedMotion } from "@/lib/hooks/use-prefers-reduced-motion";
@@ -25,6 +25,7 @@ import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { PublicStats } from "@/lib/data/public";
+import type { Appearance } from "@/lib/appearance";
 
 /**
  * The hero.
@@ -56,7 +57,9 @@ interface Slide {
   titleLead: TranslationKey;
   titleAccent: TranslationKey;
   subtitle: TranslationKey;
-  Art: typeof OrderArt;
+  /** Which configured photograph this slide shows. */
+  art: keyof Pick<Appearance, "heroOrder" | "heroBook" | "heroExplore">;
+  artAlt: TranslationKey;
   badge: { icon: typeof Bike };
 }
 
@@ -69,7 +72,8 @@ const SLIDES: Slide[] = [
     titleLead: "hero.order.titleLead",
     titleAccent: "hero.order.titleAccent",
     subtitle: "hero.order.subtitle",
-    Art: OrderArt,
+    art: "heroOrder",
+    artAlt: "hero.order.alt",
     badge: { icon: Bike },
   },
   {
@@ -80,7 +84,8 @@ const SLIDES: Slide[] = [
     titleLead: "hero.book.titleLead",
     titleAccent: "hero.book.titleAccent",
     subtitle: "hero.book.subtitle",
-    Art: BookArt,
+    art: "heroBook",
+    artAlt: "hero.book.alt",
     badge: { icon: CalendarCheck },
   },
   {
@@ -91,7 +96,8 @@ const SLIDES: Slide[] = [
     titleLead: "hero.explore.titleLead",
     titleAccent: "hero.explore.titleAccent",
     subtitle: "hero.explore.subtitle",
-    Art: ExploreArt,
+    art: "heroExplore",
+    artAlt: "hero.explore.alt",
     badge: { icon: Compass },
   },
 ];
@@ -100,10 +106,12 @@ export function Hero({
   cuisines,
   quartiers,
   stats,
+  appearance,
 }: {
   cuisines: string[];
   quartiers: string[];
   stats: PublicStats;
+  appearance: Appearance;
 }) {
   const router = useRouter();
   const { t } = useLocale();
@@ -388,7 +396,11 @@ export function Hero({
                   i === index ? "opacity-100" : "pointer-events-none opacity-0",
                 )}
               >
-                <s.Art className="size-full" />
+                <HeroPhoto
+                  src={appearance[s.art]}
+                  alt={t(s.artAlt)}
+                  className="size-full"
+                />
               </div>
             ))}
 

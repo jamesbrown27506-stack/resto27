@@ -40,6 +40,9 @@ import {
   Heart,
   IceCreamBowl,
   IceCreamCone,
+  // Aliased: bare `Image` collides with next/image in the mind of anyone
+  // reading this file, even though nothing here imports it.
+  Image as ImageIcon,
   Layers,
   LayoutDashboard,
   LayoutGrid,
@@ -63,6 +66,7 @@ import {
   Shell,
   ShieldCheck,
   ShoppingBasket,
+  Smartphone,
   Snowflake,
   Soup,
   Sparkles,
@@ -118,6 +122,7 @@ const REGISTRY = {
   Download,
   Flag,
   Heart,
+  Image: ImageIcon,
   Layers,
   LayoutDashboard,
   LayoutGrid,
@@ -129,6 +134,7 @@ const REGISTRY = {
   ScrollText,
   Settings,
   ShieldCheck,
+  Smartphone,
   Star,
   Stethoscope,
   Store,

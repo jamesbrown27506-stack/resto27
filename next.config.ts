@@ -1,14 +1,39 @@
 import type { NextConfig } from "next";
 
+/**
+ * Every upload is served from the Supabase CDN, and next/image refuses any
+ * host that is not allow-listed — so without this, every logo, dish photo and
+ * avatar renders as a 400 the moment uploads move off the local disk.
+ *
+ * Derived from the environment rather than hardcoded: the project ref is part
+ * of the hostname, so a pinned literal would break the day this is pointed at
+ * a different Supabase project (staging, or a restore).
+ */
+const supabaseHostname = (() => {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!url) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    // A malformed URL is a deployment misconfiguration, not a reason to fail
+    // the build — the Supabase client will report it far more clearly.
+    return null;
+  }
+})();
+
 const nextConfig: NextConfig = {
   reactCompiler: true,
 
   images: {
     remotePatterns: [
-      // Marketing photos on the landing page and hero (ephemeral until real
-      // restaurant photography exists). Only the homepage references this
-      // host — customer and manager uploads live in Supabase Storage.
+      // Marketing photos shipped as DEFAULTS for the landing page. An
+      // administrator replaces them from /a/appearance, at which point the
+      // images come from the bucket below instead.
       { protocol: "https", hostname: "images.unsplash.com" },
+
+      ...(supabaseHostname
+        ? [{ protocol: "https" as const, hostname: supabaseHostname, pathname: "/storage/v1/object/public/**" }]
+        : []),
     ],
   },
 

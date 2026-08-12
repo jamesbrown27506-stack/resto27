@@ -173,6 +173,7 @@ export const ADMIN_NAV: NavGroup[] = [
       { href: "/a/export", label: "CSV export", icon: "Download" },
       { href: "/a/diagnostics", label: "Diagnostics", icon: "Stethoscope" },
       { href: "/a/tests", label: "Health checks", icon: "ShieldCheck" },
+      { href: "/a/appearance", label: "Appearance", icon: "Image" },
       { href: "/a/settings", label: "Settings", icon: "Settings" },
     ],
   },

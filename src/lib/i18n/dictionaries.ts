@@ -136,6 +136,14 @@ const baseFr = {
   "hero.trust.restaurants": "restaurants",
   "hero.trust.area": "Douala et environs",
 
+  "hero.order.alt": "Un plat coloré servi dans un restaurant de Douala",
+  "hero.book.alt": "Une table dressée pour un dîner à deux",
+  "hero.explore.alt": "Vue nocturne d'une ville animée",
+  "home.alt.dishes": "Assortiment de plats typiques camerounais",
+  "home.alt.kitchen": "Cuisine de restaurant en activité",
+  "home.alt.branches": "Salle de restaurant avec plusieurs tables",
+  "home.alt.payment": "Paiement par téléphone mobile",
+
   "hero.mode.order": "Commander",
   "hero.mode.book": "Réserver",
   "hero.mode.explore": "Explorer",
@@ -715,6 +723,14 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "hero.trust.rating": "from 1,240 reviews",
   "hero.trust.restaurants": "restaurants",
   "hero.trust.area": "Douala and around",
+
+  "hero.order.alt": "A colourful dish served in a Douala restaurant",
+  "hero.book.alt": "A table laid for dinner for two",
+  "hero.explore.alt": "A night view of a busy city",
+  "home.alt.dishes": "An assortment of classic Cameroonian dishes",
+  "home.alt.kitchen": "A restaurant kitchen in service",
+  "home.alt.branches": "A restaurant dining room with several tables",
+  "home.alt.payment": "Paying by mobile phone",
 
   "hero.mode.order": "Order",
   "hero.mode.book": "Book",

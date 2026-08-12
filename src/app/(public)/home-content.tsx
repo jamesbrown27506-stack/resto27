@@ -20,6 +20,7 @@ import { DishCard } from "@/components/menu/dish-card";
 import { buttonClasses } from "@/components/ui/button";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { PopularDish, PublicRestaurant, PublicStats, FeaturedReview } from "@/lib/data/public";
+import type { Appearance } from "@/lib/appearance";
 
 /**
  * Homepage body.
@@ -40,6 +41,7 @@ export function HomeContent({
   quartiers,
   stats,
   testimonials,
+  appearance,
 }: {
   plans: PublicPlan[];
   restaurants: PublicRestaurant[];
@@ -48,6 +50,7 @@ export function HomeContent({
   quartiers: string[];
   stats: PublicStats;
   testimonials: FeaturedReview[];
+  appearance: Appearance;
 }) {
   const { t } = useLocale();
   const featured = restaurants.slice(0, 6);
@@ -55,7 +58,7 @@ export function HomeContent({
 
   return (
     <>
-      <Hero cuisines={cuisines} quartiers={quartiers} stats={stats} />
+      <Hero cuisines={cuisines} quartiers={quartiers} stats={stats} appearance={appearance} />
 
       <StatStrip
         items={[
@@ -112,8 +115,8 @@ export function HomeContent({
           />
           <div className="relative mb-12 h-56 overflow-hidden rounded-xl sm:h-72 lg:h-80">
             <Image
-              src="https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=1600&q=80"
-              alt="Assortiment de plats typiques camerouns"
+              src={appearance.homeDishes}
+              alt={t("home.alt.dishes")}
               fill
               sizes="100vw"
               className="object-cover"
@@ -180,8 +183,8 @@ export function HomeContent({
               visual={
                 <div className="relative size-full">
                   <Image
-                    src="https://images.unsplash.com/photo-1556910103-1c02745aae4d?auto=format&fit=crop&w=1200&q=80"
-                    alt="Cuisine de restaurant en activité"
+                    src={appearance.homeKitchen}
+                    alt={t("home.alt.kitchen")}
                     fill
                     sizes="(min-width: 1024px) 50vw, 100vw"
                     className="object-cover"
@@ -200,8 +203,8 @@ export function HomeContent({
               visual={
                 <div className="relative size-full">
                   <Image
-                    src="https://images.unsplash.com/photo-1517248135467-9df32ab5c56e?auto=format&fit=crop&w=1200&q=80"
-                    alt="Salle de restaurant avec plusieurs tables"
+                    src={appearance.homeBranches}
+                    alt={t("home.alt.branches")}
                     fill
                     sizes="(min-width: 1024px) 50vw, 100vw"
                     className="object-cover"
@@ -219,8 +222,8 @@ export function HomeContent({
               visual={
                 <div className="relative size-full">
                   <Image
-                    src="https://images.unsplash.com/photo-1556742098-b5536fc942f8?auto=format&fit=crop&w=1200&q=80"
-                    alt="Paiement par téléphone mobile"
+                    src={appearance.homePayment}
+                    alt={t("home.alt.payment")}
                     fill
                     sizes="(min-width: 1024px) 50vw, 100vw"
                     className="object-cover"

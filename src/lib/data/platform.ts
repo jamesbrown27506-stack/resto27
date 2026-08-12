@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
 import { mailConfigProblem, mailIsConfigured } from "@/lib/mail";
 import { appMode } from "@/lib/site-url";
+import { UPLOAD_BUCKET } from "@/lib/uploads";
 
 /**
  * Platform-operations reads: audit, notifications, broadcasts, reviews,
@@ -345,6 +346,78 @@ export async function runHealthChecks(): Promise<HealthGroup[]> {
     }),
   );
 
+  /**
+   * Object storage.
+   *
+   * Worth its own check because its failure mode is silent and confusing: with
+   * no bucket, every upload on the platform fails while the rest of the app
+   * behaves perfectly, and the error the user sees ("could not store the
+   * file") does not obviously mean "a migration has not been run".
+   *
+   * Still passive — listing buckets reads metadata and writes nothing. The
+   * round-trip that proves an object can actually be stored and served lives
+   * on /a/diagnostics, which is allowed to make real calls.
+   */
+  const storageChecks: HealthCheck[] = await (async () => {
+    const { data, error } = await supabase.storage.listBuckets();
+
+    if (error) {
+      return [
+        {
+          name: "Object storage",
+          detail: `Unreachable — ${error.message}`,
+          status: "fail" as const,
+        },
+      ];
+    }
+
+    const assets = (data ?? []).find((b) => b.id === UPLOAD_BUCKET);
+
+    if (!assets) {
+      return [
+        {
+          name: `Bucket "${UPLOAD_BUCKET}"`,
+          detail:
+            "Missing — run migration 0016. Until it exists, every logo, dish photo and avatar upload fails.",
+          status: "fail" as const,
+        },
+      ];
+    }
+
+    return [
+      {
+        name: `Bucket "${UPLOAD_BUCKET}"`,
+        detail: `Present. Size limit ${assets.file_size_limit ? `${Math.round(assets.file_size_limit / 1024 / 1024)} MB` : "unset"}.`,
+        status: "pass" as const,
+      },
+      {
+        name: "Bucket is public",
+        detail: assets.public
+          ? "Yes — uploaded images are served straight from the CDN, no signed URL per render."
+          : "No. Images will 404 for visitors; re-run migration 0016, which sets public = true.",
+        status: assets.public ? ("pass" as const) : ("fail" as const),
+      },
+      {
+        name: "Image host allow-listed",
+        /**
+         * next/image refuses any host not in `images.remotePatterns`, and the
+         * failure is a 400 on the image rather than anything in the log — so
+         * a correct upload can still render as a broken picture.
+         */
+        detail: process.env.NEXT_PUBLIC_SUPABASE_URL
+          ? `next.config.ts derives the pattern from NEXT_PUBLIC_SUPABASE_URL, so ${(() => {
+              try {
+                return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).hostname;
+              } catch {
+                return "the configured host";
+              }
+            })()} is allowed.`
+          : "NEXT_PUBLIC_SUPABASE_URL is unset, so next/image will reject every stored image.",
+        status: process.env.NEXT_PUBLIC_SUPABASE_URL ? ("pass" as const) : ("fail" as const),
+      },
+    ];
+  })();
+
   const settings = await listSettings();
   const settingOf = (key: string) => settings.find((s) => s.key === key)?.value ?? null;
 
@@ -496,6 +569,11 @@ export async function runHealthChecks(): Promise<HealthGroup[]> {
       title: "Schema",
       description: `${tableResults.filter((t) => t.status === "pass").length} of ${EXPECTED_TABLES.length} expected tables present.`,
       checks: tableResults,
+    },
+    {
+      title: "Object storage",
+      description: "Where every uploaded logo, dish photo and avatar is kept.",
+      checks: storageChecks,
     },
     {
       title: "Platform configuration",

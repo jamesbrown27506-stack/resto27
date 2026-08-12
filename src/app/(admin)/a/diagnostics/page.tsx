@@ -4,6 +4,7 @@ import { AdminPage } from "@/components/layout/admin-shell";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
 import { runHealthChecks } from "@/lib/data/platform";
+import { StorageProbe } from "./storage-probe";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,13 @@ export default async function DiagnosticsPage() {
             </p>
           </CardBody>
         </Card>
+
+        <Panel
+          title="Object storage"
+          description="The path every uploaded logo, dish photo and avatar travels."
+        >
+          <StorageProbe />
+        </Panel>
 
         <Panel
           title="Mobile money — CamerPay"

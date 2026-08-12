@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template, which carries no secrets and is what a new
+# deployment is configured from.
+!.env.example
 
 # runtime uploads — keep the folders, ignore what lands in them
 /public/uploads/*
