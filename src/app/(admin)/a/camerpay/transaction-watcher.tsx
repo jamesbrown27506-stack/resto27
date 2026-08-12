@@ -67,6 +67,24 @@ export function TransactionWatcher({
   hint?: TransactionHint;
   onSettled?: (status: TransactionStatus) => void;
 }) {
+  /**
+   * ─────────────────────────────────────────────────────────────────────────
+   *  THE REACT COMPILER IS OPTED OUT OF THIS COMPONENT, WITH EVIDENCE.
+   *
+   *  A live session rendered "No response after 11 checks" — a branch that
+   *  only exists when `attempts` has reached 11 — beside "check 0 / 11" and a
+   *  `last` timestamp frozen at the FIRST check. The same state cannot be 11
+   *  and 0 in one frame: the compiled output was reusing stale memo blocks
+   *  for part of the tree while re-evaluating its siblings.
+   *
+   *  On most screens a stale label is cosmetic. This panel is the instrument
+   *  someone reads to decide whether money moved, and an instrument that can
+   *  disagree with itself is worse than none — it had us debugging a working
+   *  poller for an afternoon. Memoisation buys nothing here worth that.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  "use no memo";
+
   // Primitives, never the object — `hint` is a literal at the call site and
   // changes identity every parent render. Primitives compare by value, so the
   // loop below restarts only when the transaction itself changes.
@@ -81,6 +99,8 @@ export function TransactionWatcher({
   const [busy, setBusy] = useState(false);
   const [auto, setAuto] = useState(true);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  /** One line per completed check — the panel's own flight recorder. */
+  const [history, setHistory] = useState<{ n: number; at: string; status: string }[]>([]);
 
   /** Set on a terminal answer, readable by BOTH the loop and a manual check. */
   const doneRef = useRef(false);
@@ -119,9 +139,11 @@ export function TransactionWatcher({
       if (cancelled) return;
 
       attempt += 1;
+      const stamp = new Date().toLocaleTimeString();
       setAttempts(attempt);
       setBusy(false);
-      setCheckedAt(new Date().toLocaleTimeString());
+      setCheckedAt(stamp);
+      setHistory((h) => [...h.slice(-14), { n: attempt, at: stamp, status: next?.status ?? "error" }]);
 
       if (next) {
         setResult(next);
@@ -163,7 +185,9 @@ export function TransactionWatcher({
         afterId,
       });
       setResult(next);
-      setCheckedAt(new Date().toLocaleTimeString());
+      const stamp = new Date().toLocaleTimeString();
+      setCheckedAt(stamp);
+      setHistory((h) => [...h.slice(-14), { n: h.length + 1, at: stamp, status: `${next.status} (manual)` }]);
       if (next.status !== "pending") {
         doneRef.current = true;
         setAuto(false);
@@ -220,10 +244,25 @@ export function TransactionWatcher({
             </span>
             {checkedAt && <span> · last {checkedAt}</span>}
             {afterId !== undefined && <span> · after #{afterId}</span>}
-            {/* v3 — so a screenshot of this panel says which watcher it is.
+            {/* v4 — so a screenshot of this panel says which watcher it is.
                 Chasing a fixed bug through a stale deploy cost an afternoon. */}
-            <span> · v3</span>
+            <span> · v4</span>
           </p>
+
+          {/* Appended, never rewritten: each check leaves its own line, so the
+              sequence the server actually answered is on screen — the record
+              that settles "did it ever say success" without a debugger. */}
+          {history.length > 0 && (
+            <ul className="mt-1 font-mono text-[11px] leading-relaxed opacity-75">
+              {history.map((h) => (
+                <li key={`${h.n}-${h.at}`}>
+                  <span>#{h.n}</span>
+                  <span> {h.at} </span>
+                  <span>{h.status}</span>
+                </li>
+              ))}
+            </ul>
+          )}
 
           {/* Without these there is nothing to match a report row on, and the
               check can only ever say pending. Saying so beats looking busy. */}
