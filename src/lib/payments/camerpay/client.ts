@@ -586,27 +586,66 @@ export async function identifyNumber(phone: string): Promise<CamerPayResponse> {
 
 /* ── Reporting — the trust anchor ──────────────────────────────────────── */
 
+/**
+ * A row of `rapport/transaction`, as CamerPay ACTUALLY returns it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE FIELDS ARE NOT THE ONES THE REST OF THE DOCS IMPLY.
+ *
+ *  This was typed as {replyTo, etat, montant, message} — the shape the
+ *  synchronous responses use. The report uses none of those. A real row:
+ *
+ *    { id: 111, ref: "18320599606", date: "2026-08-12T15:12:45.000",
+ *      number: "679534849", username: "…", "customer number": "679534849",
+ *      Amount: 500, action: "MTN_WITHDRAWAL", used: true, Response: "…" }
+ *
+ *  Capital `Amount`, capital `Response`, a key with a SPACE in it, and — the
+ *  part that broke everything — NO `replyTo` and NO `etat`. The tracking id
+ *  returned by the 202 is never echoed back here, so matching on it could
+ *  only ever fail, and every settled transaction read as pending for ever.
+ *
+ *  `used` is the outcome. `ref` is the operator's reference and is null until
+ *  the customer confirms — the two agree, and `used` is the one to trust.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
 export interface TransactionReportEntry {
   id?: number;
-  replyTo?: string;
+  /** Operator reference. NULL until the customer approves. */
+  ref?: string | null;
   date?: string;
-  numero?: string;
-  montant?: number;
+  /** The account's number. */
+  number?: string;
+  username?: string;
+  /** Yes, with a space. */
+  "customer number"?: string;
+  /** Capital A. */
+  Amount?: number;
+  /** "MTN_WITHDRAWAL" (a collection) or "DEPOT_MTN" (a payout). */
+  action?: string;
+  /** TRUE once the customer has entered their PIN. This is the outcome. */
+  used?: boolean;
+  /** Capital R — the ACKNOWLEDGEMENT text, not the result. */
+  Response?: string;
+
+  // Kept because the synchronous endpoints do use them.
+  replyTo?: string;
   etat?: boolean;
+  montant?: number;
   message?: string;
 }
 
-/**
- * Ask CamerPay what actually happened.
- *
- * THIS IS THE ONLY SOURCE OF TRUTH ABOUT MONEY. Because callbacks are
- * unsigned, nothing may be credited on the strength of one — the callback
- * tells us to look, and this tells us what is true.
- *
- * Also what the reconciler uses to sweep attempts stuck pending, exactly as
- * §6 describes: webhooks get lost, and when one does, a customer has been
- * debited while the invoice still reads unpaid and nothing else will notice.
- */
+/** What we know about a transaction we started, used to find its row. */
+export interface TransactionHint {
+  /** The number charged or paid. */
+  phone?: string;
+  /** Whole francs, as requested. */
+  amount?: number;
+  /** Which way the money was meant to go. */
+  direction?: "collect" | "payout";
+  /** ISO instant the request was accepted. */
+  startedAt?: string;
+}
+
 export async function listTransactions(
   options: { limit?: number; id?: number } = {},
 ): Promise<CamerPayResponse<TransactionReportEntry[]>> {
@@ -625,20 +664,54 @@ export async function listNotifications(
   });
 }
 
+/** How long a not-yet-confirmed row is still worth waiting on. */
+const PENDING_GRACE_MS = 5 * 60_000;
+
+/** Does this row's action match the direction we asked for? */
+function matchesDirection(action: string | undefined, direction: "collect" | "payout"): boolean {
+  const a = (action ?? "").toUpperCase();
+  // "MTN_WITHDRAWAL" / "RETRAIT" pull from the customer; "DEPOT_MTN" pushes.
+  const isCollect = a.includes("WITHDRAW") || a.includes("RETRAIT");
+  const isPayout = a.includes("DEPOT") || a.includes("DEPOSIT");
+  return direction === "collect" ? isCollect : isPayout;
+}
+
 /**
  * Confirm a single transaction against CamerPay's own record.
  *
- * Returns "success" only when CamerPay itself reports `etat: true` for that
- * replyTo. Anything unknown returns "pending", never "success" — §6: providers
- * add statuses, and defaulting to success gives away product for free.
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE REPORT DOES NOT CONTAIN OUR TRACKING ID, SO WE MATCH ON FACTS.
+ *
+ *  `requestCollection` gets back a `replyTo` like
+ *  "20260812-1419-8828-b833-29157b0f1eec" — and that string appears in NO
+ *  field of `rapport/transaction`. Not `ref` (that is the operator's own
+ *  reference, assigned later), not `id` (CamerPay's row counter). Matching on
+ *  it was matching on something that is never there, which is why a
+ *  transaction the customer had visibly paid still read as pending.
+ *
+ *  So a row is identified by what we know to be true about the request we
+ *  made: the number, the amount, the direction, and the fact that it must
+ *  have happened AFTER we asked. The newest row satisfying all four is ours.
+ *
+ *  Then `used` decides:
+ *      used === true   the customer entered their PIN. Settled.
+ *      used === false  no PIN yet. Recent → still pending. Old → abandoned.
+ *
+ *  `ref` corroborates — it is null until confirmation — but `used` is the
+ *  field to trust, and a disagreement is resolved as NOT settled.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * Without a hint there is nothing to match on, so it reports pending and
+ * returns the rows it saw. Guessing "the newest row is probably yours" would
+ * settle an invoice against somebody else's payment.
  */
 export async function confirmTransaction(
   replyTo: string,
+  hint: TransactionHint = {},
 ): Promise<{
   status: "success" | "failed" | "pending";
   amount?: number;
   raw?: unknown;
-  /** The report actually returned, so an unmatched id can be diagnosed. */
   searched?: unknown;
 }> {
   const report = await listTransactions({ limit: 100 });
@@ -647,52 +720,59 @@ export async function confirmTransaction(
     return { status: "pending", searched: report.data ?? report.message };
   }
 
-  /**
-   * MATCHED ON MORE THAN `replyTo`.
-   *
-   * The report rows do not reliably carry the tracking id under that name —
-   * the notification feed, for one, returns `{date, numero, title, message,
-   * id}` with the reference buried in prose ("Réf. Transaction : 18319340864")
-   * and no `replyTo` at all. Matching only on the field the docs imply meant a
-   * transaction that had visibly succeeded still read as "pending" for ever.
-   *
-   * So: the documented field first, then any string field on the row that
-   * contains the id. Deliberately still a CONTAINS check against known fields
-   * rather than a blind scan of the whole payload — the aim is to find the row
-   * CamerPay is describing, not to match something coincidental.
-   */
+  const rows = report.data;
   const needle = replyTo.trim();
-  const match = report.data.find((entry) => {
-    if (entry.replyTo === needle) return true;
-    if (entry.id !== undefined && String(entry.id) === needle) return true;
-    return typeof entry.message === "string" && entry.message.includes(needle);
-  });
 
-  if (!match) {
-    // The report is returned so the caller can see WHAT was searched. "Not
-    // found" and "found and still running" are different facts, and only one
-    // of them means waiting will help.
-    return { status: "pending", searched: report.data };
+  // Defensive: if a future version ever does echo the id back, believe it.
+  const direct = rows.find(
+    (row) => row.ref === needle || row.replyTo === needle || String(row.id ?? "") === needle,
+  );
+
+  const phone = hint.phone ? normalisePhone(hint.phone) : null;
+  const startedAt = hint.startedAt ? new Date(hint.startedAt).getTime() : null;
+
+  const candidates = direct
+    ? [direct]
+    : rows
+        .filter((row) => {
+          if (phone) {
+            const rowPhone = row["customer number"] ?? row.number;
+            if (normalisePhone(String(rowPhone ?? "")) !== phone) return false;
+          }
+          if (hint.amount !== undefined && (row.Amount ?? row.montant) !== hint.amount) return false;
+          if (hint.direction && !matchesDirection(row.action, hint.direction)) return false;
+          if (startedAt && row.date) {
+            // A minute of slack for clock skew between us and CamerPay.
+            if (new Date(row.date).getTime() < startedAt - 60_000) return false;
+          }
+          return true;
+        })
+        // Newest first — `id` counts up, and is more reliable than parsing dates.
+        .sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
+
+  // Nothing identifiable. Never fall back to "the most recent row", which
+  // would happily settle an invoice against an unrelated payment.
+  if (candidates.length === 0 || (!direct && !phone && hint.amount === undefined)) {
+    return { status: "pending", searched: rows };
   }
 
-  if (match.etat === true) return { status: "success", amount: match.montant, raw: match };
-  if (match.etat === false) return { status: "failed", amount: match.montant, raw: match };
+  const match = candidates[0];
+  const amount = match.Amount ?? match.montant;
 
-  /**
-   * No `etat` on the row. Fall back to the message, which is how the feed
-   * actually reports an outcome ("Retrait MobileMoney validé avec succès").
-   * A French success phrase is weak evidence, so it is used ONLY when the
-   * structured field is absent — never to override an explicit `etat: false`.
-   */
-  if (typeof match.message === "string") {
-    const text = match.message.toLowerCase();
-    if (text.includes("succès") || text.includes("success") || text.includes("validé")) {
-      return { status: "success", amount: match.montant, raw: match };
+  if (match.used === true) return { status: "success", amount, raw: match };
+
+  // An explicit failure from the synchronous shape still wins if present.
+  if (match.etat === false) return { status: "failed", amount, raw: match };
+
+  if (match.used === false) {
+    const age = match.date ? Date.now() - new Date(match.date).getTime() : 0;
+    if (age > PENDING_GRACE_MS) {
+      // The PIN prompt is long gone. Row 110 in the live account looks exactly
+      // like this: requested, never confirmed, `ref` still null.
+      return { status: "failed", amount, raw: match };
     }
-    if (text.includes("échec") || text.includes("echec") || text.includes("annul")) {
-      return { status: "failed", amount: match.montant, raw: match };
-    }
+    return { status: "pending", amount, raw: match };
   }
 
-  return { status: "pending", raw: match };
+  return { status: "pending", amount, raw: match };
 }

@@ -17,6 +17,7 @@ import {
   setCallbackUrl,
   validateAccount,
   type CamerPayService,
+  type TransactionHint,
 } from "@/lib/payments/camerpay/client";
 
 /**
@@ -156,14 +157,17 @@ export interface TransactionStatus {
  *  there is no path where a status is believed rather than verified.
  * ─────────────────────────────────────────────────────────────────────────
  */
-export async function checkTransaction(replyTo: string): Promise<TransactionStatus> {
+export async function checkTransaction(
+  replyTo: string,
+  hint: TransactionHint = {},
+): Promise<TransactionStatus> {
   await requireRole("admin");
 
   const trimmed = replyTo.trim();
   if (!trimmed) return { status: "pending", detail: "No transaction reference to check." };
 
   try {
-    const result = await confirmTransaction(trimmed);
+    const result = await confirmTransaction(trimmed, hint);
 
     return {
       status: result.status,
@@ -173,8 +177,8 @@ export async function checkTransaction(replyTo: string): Promise<TransactionStat
         result.status === "success"
           ? `Settled${result.amount ? ` — ${result.amount} FCFA` : ""}.`
           : result.status === "failed"
-            ? "CamerPay reports this transaction failed. No money moved."
-            : "Waiting for CamerPay. The customer may not have approved on their handset yet.",
+            ? "Not confirmed — the PIN was never entered, so no money moved."
+            : "Waiting for CamerPay. The customer has to enter their PIN on the handset.",
     };
   } catch (error) {
     // A network blip must not read as "failed" — that is the one status that
@@ -500,10 +504,13 @@ export async function probeCollection(phone: string, amount: number): Promise<Pr
 }
 
 /** Ask CamerPay what actually happened to one transaction. */
-export async function probeConfirm(replyTo: string): Promise<ProbeResult> {
+export async function probeConfirm(
+  replyTo: string,
+  hint: TransactionHint = {},
+): Promise<ProbeResult> {
   await requireRole("admin");
   try {
-    const result = await confirmTransaction(replyTo.trim());
+    const result = await confirmTransaction(replyTo.trim(), hint);
     return {
       ok: result.status === "success",
       label: "Confirm",
@@ -512,7 +519,7 @@ export async function probeConfirm(replyTo: string): Promise<ProbeResult> {
           ? `CamerPay confirms this settled${result.amount ? ` — ${result.amount} FCFA` : ""}.`
           : result.status === "failed"
             ? "CamerPay reports this transaction FAILED."
-            : "Still pending — no matching row in CamerPay's report yet. The rows searched are below; if the transaction is visibly there, its id is under a field name we are not matching on.",
+            : "Still pending. CamerPay's report does not echo the tracking id, so the row is found by number, amount and direction — supply those above if this keeps missing. The rows searched are below.",
       // On a miss this is the whole report, which is exactly what is needed to
       // see WHY nothing matched.
       payload: result.raw ?? result.searched,

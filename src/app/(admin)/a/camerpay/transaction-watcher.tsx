@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useTransition } from "react";
 import { CheckCircle2, Clock, RefreshCw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { checkTransaction, type TransactionStatus } from "./actions";
+import type { TransactionHint } from "@/lib/payments/camerpay/client";
 import { cn } from "@/lib/utils";
 
 /**
@@ -41,10 +42,17 @@ function delayFor(attempt: number): number {
 
 export function TransactionWatcher({
   replyTo,
+  /**
+   * What we know about the request. REQUIRED in practice: CamerPay's report
+   * does not echo the tracking id, so without the number, amount and
+   * direction there is nothing to match a row on.
+   */
+  hint,
   /** Called once, when a terminal answer arrives. */
   onSettled,
 }: {
   replyTo: string;
+  hint?: TransactionHint;
   onSettled?: (status: TransactionStatus) => void;
 }) {
   const [result, setResult] = useState<TransactionStatus | null>(null);
@@ -57,7 +65,7 @@ export function TransactionWatcher({
 
   const check = useCallback(() => {
     startTransition(async () => {
-      const next = await checkTransaction(replyTo);
+      const next = await checkTransaction(replyTo, hint ?? {});
       setResult(next);
       setAttempts((n) => n + 1);
       if (next.status !== "pending") {
@@ -65,7 +73,7 @@ export function TransactionWatcher({
         onSettled?.(next);
       }
     });
-  }, [replyTo, onSettled]);
+  }, [replyTo, hint, onSettled]);
 
   useEffect(() => {
     if (!auto || settled || exhausted) return;

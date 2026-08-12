@@ -207,6 +207,8 @@ interface RecentTx {
   amount: number;
   /** Formatted when it happened — reading a clock during render is impure. */
   at: string;
+  /** The same instant, machine-readable, for matching the report row. */
+  startedAt: string;
 }
 
 /** The five jobs this console does, in the order you do them. */
@@ -237,10 +239,10 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
   const [phone, setPhone] = useState("");
   const [amount, setAmount] = useState("500");
   const [replyTo, setReplyTo] = useState("");
-  const [watching, setWatching] = useState<string | null>(null);
+  const [watching, setWatching] = useState<RecentTx | null>(null);
   const [payoutPhone, setPayoutPhone] = useState("");
   const [payoutAmount, setPayoutAmount] = useState("500");
-  const [watchingPayout, setWatchingPayout] = useState<string | null>(null);
+  const [watchingPayout, setWatchingPayout] = useState<RecentTx | null>(null);
 
   /**
    * Everything charged or sent from this console, newest first.
@@ -306,8 +308,8 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
   function reopen(tx: RecentTx) {
     setReplyTo(tx.replyTo);
     setSection(tx.kind === "payout" ? "withdraw" : "collect");
-    if (tx.kind === "payout") setWatchingPayout(tx.replyTo);
-    else setWatching(tx.replyTo);
+    if (tx.kind === "payout") setWatchingPayout(tx);
+    else setWatching(tx);
   }
 
   /** Login, but asking for the token in full so it can be copied. */
@@ -828,17 +830,20 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                 // go and ask whether it worked.
                 const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
                 if (result.ok && id) {
-                  setWatching(id);
-                  // Prefilled, so "check this one" never means retyping a
-                  // tracking id off the screen above it.
-                  setReplyTo(id);
-                  remember({
+                  const now = new Date();
+                  const tx: RecentTx = {
                     replyTo: id,
                     kind: "collect",
                     phone,
                     amount: amountValue,
-                    at: new Date().toLocaleTimeString(),
-                  });
+                    at: now.toLocaleTimeString(),
+                    startedAt: now.toISOString(),
+                  };
+                  setWatching(tx);
+                  // Prefilled, so "check this one" never means retyping a
+                  // tracking id off the screen above it.
+                  setReplyTo(id);
+                  remember(tx);
                 }
                 return result;
               })
@@ -848,7 +853,18 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
             <span>Charge {amount} FCFA for real</span>
           </Button>
           {results.collect && <ResultLine result={results.collect} />}
-          {watching && <TransactionWatcher key={watching} replyTo={watching} />}
+          {watching && (
+            <TransactionWatcher
+              key={watching.replyTo}
+              replyTo={watching.replyTo}
+              hint={{
+                phone: watching.phone,
+                amount: watching.amount,
+                direction: watching.kind,
+                startedAt: watching.startedAt,
+              }}
+            />
+          )}
         </CardBody>
       </Panel>
 
@@ -879,8 +895,24 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
             onClick={() => {
               // A one-shot answer AND the watcher, because the usual reason
               // to paste a replyTo in here is that it was pending last time.
-              setWatching(replyTo.trim() || null);
-              run("confirm", () => probeConfirm(replyTo));
+              const known = recent.find((t) => t.replyTo === replyTo.trim());
+              if (known) setWatching(known);
+              run("confirm", () =>
+                probeConfirm(
+                  replyTo,
+                  known
+                    ? {
+                        phone: known.phone,
+                        amount: known.amount,
+                        direction: known.kind,
+                        startedAt: known.startedAt,
+                      }
+                    : // Fall back to whatever is typed into the charge fields —
+                      // without a number and an amount there is nothing to
+                      // match a row on.
+                      { phone, amount: amountValue, direction: "collect" },
+                ),
+              );
             }}
           >
             <Play className="size-3.5" aria-hidden />
@@ -948,15 +980,18 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
                 const result = await probePayout(payoutPhone, payoutValue);
                 const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
                 if (result.ok && id) {
-                  setWatchingPayout(id);
-                  setReplyTo(id);
-                  remember({
+                  const now = new Date();
+                  const tx: RecentTx = {
                     replyTo: id,
                     kind: "payout",
                     phone: payoutPhone,
                     amount: payoutValue,
-                    at: new Date().toLocaleTimeString(),
-                  });
+                    at: now.toLocaleTimeString(),
+                    startedAt: now.toISOString(),
+                  };
+                  setWatchingPayout(tx);
+                  setReplyTo(id);
+                  remember(tx);
                 }
                 return result;
               })
@@ -967,7 +1002,18 @@ export function CamerPayConsole({ suggestedCallback }: { suggestedCallback: stri
           </Button>
 
           {results.payout && <ResultLine result={results.payout} />}
-          {watchingPayout && <TransactionWatcher key={watchingPayout} replyTo={watchingPayout} />}
+          {watchingPayout && (
+            <TransactionWatcher
+              key={watchingPayout.replyTo}
+              replyTo={watchingPayout.replyTo}
+              hint={{
+                phone: watchingPayout.phone,
+                amount: watchingPayout.amount,
+                direction: watchingPayout.kind,
+                startedAt: watchingPayout.startedAt,
+              }}
+            />
+          )}
         </CardBody>
       </Panel>
 
