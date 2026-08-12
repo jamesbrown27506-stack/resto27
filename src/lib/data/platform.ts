@@ -311,6 +311,7 @@ const EXPECTED_TABLES: { table: string; migration: string }[] = [
   { table: "payment_attempts", migration: "0005" },
   { table: "payments", migration: "0005" },
   { table: "payment_webhook_events", migration: "0005" },
+  { table: "camerpay_requests", migration: "0017" },
   { table: "refunds", migration: "0005" },
   { table: "commission_statements", migration: "0005" },
   { table: "plan_changes", migration: "0005" },

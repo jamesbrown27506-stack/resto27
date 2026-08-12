@@ -12,6 +12,7 @@ import {
   maskToken,
   normalisePhone,
   rawCall,
+  recordAcceptedRequest,
   registerAccount,
   requestCollection,
   sendPayout,
@@ -213,6 +214,21 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
     if (response.httpStatus === 202 || response.etat) {
       const replyTo = response.data?.replyTo ?? "(none returned)";
       console.info("[camerpay] payout requested", replyTo, amount, "by", admin.email);
+
+      // The ledger is what lets a later check — and above all the webhook,
+      // which receives a callback carrying only this replyTo — find the row
+      // in the report by number/amount/direction. The report never echoes it.
+      if (response.data?.replyTo) {
+        await recordAcceptedRequest({
+          replyTo: response.data.replyTo,
+          direction: "payout",
+          phone,
+          amount,
+          afterId: afterId ?? null,
+          startedAt: new Date().toISOString(),
+        });
+      }
+
       return {
         ok: true,
         label: "Payout",
@@ -489,6 +505,22 @@ export async function probeCollection(phone: string, amount: number): Promise<Pr
     if (response.httpStatus === 202 || response.etat) {
       const replyTo = response.data?.replyTo ?? "(none returned)";
       console.info("[camerpay] collection requested", replyTo, "by", admin.email);
+
+      // Ledger the acceptance under its replyTo, so the webhook — which
+      // receives a callback carrying only this id — can find the report row
+      // by number/amount/direction instead of a tracking id the report never
+      // echoes. Without this row every callback would confirm as "pending".
+      if (response.data?.replyTo) {
+        await recordAcceptedRequest({
+          replyTo: response.data.replyTo,
+          direction: "collect",
+          phone,
+          amount,
+          afterId: afterId ?? null,
+          startedAt: new Date().toISOString(),
+        });
+      }
+
       return {
         ok: true,
         label: "Collection",

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createAdminClient } from "@/lib/supabase/server";
+
 /**
  * CamerPay API client — https://doc.camerpay.net
  *
@@ -627,6 +629,17 @@ export interface TransactionReportEntry {
   /** Capital R — the ACKNOWLEDGEMENT text, not the result. */
   Response?: string;
 
+  // Variants observed on a live account (2026-08-12): the report answered with
+  // LOWERCASE keys (numero/numeroClient/montant/reponse) where the earlier
+  // example showed mixed case. confirmTransaction reads BOTH spellings — a key
+  // miss is exactly how a settled row silently fails to match and reads as
+  // pending forever. (`montant` is declared below in the sync-endpoint block.)
+  numero?: string;
+  numeroClient?: string;
+  amount?: number;
+  reponse?: string;
+  phone?: string;
+
   // Kept because the synchronous endpoints do use them.
   replyTo?: string;
   etat?: boolean;
@@ -677,13 +690,29 @@ export async function listNotifications(
 /** How long a not-yet-confirmed row is still worth waiting on. */
 const PENDING_GRACE_MS = 5 * 60_000;
 
-/** Does this row's action match the direction we asked for? */
-function matchesDirection(action: string | undefined, direction: "collect" | "payout"): boolean {
+/** Which way a report row's action moves money, when it can be told. */
+function directionFor(action: string | undefined): "collect" | "payout" | undefined {
   const a = (action ?? "").toUpperCase();
   // "MTN_WITHDRAWAL" / "RETRAIT" pull from the customer; "DEPOT_MTN" pushes.
-  const isCollect = a.includes("WITHDRAW") || a.includes("RETRAIT");
-  const isPayout = a.includes("DEPOT") || a.includes("DEPOSIT");
-  return direction === "collect" ? isCollect : isPayout;
+  if (a.includes("WITHDRAW") || a.includes("RETRAIT")) return "collect";
+  if (a.includes("DEPOT") || a.includes("DEPOSIT")) return "payout";
+  return undefined;
+}
+
+/** Does this row's action match the direction we asked for? */
+function matchesDirection(action: string | undefined, direction: "collect" | "payout"): boolean {
+  return directionFor(action) === direction;
+}
+
+/** Every spelling of the customer-number key seen from CamerPay's report. */
+function rowPhone(row: TransactionReportEntry): string | undefined {
+  const raw = row["customer number"] ?? row.number ?? row.numero ?? row.numeroClient ?? row.phone;
+  return raw != null ? String(raw) : undefined;
+}
+
+/** Every spelling of the amount key seen from CamerPay's report. */
+function rowAmount(row: TransactionReportEntry): number | undefined {
+  return row.Amount ?? row.montant ?? row.amount;
 }
 
 /**
@@ -731,6 +760,143 @@ export async function latestTransactionId(): Promise<number | null> {
     return null;
   }
 }
+/* ── The request ledger ─────────────────────────────────────────────────── */
+
+export interface CamerPayRequestRecord {
+  replyTo: string;
+  direction: "collect" | "payout";
+  phone: string;
+  amount: number;
+  afterId?: number | null;
+  startedAt?: string;
+  status: "pending" | "success" | "failed";
+}
+
+/**
+ * Remember an accepted request (the HTTP 202) under its `replyTo`.
+ *
+ * Called by the Server Actions the moment CamerPay returns a tracking id.
+ * This is the row the webhook will find when the callback arrives: the report
+ * never echoes `replyTo`, so a callback carrying only that id would otherwise
+ * have nothing to locate the report row by, and every confirmation would
+ * read as pending.
+ *
+ * Bookkeeping, never an authority on money: a write failure is logged and the
+ * request proceeds — the report remains the source of truth.
+ */
+export async function recordAcceptedRequest(input: {
+  replyTo: string;
+  direction: "collect" | "payout";
+  phone: string;
+  amount: number;
+  afterId?: number | null;
+  startedAt?: string;
+}): Promise<void> {
+  const replyTo = input.replyTo.trim();
+  if (!replyTo) return;
+
+  try {
+    const supabase = createAdminClient();
+    await supabase
+      .from("camerpay_requests")
+      .upsert(
+        {
+          reply_to: replyTo,
+          direction: input.direction,
+          phone: input.phone,
+          amount: input.amount,
+          after_id: input.afterId ?? null,
+          started_at: input.startedAt ?? new Date().toISOString(),
+          status: "pending",
+        },
+        { onConflict: "reply_to", ignoreDuplicates: true },
+      );
+  } catch (error) {
+    console.error("[camerpay] could not record accepted request", replyTo, error);
+  }
+}
+
+/** The ledger row for a `replyTo`, when the console wrote one. */
+export async function findRequestByReplyTo(replyTo: string): Promise<CamerPayRequestRecord | null> {
+  try {
+    const supabase = createAdminClient();
+    const { data, error } = await supabase
+      .from("camerpay_requests")
+      .select("reply_to, direction, phone, amount, after_id, started_at, status")
+      .eq("reply_to", replyTo)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      replyTo: data.reply_to,
+      direction: data.direction,
+      phone: data.phone,
+      amount: data.amount,
+      afterId: data.after_id,
+      startedAt: data.started_at,
+      status: data.status,
+    };
+  } catch (error) {
+    console.error("[camerpay] could not read request ledger", replyTo, error);
+    return null;
+  }
+}
+
+/**
+ * Write (or refresh) the ledger row for a confirmed `replyTo`.
+ *
+ * Every terminal outcome lands here, whether it was reached from the admin
+ * console or from a callback, so the record never claims a stale "pending".
+ * The row is created only when the facts needed to find the report row are
+ * actually known — a bare status without a number and an amount has nothing
+ * to be regenerated from, and must not displace the console's full record.
+ */
+async function persistResolution(
+  replyTo: string,
+  input: {
+    direction?: "collect" | "payout";
+    phone?: string;
+    amount?: number;
+    afterId?: number;
+    startedAt?: string;
+    status: "pending" | "success" | "failed";
+  },
+): Promise<void> {
+  if (!replyTo) return;
+
+  try {
+    const supabase = createAdminClient();
+    const { data: existing } = await supabase
+      .from("camerpay_requests")
+      .select("id")
+      .eq("reply_to", replyTo)
+      .maybeSingle();
+
+    if (existing) {
+      await supabase
+        .from("camerpay_requests")
+        .update({ status: input.status, updated_at: new Date().toISOString() })
+        .eq("id", existing.id);
+      return;
+    }
+
+    if (!input.phone || input.amount === undefined) return;
+
+    await supabase.from("camerpay_requests").insert({
+      reply_to: replyTo,
+      direction: input.direction ?? "collect",
+      phone: input.phone,
+      amount: input.amount,
+      after_id: input.afterId ?? null,
+      started_at: input.startedAt ?? new Date().toISOString(),
+      status: input.status,
+    });
+  } catch (error) {
+    console.error("[camerpay] could not persist resolution", replyTo, error);
+  }
+}
 
 export async function confirmTransaction(
   replyTo: string,
@@ -755,23 +921,54 @@ export async function confirmTransaction(
     (row) => row.ref === needle || row.replyTo === needle || String(row.id ?? "") === needle,
   );
 
-  const phone = hint.phone ? normalisePhone(hint.phone) : null;
-  const startedAt = hint.startedAt ? new Date(hint.startedAt).getTime() : null;
+  /**
+   * THE LEDGER, WHEN THE CALLER HAS NO FACTS.
+   *
+   * The browser session knows the number/amount/direction while a test is
+   * running. The webhook receives a callback carrying ONLY the `replyTo` —
+   * and the report never echoes it. So when a hint is missing any identifying
+   * fact, the request ledger (written when the 202 was accepted) supplies it,
+   * making the report row findable. Without this, every callback confirms as
+   * "pending" no matter what actually happened.
+   */
+  let effective = hint;
+  const needsFacts = !hint.phone || hint.amount === undefined || hint.direction === undefined;
+  if (needsFacts) {
+    const ledger = await findRequestByReplyTo(needle);
+    if (ledger) {
+      // Fill only what the caller omitted, so a partial hint (say, a phone
+      // typed into the Confirm panel) still gets the amount and direction the
+      // console recorded at initiation.
+      effective = {
+        phone: hint.phone ?? ledger.phone,
+        amount: hint.amount ?? ledger.amount,
+        direction: hint.direction ?? ledger.direction,
+        startedAt: hint.startedAt ?? ledger.startedAt ?? undefined,
+        afterId: hint.afterId ?? ledger.afterId ?? undefined,
+      };
+    }
+  }
+
+  const phone = effective.phone ? normalisePhone(effective.phone) : null;
+  const startedAt = effective.startedAt ? new Date(effective.startedAt).getTime() : null;
 
   const candidates = direct
     ? [direct]
     : rows
         .filter((row) => {
           if (phone) {
-            const rowPhone = row["customer number"] ?? row.number;
-            if (normalisePhone(String(rowPhone ?? "")) !== phone) return false;
+            // The report's customer-number key has appeared as "customer
+            // number", number, numero AND numeroClient across accounts and
+            // versions. Reading one spelling is how a correct row silently
+            // fails to match and a paid transaction reads as pending.
+            if (normalisePhone(rowPhone(row) ?? "") !== phone) return false;
           }
-          if (hint.amount !== undefined && (row.Amount ?? row.montant) !== hint.amount) return false;
-          if (hint.direction && !matchesDirection(row.action, hint.direction)) return false;
+          if (effective.amount !== undefined && rowAmount(row) !== effective.amount) return false;
+          if (effective.direction && !matchesDirection(row.action, effective.direction)) return false;
 
           // The precise test, when we have it: our row is above the counter as
           // it stood before we asked.
-          if (hint.afterId !== undefined && (row.id ?? 0) <= hint.afterId) return false;
+          if (effective.afterId !== undefined && (row.id ?? 0) <= effective.afterId) return false;
 
           /**
            * The date is only a COARSE guard, and only when there is no
@@ -780,7 +977,7 @@ export async function confirmTransaction(
            * Tightening it is how a correct row gets rejected on a server whose
            * clock sits in a different zone from Douala.
            */
-          if (hint.afterId === undefined && startedAt && row.date) {
+          if (effective.afterId === undefined && startedAt && row.date) {
             const TOLERANCE_MS = 6 * 60 * 60_000;
             if (new Date(row.date).getTime() < startedAt - TOLERANCE_MS) return false;
           }
@@ -791,27 +988,42 @@ export async function confirmTransaction(
 
   // Nothing identifiable. Never fall back to "the most recent row", which
   // would happily settle an invoice against an unrelated payment.
-  if (candidates.length === 0 || (!direct && !phone && hint.amount === undefined)) {
+  if (candidates.length === 0 || (!direct && !phone && effective.amount === undefined)) {
     return { status: "pending", searched: rows };
   }
 
   const match = candidates[0];
-  const amount = match.Amount ?? match.montant;
+  const amount = rowAmount(match);
 
-  if (match.used === true) return { status: "success", amount, raw: match };
-
-  // An explicit failure from the synchronous shape still wins if present.
-  if (match.etat === false) return { status: "failed", amount, raw: match };
-
-  if (match.used === false) {
+  let status: "success" | "failed" | "pending";
+  if (match.used === true) {
+    // The customer entered their PIN. Settled.
+    status = "success";
+  } else if (match.etat === false) {
+    // An explicit failure from the synchronous shape still wins if present.
+    status = "failed";
+  } else if (match.used === false) {
     const age = match.date ? Date.now() - new Date(match.date).getTime() : 0;
-    if (age > PENDING_GRACE_MS) {
-      // The PIN prompt is long gone. Row 110 in the live account looks exactly
-      // like this: requested, never confirmed, `ref` still null.
-      return { status: "failed", amount, raw: match };
-    }
-    return { status: "pending", amount, raw: match };
+    status = age > PENDING_GRACE_MS ? "failed" : "pending";
+    // The PIN prompt is long gone on the failed branch. Row 110 in the live
+    // account looks exactly like this: requested, never confirmed, ref null.
+  } else {
+    status = "pending";
   }
 
-  return { status: "pending", amount, raw: match };
+  // Persist the outcome — and, if this check started from a ledger row, the
+  // verdict — so the webhook and any later check carrying only the replyTo
+  // reach the same conclusion without the initiating browser session.
+  if (status !== "pending") {
+    await persistResolution(needle, {
+      direction: effective.direction ?? directionFor(match.action),
+      phone: effective.phone ?? rowPhone(match),
+      amount: amount ?? effective.amount,
+      afterId: effective.afterId,
+      startedAt: effective.startedAt,
+      status,
+    });
+  }
+
+  return { status, amount, raw: match };
 }

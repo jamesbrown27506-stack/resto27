@@ -31,7 +31,17 @@ interface CamerPayCallback {
   replyTo?: string;
   type?: string;
   etat?: boolean;
-  data?: { date?: string; numero?: string; message?: string; id?: number };
+  // The docs do not pin the payload shape, so `replyTo` and `etat` are
+  // accepted nested inside `data` as well as at the top level — a callback
+  // whose tracking id is missed is a callback that can never be confirmed.
+  data?: {
+    date?: string;
+    numero?: string;
+    message?: string;
+    id?: number;
+    replyTo?: string;
+    etat?: boolean;
+  };
 }
 
 /**
@@ -76,7 +86,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ received: true }, { status: 200 });
   }
 
-  const replyTo = body.replyTo ?? null;
+  // The tracking id can sit at the top level or inside data — accept both.
+  const replyTo = body.replyTo ?? body.data?.replyTo ?? null;
+  const claimed = body.etat ?? body.data?.etat;
 
   /**
    * Recorded FIRST, before any judgement about what it means.
@@ -87,12 +99,21 @@ export async function POST(request: NextRequest) {
    */
   const stored = await record({
     transactionId: replyTo ?? body.id ?? "unknown",
-    status: body.etat === true ? "claimed_success" : "claimed_failure",
+    status: claimed === true ? "claimed_success" : "claimed_failure",
     raw,
   });
 
-  if (!replyTo || body.type !== "EVENT") {
-    console.warn("[camerpay:webhook] ignored — missing replyTo or wrong type", body.type);
+  if (!replyTo) {
+    // Recorded above; a callback without a tracking id has nothing to confirm.
+    console.warn("[camerpay:webhook] ignored — no replyTo", body.type);
+    return NextResponse.json({ received: true }, { status: 200 });
+  }
+
+  // CamerPay's transaction result carries no documented `type` field, so only
+  // a type that is present AND clearly not a transaction event is ignored.
+  // Requiring `type === "EVENT"` dropped every real callback.
+  if (body.type && body.type !== "EVENT") {
+    console.warn("[camerpay:webhook] ignored — unexpected type", body.type);
     return NextResponse.json({ received: true }, { status: 200 });
   }
 
@@ -104,20 +125,24 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // confirmTransaction(replyTo) with NO hint: it reads the request ledger
+    // the console wrote when the 202 was accepted, so the report row is found
+    // by number/amount/direction — the report never echoes the replyTo that a
+    // callback carries. This is what actually resolves success/failed here.
     const confirmed = await confirmTransaction(replyTo);
 
     console.info(
       "[camerpay:webhook]",
       replyTo,
       "claimed:",
-      body.etat,
+      claimed,
       "confirmed:",
       confirmed.status,
     );
 
     // A callback claiming success that CamerPay does not corroborate is either
     // a race or a forgery. Both are worth seeing.
-    if (body.etat === true && confirmed.status !== "success") {
+    if (claimed === true && confirmed.status !== "success") {
       console.warn(
         "[camerpay:webhook] CLAIM NOT CORROBORATED —",
         replyTo,
