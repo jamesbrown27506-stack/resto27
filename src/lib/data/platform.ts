@@ -206,6 +206,82 @@ export async function listReportedReviews(): Promise<ReviewRow[]> {
   }));
 }
 
+/* ── Withdrawal fees ──────────────────────────────────────────────────── */
+
+export interface WithdrawalFeeSummary {
+  /** Total francs withheld since the first payout (migration 0022). */
+  totalFees: number;
+  /** How many payouts carried a fee. */
+  count: number;
+  /** Fees withheld since the start of this calendar month. */
+  thisMonthFees: number;
+  recent: {
+    id: string;
+    phone: string;
+    gross: number;
+    fee: number;
+    net: number;
+    createdAt: string;
+  }[];
+}
+
+/**
+ * The fee-revenue numbers behind the admin dashboard tile.
+ *
+ * One row per accepted payout that carried a fee, written by the payout
+ * action. Reads are service-role only, matching every other platform read.
+ * Fails soft: no ledger table yet means zeros, not an error page.
+ */
+export async function getWithdrawalFeeSummary(): Promise<WithdrawalFeeSummary> {
+  const supabase = createAdminClient();
+
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+
+  const [all, month, recent] = await Promise.all([
+    supabase.from("withdrawal_fees").select("fee"),
+    supabase.from("withdrawal_fees").select("fee").gte("created_at", monthStart.toISOString()),
+    supabase
+      .from("withdrawal_fees")
+      .select("id, phone, gross, fee, net, created_at")
+      .order("created_at", { ascending: false })
+      .limit(6),
+  ]);
+
+  const sum = (rows: { fee: number }[] | null) =>
+    (rows ?? []).reduce((acc, r) => acc + Number(r.fee), 0);
+
+  if (all.error || month.error || recent.error) {
+    console.warn(
+      "[data:withdrawal_fees] unavailable —",
+      all.error?.message ?? month.error?.message ?? recent.error?.message ?? "",
+    );
+    return { totalFees: 0, count: 0, thisMonthFees: 0, recent: [] };
+  }
+
+  return {
+    totalFees: sum(all.data),
+    count: (all.data ?? []).length,
+    thisMonthFees: sum(month.data),
+    recent: ((recent.data ?? []) as {
+      id: string;
+      phone: string;
+      gross: number;
+      fee: number;
+      net: number;
+      created_at: string;
+    }[]).map((r) => ({
+      id: r.id,
+      phone: r.phone,
+      gross: Number(r.gross),
+      fee: Number(r.fee),
+      net: Number(r.net),
+      createdAt: r.created_at,
+    })),
+  };
+}
+
 /* ── Support ───────────────────────────────────────────────────────────── */
 
 export interface SupportRow {
@@ -316,6 +392,7 @@ const EXPECTED_TABLES: { table: string; migration: string }[] = [
   { table: "commission_statements", migration: "0005" },
   { table: "plan_changes", migration: "0005" },
   { table: "push_subscriptions", migration: "0018" },
+  { table: "withdrawal_fees", migration: "0022" },
 ];
 
 /**

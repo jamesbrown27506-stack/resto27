@@ -116,7 +116,16 @@ export function NotificationBell() {
       </Button>
 
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-surface shadow-xl">
+        <div
+          className={cn(
+            "fixed inset-x-2 bottom-2 z-50 overflow-hidden rounded-lg border border-border bg-surface shadow-xl",
+            // Desktop: the anchored dropdown under the bell, as before. Mobile:
+            // a full-width bottom sheet — a narrow right-aligned dropdown on a
+            // phone is exactly what gets clipped and unreadable, so it becomes
+            // a sheet that is never off-screen, clear of the tab bar.
+            "lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:bottom-auto lg:mt-2 lg:w-[22rem] lg:max-w-[calc(100vw-2rem)]",
+          )}
+        >
           <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
             <p className="text-sm font-semibold">
               <span>{t("notif.title")}</span>
@@ -145,7 +154,7 @@ export function NotificationBell() {
               description={t("notif.emptyBody")}
             />
           ) : (
-            <ul className="max-h-[22rem] overflow-y-auto divide-y divide-border">
+            <ul className="max-h-[60dvh] overflow-y-auto divide-y divide-border lg:max-h-[22rem]">
               {items.map((n) => {
                 const Icon = ICONS[n.tone];
                 return (

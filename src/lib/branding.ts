@@ -25,6 +25,8 @@ export interface Branding {
   /** Absolute or site-relative URL, or null to fall back to the wordmark. */
   logoUrl: string | null;
   faviconUrl: string | null;
+  /** The PWA/home-screen icon (migration 0021), or null for the default. */
+  iconUrl: string | null;
   supportEmail: string;
 }
 
@@ -39,6 +41,7 @@ export const DEFAULT_BRANDING: Branding = {
   tagline: "Commandez vos plats préférés au Cameroun",
   logoUrl: null,
   faviconUrl: null,
+  iconUrl: null,
   supportEmail: "contact@restolink.cm",
 };
 
@@ -47,6 +50,7 @@ const KEYS = [
   "brand_tagline",
   "brand_logo_url",
   "brand_favicon_url",
+  "brand_icon_url",
   "support_email",
 ] as const;
 
@@ -79,6 +83,7 @@ export const getBranding = cache(async (): Promise<Branding> => {
     tagline: map.get("brand_tagline") || DEFAULT_BRANDING.tagline,
     logoUrl: map.get("brand_logo_url") || null,
     faviconUrl: map.get("brand_favicon_url") || null,
+    iconUrl: map.get("brand_icon_url") || null,
     supportEmail: map.get("support_email") || DEFAULT_BRANDING.supportEmail,
   };
 });

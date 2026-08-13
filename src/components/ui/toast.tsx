@@ -63,7 +63,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       <div
         aria-live="polite"
         aria-atomic="false"
-        className="pointer-events-none fixed inset-x-4 bottom-4 z-[9000] flex flex-col items-end gap-2 sm:inset-x-auto sm:right-6 sm:bottom-6"
+        // At the TOP, not the bottom: toasts announce themselves where the
+        // eye already is — above the content — and never collide with the
+        // mobile bottom tab bar or a sticky save bar.
+        className="pointer-events-none fixed inset-x-4 top-4 z-[9000] flex flex-col items-end gap-2 sm:inset-x-auto sm:right-6 sm:top-6"
       >
         {toasts.map(({ id, tone, message }) => {
           const Icon = ICONS[tone];
@@ -72,7 +75,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               key={id}
               className={cn(
                 "pointer-events-auto flex w-full items-start gap-2.5 rounded-md border px-4 py-3 shadow-md sm:w-auto sm:min-w-[280px] sm:max-w-md",
-                "animate-rise",
+                "animate-drop",
                 TONES[tone],
               )}
             >

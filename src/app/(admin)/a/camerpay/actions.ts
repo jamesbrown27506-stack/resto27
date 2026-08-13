@@ -2,6 +2,7 @@
 
 import { requireRole } from "@/lib/auth/session";
 import { MIN_AMOUNT_XAF } from "@/lib/payments/camerpay/client";
+import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 import { getWithdrawalFeeConfig } from "@/lib/data/settings";
 import {
   confirmTransaction,
@@ -17,6 +18,7 @@ import {
   recordAcceptedRequest,
   registerAccount,
   requestCollection,
+  recordWithdrawalFee,
   sendPayout,
   setCallbackUrl,
   validateAccount,
@@ -229,11 +231,9 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
     let fee = 0;
     let net = amount;
     if (feeConfig.enabled && feeConfig.percent > 0) {
-      // Whole francs — XAF has no decimals. Rounding is neutral (banker-style
-      // half-up), and the net check below refuses any case where the fee eats
-      // the whole payout.
-      fee = Math.round((gross * feeConfig.percent) / 100);
-      net = gross - fee;
+      // Whole francs — XAF has no decimals. The net check below refuses any
+      // case where the fee eats the whole payout.
+      ({ fee, net } = computeWithdrawalFee(gross, feeConfig.percent));
 
       if (fee >= gross) {
         return {
@@ -282,6 +282,19 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
           afterId: afterId ?? null,
           startedAt: new Date().toISOString(),
         });
+
+        // The withheld fee is the platform's revenue — one row per payout,
+        // whatever ends up on the dashboard. Best-effort like the rest of the
+        // bookkeeping: the fee is withheld regardless, this only records it.
+        if (fee > 0) {
+          await recordWithdrawalFee({
+            replyTo: response.data.replyTo,
+            phone,
+            gross,
+            fee,
+            net,
+          });
+        }
       }
 
       return {

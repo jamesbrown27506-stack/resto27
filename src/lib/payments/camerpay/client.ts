@@ -816,6 +816,35 @@ export async function recordAcceptedRequest(input: {
   }
 }
 
+/**
+ * Record a withheld withdrawal fee (migration 0022) — the platform's revenue.
+ *
+ * Called by the payout action at ACCEPTANCE time, once per payout that carried
+ * a fee. Bookkeeping, never an authority on money: a write failure is logged
+ * and the payout proceeds — the fee is still withheld either way, it is just
+ * missing from the dashboard sum.
+ */
+export async function recordWithdrawalFee(input: {
+  replyTo: string;
+  phone: string;
+  gross: number;
+  fee: number;
+  net: number;
+}): Promise<void> {
+  try {
+    const supabase = createAdminClient();
+    await supabase.from("withdrawal_fees").insert({
+      reply_to: input.replyTo,
+      phone: input.phone,
+      gross: input.gross,
+      fee: input.fee,
+      net: input.net,
+    });
+  } catch (error) {
+    console.error("[camerpay] could not record withdrawal fee", input.replyTo, error);
+  }
+}
+
 /** The ledger row for a `replyTo`, when the console wrote one. */
 export async function findRequestByReplyTo(replyTo: string): Promise<CamerPayRequestRecord | null> {
   try {

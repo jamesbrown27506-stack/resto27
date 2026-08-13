@@ -294,6 +294,23 @@
   animation: rl-rise 0.25s ease both;
 }
 
+/* Toasts appear at the TOP of the screen, so they drop in from above rather
+   than rising from below. */
+@keyframes rl-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility animate-drop {
+  animation: rl-drop 0.25s ease both;
+}
+
 @utility animate-fade {
   animation: rl-fade 0.2s ease both;
 }

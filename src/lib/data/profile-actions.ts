@@ -17,14 +17,25 @@ export interface UploadActionResult {
   error?: string;
 }
 
+/** The settings keys that hold an uploaded branding image. */
+export type BrandingAssetKey = "brand_logo_url" | "brand_favicon_url" | "brand_icon_url";
+
+/** A one-word name for each key, for audit summaries. */
+const BRANDING_ASSET_LABEL: Record<BrandingAssetKey, string> = {
+  brand_logo_url: "logo",
+  brand_favicon_url: "favicon",
+  brand_icon_url: "app icon",
+};
+
 /**
- * Upload a branding asset (logo or favicon) and write its URL into settings.
+ * Upload a branding asset (logo, favicon or PWA app icon) and write its URL
+ * into settings.
  *
  * Admin only. The file is validated by its bytes in `saveUpload` — the browser
  * does not get a vote on what it is.
  */
 export async function uploadBrandingAsset(
-  settingKey: "brand_logo_url" | "brand_favicon_url",
+  settingKey: BrandingAssetKey,
   formData: FormData,
 ): Promise<UploadActionResult> {
   const admin = await requireRole("admin");
@@ -50,20 +61,19 @@ export async function uploadBrandingAsset(
     action: "settings.branding_upload",
     entityType: "settings",
     entityId: settingKey,
-    summary: `Uploaded ${settingKey === "brand_logo_url" ? "logo" : "favicon"}`,
+    summary: `Uploaded ${BRANDING_ASSET_LABEL[settingKey]}`,
     metadata: { url: result.url, bytes: result.bytes, mime: result.mime },
   });
 
-  // Branding is read by every page, tab, email and share card (§9), so the
-  // whole layout is revalidated rather than just this route.
+  // Branding is read by every page, tab, email, the PWA manifest and the
+  // share cards (§9), so the whole layout is revalidated rather than just
+  // this route.
   revalidatePath("/", "layout");
   return { ok: true, url: result.url };
 }
 
 /** Clear a branding asset without uploading a replacement. */
-export async function clearBrandingAsset(
-  settingKey: "brand_logo_url" | "brand_favicon_url",
-): Promise<ActionResult> {
+export async function clearBrandingAsset(settingKey: BrandingAssetKey): Promise<ActionResult> {
   const admin = await requireRole("admin");
 
   const supabase = createAdminClient();
@@ -75,6 +85,7 @@ export async function clearBrandingAsset(
     action: "settings.branding_clear",
     entityType: "settings",
     entityId: settingKey,
+    summary: `Cleared ${BRANDING_ASSET_LABEL[settingKey]}`,
   });
 
   revalidatePath("/", "layout");

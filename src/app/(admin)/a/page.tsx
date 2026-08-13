@@ -1,13 +1,14 @@
 import Link from "next/link";
-import { Clock, Store, UserCog, Users } from "lucide-react";
+import { Banknote, Clock, Store, UserCog, Users } from "lucide-react";
 import { AdminPage } from "@/components/layout/admin-shell";
 import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatTile } from "@/components/ui/stat-tile";
-import { formatDate } from "@/lib/format/datetime";
+import { formatDate, formatDateTime } from "@/lib/format/datetime";
 import { getAdminOverview } from "@/lib/data/admin";
+import { getWithdrawalFeeSummary } from "@/lib/data/platform";
 import { requireRole } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +23,11 @@ export const dynamic = "force-dynamic";
  * with migrations 0005 (platform ops) and 0006 (orders).
  */
 export default async function AdminDashboard() {
-  const [admin, overview] = await Promise.all([requireRole("admin"), getAdminOverview()]);
+  const [admin, overview, fees] = await Promise.all([
+    requireRole("admin"),
+    getAdminOverview(),
+    getWithdrawalFeeSummary(),
+  ]);
 
   const firstName = admin.name.split(" ")[0];
 
@@ -62,10 +67,10 @@ export default async function AdminDashboard() {
           hint={`${overview.usersCustomers} customers · ${overview.usersManagers} owners`}
         />
         <StatTile
-          label="Administrators"
-          value={overview.usersAdmins}
-          icon={<UserCog />}
-          hint="Full platform access"
+          label="Fee revenue"
+          value={`${fees.totalFees.toLocaleString("fr-CM")} FCFA`}
+          icon={<Banknote />}
+          hint={`${fees.count} payout${fees.count === 1 ? "" : "s"} · ${fees.thisMonthFees.toLocaleString("fr-CM")} this month`}
           tone="primary"
         />
       </div>
@@ -109,6 +114,52 @@ export default async function AdminDashboard() {
                   >
                     Review
                   </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      </div>
+
+      {/*
+        The withdrawal fee is the platform's revenue (migration 0022) — this
+        is where it becomes visible instead of theory. Zero here means either
+        the fee is off or no payout has carried one yet; the tile above sums
+        the same rows.
+      */}
+      <div className="mt-6">
+        <Panel
+          title="Recent withdrawal fees"
+          description="One row per payout that withheld a fee — gross owed, fee kept, net sent."
+        >
+          {fees.recent.length === 0 ? (
+            <EmptyState
+              icon={<Banknote />}
+              title="No fees collected yet"
+              description="Payouts are free until the withdrawal fee is switched on in Settings → Payments, or until a payout carries one."
+            />
+          ) : (
+            <ul className="divide-y divide-border">
+              {fees.recent.map((f) => (
+                <li
+                  key={f.id}
+                  className="flex flex-wrap items-center gap-x-6 gap-y-1 px-5 py-4"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="tnum text-sm font-semibold">
+                      {f.gross.toLocaleString("fr-CM")} FCFA
+                      <span className="ml-2 font-normal text-text-light">→ {f.phone}</span>
+                    </p>
+                    <p className="tnum mt-0.5 text-xs text-text-light">
+                      {formatDateTime(f.createdAt)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="tnum text-sm font-semibold text-primary">
+                      +{f.fee.toLocaleString("fr-CM")} FCFA
+                    </p>
+                    <p className="tnum text-xs text-text-light">net {f.net.toLocaleString("fr-CM")} FCFA</p>
+                  </div>
                 </li>
               ))}
             </ul>

@@ -34,6 +34,7 @@ import {
 } from "./actions";
 import { TransactionWatcher } from "./transaction-watcher";
 import { cn } from "@/lib/utils";
+import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 
 function ResultLine({ result }: { result: ProbeResult }) {
   return (
@@ -334,12 +335,15 @@ export function CamerPayConsole({
   const payoutValue = Number(payoutAmount);
 
   // The withdrawal fee is a dial in settings (migration 0020). The console
-  // computes the same math the server action enforces at send time, so the
-  // numbers on screen are the numbers that will move. Fee = gross × %, rounded
-  // to whole francs; the recipient gets the net.
+  // computes the same math the server action enforces at send time — the one
+  // shared function (withdrawal-fee.ts) feeds both, so the numbers on screen
+  // are the numbers that will move. Fee = gross × %, rounded to whole francs;
+  // the recipient gets the net.
   const feeEnabled = withdrawalFee.enabled && withdrawalFee.percent > 0;
-  const payoutFee = feeEnabled ? Math.round((payoutValue * withdrawalFee.percent) / 100) : 0;
-  const payoutNet = payoutValue - payoutFee;
+  const { fee: payoutFee, net: payoutNet } = computeWithdrawalFee(
+    payoutValue,
+    feeEnabled ? withdrawalFee.percent : 0,
+  );
   const payoutValid =
     Number.isInteger(payoutValue) &&
     payoutValue >= 500 &&

@@ -61,7 +61,7 @@ const NOTIFICATION_SOUNDS = [
  *  URL for the preview, sent by Save alongside the text settings.
  * ─────────────────────────────────────────────────────────────────────────
  */
-const ASSET_KEY_LIST = ["brand_logo_url", "brand_favicon_url"] as const;
+const ASSET_KEY_LIST = ["brand_logo_url", "brand_favicon_url", "brand_icon_url"] as const;
 type AssetKey = (typeof ASSET_KEY_LIST)[number];
 
 const ASSET_KEYS: ReadonlySet<string> = new Set(ASSET_KEY_LIST);
@@ -264,6 +264,18 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
                 onSelect={(file) => selectAsset("brand_favicon_url", file)}
                 onUndo={() => undoAsset("brand_favicon_url")}
                 onRemove={() => removeAsset("brand_favicon_url")}
+              />
+
+              <ImageUpload
+                label="App icon (PWA)"
+                shape="square"
+                hint="The icon on the home screen and in the install prompt when someone installs the app — iOS uses it for the home screen and Web Push too. A square PNG or WebP, ideally 512×512."
+                previewUrl={previewOf("brand_icon_url")}
+                dirty={Boolean(assets.brand_icon_url)}
+                disabled={pending}
+                onSelect={(file) => selectAsset("brand_icon_url", file)}
+                onUndo={() => undoAsset("brand_icon_url")}
+                onRemove={() => removeAsset("brand_icon_url")}
               />
 
               {/*
