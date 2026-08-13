@@ -235,9 +235,12 @@ const SIMPLE_PROBES = {
 export function CamerPayConsole({
   suggestedCallback,
   build,
+  withdrawalFee,
 }: {
   suggestedCallback: string;
   build: string;
+  /** The withdrawal-fee dial (migration 0020), read by the server page. */
+  withdrawalFee: { enabled: boolean; percent: number };
 }) {
   const [section, setSection] = useState<SectionId>("auth");
   const [pending, startTransition] = useTransition();
@@ -329,8 +332,21 @@ export function CamerPayConsole({
     });
 
   const payoutValue = Number(payoutAmount);
+
+  // The withdrawal fee is a dial in settings (migration 0020). The console
+  // computes the same math the server action enforces at send time, so the
+  // numbers on screen are the numbers that will move. Fee = gross × %, rounded
+  // to whole francs; the recipient gets the net.
+  const feeEnabled = withdrawalFee.enabled && withdrawalFee.percent > 0;
+  const payoutFee = feeEnabled ? Math.round((payoutValue * withdrawalFee.percent) / 100) : 0;
+  const payoutNet = payoutValue - payoutFee;
   const payoutValid =
-    Number.isInteger(payoutValue) && payoutValue >= 500 && payoutValue <= 500_000;
+    Number.isInteger(payoutValue) &&
+    payoutValue >= 500 &&
+    payoutValue <= 500_000 &&
+    // With a fee, the SENT amount must still clear CamerPay's minimum — the
+    // server refuses exactly this case, so the button must refuse it first.
+    payoutNet >= 500;
 
   const amountValue = Number(amount);
   const amountValid = Number.isInteger(amountValue) && amountValue >= 500 && amountValue <= 500_000;
@@ -961,6 +977,16 @@ export function CamerPayConsole({
             </p>
           </div>
 
+          {feeEnabled && (
+            <div className="rounded-md border border-warning/30 bg-warning-light p-3 text-sm text-warning">
+              <span>
+                <strong>Withdrawal fee: {withdrawalFee.percent}%.</strong> Withheld from the amount
+                below — the recipient receives the net, the fee stays in the platform balance.
+                Pay-ins (<code className="font-mono text-xs">retrait</code>) are always free.
+              </span>
+            </div>
+          )}
+
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Destination number" htmlFor="po-phone" required hint="9 digits, starts with 6.">
               <Input
@@ -972,7 +998,12 @@ export function CamerPayConsole({
               />
             </Field>
 
-            <Field label="Amount (FCFA)" htmlFor="po-amount" required hint="500 minimum, 500 000 maximum.">
+            <Field
+              label="Amount the recipient is owed (FCFA)"
+              htmlFor="po-amount"
+              required
+              hint={`500 minimum, 500 000 maximum.${feeEnabled ? " The fee is withheld from this." : ""}`}
+            >
               <Input
                 id="po-amount"
                 type="number"
@@ -985,6 +1016,37 @@ export function CamerPayConsole({
               />
             </Field>
           </div>
+
+          {feeEnabled && Number.isFinite(payoutValue) && payoutValue > 0 && (
+            <div className="rounded-md border border-border bg-surface-2 p-3 text-sm">
+              <div className="flex items-baseline justify-between gap-4">
+                <span className="text-text-secondary">Recipient is owed (gross)</span>
+                <span className="tnum font-semibold">{payoutValue.toLocaleString("fr-CM")} FCFA</span>
+              </div>
+              <div className="mt-1 flex items-baseline justify-between gap-4">
+                <span className="text-text-secondary">Platform fee ({withdrawalFee.percent}%)</span>
+                <span className="tnum font-semibold text-text-light">
+                  − {payoutFee.toLocaleString("fr-CM")} FCFA
+                </span>
+              </div>
+              <div className="mt-2 flex items-baseline justify-between gap-4 border-t border-border pt-2">
+                <span className="font-semibold">Recipient receives</span>
+                <span
+                  className={cn(
+                    "tnum font-semibold",
+                    payoutNet >= 500 ? "text-success" : "text-error",
+                  )}
+                >
+                  {payoutNet.toLocaleString("fr-CM")} FCFA
+                </span>
+              </div>
+              {payoutNet > 0 && payoutNet < 500 && (
+                <p className="mt-2 text-xs text-error">
+                  Below CamerPay&apos;s 500 FCFA minimum after the fee — raise the amount.
+                </p>
+              )}
+            </div>
+          )}
 
           <Button
             variant="danger"
@@ -1001,7 +1063,9 @@ export function CamerPayConsole({
                     replyTo: id,
                     kind: "payout",
                     phone: payoutPhone,
-                    amount: payoutValue,
+                    // The NET is what left the balance — and what the watcher
+                    // needs to match the row in CamerPay's report.
+                    amount: result.fee?.net ?? payoutValue,
                     at: now.toLocaleTimeString(),
                     startedAt: now.toISOString(),
                     afterId: result.afterId,
@@ -1015,7 +1079,10 @@ export function CamerPayConsole({
             }
           >
             <Play className="size-4" aria-hidden />
-            <span>Send {payoutValid ? payoutValue.toLocaleString("fr-CM") : "…"} FCFA</span>
+            <span>
+              Send {payoutValid ? payoutNet.toLocaleString("fr-CM") : "…"} FCFA
+              {feeEnabled && payoutValid ? ` (${payoutFee.toLocaleString("fr-CM")} fee)` : ""}
+            </span>
           </Button>
 
           {results.payout && <ResultLine result={results.payout} />}

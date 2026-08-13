@@ -376,7 +376,7 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
       {/* Sticky, because these values are read across the whole app and an
           unsaved change should never be easy to walk away from. */}
       {dirtyCount > 0 && (
-        <div className="sticky bottom-4 mt-6 rounded-lg border border-primary bg-surface p-4 shadow-lg">
+        <div className="sticky bottom-4 z-50 mt-6 rounded-lg border border-primary bg-surface p-4 shadow-lg">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm">
               <strong className="font-semibold">{dirtyCount} unsaved change(s)</strong>

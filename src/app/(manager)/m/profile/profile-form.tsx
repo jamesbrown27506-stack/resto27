@@ -623,7 +623,7 @@ export function ProfileForm({
         scroll — on a phone the buttons are under the thumb the whole way down,
         and nothing on this page is ever reached by scrolling sideways.
       */}
-      <div className="sticky bottom-4 z-10 mt-6 rounded-lg border border-primary bg-surface p-4 shadow-lg">
+      <div className="sticky bottom-4 z-50 mt-6 rounded-lg border border-primary bg-surface p-4 shadow-lg">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <p className="text-sm font-semibold">

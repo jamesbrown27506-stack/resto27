@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { AdminPage } from "@/components/layout/admin-shell";
+import { getWithdrawalFeeConfig } from "@/lib/data/settings";
 import { CamerPayConsole } from "./console";
 
 export const dynamic = "force-dynamic";
@@ -23,12 +24,22 @@ export default async function CamerPayPage() {
     process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ??
     (process.env.NODE_ENV === "development" ? "dev" : "unknown");
 
+  // Read once per request (the page is force-dynamic) and handed down: the
+  // console shows the fee math live, and the server action re-reads the same
+  // rows when the payout actually fires, so display and execution cannot
+  // disagree even if the setting changes between render and click.
+  const withdrawalFee = await getWithdrawalFeeConfig();
+
   return (
     <AdminPage
       title="CamerPay"
       description="Mobile money integration — authentication, callbacks and live transaction tests."
     >
-      <CamerPayConsole suggestedCallback={suggested} build={build} />
+      <CamerPayConsole
+        suggestedCallback={suggested}
+        build={build}
+        withdrawalFee={withdrawalFee}
+      />
     </AdminPage>
   );
 }

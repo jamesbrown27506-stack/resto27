@@ -118,6 +118,57 @@ export async function fetchNotificationPreferences(
 }
 
 /**
+ * The withdrawal fee — the aggregator model made a dial (migration 0020).
+ *
+ * Pay-ins (`retrait` collections) are always free. Payouts (`depot` from the
+ * CamerPay console) withhold `percent` from what the recipient receives when
+ * `enabled` is true; the withheld amount stays in the platform balance.
+ *
+ * Read fresh on every call, never cached: the admin can flip this while the
+ * app is running and the console must show the same math the action executes.
+ * A missing row means the safe default — OFF — rather than an invented fee.
+ */
+export interface WithdrawalFeeConfig {
+  enabled: boolean;
+  /** Whole percentage points as written in settings, e.g. 1.5 for 1.5 %. */
+  percent: number;
+}
+
+export const WITHDRAWAL_FEE_FALLBACK: WithdrawalFeeConfig = {
+  enabled: false,
+  percent: 1.5,
+};
+
+export async function getWithdrawalFeeConfig(): Promise<WithdrawalFeeConfig> {
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("settings")
+    .select("key, value")
+    .in("key", ["withdrawal_fee_enabled", "withdrawal_fee_percent"]);
+
+  if (error) {
+    // Same fail-soft rule as the notification preferences: a settings outage
+    // must not break payouts. Off is the conservative answer — nobody is
+    // charged a fee their database row never asked for.
+    console.error("[settings:getWithdrawalFeeConfig]", error.message);
+    return WITHDRAWAL_FEE_FALLBACK;
+  }
+
+  const map = new Map(
+    ((data ?? []) as { key: string; value: string | null }[]).map((r) => [r.key, r.value ?? ""]),
+  );
+
+  const percent = Number(map.get("withdrawal_fee_percent"));
+
+  return {
+    enabled: map.get("withdrawal_fee_enabled") === "true",
+    // 0 or unparseable means no fee — same rule the console displays.
+    percent: Number.isFinite(percent) && percent > 0 ? percent : 0,
+  };
+}
+
+/**
  * Why the branch stopped taking orders, if it has.
  *
  * `is_accepting_orders` already rides on the branch context; only the sentence

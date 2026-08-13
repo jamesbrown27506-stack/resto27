@@ -1,6 +1,8 @@
 "use server";
 
 import { requireRole } from "@/lib/auth/session";
+import { MIN_AMOUNT_XAF } from "@/lib/payments/camerpay/client";
+import { getWithdrawalFeeConfig } from "@/lib/data/settings";
 import {
   confirmTransaction,
   getBalance,
@@ -47,6 +49,11 @@ export interface ProbeResult {
   request?: unknown;
   /** The raw response body, so support sees both halves of the exchange. */
   response?: unknown;
+  /**
+   * Present on a payout when the withdrawal fee is enabled: the gross the
+   * recipient is owed, the withheld fee, and the net actually sent.
+   */
+  fee?: { gross: number; fee: number; net: number };
 }
 
 function fail(label: string, error: unknown): ProbeResult {
@@ -204,26 +211,74 @@ export async function checkTransaction(
  * no longer contain the word "deposit" on both sides. This spends the balance
  * that collections built up: refunds, payouts to a restaurant, withdrawing to
  * your own number.
+ *
+ * WITHDRAWAL FEE (migration 0020): the `amount` argument is the GROSS — what
+ * the recipient is owed. When the fee is enabled, this action withholds
+ * `percent` of it and sends the net; the withheld francs stay in the platform
+ * balance, which is the revenue. The console only displays the math — this is
+ * where it is actually enforced, so a stale or edited client can never bypass
+ * the fee.
  */
 export async function probePayout(phone: string, amount: number): Promise<ProbeResult> {
   const admin = await requireRole("admin");
   try {
+    // The fee is read on the server, at send time — never trusted from the
+    // client. It may have been switched on or off since the page loaded.
+    const feeConfig = await getWithdrawalFeeConfig();
+    let gross = amount;
+    let fee = 0;
+    let net = amount;
+    if (feeConfig.enabled && feeConfig.percent > 0) {
+      // Whole francs — XAF has no decimals. Rounding is neutral (banker-style
+      // half-up), and the net check below refuses any case where the fee eats
+      // the whole payout.
+      fee = Math.round((gross * feeConfig.percent) / 100);
+      net = gross - fee;
+
+      if (fee >= gross) {
+        return {
+          ok: false,
+          label: "Payout",
+          detail: `The ${feeConfig.percent}% withdrawal fee (${fee} FCFA) is the whole amount — nothing would reach the recipient.`,
+        };
+      }
+      if (net < MIN_AMOUNT_XAF) {
+        return {
+          ok: false,
+          label: "Payout",
+          detail: `After the ${feeConfig.percent}% fee (${fee} FCFA), the recipient would get ${net} FCFA — below CamerPay's ${MIN_AMOUNT_XAF} FCFA minimum. Raise the amount.`,
+        };
+      }
+    }
+
     const afterId = await latestTransactionId();
-    const response = await sendPayout(phone, amount);
+    const response = await sendPayout(phone, net);
 
     if (response.httpStatus === 202 || response.etat) {
       const replyTo = response.data?.replyTo ?? "(none returned)";
-      console.info("[camerpay] payout requested", replyTo, amount, "by", admin.email);
+      console.info(
+        "[camerpay] payout requested",
+        replyTo,
+        "gross",
+        gross,
+        fee > 0 ? `fee ${fee}` : "no fee",
+        "net",
+        net,
+        "by",
+        admin.email,
+      );
 
       // The ledger is what lets a later check — and above all the webhook,
       // which receives a callback carrying only this replyTo — find the row
       // in the report by number/amount/direction. The report never echoes it.
+      // The NET is recorded: that is the amount the CamerPay report shows for
+      // this transaction, so the reconciler can match the row.
       if (response.data?.replyTo) {
         await recordAcceptedRequest({
           replyTo: response.data.replyTo,
           direction: "payout",
           phone,
-          amount,
+          amount: net,
           afterId: afterId ?? null,
           startedAt: new Date().toISOString(),
         });
@@ -232,10 +287,14 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
       return {
         ok: true,
         label: "Payout",
-        detail: `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — money is on its way OUT of your balance. Watch it settle below.`,
+        detail:
+          fee > 0
+            ? `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — ${net.toLocaleString("fr-CM")} FCFA sent (${fee.toLocaleString("fr-CM")} FCFA withdrawal fee withheld). Money is on its way OUT of your balance.`
+            : `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — money is on its way OUT of your balance. Watch it settle below.`,
         payload: response.data,
         request: response.request,
         afterId: afterId ?? undefined,
+        fee: fee > 0 ? { gross, fee, net } : undefined,
       };
     }
 

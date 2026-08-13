@@ -445,6 +445,14 @@ export async function runHealthChecks(): Promise<HealthGroup[]> {
       status: settingOf("service_charge_percent") ? "pass" : "warn",
     },
     {
+      name: "Withdrawal fee",
+      detail:
+        settingOf("withdrawal_fee_enabled") === "true"
+          ? `ON — payouts withhold ${settingOf("withdrawal_fee_percent") ?? "?"} % from what the recipient receives (migration 0020).`
+          : "Off — payouts are free. Setting it up: run migration 0020, then toggle on /a/settings → Payments.",
+      status: settingOf("withdrawal_fee_enabled") === "true" ? "pass" : "warn",
+    },
+    {
       name: "Subscription grace period",
       detail: settingOf("subscription_grace_days")
         ? `${settingOf("subscription_grace_days")} days after expiry before limits drop to Starter.`
