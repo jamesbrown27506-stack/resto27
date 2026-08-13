@@ -12,6 +12,7 @@
 
 import { billingDict } from "./dict/billing";
 import { categoriesDict } from "./dict/categories";
+import { chatDict } from "./dict/chat";
 import { commonDict } from "./dict/common";
 import { custAccountDict } from "./dict/cust-account";
 import { custAddressesDict } from "./dict/cust-addresses";
@@ -84,6 +85,7 @@ const baseFr = {
   "nav.m.tableOrder": "Commande en salle",
   "nav.m.reservations": "Réservations",
   "nav.m.tables": "Tables",
+  "nav.m.messages": "Messages",
   "nav.m.menu": "Menu",
   "nav.m.categories": "Catégories",
   "nav.m.promotions": "Promotions",
@@ -502,6 +504,14 @@ const baseFr = {
   "m.team.body": "Chacun n'accède qu'à ce que son rôle autorise, succursale par succursale.",
   "m.team.manage": "Gérer l'équipe",
 
+  "m.attention.title": "Requiert votre attention",
+  "m.attention.orders": "{count} commande(s) à traiter",
+  "m.attention.reservations": "{count} réservation(s) à confirmer",
+  "m.attention.lowStock": "{count} plat(s) en stock bas",
+  "m.attention.reviews": "{count} avis sans réponse",
+  "m.attention.empty": "Tout est à jour",
+  "m.attention.emptyBody": "Aucune action requise pour le moment.",
+
   /* -- Commandes ----------------------------------------------------- */
   "m.orders.title": "Commandes",
   "m.orders.subtitle": "La file du service, la plus urgente en premier.",
@@ -675,6 +685,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "nav.m.tableOrder": "Table order",
   "nav.m.reservations": "Reservations",
   "nav.m.tables": "Tables",
+  "nav.m.messages": "Messages",
   "nav.m.menu": "Menu",
   "nav.m.categories": "Categories",
   "nav.m.promotions": "Promotions",
@@ -1090,6 +1101,14 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "m.team.body": "Each person only reaches what their role allows, branch by branch.",
   "m.team.manage": "Manage the team",
 
+  "m.attention.title": "Needs your attention",
+  "m.attention.orders": "{count} order(s) to handle",
+  "m.attention.reservations": "{count} booking(s) to confirm",
+  "m.attention.lowStock": "{count} dish(es) low in stock",
+  "m.attention.reviews": "{count} review(s) awaiting a reply",
+  "m.attention.empty": "Everything is up to date",
+  "m.attention.emptyBody": "Nothing needs your attention right now.",
+
   /* -- Orders --------------------------------------------------------- */
   "m.orders.title": "Orders",
   "m.orders.subtitle": "The service queue, most urgent first.",
@@ -1244,6 +1263,7 @@ const fr = {
   ...baseFr,
   ...commonDict.fr,
   ...categoriesDict.fr,
+  ...chatDict.fr,
   ...menuDict.fr,
   ...modifiersDict.fr,
   ...customersDict.fr,
@@ -1275,6 +1295,7 @@ const en: Record<TranslationKey, string> = {
   ...baseEn,
   ...commonDict.en,
   ...categoriesDict.en,
+  ...chatDict.en,
   ...menuDict.en,
   ...modifiersDict.en,
   ...customersDict.en,

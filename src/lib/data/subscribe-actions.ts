@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
+import { notify } from "@/lib/notify";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -157,6 +158,20 @@ export async function choosePlan(
       summary: `${active.restaurantName} moved to ${plan.name} (free)`,
     });
 
+    await notify({
+      event: "billing",
+      tone: "info",
+      restaurantId: active.restaurantId,
+      href: "/m/billing",
+      params: { detail: `Vous êtes maintenant sur le forfait ${plan.name}.` },
+    });
+    await notify({
+      event: "new_subscription",
+      admins: true,
+      href: "/a/subscriptions",
+      params: { restaurantName: active.restaurantName, planName: plan.name },
+    });
+
     revalidatePath("/m", "layout");
     return { ok: true, note: `Vous êtes maintenant sur ${plan.name}.` };
   }
@@ -196,6 +211,16 @@ export async function choosePlan(
     console.error("[subscribe:choosePlan] invoice", error?.message);
     return { ok: false, error: "Impossible de créer la facture." };
   }
+
+  // The tenant is told the invoice is waiting — the single most missed step
+  // in paid onboarding is "you have to go pay now".
+  await notify({
+    event: "billing",
+    tone: "info",
+    restaurantId: active.restaurantId,
+    href: "/m/billing",
+    params: { detail: `Facture ${plan.name} (${invoice.amount} FCFA) à régler.` },
+  });
 
   return { ok: true, invoiceId: invoice.id, amount: invoice.amount };
 }
@@ -276,6 +301,20 @@ export async function startTrial(planId: string): Promise<ActionResult> {
     entityType: "subscription",
     entityId: subscription.id,
     summary: `${active.restaurantName} started a ${plan.trial_days}-day trial of ${plan.name}`,
+  });
+
+  await notify({
+    event: "billing",
+    tone: "success",
+    restaurantId: active.restaurantId,
+    href: "/m/billing",
+    params: { detail: `Essai gratuit de ${plan.trial_days} jours sur ${plan.name}.` },
+  });
+  await notify({
+    event: "new_subscription",
+    admins: true,
+    href: "/a/subscriptions",
+    params: { restaurantName: active.restaurantName, planName: plan.name },
   });
 
   revalidatePath("/m", "layout");

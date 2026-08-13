@@ -461,6 +461,8 @@ export interface BranchOverview {
   menuItems: number;
   unavailableItems: number;
   lowStockItems: number;
+  /** Reviews written by customers that the restaurant has not answered. */
+  unrepliedReviews: number;
   staffCount: number;
   averageRating: number;
   reviewCount: number;
@@ -483,19 +485,21 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
   const count = (table: string) =>
     supabase.from(table).select("*", { count: "exact", head: true }).eq("restaurant_id", restaurantId);
 
-  const [today, pending, reservations, items, unavailable, staff, restaurant] = await Promise.all([
-    supabase
-      .from("orders")
-      .select("total, status")
-      .eq("restaurant_id", restaurantId)
-      .gte("created_at", since),
-    count("orders").in("status", ["pending", "confirmed", "preparing"]),
-    count("reservations").eq("status", "pending"),
-    count("menu_items"),
-    count("menu_items").eq("is_available", false),
-    count("restaurant_staff").eq("status", "active"),
-    supabase.from("restaurants").select("rating, review_count").eq("id", restaurantId).maybeSingle(),
-  ]);
+  const [today, pending, reservations, items, unavailable, staff, unrepliedReviews, restaurant] =
+    await Promise.all([
+      supabase
+        .from("orders")
+        .select("total, status")
+        .eq("restaurant_id", restaurantId)
+        .gte("created_at", since),
+      count("orders").in("status", ["pending", "confirmed", "preparing"]),
+      count("reservations").eq("status", "pending"),
+      count("menu_items"),
+      count("menu_items").eq("is_available", false),
+      count("restaurant_staff").eq("status", "active"),
+      count("reviews").is("reply", null).is("removed_at", null),
+      supabase.from("restaurants").select("rating, review_count").eq("id", restaurantId).maybeSingle(),
+    ]);
 
   const todayRows = (today.data ?? []) as { total: number; status: string }[];
 
@@ -525,6 +529,7 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
     menuItems: items.count ?? 0,
     unavailableItems: unavailable.count ?? 0,
     lowStockItems,
+    unrepliedReviews: unrepliedReviews.count ?? 0,
     staffCount: staff.count ?? 0,
     averageRating: restaurant.data?.rating ?? 0,
     reviewCount: restaurant.data?.review_count ?? 0,

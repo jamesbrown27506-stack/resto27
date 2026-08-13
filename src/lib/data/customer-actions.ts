@@ -6,6 +6,7 @@ import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/session";
 import { canCustomerCancel } from "@/lib/format/order-status";
+import { notify } from "@/lib/notify";
 import type { ActionResult } from "./admin-actions";
 import type { CustomerPreferences } from "./customer";
 
@@ -30,7 +31,7 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
 
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, customer_id, status")
+    .select("id, customer_id, restaurant_id, reference, status")
     .eq("id", orderId)
     .eq("customer_id", user.id)
     .maybeSingle();
@@ -54,6 +55,15 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
     status: "cancelled",
     by_name: user.name,
     note: "Cancelled by customer",
+  });
+
+  // The branch needs to know the order they were about to cook is gone.
+  await notify({
+    event: "order_cancelled",
+    tone: "warning",
+    restaurantId: order.restaurant_id,
+    href: `/m/orders/${orderId}`,
+    params: { reference: order.reference, cancelledBy: "customer" },
   });
 
   revalidatePath("/orders");
@@ -145,6 +155,16 @@ export async function submitOwnReview(
   });
 
   if (insertError) return { ok: false, error: "La publication a échoué." };
+
+  // A review is a public word about the restaurant — the manager should hear
+  // about it the moment it lands.
+  await notify({
+    event: "review",
+    tone: "info",
+    restaurantId: order.restaurant_id,
+    href: "/m/reviews",
+    params: { rating, customerName: user.name },
+  });
 
   revalidatePath("/reviews");
   revalidatePath("/restaurants");
@@ -272,6 +292,15 @@ export async function createOwnReservation(input: z.infer<typeof ReservationSche
   });
 
   if (insertError) return { ok: false, error: "La demande n'a pas pu être envoyée." };
+
+  // A booking request is only real once someone at the restaurant has seen it.
+  await notify({
+    event: "reservation",
+    tone: "info",
+    restaurantId,
+    href: "/m/reservations",
+    params: { reference, customerName: user.name, partySize },
+  });
 
   revalidatePath("/reservations");
   revalidatePath("/account");
@@ -483,7 +512,12 @@ export async function saveOwnPreferences(prefs: CustomerPreferences): Promise<Ac
 
   const supabase = createAdminClient();
   const { error } = await supabase.from("customer_preferences").upsert(
-    { profile_id: user.id, notification_json: clean, updated_at: new Date().toISOString() },
+    {
+      profile_id: user.id,
+      notification_json: clean,
+      push_enabled: prefs.pushEnabled,
+      updated_at: new Date().toISOString(),
+    },
     { onConflict: "profile_id" },
   );
 

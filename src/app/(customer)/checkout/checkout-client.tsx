@@ -60,6 +60,7 @@ const ORDER_REASONS: Record<string, string> = {
   badSchedule: "La date de programmation est invalide.",
   scheduleTooSoon: "Choisissez un horaire à plus d'une minute.",
   scheduleTooFar: "La programmation est limitée à 7 jours.",
+  rateLimited: "Trop de commandes passées récemment. Réessayez dans quelques minutes.",
   failed: "La commande n'a pas pu être enregistrée. Réessayez.",
 };
 

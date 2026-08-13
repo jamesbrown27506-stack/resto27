@@ -7,6 +7,8 @@ import { getCurrentProfile } from "@/lib/auth/session";
 import { getCartConfig } from "@/lib/orders/cart-config";
 import { discountFor } from "@/lib/orders/promotions";
 import { computeTotals } from "@/lib/orders/totals";
+import { notify } from "@/lib/notify";
+import { rateLimit } from "@/lib/rate-limit";
 
 
 /**
@@ -68,6 +70,19 @@ const MAX_QTY_PER_LINE = 50;
 export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> {
   const supabase = createAdminClient();
 
+  // ── Rate limit ────────────────────────────────────────────────────────
+  // Placing an order is a real write: rows, a notification, an email, stock
+  // decrements. A script could drive it as a spam/DOS vector against a
+  // kitchen. 10 orders in 10 minutes per person/IP is beyond any human cadence.
+  const profile = await getCurrentProfile();
+  const limited = await rateLimit({
+    key: "checkout:place",
+    limit: 10,
+    windowMs: 10 * 60_000,
+    identifier: profile?.id,
+  });
+  if (!limited.ok) return { ok: false, reason: "rateLimited" };
+
   if (!input.lines?.length) return { ok: false, reason: "emptyBasket" };
   if (input.type !== "delivery" && input.type !== "pickup") {
     return { ok: false, reason: "badType" };
@@ -99,7 +114,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   const itemIds = [...new Set(input.lines.map((l) => l.menuItemId))];
   const { data: menuRows } = await supabase
     .from("menu_items")
-    .select("id, name, price, is_available, track_stock, stock_quantity")
+    .select("id, name, price, is_available, track_stock, stock_quantity, low_stock_threshold")
     // Scoped to THIS restaurant: without it, an id from another tenant's menu
     // would be priced and sold by a kitchen that has never heard of it.
     .eq("restaurant_id", input.restaurantId)
@@ -113,6 +128,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       is_available: boolean;
       track_stock: boolean;
       stock_quantity: number | null;
+      low_stock_threshold: number | null;
     }[]).map((m) => [m.id, m]),
   );
 
@@ -236,7 +252,6 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
 
   // ── Loyalty, re-validated ───────────────────────────────────────────────
   const config = await getCartConfig();
-  const profile = await getCurrentProfile();
 
   let pointsUsed = 0;
   let loyaltyValue = 0;
@@ -377,14 +392,34 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     note: "Order placed",
   });
 
+  const lowStockNotified = new Set<string>();
   for (const line of input.lines) {
     const item = menu.get(line.menuItemId);
     if (item?.track_stock && item.stock_quantity !== null) {
+      const remaining = Math.max(0, item.stock_quantity - line.quantity);
       await supabase
         .from("menu_items")
-        .update({ stock_quantity: Math.max(0, item.stock_quantity - line.quantity) })
+        .update({ stock_quantity: remaining })
         .eq("id", line.menuItemId)
         .eq("restaurant_id", input.restaurantId);
+
+      // Stock crossed its threshold because of THIS order → the branch should
+      // know, once per item, not once per line.
+      if (
+        item.low_stock_threshold !== null &&
+        remaining <= item.low_stock_threshold &&
+        item.stock_quantity > item.low_stock_threshold &&
+        !lowStockNotified.has(item.id)
+      ) {
+        lowStockNotified.add(item.id);
+        await notify({
+          event: "low_stock",
+          tone: "warning",
+          restaurantId: input.restaurantId,
+          href: "/m/menu",
+          params: { itemName: item.name, count: remaining },
+        });
+      }
     }
   }
 
@@ -434,6 +469,35 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
 
   revalidatePath("/orders");
   revalidatePath("/account");
+
+  // ── Notification triggers ────────────────────────────────────────────
+  // The order is written; everything below is news about it. Non-fatal.
+  await notify({
+    event: "new_order",
+    tone: "success",
+    restaurantId: input.restaurantId,
+    href: `/m/orders/${created.id}`,
+    params: {
+      reference: created.reference,
+      customerName: deliveryName,
+      amount: totals.total,
+    },
+  });
+
+  // Registered customers get a confirmation; guests have no profile to reach.
+  if (profile) {
+    await notify({
+      event: "order_status",
+      tone: "info",
+      customerId: profile.id,
+      href: `/orders/${created.id}`,
+      params: {
+        status: "pending",
+        reference: created.reference,
+        restaurantName: restaurant.name,
+      },
+    });
+  }
 
   return { ok: true, orderId: created.id, reference: created.reference };
 }

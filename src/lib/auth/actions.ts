@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import type { z } from "zod";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { siteUrl } from "@/lib/site-url";
+import { rateLimit } from "@/lib/rate-limit";
 import {
   forgotPasswordSchema,
   resetPasswordSchema,
@@ -107,6 +108,17 @@ function describeAuthError(error: { message?: string; status?: number }, context
  * we lost their registration.
  */
 export async function signIn(_prev: AuthState, formData: FormData): Promise<AuthState> {
+  // Brute force on the password field, throttled per IP before Supabase is
+  // even reached. 10 attempts in 5 minutes is generous for a human and a
+  // wall for a script.
+  const limited = await rateLimit({ key: "auth:signin", limit: 10, windowMs: 5 * 60_000 });
+  if (!limited.ok) {
+    return {
+      ok: false,
+      error: "Trop de tentatives. Réessayez dans quelques minutes.",
+    };
+  }
+
   const parsed = signInSchema.safeParse({
     email: formData.get("email"),
     password: formData.get("password"),
@@ -177,6 +189,13 @@ export async function signUpCustomer(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  // Account-creation spam: a handful of real people can register in an hour;
+  // a botnet can register thousands. Per IP, per hour.
+  const limited = await rateLimit({ key: "auth:signup-customer", limit: 5, windowMs: 60 * 60_000 });
+  if (!limited.ok) {
+    return { ok: false, error: "Trop d'inscriptions depuis cette adresse. Réessayez dans une heure." };
+  }
+
   const parsed = signUpCustomerSchema.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
@@ -260,6 +279,14 @@ export async function signUpRestaurant(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  // Each application creates an auth user AND a restaurant row — expensive
+  // writes an attacker could use to exhaust storage or flood the admin
+  // approval queue. Same budget as customer signup.
+  const limited = await rateLimit({ key: "auth:signup-restaurant", limit: 5, windowMs: 60 * 60_000 });
+  if (!limited.ok) {
+    return { ok: false, error: "Trop d'inscriptions depuis cette adresse. Réessayez dans une heure." };
+  }
+
   const parsed = signUpRestaurantSchema.safeParse({
     ownerName: formData.get("ownerName"),
     email: formData.get("email"),
@@ -436,6 +463,12 @@ export async function requestPasswordReset(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  // SMTP is the expensive resource here — a mail bomb costs us money per
+  // message. The response stays "ok: true" either way: revealing that we
+  // throttled would turn the limiter into an account-enumeration oracle.
+  const limited = await rateLimit({ key: "auth:reset", limit: 5, windowMs: 60 * 60_000 });
+  if (!limited.ok) return { ok: true, done: true };
+
   const parsed = forgotPasswordSchema.safeParse({ email: formData.get("email") });
 
   if (!parsed.success) {
@@ -468,6 +501,13 @@ export async function updatePassword(
 
   if (!parsed.success) {
     return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error) };
+  }
+
+  // A stolen reset link is a password-change oracle: anyone holding one can
+  // keep submitting new passwords until one sticks. Throttle per IP.
+  const limited = await rateLimit({ key: "auth:update-password", limit: 5, windowMs: 60 * 60_000 });
+  if (!limited.ok) {
+    return { ok: false, error: "Trop de tentatives. Réessayez dans une heure." };
   }
 
   const supabase = await createClient();

@@ -14,6 +14,14 @@ import { MANAGER_NAV, isActive } from "@/lib/nav";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { Branch } from "@/lib/branch-types";
+import { CountBadge, useManagerNavCounts } from "@/components/notifications/nav-counts";
+
+/** Which nav links carry a live "needs you" count. */
+const BADGED_LINKS: Record<string, "orders" | "reservations" | "messages"> = {
+  "/m/orders": "orders",
+  "/m/reservations": "reservations",
+  "/m/messages": "messages",
+};
 
 /**
  * Manager navigation, filtered twice over.
@@ -45,6 +53,7 @@ export function ManagerSidebar({
   const pathname = usePathname();
   const locked = activeBranch.subscriptionState === "locked";
   const planIsPaid = activeBranch.planTier !== "starter";
+  const navCounts = useManagerNavCounts(activeBranch.restaurantId);
 
   return (
     <div className="flex h-full flex-col">
@@ -85,12 +94,16 @@ export function ManagerSidebar({
                   const blocked = locked && !item.allowLocked;
                   const gated = item.planGated && !planIsPaid;
 
+                  const badgeKind = BADGED_LINKS[item.href];
+                  const badgeCount = badgeKind ? navCounts[badgeKind] : 0;
+
                   const content = (
                     <>
                       <NavIcon name={item.icon} className="size-4 shrink-0" />
                       <span className="flex-1 truncate">
                         {item.labelKey ? t(item.labelKey) : item.label}
                       </span>
+                      {!blocked && badgeCount > 0 && <CountBadge count={badgeCount} />}
                       {(blocked || gated) && (
                         <Lock className="size-3 shrink-0 opacity-60" aria-hidden />
                       )}

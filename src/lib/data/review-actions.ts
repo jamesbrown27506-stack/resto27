@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
+import { notify } from "@/lib/notify";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -69,6 +70,16 @@ export async function reportReview(reviewId: string, reason: string): Promise<Ac
     entityType: "review",
     entityId: reviewId,
     summary: `${active.restaurantName} reported a review: ${trimmed}`,
+  });
+
+  // Moderation is a human queue — the platform must know the moment a review
+  // was flagged, not when an admin happens to open the page.
+  await notify({
+    event: "moderation",
+    tone: "warning",
+    admins: true,
+    href: "/a/reviews",
+    params: { restaurantName: active.restaurantName, reason: trimmed },
   });
 
   revalidatePath("/m/reviews");

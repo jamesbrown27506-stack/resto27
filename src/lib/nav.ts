@@ -59,6 +59,8 @@ export const MANAGER_NAV: NavGroup[] = [
         capability: "reservations.view",
       },
       { href: "/m/tables", labelKey: "nav.m.tables", icon: "Armchair", capability: "tables.view" },
+      // No capability gate: every active staff member may answer customers.
+      { href: "/m/messages", labelKey: "nav.m.messages", icon: "MessageSquare" },
     ],
   },
   {
@@ -162,6 +164,7 @@ export const ADMIN_NAV: NavGroup[] = [
     items: [
       { href: "/a/reviews", label: "Reported reviews", icon: "Flag" },
       { href: "/a/support", label: "Support", icon: "LifeBuoy" },
+      { href: "/a/messages", label: "Messages", icon: "MessageSquare" },
       { href: "/a/broadcast", label: "Broadcast", icon: "Megaphone" },
       { href: "/a/notifications", label: "Notifications", icon: "Bell" },
     ],
@@ -189,6 +192,7 @@ export const ADMIN_NAV: NavGroup[] = [
  */
 export const CUSTOMER_NAV: NavItem[] = [
   { href: "/account", labelKey: "cac.title", icon: "LayoutDashboard" },
+  { href: "/messages", labelKey: "cmsg.title", icon: "MessageSquare" },
   { href: "/orders", labelKey: "cor.title", icon: "ReceiptText", matchPrefix: true },
   { href: "/reservations", labelKey: "crs.title", icon: "CalendarCheck" },
   { href: "/favorites", labelKey: "cfv.title", icon: "Heart" },

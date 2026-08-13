@@ -20,6 +20,9 @@ import { useToast } from "@/components/ui/toast";
 import { switchBranch } from "@/lib/data/manager-actions";
 import { can } from "@/lib/capabilities";
 import type { Branch } from "@/lib/branch-types";
+import { NotificationProvider } from "@/components/notifications/notification-provider";
+import { NotificationBell } from "@/components/notifications/notification-bell";
+import { useManagerNavCounts } from "@/components/notifications/nav-counts";
 
 /**
  * Manager chrome: sidebar, branch context, subscription banner.
@@ -56,13 +59,24 @@ export function ManagerShell({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [, startTransition] = useTransition();
 
+  // The "N orders need you" bubble on the bottom tab and the sidebar.
+  const navCounts = useManagerNavCounts(active.restaurantId);
+
   // The manager's own "back to the public site" is the FIRST bottom tab, and
   // the sidebar's way out is the brand mark. Dashboard home for the phone bar.
   const tabItems: TabItem[] = [
     { href: "/", icon: "Home", labelKey: "nav.site" },
     { href: "/m", icon: "LayoutDashboard", labelKey: "nav.m.dashboard" },
     ...(can(active.role, "orders.view")
-      ? [{ href: "/m/orders", icon: "ReceiptText", labelKey: "nav.m.orders", matchPrefix: true } as TabItem]
+      ? [
+          {
+            href: "/m/orders",
+            icon: "ReceiptText",
+            labelKey: "nav.m.orders",
+            matchPrefix: true,
+            badge: navCounts.orders,
+          } as TabItem,
+        ]
       : []),
     ...(can(active.role, "menu.view")
       ? [{ href: "/m/menu", icon: "UtensilsCrossed", labelKey: "nav.m.menu", matchPrefix: true } as TabItem]
@@ -70,6 +84,7 @@ export function ManagerShell({
     ...(can(active.role, "kitchen.display")
       ? [{ href: "/m/kitchen", icon: "ChefHat", labelKey: "nav.m.kitchen" } as TabItem]
       : []),
+    { href: "/m/messages", icon: "MessageSquare", labelKey: "nav.m.messages", badge: navCounts.messages },
   ];
 
   // Close the drawer on navigation — otherwise tapping a link leaves it open
@@ -183,6 +198,10 @@ export function ManagerShell({
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            <NotificationProvider>
+              <NotificationBell />
+            </NotificationProvider>
+
             {/* Theme and language live in the drawer below lg — the mobile bar
                 otherwise crowds the tenant name off the screen. */}
             <LocaleToggle className="hidden lg:inline-flex" />

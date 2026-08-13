@@ -10,6 +10,8 @@ import {
   setImpersonationCookie,
 } from "@/lib/auth/impersonation";
 import { trySendMail } from "@/lib/mail";
+import { notify } from "@/lib/notify";
+import { rateLimit } from "@/lib/rate-limit";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -116,40 +118,39 @@ export async function sendBroadcast(input: {
 }): Promise<ActionResult> {
   const admin = await requireRole("admin");
 
+  // A broadcast with email is thousands of SMTP sends in one click — the most
+  // expensive single action in the app. A compromised or angry admin account
+  // must not be able to burn the mail budget repeatedly.
+  const limited = await rateLimit({ key: "broadcast:send", limit: 5, windowMs: 60 * 60_000, identifier: admin.id });
+  if (!limited.ok) return { ok: false, error: "Broadcast rate limit reached. Try again in an hour." };
+
   if (input.subject.trim().length < 4) return { ok: false, error: "Subject is too short." };
   if (input.body.trim().length < 10) return { ok: false, error: "Message is too short." };
 
   const supabase = createAdminClient();
 
-  // Resolve the audience to actual profile ids, so the recorded recipient
-  // count is what was really delivered rather than an estimate shown earlier.
-  let recipientQuery = supabase.from("profiles").select("id").eq("status", "active");
-  if (input.audience === "managers") recipientQuery = recipientQuery.eq("role", "manager");
-  else if (input.audience === "customers") recipientQuery = recipientQuery.eq("role", "customer");
-  else if (input.audience === "admins") recipientQuery = recipientQuery.eq("role", "admin");
+  // The audience becomes a role list — the notify writer resolves it to active
+  // profiles itself, so the recorded count is what was really delivered.
+  const roles: ("manager" | "customer" | "admin")[] =
+    input.audience === "managers"
+      ? ["manager"]
+      : input.audience === "customers"
+        ? ["customer"]
+        : input.audience === "admins"
+          ? ["admin"]
+          : ["manager", "customer", "admin"];
 
-  const { data: recipients, error: readError } = await recipientQuery;
+  const result = await notify({
+    event: "broadcast",
+    roles,
+    params: { subject: input.subject.trim(), bodyText: input.body.trim() },
+    // In-app always (that is what the composer promises); email exactly when
+    // the admin asked for it; push follows each user's own preference.
+    channels: { inApp: true, email: input.sendEmail },
+  });
 
-  if (readError) {
-    console.error("[platform:sendBroadcast]", readError.message);
-    return { ok: false, error: "Could not resolve the audience." };
-  }
-
-  const ids = (recipients ?? []).map((r) => (r as { id: string }).id);
-  if (ids.length === 0) return { ok: false, error: "That audience has no active members." };
-
-  const { error: notifyError } = await supabase.from("notifications").insert(
-    ids.map((profileId) => ({
-      profile_id: profileId,
-      title: input.subject.trim(),
-      body: input.body.trim(),
-      tone: "info" as const,
-    })),
-  );
-
-  if (notifyError) {
-    console.error("[platform:sendBroadcast] notifications", notifyError.message);
-    return { ok: false, error: "Could not deliver the in-app notifications." };
+  if (result.delivered === 0) {
+    return { ok: false, error: "That audience has no active members." };
   }
 
   await supabase.from("broadcasts").insert({
@@ -157,18 +158,16 @@ export async function sendBroadcast(input: {
     body: input.body.trim(),
     audience: input.audience,
     channels: input.sendEmail ? "in_app,email" : "in_app",
-    recipient_count: ids.length,
+    recipient_count: result.delivered,
     sent_by_email: admin.email,
   });
 
   await writeAudit(admin, {
     action: "broadcast.send",
     entityType: "broadcast",
-    summary: `Sent "${input.subject.trim()}" to ${ids.length} ${input.audience}`,
+    summary: `Sent "${input.subject.trim()}" to ${result.delivered} ${input.audience}`,
   });
 
-  // Email delivery is not wired: no provider is configured yet, and the switch
-  // in the composer says so rather than silently doing nothing.
   revalidatePath("/a/broadcast");
   revalidatePath("/a/notifications");
   return { ok: true };
@@ -257,8 +256,78 @@ export async function removeReview(reviewId: string): Promise<ActionResult> {
 
 /* ── Support ───────────────────────────────────────────────────────────── */
 
+/**
+ * The public contact form (P14 finally wired).
+ *
+ * NOT an admin action — anyone may write to support. Guards, therefore, are
+ * the honeypot (a hidden field humans never fill), a per-IP rate limit that
+ * protects the SMTP budget, and a max length on every field. The address and
+ * subject are never echoed back into HTML unescaped — React escapes on
+ * render, and the support list renders with plain text, so stored XSS has no
+ * sink here.
+ */
+export async function submitSupportMessage(input: {
+  name: string;
+  email: string;
+  subject: string;
+  body: string;
+  /** The honeypot — any value means a bot. */
+  website?: string;
+}): Promise<ActionResult> {
+  // Bots fill the hidden field; pretending to succeed costs them nothing and
+  // tells them nothing.
+  if (input.website?.trim()) return { ok: true };
+
+  const limited = await rateLimit({ key: "support:submit", limit: 3, windowMs: 60 * 60_000 });
+  if (!limited.ok) {
+    return { ok: false, error: "Too many messages from this address. Try again in an hour." };
+  }
+
+  const name = String(input.name ?? "").trim().slice(0, 120);
+  const email = String(input.email ?? "").trim().toLowerCase().slice(0, 254);
+  const subject = String(input.subject ?? "").trim().slice(0, 160);
+  const body = String(input.body ?? "").trim().slice(0, 4000);
+
+  if (name.length < 2) return { ok: false, error: "Name is required." };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: "Email is invalid." };
+  if (subject.length < 4) return { ok: false, error: "Subject is too short." };
+  if (body.length < 10) return { ok: false, error: "Message is too short." };
+
+  const supabase = createAdminClient();
+  const headerList = await headers();
+
+  const { error } = await supabase.from("support_messages").insert({
+    name,
+    email,
+    subject,
+    body,
+    status: "open",
+    ip_address: headerList.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+  });
+
+  if (error) {
+    console.error("[support:submit]", error.message);
+    return { ok: false, error: "Could not send the message. Please try again." };
+  }
+
+  // The admin bell is the inbox; email follows each admin's own preferences.
+  await notify({
+    event: "support",
+    tone: "info",
+    admins: true,
+    href: "/a/support",
+    params: { customerName: name, subject },
+  });
+
+  return { ok: true };
+}
+
 export async function replyToSupport(messageId: string, reply: string): Promise<ActionResult> {
   const admin = await requireRole("admin");
+
+  // Each reply is also an outbound SMTP send; throttle the endpoint.
+  const limited = await rateLimit({ key: "support:reply", limit: 30, windowMs: 60 * 60_000, identifier: admin.id });
+  if (!limited.ok) return { ok: false, error: "Reply rate limit reached. Try again later." };
 
   if (reply.trim().length < 10) return { ok: false, error: "Reply is too short." };
 

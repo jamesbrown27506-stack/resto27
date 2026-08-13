@@ -4,6 +4,7 @@ import { AdminPage } from "@/components/layout/admin-shell";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
 import { runHealthChecks } from "@/lib/data/platform";
+import { NotificationTester } from "./notification-tester";
 import { StorageProbe } from "./storage-probe";
 
 export const dynamic = "force-dynamic";
@@ -69,9 +70,17 @@ export default async function DiagnosticsPage() {
               <span>Open the CamerPay console</span>
             </Link>
           </CardBody>
+        </Panel>        <Panel
+          title="Notifications"
+          description="Exercise the whole delivery pipeline — in-app bell, toast, sound, email and push."
+        >
+          <NotificationTester />
         </Panel>
 
-        <Panel title="Database" description="Reachability and schema completeness.">
+        <Panel
+          title="Database"
+          description="Reachability and schema completeness."
+        >
           <CardBody className="flex flex-col gap-4">
             <p className="text-sm text-text-secondary">
               <strong className="text-text">

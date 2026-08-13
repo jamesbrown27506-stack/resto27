@@ -533,6 +533,8 @@ export interface CustomerPreferences {
   reservations: boolean;
   loyalty: boolean;
   promotions: boolean;
+  /** Master push switch — delivery is per-event, like the manager side. */
+  pushEnabled: boolean;
 }
 
 export const CUSTOMER_PREFERENCES_DEFAULT: CustomerPreferences = {
@@ -540,6 +542,7 @@ export const CUSTOMER_PREFERENCES_DEFAULT: CustomerPreferences = {
   reservations: true,
   loyalty: true,
   promotions: false,
+  pushEnabled: true,
 };
 
 /** The stored notification prefs, or the defaults when no row exists yet. */
@@ -550,14 +553,15 @@ export async function fetchCustomerPreferences(
 
   const { data, error } = await supabase
     .from("customer_preferences")
-    .select("notification_json")
+    .select("notification_json, push_enabled")
     .eq("profile_id", profileId)
     .maybeSingle();
 
   if (error || !data) return CUSTOMER_PREFERENCES_DEFAULT;
 
-  const stored = (data as { notification_json: unknown }).notification_json;
-  if (typeof stored !== "object" || stored === null) return CUSTOMER_PREFERENCES_DEFAULT;
+  const row = data as { notification_json: unknown; push_enabled: boolean | null };
+  const stored = row.notification_json;
+  if (typeof stored !== "object" || stored === null) return { ...CUSTOMER_PREFERENCES_DEFAULT, pushEnabled: row.push_enabled !== false };
 
   const obj = stored as Record<string, unknown>;
   return {
@@ -565,5 +569,6 @@ export async function fetchCustomerPreferences(
     reservations: typeof obj.reservations === "boolean" ? obj.reservations : true,
     loyalty: typeof obj.loyalty === "boolean" ? obj.loyalty : true,
     promotions: typeof obj.promotions === "boolean" ? obj.promotions : false,
+    pushEnabled: row.push_enabled !== false,
   };
 }

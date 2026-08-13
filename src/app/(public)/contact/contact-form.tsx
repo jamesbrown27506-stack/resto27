@@ -1,32 +1,46 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
+import { submitSupportMessage } from "@/lib/data/platform-actions";
 
 /**
  * Support form → `support_messages` (§14.1).
  *
  * The honeypot is a real field, visually hidden and out of the tab order, that
- * humans never fill. Server-side this must be paired with CSRF and a per-IP
- * rate limit (P3) — a honeypot alone stops naive bots, nothing more.
+ * humans never fill — the server discards any submission that contains one.
+ * Server-side there is also a per-IP rate limit (P3); a honeypot alone stops
+ * naive bots, nothing more.
  */
 export function ContactForm() {
   const { toast } = useToast();
-  const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [pending, startTransition] = useTransition();
 
-  function onSubmit(e: React.FormEvent) {
+  function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSending(true);
-    // Fixture behaviour. Becomes a Server Action in P14.
-    window.setTimeout(() => {
-      setSending(false);
-      setSent(true);
-      toast("Message envoyé. Nous répondons sous 24 heures.", "success");
-    }, 700);
+    const form = e.currentTarget;
+    const data = new FormData(form);
+
+    startTransition(async () => {
+      const result = await submitSupportMessage({
+        name: String(data.get("name") ?? ""),
+        email: String(data.get("email") ?? ""),
+        subject: String(data.get("subject") ?? ""),
+        body: String(data.get("body") ?? ""),
+        website: String(data.get("website") ?? ""),
+      });
+
+      if (result.ok) {
+        setSent(true);
+        toast("Message envoyé. Nous répondons sous 24 heures.", "success");
+      } else {
+        toast(result.error ?? "Impossible d'envoyer le message.", "error");
+      }
+    });
   }
 
   if (sent) {
@@ -75,7 +89,7 @@ export function ContactForm() {
         <input id="c-website" name="website" tabIndex={-1} autoComplete="off" />
       </div>
 
-      <Button type="submit" size="lg" loading={sending} className="self-start">
+      <Button type="submit" size="lg" loading={pending} disabled={pending} className="self-start">
         <Send className="size-4" aria-hidden />
         Envoyer le message
       </Button>

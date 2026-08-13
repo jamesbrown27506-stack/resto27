@@ -315,6 +315,7 @@ const EXPECTED_TABLES: { table: string; migration: string }[] = [
   { table: "refunds", migration: "0005" },
   { table: "commission_statements", migration: "0005" },
   { table: "plan_changes", migration: "0005" },
+  { table: "push_subscriptions", migration: "0018" },
 ];
 
 /**

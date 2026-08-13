@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability, setActiveBranch } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
 import { trySendMail } from "@/lib/mail";
+import { notify } from "@/lib/notify";
 import type { BranchRole } from "@/lib/capabilities";
 import type { ActionResult } from "./admin-actions";
 
@@ -796,6 +797,13 @@ export async function decideReservation(
   }
 
   const supabase = createAdminClient();
+  const { data: reservation } = await supabase
+    .from("reservations")
+    .select("id, reference, customer_id, guest_name")
+    .eq("id", reservationId)
+    .eq("restaurant_id", active.restaurantId)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("reservations")
     .update({
@@ -809,6 +817,23 @@ export async function decideReservation(
     .eq("restaurant_id", active.restaurantId);
 
   if (error) return { ok: false, error: "Could not save the decision." };
+
+  // The guest hears the verdict — and a refusal must never arrive without the
+  // reason the restaurant was forced to give.
+  if (reservation?.customer_id) {
+    await notify({
+      event: "reservation_decision",
+      tone: decision === "confirmed" ? "success" : "error",
+      customerId: reservation.customer_id,
+      href: "/reservations",
+      params: {
+        reference: reservation.reference,
+        restaurantName: active.restaurantName,
+        status: decision as "confirmed" | "cancelled",
+        reason: decision === "cancelled" ? input.reason?.trim() : undefined,
+      },
+    });
+  }
 
   revalidatePath("/m/reservations");
   return { ok: true };
@@ -927,11 +952,23 @@ export async function replyToReview(reviewId: string, reply: string): Promise<Ac
     .eq("id", reviewId)
     .eq("restaurant_id", active.restaurantId)
     .is("removed_at", null)
-    .select("id");
+    .select("id, customer_id");
 
   if (error) return { ok: false, error: "Could not post the reply." };
   if ((data ?? []).length === 0) {
     return { ok: false, error: "That review is no longer available." };
+  }
+
+  // The reviewer is told their word was heard.
+  const replied = (data as { id: string; customer_id: string | null }[])[0];
+  if (replied?.customer_id) {
+    await notify({
+      event: "review_reply",
+      tone: "success",
+      customerId: replied.customer_id,
+      href: "/reviews",
+      params: { restaurantName: active.restaurantName, reply: reply.trim() },
+    });
   }
 
   revalidatePath("/m/reviews");

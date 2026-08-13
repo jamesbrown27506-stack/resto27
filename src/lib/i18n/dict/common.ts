@@ -113,6 +113,31 @@ export const commonDict = defineDict({
      */
     "common.quoted": "« {text} »",
     "common.accountNav": "Navigation du compte",
+
+    /* The notification bell — shared by every shell. */
+    "notif.title": "Notifications",
+    "notif.unreadCount": "{count} non lue(s)",
+    "notif.markAllRead": "Tout lire",
+    "notif.empty": "Aucune notification",
+    "notif.emptyBody": "Les événements vous concernant apparaîtront ici.",
+
+    /* The install / notification-permission banners — shown automatically
+       until accepted or dismissed (dismissals cool down for one hour). */
+    "pwa.install.title": "Installez {name}",
+    "pwa.install.body":
+      "Ajoutez {name} à votre écran d'accueil : lancement rapide et plein écran, comme une vraie application.",
+    "pwa.install.action": "Installer",
+    "pwa.install.ios": "Sur iPhone/iPad : touchez Partager, puis « Sur l'écran d'accueil ».",
+    "pwa.notif.title": "Activez les notifications",
+    "pwa.notif.body":
+      "Soyez alerté des commandes et réservations, même quand l'onglet est fermé.",
+    "pwa.notif.action": "Activer",
+    "pwa.notif.enabled": "Notifications activées sur cet appareil.",
+    "pwa.notif.failed": "Impossible d'activer les notifications.",
+    "pwa.notif.denied":
+      "Les notifications sont bloquées par le navigateur. Autorisez-les dans les réglages du site pour recevoir les alertes.",
+    "pwa.later": "Plus tard",
+    "pwa.dismiss": "Fermer",
   },
   en: {
     "common.search": "Search…",
@@ -195,5 +220,29 @@ export const commonDict = defineDict({
 
     "common.quoted": "“{text}”",
     "common.accountNav": "Account navigation",
+
+    /* The notification bell — shared by every shell. */
+    "notif.title": "Notifications",
+    "notif.unreadCount": "{count} unread",
+    "notif.markAllRead": "Mark all as read",
+    "notif.empty": "No notifications",
+    "notif.emptyBody": "Events concerning you will appear here.",
+
+    /* The install / notification-permission banners — shown automatically
+       until accepted or dismissed (dismissals cool down for one hour). */
+    "pwa.install.title": "Install {name}",
+    "pwa.install.body":
+      "Add {name} to your home screen for quick, full-screen launches — just like a real app.",
+    "pwa.install.action": "Install",
+    "pwa.install.ios": "On iPhone/iPad: tap Share, then “Add to Home Screen”.",
+    "pwa.notif.title": "Enable notifications",
+    "pwa.notif.body": "Get order and booking alerts even when this tab is closed.",
+    "pwa.notif.action": "Enable",
+    "pwa.notif.enabled": "Notifications enabled on this device.",
+    "pwa.notif.failed": "Could not enable notifications.",
+    "pwa.notif.denied":
+      "Notifications are blocked by your browser. Allow them in the site settings to receive alerts.",
+    "pwa.later": "Later",
+    "pwa.dismiss": "Close",
   },
 });

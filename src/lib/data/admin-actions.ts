@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth/session";
 import { writeAudit } from "./platform-actions";
 import { trySendMail } from "@/lib/mail";
+import { notify } from "@/lib/notify";
 import { absoluteUrl } from "@/lib/site-url";
 import { getBranding } from "@/lib/branding";
 
@@ -209,6 +210,17 @@ export async function setRestaurantStatus(
     note = "Approved. No owner is attached to this restaurant, so nobody was emailed.";
   }
 
+  // The owner sees the verdict in-app (the approval email above already went
+  // out separately, so it is in-app only for that one action).
+  await notify({
+    event: "approval",
+    tone: action === "suspend" ? "error" : "success",
+    restaurantId,
+    href: "/m",
+    params: { restaurantName: restaurant?.name ?? undefined, status },
+    email: action !== "approve", // approval's custom email carries the login link
+  });
+
   revalidatePath("/a/restaurants");
   revalidatePath("/a");
   revalidatePath("/restaurants");
@@ -266,6 +278,14 @@ export async function suspendUser(profileId: string): Promise<ActionResult> {
     summary: "Account suspended and refresh tokens revoked",
   });
 
+  // Suspension without explanation is how platforms lose users forever.
+  await notify({
+    event: "account",
+    tone: "error",
+    customerId: profileId,
+    params: { status: "suspended" },
+  });
+
   revalidatePath("/a/users");
   revalidatePath("/a");
   return { ok: true };
@@ -292,6 +312,13 @@ export async function reinstateUser(profileId: string): Promise<ActionResult> {
     action: "user.reinstate",
     entityType: "profile",
     entityId: profileId,
+  });
+
+  await notify({
+    event: "account",
+    tone: "success",
+    customerId: profileId,
+    params: { status: "active" },
   });
 
   revalidatePath("/a/users");

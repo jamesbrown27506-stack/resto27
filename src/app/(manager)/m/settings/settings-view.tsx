@@ -11,6 +11,7 @@ import { Field, Switch, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { setAcceptingOrders } from "@/lib/data/manager-actions";
 import { saveNotificationPreferences } from "@/lib/data/settings-actions";
+import { PushToggle } from "@/components/notifications/push-toggle";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { NotificationEventKey, NotificationPreference } from "@/lib/data/settings";
@@ -56,16 +57,18 @@ export function SettingsView({
 
   const dirty = draft.some((d) => {
     const saved = preferences.find((p) => p.key === d.key);
-    return !saved || saved.inApp !== d.inApp || saved.email !== d.email;
+    return !saved || saved.inApp !== d.inApp || saved.email !== d.email || saved.push !== d.push;
   });
 
-  function setChannel(key: NotificationEventKey, channel: "inApp" | "email", value: boolean) {
+  function setChannel(key: NotificationEventKey, channel: "inApp" | "email" | "push", value: boolean) {
     setDraft((current) =>
       current.map((p) => {
         // Locked events refuse the change here too, so the draft can never
         // even hold a silenced value to post.
         if (p.key !== key || p.locked) return p;
-        return channel === "inApp" ? { ...p, inApp: value } : { ...p, email: value };
+        if (channel === "inApp") return { ...p, inApp: value };
+        if (channel === "email") return { ...p, email: value };
+        return { ...p, push: value };
       }),
     );
   }
@@ -73,7 +76,7 @@ export function SettingsView({
   function save() {
     startSaving(async () => {
       const result = await saveNotificationPreferences(
-        draft.map((p) => ({ key: p.key, inApp: p.inApp, email: p.email })),
+        draft.map((p) => ({ key: p.key, inApp: p.inApp, email: p.email, push: p.push })),
       );
       // The action's own message is server-side English. Both failures here are
       // "it did not save", with no per-case detail worth surfacing, so the
@@ -161,7 +164,7 @@ export function SettingsView({
         {/* The column headers only exist once the row IS a row. Below md each
             switch carries its own word instead. */}
         <div
-          className="hidden border-b border-border px-5 py-3 md:grid md:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem] md:items-center md:gap-4"
+          className="hidden border-b border-border px-5 py-3 md:grid md:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_6.5rem] md:items-center md:gap-4"
           aria-hidden
         >
           <span className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
@@ -173,6 +176,9 @@ export function SettingsView({
           <span className="text-center text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
             {t("mset.notif.email")}
           </span>
+          <span className="text-center text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
+            {t("mset.notif.push")}
+          </span>
         </div>
 
         <ul className="divide-y divide-border">
@@ -182,7 +188,7 @@ export function SettingsView({
             return (
               <li
                 key={pref.key}
-                className="grid gap-3.5 p-4 sm:p-5 md:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem] md:items-center md:gap-4"
+                className="grid gap-3.5 p-4 sm:p-5 md:grid-cols-[minmax(0,1fr)_6.5rem_6.5rem_6.5rem] md:items-center md:gap-4"
               >
                 <div className="min-w-0">
                   <p className="text-sm font-medium">
@@ -224,6 +230,16 @@ export function SettingsView({
                     disabled={pref.locked || saving}
                     onChange={(value) => setChannel(pref.key, "email", value)}
                   />
+                  <ChannelSwitch
+                    label={t("mset.notif.push")}
+                    ariaLabel={t("mset.notif.channel", {
+                      event: name,
+                      channel: t("mset.notif.push"),
+                    })}
+                    checked={pref.push}
+                    disabled={pref.locked || saving}
+                    onChange={(value) => setChannel(pref.key, "push", value)}
+                  />
                 </div>
               </li>
             );
@@ -244,6 +260,13 @@ export function SettingsView({
           >
             <span>{t("common.save")}</span>
           </Button>
+        </div>
+      </Panel>
+
+      {/* ── Push on this device ─────────────────────────────────────── */}
+      <Panel title={t("mset.push.title")} description={t("mset.push.body")}>
+        <div className="p-5">
+          <PushToggle tPrefix="mset" />
         </div>
       </Panel>
 

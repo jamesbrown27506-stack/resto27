@@ -57,6 +57,7 @@ export const settingsDict = defineDict({
     "mset.notif.event": "Événement",
     "mset.notif.inApp": "Dans l'app",
     "mset.notif.email": "Email",
+    "mset.notif.push": "Push",
     "mset.notif.locked": "Toujours actif",
     "mset.notif.lockedBody":
       "Les alertes de commande et de facturation ne peuvent pas être désactivées.",
@@ -64,6 +65,18 @@ export const settingsDict = defineDict({
     "mset.notif.saved": "Préférences enregistrées.",
     "mset.notif.nothingToSave": "Aucune modification à enregistrer.",
     "mset.notif.failed": "Impossible d'enregistrer vos préférences. Réessayez.",
+
+    /* -- Notifications push (cet appareil) ------------------------------ */
+    "mset.push.title": "Notifications sur cet appareil",
+    "mset.push.body":
+      "Recevez les alertes de commande même lorsque la fenêtre est fermée.",
+    "mset.push.enable": "Activer",
+    "mset.push.disable": "Désactiver",
+    "mset.push.enabled": "Activées sur cet appareil",
+    "mset.push.unsupported": "Non pris en charge par ce navigateur.",
+    "mset.push.denied":
+      "Bloquées par le navigateur. Autorisez-les dans les réglages du site.",
+    "mset.push.failed": "Impossible d'activer les notifications sur cet appareil.",
 
     "mset.evt.new_order": "Nouvelle commande",
     "mset.evtBody.new_order": "Dès qu'une commande arrive.",
@@ -120,12 +133,23 @@ export const settingsDict = defineDict({
     "mset.notif.event": "Event",
     "mset.notif.inApp": "In-app",
     "mset.notif.email": "Email",
+    "mset.notif.push": "Push",
     "mset.notif.locked": "Always on",
     "mset.notif.lockedBody": "Order and billing alerts cannot be switched off.",
     "mset.notif.channel": "{event} — {channel}",
     "mset.notif.saved": "Preferences saved.",
     "mset.notif.nothingToSave": "Nothing changed to save.",
     "mset.notif.failed": "Could not save your preferences. Try again.",
+
+    /* -- Push notifications (this device) ------------------------------ */
+    "mset.push.title": "Notifications on this device",
+    "mset.push.body": "Get order alerts even when the tab is closed.",
+    "mset.push.enable": "Enable",
+    "mset.push.disable": "Disable",
+    "mset.push.enabled": "Enabled on this device",
+    "mset.push.unsupported": "Not supported by this browser.",
+    "mset.push.denied": "Blocked by the browser. Allow them in the site settings.",
+    "mset.push.failed": "Could not enable notifications on this device.",
 
     "mset.evt.new_order": "New order",
     "mset.evtBody.new_order": "The moment an order comes in.",

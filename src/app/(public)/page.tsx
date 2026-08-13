@@ -84,7 +84,10 @@ export default async function HomePage() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+        // JSON.stringify does not escape '<' — see the restaurant page for the
+        // full reasoning. Escaping it keeps admin-set strings (brand name)
+        // from ever closing this tag.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD).replace(/</g, "\\u003c") }}
       />
       <HomeContent
         plans={plans}

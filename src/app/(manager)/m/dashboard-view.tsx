@@ -53,9 +53,11 @@ export function DashboardView({
     ordersToday: number;
     revenueToday: number;
     pendingOrders: number;
+    pendingReservations: number;
+    lowStockItems: number;
+    unrepliedReviews: number;
     menuItems: number;
     unavailableItems: number;
-    lowStockItems: number;
     staffCount: number;
     averageRating: number;
     reviewCount: number;
@@ -87,6 +89,39 @@ export function DashboardView({
             <span className="opacity-85">{t("m.pending.body")}</span>
           </p>
         </div>
+      )}
+
+      {/* ── Requires your attention ────────────────────────────────── */}
+      {overview.pendingOrders + overview.pendingReservations + overview.lowStockItems +
+        overview.unrepliedReviews > 0 && (
+        <Panel title={t("m.attention.title")} className="mb-6">
+          <ul className="flex flex-col gap-2 p-4 sm:flex-row sm:flex-wrap sm:gap-3">
+            {overview.pendingOrders > 0 && (
+              <AttentionLink
+                href="/m/orders"
+                label={t("m.attention.orders", { count: overview.pendingOrders })}
+              />
+            )}
+            {overview.pendingReservations > 0 && (
+              <AttentionLink
+                href="/m/reservations"
+                label={t("m.attention.reservations", { count: overview.pendingReservations })}
+              />
+            )}
+            {overview.lowStockItems > 0 && (
+              <AttentionLink
+                href="/m/menu"
+                label={t("m.attention.lowStock", { count: overview.lowStockItems })}
+              />
+            )}
+            {overview.unrepliedReviews > 0 && (
+              <AttentionLink
+                href="/m/reviews"
+                label={t("m.attention.reviews", { count: overview.unrepliedReviews })}
+              />
+            )}
+          </ul>
+        </Panel>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -226,5 +261,20 @@ export function DashboardView({
         </Card>
       )}
     </ManagerPage>
+  );
+}
+
+/** One tappable "you need to look at this" row. */
+function AttentionLink({ href, label }: { href: string; label: string }) {
+  return (
+    <li className="min-w-0">
+      <Link
+        href={href}
+        className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-primary-light hover:text-primary"
+      >
+        <ArrowRight className="size-3.5 shrink-0" aria-hidden />
+        <span className="truncate">{label}</span>
+      </Link>
+    </li>
   );
 }

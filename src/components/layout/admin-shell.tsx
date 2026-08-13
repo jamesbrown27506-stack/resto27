@@ -16,6 +16,8 @@ import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
 import { ADMIN_NAV, isActive } from "@/lib/nav";
 import { cn } from "@/lib/utils";
+import { NotificationProvider } from "@/components/notifications/notification-provider";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 
 /**
  * The signed-in administrator.
@@ -215,6 +217,10 @@ export function AdminShell({
             <BrandMark name={brand.name} logoUrl={brand.logoUrl} size="sm" className="lg:hidden" />
 
             <div className="ml-auto flex items-center gap-2">
+              <NotificationProvider>
+                <NotificationBell />
+              </NotificationProvider>
+
               {/* Theme and language live in the sidebar drawer below lg. */}
               <LocaleToggle className="hidden lg:inline-flex" />
               <ThemeToggle className="hidden lg:inline-flex" />

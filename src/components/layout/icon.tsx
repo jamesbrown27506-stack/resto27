@@ -54,6 +54,7 @@ import {
   MapPin,
   Martini,
   Megaphone,
+  MessageSquare,
   Milk,
   Nut,
   PartyPopper,
@@ -116,6 +117,7 @@ const REGISTRY = {
   // ── Chrome / navigation ──
   Armchair,
   Bell,
+  MessageSquare,
   CalendarCheck,
   CalendarClock,
   ChartColumn,

@@ -68,9 +68,15 @@ export default async function RestaurantDetailPage({
 
   return (
     <>
+      {/*
+        JSON.stringify does NOT escape '<', so a restaurant named
+        `</script><script>…` would break out of this tag and run in the
+        visitor's browser. Escaping `<` inside the string is the standard
+        JSON-in-script defence — the parser reads \u003c back as `<`.
+      */}
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
       />
 
       <div

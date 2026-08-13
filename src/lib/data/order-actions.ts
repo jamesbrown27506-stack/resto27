@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { getCartConfig } from "@/lib/orders/cart-config";
 import { nextStatus, isTerminal, type OrderStatus } from "@/lib/format/order-status";
+import { notify } from "@/lib/notify";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -89,6 +90,7 @@ export async function advanceOrder(
   if (!next) return { ok: false, error: "This order is already finished." };
 
   const patch: Record<string, unknown> = { status: next };
+  let quotedFee: number | undefined;
 
   if (next === "confirmed" && order.type === "delivery" && order.delivery_fee_set_at === null) {
     const fee = input.deliveryFee;
@@ -101,6 +103,7 @@ export async function advanceOrder(
     patch.delivery_fee_set_at = new Date().toISOString();
     // The customer committed to a total that did not yet include delivery.
     patch.total = order.total + fee;
+    quotedFee = fee;
   }
 
   if (next === "delivered") {
@@ -124,6 +127,23 @@ export async function advanceOrder(
   await recordHistory(orderId, next, { name: profile.name, email: profile.email });
 
   if (next === "delivered") await awardDeliveryPoints(supabase, order);
+
+  // The customer hears about every step — and about the quoted fee, which
+  // changed the total they committed to.
+  if (order.customer_id) {
+    await notify({
+      event: "order_status",
+      tone: next === "delivered" ? "success" : "info",
+      customerId: order.customer_id,
+      href: `/orders/${order.id}`,
+      params: {
+        status: next as "confirmed" | "preparing" | "shipped" | "delivered",
+        reference: order.reference,
+        restaurantName: active.restaurantName,
+        deliveryFee: quotedFee,
+      },
+    });
+  }
 
   refreshOrderScreens();
   revalidatePath(`/m/orders/${orderId}`);
@@ -169,6 +189,15 @@ async function awardDeliveryPoints(
     // reconciliation problem, not a delivery problem.
     console.error("[orders:awardDeliveryPoints]", order.id, error.message);
   }
+
+  // The points landed; the customer should know they did.
+  await notify({
+    event: "loyalty",
+    tone: "success",
+    customerId: order.customer_id,
+    href: "/loyalty",
+    params: { points, reference: order.reference },
+  });
 }
 
 /**
@@ -202,6 +231,23 @@ export async function cancelOrder(orderId: string, reason: string): Promise<Acti
   if (error) return { ok: false, error: "Could not cancel the order." };
 
   await recordHistory(orderId, "cancelled", { name: profile.name, email: profile.email }, reason.trim());
+
+  // The customer reads the reason on the order page; the notification is how
+  // they know to look.
+  if (order.customer_id) {
+    await notify({
+      event: "order_cancelled",
+      tone: "error",
+      customerId: order.customer_id,
+      href: `/orders/${order.id}`,
+      params: {
+        reference: order.reference,
+        restaurantName: active.restaurantName,
+        cancelledBy: "restaurant",
+        reason: reason.trim(),
+      },
+    });
+  }
 
   refreshOrderScreens();
   revalidatePath(`/m/orders/${orderId}`);
@@ -258,7 +304,7 @@ export async function createTableOrder(input: {
   const itemIds = [...new Set(input.lines.map((l) => l.menuItemId))];
   const { data: menuRows } = await supabase
     .from("menu_items")
-    .select("id, name, price, is_available, track_stock, stock_quantity")
+    .select("id, name, price, is_available, track_stock, stock_quantity, low_stock_threshold")
     .eq("restaurant_id", active.restaurantId)
     .in("id", itemIds);
 
@@ -270,6 +316,7 @@ export async function createTableOrder(input: {
       is_available: boolean;
       track_stock: boolean;
       stock_quantity: number | null;
+      low_stock_threshold: number | null;
     }[]).map((m) => [m.id, m]),
   );
 
@@ -338,7 +385,7 @@ export async function createTableOrder(input: {
       payment_method: "pay_at_restaurant",
       notes: input.notes?.trim() || null,
     })
-    .select("id")
+    .select("id, total")
     .single();
 
   if (error || !order) {
@@ -360,13 +407,31 @@ export async function createTableOrder(input: {
 
   // Decrement tracked stock. Non-fatal: the sale already happened at the
   // table; a failed counter update must not void it.
+  const lowStockNotified = new Set<string>();
   for (const line of input.lines) {
     const item = menu.get(line.menuItemId)!;
     if (item.track_stock && item.stock_quantity !== null) {
+      const remaining = Math.max(0, item.stock_quantity - line.quantity);
       await supabase
         .from("menu_items")
-        .update({ stock_quantity: Math.max(0, item.stock_quantity - line.quantity) })
+        .update({ stock_quantity: remaining })
         .eq("id", item.id);
+
+      if (
+        item.low_stock_threshold !== null &&
+        remaining <= item.low_stock_threshold &&
+        item.stock_quantity > item.low_stock_threshold &&
+        !lowStockNotified.has(item.id)
+      ) {
+        lowStockNotified.add(item.id);
+        await notify({
+          event: "low_stock",
+          tone: "warning",
+          restaurantId: active.restaurantId,
+          href: "/m/menu",
+          params: { itemName: item.name, count: remaining },
+        });
+      }
     }
   }
 
@@ -377,6 +442,16 @@ export async function createTableOrder(input: {
     .eq("status", "available");
 
   await recordHistory(order.id, "confirmed", { name: profile.name, email: profile.email }, `Table ${table.number}`);
+
+  // The kitchen queue is fed by the same rows as online orders; the
+  // notification is the same "new order" the branch would get from a customer.
+  await notify({
+    event: "new_order",
+    tone: "info",
+    restaurantId: active.restaurantId,
+    href: `/m/orders/${order.id}`,
+    params: { reference, customerName: `Table ${table.number}`, amount: order.total },
+  });
 
   refreshOrderScreens();
   revalidatePath("/m/tables");

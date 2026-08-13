@@ -28,6 +28,7 @@ export interface NotificationPreferenceInput {
   key: string;
   inApp: boolean;
   email: boolean;
+  push: boolean;
 }
 
 export async function saveNotificationPreferences(
@@ -49,6 +50,7 @@ export async function saveNotificationPreferences(
       event_key: event.key,
       in_app: event.locked ? event.inApp : (sent ? sent.inApp === true : event.inApp),
       email: event.locked ? event.email : (sent ? sent.email === true : event.email),
+      push: event.locked ? event.push : (sent ? sent.push === true : event.push),
     };
   });
 

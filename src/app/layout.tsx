@@ -8,6 +8,7 @@ import { getBranding } from "@/lib/branding";
 import { getCartConfig } from "@/lib/orders/cart-config";
 import { ToastProvider } from "@/components/ui/toast";
 import { CartProvider } from "@/components/cart/cart-provider";
+import { PwaPrompts } from "@/components/notifications/pwa-prompts";
 import { SkipLink } from "@/components/layout/skip-link";
 import { TranslationSafeBoundary } from "@/components/layout/translation-safe";
 import "./globals.css";
@@ -89,13 +90,15 @@ export const viewport: Viewport = {
  * give up is close to zero.
  */
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const [locale, cookieStore, cartConfig] = await Promise.all([
+  const [locale, cookieStore, cartConfig, brand] = await Promise.all([
     getLocale(),
     cookies(),
     // The service charge and loyalty rates are settings, not constants. Read
     // here so the basket renders the right total on its first paint instead of
     // showing 5 % and correcting itself once a client fetch lands.
     getCartConfig(),
+    // The install banner greets the visitor by the platform's own name.
+    getBranding(),
   ]);
 
   const stored = cookieStore.get(THEME_COOKIE)?.value;
@@ -139,6 +142,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           request, so the server already knows the answer.
         */}
         {needsThemeProbe && <script dangerouslySetInnerHTML={{ __html: themeScript }} />}
+        {/*
+          PWA plumbing — the manifest is what makes the site installable, and
+          iOS Safari's Web Push (16.4+) only delivers to sites installed to
+          the home screen. The icons live in public/app-icon-*.png, generated
+          by scripts/generate-app-icon.mjs. Replace them with a real logo
+          whenever one exists.
+        */}
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="apple-touch-icon" href="/app-icon-180.png" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="RestoLink" />
       </head>
       {/*
         suppressHydrationWarning on <body> as well as <html>.
@@ -175,6 +191,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 public pages and keep it through sign-in.
               */}
               <CartProvider config={cartConfig}>{children}</CartProvider>
+              {/*
+                The install / notification banners: mounted once, for every
+                page. They check the install state and the notification
+                permission on load, and a dismissed banner stays quiet for
+                one hour before asking again.
+              */}
+              <PwaPrompts brandName={brand.name} />
             </ToastProvider>
           </LocaleProvider>
         </TranslationSafeBoundary>

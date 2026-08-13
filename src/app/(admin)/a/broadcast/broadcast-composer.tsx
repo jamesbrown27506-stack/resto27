@@ -85,16 +85,10 @@ export function BroadcastComposer({
                 />
               </Field>
 
-              {/*
-                Honest about what is and is not wired. A switch that silently
-                does nothing is worse than no switch — people stop trusting the
-                ones that do work.
-              */}
               <Switch
                 label="Also send by email"
-                description="No mail provider is configured yet, so this is recorded but not delivered."
+                description="Each recipient who has email notifications enabled also gets this in their inbox. Recipients can mute it in their settings."
                 checked={sendEmail}
-                disabled
                 onChange={(e) => setSendEmail(e.target.checked)}
               />
             </CardBody>
@@ -189,7 +183,7 @@ export function BroadcastComposer({
           });
         }}
         title="Send this broadcast?"
-        message={`It will reach ${recipientCount} active ${selected.label.toLowerCase()} as an in-app notification. This cannot be undone.`}
+        message={`It will reach ${recipientCount} active ${selected.label.toLowerCase()} as an in-app notification${sendEmail ? " and by email" : ""}. This cannot be undone.`}
         confirmLabel="Send now"
       />
     </>

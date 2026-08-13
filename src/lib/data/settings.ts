@@ -35,6 +35,7 @@ export interface NotificationEvent {
   /** What someone who has never touched this screen gets. */
   inApp: boolean;
   email: boolean;
+  push: boolean;
   /**
    * Cannot be silenced — it is the business, not a newsletter. A locked event
    * is pinned to its defaults on read AND on write; the disabled switch is a
@@ -44,12 +45,12 @@ export interface NotificationEvent {
 }
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
-  { key: "new_order", inApp: true, email: true, locked: true },
-  { key: "order_cancelled", inApp: true, email: true, locked: false },
-  { key: "reservation", inApp: true, email: true, locked: false },
-  { key: "review", inApp: true, email: false, locked: false },
-  { key: "low_stock", inApp: true, email: false, locked: false },
-  { key: "billing", inApp: true, email: true, locked: true },
+  { key: "new_order", inApp: true, email: true, push: true, locked: true },
+  { key: "order_cancelled", inApp: true, email: true, push: true, locked: false },
+  { key: "reservation", inApp: true, email: true, push: true, locked: false },
+  { key: "review", inApp: true, email: false, push: true, locked: false },
+  { key: "low_stock", inApp: true, email: false, push: true, locked: false },
+  { key: "billing", inApp: true, email: true, push: true, locked: true },
 ];
 
 /** One resolved answer: the stored row if there is one, the default otherwise. */
@@ -57,6 +58,7 @@ export interface NotificationPreference {
   key: NotificationEventKey;
   inApp: boolean;
   email: boolean;
+  push: boolean;
   locked: boolean;
 }
 
@@ -65,6 +67,7 @@ function defaults(): NotificationPreference[] {
     key: event.key,
     inApp: event.inApp,
     email: event.email,
+    push: event.push,
     locked: event.locked,
   }));
 }
@@ -85,7 +88,7 @@ export async function fetchNotificationPreferences(
 
   const { data, error } = await supabase
     .from("notification_preferences")
-    .select("event_key, in_app, email")
+    .select("event_key, in_app, email, push")
     .eq("restaurant_id", restaurantId)
     .eq("profile_id", profileId);
 
@@ -95,10 +98,9 @@ export async function fetchNotificationPreferences(
   }
 
   const stored = new Map(
-    ((data ?? []) as { event_key: string; in_app: boolean; email: boolean }[]).map((row) => [
-      row.event_key,
-      row,
-    ]),
+    ((data ?? []) as { event_key: string; in_app: boolean; email: boolean; push: boolean }[]).map(
+      (row) => [row.event_key, row],
+    ),
   );
 
   return NOTIFICATION_EVENTS.map((event) => {
@@ -109,6 +111,7 @@ export async function fetchNotificationPreferences(
       // event was locked, or by a client that lied, cannot silence it.
       inApp: event.locked ? event.inApp : (row?.in_app ?? event.inApp),
       email: event.locked ? event.email : (row?.email ?? event.email),
+      push: event.locked ? event.push : (row?.push ?? event.push),
       locked: event.locked,
     };
   });

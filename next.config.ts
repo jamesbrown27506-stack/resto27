@@ -21,8 +21,71 @@ const supabaseHostname = (() => {
   }
 })();
 
+/**
+ * Content-Security-Policy for the whole app.
+ *
+ * The three concessions, each deliberate:
+ *  · `'unsafe-inline'` for script — the first-visit theme probe in layout.tsx
+ *    must run before hydration and is therefore an inline tag. Next.js also
+ *    inlines RSC flight data. This is the standard trade-off for a theme
+ *    script; everything else still has to come from our origin.
+ *  · `'unsafe-eval'` — needed by Turbopack in development; the production
+ *    bundle does not require it, but a config that breaks `next dev` is worse
+ *    than a CSP that is slightly looser in prod.
+ *  · `connect-src` is widened to the Supabase project (REST + Realtime
+ *    websocket); `img-src` to Unsplash and the Supabase storage bucket.
+ *
+ * Everything else is locked down: no frames, no plugin objects, no external
+ * fonts/scripts, base-uri and form-action pinned to self.
+ */
+function contentSecurityPolicy(production: boolean): string {
+  const supabase = supabaseHostname
+    ? ` https://${supabaseHostname} wss://${supabaseHostname}`
+    : "";
+  const upgrade = production ? " upgrade-insecure-requests;" : "";
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'unsafe-inline' 'unsafe-eval'`,
+    "style-src 'self' 'unsafe-inline'",
+    `img-src 'self' data: blob: https://images.unsplash.com${supabase}`,
+    "font-src 'self' data:",
+    `connect-src 'self'${supabase}`,
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    upgrade,
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
 const nextConfig: NextConfig = {
   reactCompiler: true,
+
+  /**
+   * Security headers on every response, including /sw.js and other public
+   * assets. The CSP above is the centrepiece; the rest are the cheap ones.
+   */
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // Clickjacking: even with frame-ancestors 'none' in the CSP, this
+          // covers the legacy browsers that ignore it.
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          {
+            key: "Content-Security-Policy",
+            value: contentSecurityPolicy(process.env.NODE_ENV === "production"),
+          },
+        ],
+      },
+    ];
+  },
 
   images: {
     remotePatterns: [

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth/session";
 import { writeAudit } from "./platform-actions";
+import { notify } from "@/lib/notify";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -192,6 +193,14 @@ export async function extendSubscription(
     summary: `Extended by ${days} days to ${endDate}`,
   });
 
+  await notify({
+    event: "billing",
+    tone: "success",
+    restaurantId,
+    href: "/m/billing",
+    params: { detail: `Abonnement prolongé de ${days} jours.` },
+  });
+
   revalidatePath("/a/subscriptions");
   revalidatePath("/a/restaurants");
   return { ok: true };
@@ -262,6 +271,14 @@ export async function changeSubscriptionPlan(
     metadata: { from: current.plan_id, to: planId },
   });
 
+  await notify({
+    event: "billing",
+    tone: "info",
+    restaurantId,
+    href: "/m/billing",
+    params: { detail: `Plan ${target.name} — échéance fixée à 30 jours.` },
+  });
+
   revalidatePath("/a/subscriptions");
   revalidatePath("/a/restaurants");
   revalidatePath("/m", "layout");
@@ -305,7 +322,7 @@ export async function confirmPaymentAttempt(attemptId: string): Promise<ActionRe
 
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, amount, status")
+    .select("id, number, amount, status, restaurant_id")
     .eq("id", attempt.invoice_id)
     .maybeSingle();
 
@@ -356,6 +373,15 @@ export async function confirmPaymentAttempt(attemptId: string): Promise<ActionRe
     summary: `Confirmed ${attempt.amount} XAF against invoice ${invoice.id}`,
   });
 
+  // A settled invoice is the one billing alert a tenant genuinely cares about.
+  await notify({
+    event: "billing_paid",
+    tone: "success",
+    restaurantId: invoice.restaurant_id,
+    href: "/m/billing",
+    params: { invoiceNumber: invoice.number, amount: invoice.amount },
+  });
+
   revalidatePath("/a/payments");
   revalidatePath("/a/subscriptions");
   return { ok: true };
@@ -369,6 +395,12 @@ export async function setCommissionStatus(
 ): Promise<ActionResult> {
   const admin = await requireRole("admin");
   const supabase = createAdminClient();
+
+  const { data: statement } = await supabase
+    .from("commission_statements")
+    .select("restaurant_id, commission_amount")
+    .eq("id", statementId)
+    .maybeSingle();
 
   const now = new Date().toISOString();
   const patch: Record<string, unknown> = { status };
@@ -390,6 +422,20 @@ export async function setCommissionStatus(
     entityType: "commission_statement",
     entityId: statementId,
   });
+
+  // Issuing is the moment the tenant needs to know — a statement they never
+  // look at is a statement that silently accrues.
+  if (status === "issued" && statement?.restaurant_id) {
+    await notify({
+      event: "billing",
+      tone: "info",
+      restaurantId: statement.restaurant_id,
+      href: "/m/billing",
+      params: {
+        detail: `Votre relevé de commissions (${statement.commission_amount} FCFA) est disponible.`,
+      },
+    });
+  }
 
   revalidatePath("/a/commissions");
   return { ok: true };
@@ -534,8 +580,9 @@ export async function createRefund(input: {
 
   // §14.5 — a refund is ITS OWN ROW. The original payment is never edited:
   // it records what was collected, this records what was returned.
+  const reference = makeReference("RF");
   const { error } = await supabase.from("refunds").insert({
-    reference: makeReference("RF"),
+    reference,
     restaurant_id: input.restaurantId,
     type: input.type,
     amount: Math.round(input.amount),
@@ -555,6 +602,16 @@ export async function createRefund(input: {
     entityType: "refund",
     entityId: input.restaurantId,
     summary: `${input.type} of ${input.amount} XAF — ${input.reason.trim()}`,
+  });
+
+  // Money leaving the tenant's account is news the tenant must not discover
+  // by looking at a statement.
+  await notify({
+    event: "billing_refund",
+    tone: "warning",
+    restaurantId: input.restaurantId,
+    href: "/m/billing",
+    params: { reference, amount: input.amount, reason: input.reason.trim() },
   });
 
   revalidatePath("/a/refunds");

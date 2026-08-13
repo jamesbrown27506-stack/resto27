@@ -14,6 +14,8 @@ import { useCart } from "@/components/cart/cart-provider";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
+import { NotificationProvider } from "@/components/notifications/notification-provider";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 
 const NAV: { href: string; label: TranslationKey }[] = [
   { href: "/restaurants", label: "nav.restaurants" },
@@ -139,6 +141,10 @@ export function SiteHeader({
 
             {user ? (
               <>
+                <NotificationProvider>
+                  <NotificationBell />
+                </NotificationProvider>
+
                 <Link
                   href={user.homeHref}
                   className="inline-flex items-center gap-2 rounded-full py-1 pr-3 pl-1 transition-colors hover:bg-surface-2 sm:pr-3"

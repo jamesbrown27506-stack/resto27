@@ -4,6 +4,7 @@ import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
+import { PushToggle } from "@/components/notifications/push-toggle";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
 import { TypedConfirmDialog } from "@/components/ui/dialog";
@@ -103,6 +104,12 @@ export function SettingsClient({
               </p>
             </div>
             <ThemeToggle />
+          </div>
+        </Panel>
+
+        <Panel title="Notifications sur cet appareil">
+          <div className="p-5">
+            <PushToggle tPrefix="cst" />
           </div>
         </Panel>
 

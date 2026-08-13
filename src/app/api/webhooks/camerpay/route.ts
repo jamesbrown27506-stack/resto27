@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { confirmTransaction } from "@/lib/payments/camerpay/client";
 import { createAdminClient } from "@/lib/supabase/server";
+import { notify } from "@/lib/notify";
 
 /**
  * CamerPay callback endpoint.
@@ -152,6 +153,36 @@ export async function POST(request: NextRequest) {
     }
 
     await markProcessed(replyTo, confirmed.status);
+
+    // A payment that really landed is news the tenant must not discover by
+    // looking at an invoice. Non-fatal, like every delivery here.
+    if (confirmed.status === "success") {
+      try {
+        const supabase = createAdminClient();
+        const { data: attempt } = await supabase
+          .from("payment_attempts")
+          .select("amount, invoices ( number, restaurant_id )")
+          .eq("transaction_id", replyTo)
+          .maybeSingle();
+
+        const invoice = (attempt as unknown as {
+          amount: number;
+          invoices: { number: string; restaurant_id: string } | null;
+        } | null)?.invoices;
+
+        if (invoice?.restaurant_id) {
+          await notify({
+            event: "billing_paid",
+            tone: "success",
+            restaurantId: invoice.restaurant_id,
+            href: "/m/billing",
+            params: { invoiceNumber: invoice.number, amount: attempt?.amount },
+          });
+        }
+      } catch (error) {
+        console.error("[camerpay:webhook] notification failed", replyTo, error);
+      }
+    }
   } catch (error) {
     // Never fail the response on our own error. A non-2xx makes CamerPay
     // retry, and retries are how duplicate processing starts; the reconciler
