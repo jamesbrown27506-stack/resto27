@@ -57,6 +57,10 @@ export function SiteHeader({
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  // A signed-in client should not be offered "Pricing" — they already pay. The
+  // pricing page stays, but only as a link anonymous visitors see.
+  const nav = user ? NAV.filter((item) => item.href !== "/pricing") : NAV;
+
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
     onScroll();
@@ -82,7 +86,7 @@ export function SiteHeader({
     <>
       <header
         className={cn(
-          "fixed inset-x-0 top-0 z-50 h-16 border-b transition-shadow",
+          "fixed inset-x-0 top-0 z-50 h-20 border-b transition-shadow lg:h-16",
           scrolled ? "border-border shadow-sm" : "border-border/60",
         )}
       >
@@ -99,7 +103,7 @@ export function SiteHeader({
             <BrandMark name={brand.name} logoUrl={brand.logoUrl} />
 
             <nav aria-label={t("nav.menu")} className="hidden items-center gap-1 lg:flex">
-              {NAV.map((item) => (
+              {nav.map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}
@@ -137,10 +141,12 @@ export function SiteHeader({
               <>
                 <Link
                   href={user.homeHref}
-                  className="hidden items-center gap-2 rounded-full py-1 pr-3 pl-1 transition-colors hover:bg-surface-2 sm:inline-flex"
+                  className="inline-flex items-center gap-2 rounded-full py-1 pr-3 pl-1 transition-colors hover:bg-surface-2 sm:pr-3"
                 >
                   <Avatar name={user.name} src={user.avatarUrl} size="sm" />
-                  <span className="max-w-28 truncate text-sm font-medium">{user.name}</span>
+                  <span className="hidden max-w-28 truncate text-sm font-medium sm:block">
+                    {user.name}
+                  </span>
                 </Link>
                 {/*
                   A form POST, not a link. Sign-out is a state change, and a
@@ -194,65 +200,73 @@ export function SiteHeader({
       </header>
 
       <Sheet open={menuOpen} onClose={() => setMenuOpen(false)} title={t("nav.menu")} side="right">
-        <nav aria-label={t("nav.menu")} className="flex flex-col gap-1">
-          {NAV.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                "rounded-md px-4 py-3 text-base font-medium transition-colors",
-                pathname.startsWith(item.href)
-                  ? "bg-primary-light text-primary"
-                  : "text-text hover:bg-surface-2",
-              )}
-            >
-              {t(item.label)}
-            </Link>
-          ))}
-        </nav>
-
-        <div className="mt-6 flex flex-col gap-3 border-t border-border pt-6">
-          {user ? (
-            <>
-              <Link href={user.homeHref} className={buttonClasses({ fullWidth: true })}>
-                {user.name}
-              </Link>
-              <form action="/logout" method="post">
-                <Button type="submit" variant="outline" fullWidth>
-                  <LogOut className="size-4" aria-hidden />
-                  {t("nav.logout")}
-                </Button>
-              </form>
-            </>
-          ) : (
-            <>
+        {/* Any link tap closes the drawer — including a link to the page you
+            are already on, which no pathname change can ever tell us about. */}
+        <div
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest("a")) setMenuOpen(false);
+          }}
+        >
+          <nav aria-label={t("nav.menu")} className="flex flex-col gap-1">
+            {nav.map((item) => (
               <Link
-                href="/login"
-                className={buttonClasses({ variant: "outline", fullWidth: true })}
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "rounded-md px-4 py-3 text-base font-medium transition-colors",
+                  pathname.startsWith(item.href)
+                    ? "bg-primary-light text-primary"
+                    : "text-text hover:bg-surface-2",
+                )}
               >
-                {t("nav.login")}
+                {t(item.label)}
               </Link>
-              <Link href="/register" className={buttonClasses({ fullWidth: true })}>
-                {t("nav.register")}
-              </Link>
-              <Link
-                href="/register/restaurant"
-                className={buttonClasses({ variant: "ghost", fullWidth: true })}
-              >
-                {t("nav.registerRestaurant")}
-              </Link>
-            </>
-          )}
-        </div>
+            ))}
+          </nav>
 
-        <div className="mt-6 flex flex-col gap-4 border-t border-border pt-6">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-text-secondary">{t("nav.language")}</span>
-            <LocaleToggle />
+          <div className="mt-6 flex flex-col gap-3 border-t border-border pt-6">
+            {user ? (
+              <>
+                <Link href={user.homeHref} className={buttonClasses({ fullWidth: true })}>
+                  {user.name}
+                </Link>
+                <form action="/logout" method="post">
+                  <Button type="submit" variant="outline" fullWidth>
+                    <LogOut className="size-4" aria-hidden />
+                    {t("nav.logout")}
+                  </Button>
+                </form>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className={buttonClasses({ variant: "outline", fullWidth: true })}
+                >
+                  {t("nav.login")}
+                </Link>
+                <Link href="/register" className={buttonClasses({ fullWidth: true })}>
+                  {t("nav.register")}
+                </Link>
+                <Link
+                  href="/register/restaurant"
+                  className={buttonClasses({ variant: "ghost", fullWidth: true })}
+                >
+                  {t("nav.registerRestaurant")}
+                </Link>
+              </>
+            )}
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-text-secondary">{t("nav.theme")}</span>
-            <ThemeToggle />
+
+          <div className="mt-6 flex flex-col gap-4 border-t border-border pt-6">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-text-secondary">{t("nav.language")}</span>
+              <LocaleToggle />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-text-secondary">{t("nav.theme")}</span>
+              <ThemeToggle />
+            </div>
           </div>
         </div>
       </Sheet>

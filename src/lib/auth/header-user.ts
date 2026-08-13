@@ -1,4 +1,5 @@
 import { getCurrentProfile } from "./session";
+import { getImpersonation } from "./impersonation";
 import type { HeaderUser } from "@/components/layout/site-header";
 
 /**
@@ -10,14 +11,21 @@ import type { HeaderUser } from "@/components/layout/site-header";
  * header as well would make it look like the sign-in silently failed.
  */
 export async function getHeaderUser(): Promise<HeaderUser | null> {
-  const profile = await getCurrentProfile();
+  const [profile, impersonation] = await Promise.all([getCurrentProfile(), getImpersonation()]);
   if (!profile) return null;
 
   return {
     name: profile.name,
     email: profile.email,
     avatarUrl: profile.avatarUrl,
-    homeHref:
-      profile.role === "admin" ? "/a" : profile.role === "manager" ? "/m" : "/account",
+    // While impersonating, "my area" is the tenant's — the admin's own /a
+    // would bounce straight back out anyway (see the admin layout guard).
+    homeHref: impersonation
+      ? "/m"
+      : profile.role === "admin"
+        ? "/a"
+        : profile.role === "manager"
+          ? "/m"
+          : "/account",
   };
 }

@@ -2,6 +2,7 @@ import { AdminShell } from "@/components/layout/admin-shell";
 import { requireRole } from "@/lib/auth/session";
 import { getImpersonation } from "@/lib/auth/impersonation";
 import { getBranding } from "@/lib/branding";
+import { redirect } from "next/navigation";
 
 /**
  * Platform admin guard.
@@ -22,21 +23,21 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const admin = await requireRole("admin");
   const [impersonating, brand] = await Promise.all([getImpersonation(), getBranding()]);
 
+  // While impersonating, the admin belongs on the TENANT's side of the app.
+  // Visiting /a mid-session used to leave them staring at their own dashboard
+  // with a banner explaining they are elsewhere — an easy way to act on the
+  // wrong data. Send them to /m instead; "Stop impersonating" clears the
+  // cookie first, so returning here is never a redirect loop.
+  if (impersonating) redirect("/m");
+
   return (
     <AdminShell
       user={{ name: admin.name, email: admin.email, avatarUrl: admin.avatarUrl }}
       brand={{ name: brand.name, logoUrl: brand.logoUrl }}
-      impersonating={
-        impersonating
-          ? {
-              adminName: impersonating.adminName,
-              targetName:
-                impersonating.branchLabel && impersonating.branchLabel !== "Principal"
-                  ? `${impersonating.restaurantName} — ${impersonating.branchLabel}`
-                  : impersonating.restaurantName,
-            }
-          : null
-      }
+      // The guard above means this layout is never rendered mid-impersonation;
+      // the banner that displays impersonation state lives with the manager
+      // shell, where an impersonating admin actually is.
+      impersonating={null}
     >
       {children}
     </AdminShell>

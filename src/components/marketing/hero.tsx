@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
@@ -116,6 +116,24 @@ export function Hero({
   const [city, setCity] = useState("");
   const [guests, setGuests] = useState("2");
   const [date, setDate] = useState("");
+  const [userStopped, setUserStopped] = useState(false);
+
+  // Auto-rotate order → book → explore → order every 5 seconds — but only
+  // until the visitor actually engages. A press on a tab, a focus into a field
+  // or a tap on a popular cuisine pauses the carousel for good: once someone
+  // is choosing, moving the copy under their thumb reads as the page fighting
+  // them. Reduced-motion visitors never see it spin at all.
+  useEffect(() => {
+    if (userStopped) return;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    if (motion.matches) return;
+    const id = window.setInterval(() => setIndex((i) => (i + 1) % SLIDES.length), 5000);
+    return () => window.clearInterval(id);
+  }, [userStopped]);
+
+  function pauseRotation() {
+    setUserStopped(true);
+  }
 
   const slide = SLIDES[index];
   const numberFormat = new Intl.NumberFormat("fr-FR");
@@ -189,7 +207,11 @@ export function Hero({
               role="tab"
               type="button"
               aria-selected={i === index}
-              onClick={() => setIndex(i)}
+              onClick={() => {
+                pauseRotation();
+                setIndex(i);
+              }}
+              onFocus={pauseRotation}
               className={cn(
                 "inline-flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors",
                 i === index ? "bg-white text-neutral-900 shadow-sm" : "text-white/80 hover:text-white",
@@ -229,6 +251,7 @@ export function Hero({
         {/* ── The search pill ────────────────────────────────────────────── */}
         <form
           onSubmit={onSubmit}
+          onFocusCapture={pauseRotation}
           className="flex w-full max-w-3xl flex-col gap-2 rounded-3xl bg-white p-2 shadow-2xl sm:flex-row sm:items-center sm:rounded-full"
         >
           <label className="flex min-w-0 flex-1 items-center gap-3 rounded-full px-4 py-3">
@@ -280,6 +303,7 @@ export function Hero({
         {slide.mode === "book" && (
           <div
             key="book-extras"
+            onFocusCapture={pauseRotation}
             className="flex w-full max-w-3xl flex-col gap-2 rounded-3xl bg-white/10 p-2 ring-1 ring-white/25 backdrop-blur-md sm:flex-row sm:rounded-full"
           >
             <label className="flex flex-1 items-center gap-2.5 rounded-full px-4 py-2.5 text-white">
@@ -309,7 +333,7 @@ export function Hero({
 
         {/* ── One-tap paths: the cuisines people actually search ─────────── */}
         {cuisines.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2" onFocusCapture={pauseRotation}>
             <span className="mr-1 text-sm font-medium text-white/70">{t("hero.popular")}</span>
             {cuisines.slice(0, 6).map((c) => (
               <button

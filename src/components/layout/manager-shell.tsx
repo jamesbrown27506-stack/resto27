@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Menu, PauseCircle } from "lucide-react";
 import { ManagerSidebar } from "./manager-sidebar";
+import { MobileTabBar, type TabItem } from "./mobile-tabbar";
 import { ImpersonationBanner } from "./impersonation-banner";
 import { LocaleToggle } from "./locale-toggle";
 import { LogoutButton } from "./logout-button";
@@ -17,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
 import { switchBranch } from "@/lib/data/manager-actions";
+import { can } from "@/lib/capabilities";
 import type { Branch } from "@/lib/branch-types";
 
 /**
@@ -54,6 +56,36 @@ export function ManagerShell({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [, startTransition] = useTransition();
 
+  // The manager's own "back to the public site" is the FIRST bottom tab, and
+  // the sidebar's way out is the brand mark. Dashboard home for the phone bar.
+  const tabItems: TabItem[] = [
+    { href: "/", icon: "Home", labelKey: "nav.site" },
+    { href: "/m", icon: "LayoutDashboard", labelKey: "nav.m.dashboard" },
+    ...(can(active.role, "orders.view")
+      ? [{ href: "/m/orders", icon: "ReceiptText", labelKey: "nav.m.orders", matchPrefix: true } as TabItem]
+      : []),
+    ...(can(active.role, "menu.view")
+      ? [{ href: "/m/menu", icon: "UtensilsCrossed", labelKey: "nav.m.menu", matchPrefix: true } as TabItem]
+      : []),
+    ...(can(active.role, "kitchen.display")
+      ? [{ href: "/m/kitchen", icon: "ChefHat", labelKey: "nav.m.kitchen" } as TabItem]
+      : []),
+  ];
+
+  // Close the drawer on navigation — otherwise tapping a link leaves it open
+  // over the page you just moved to. Adjusted during render rather than in an
+  // effect, so the still-open drawer never paints over the new page.
+  const [openedOn, setOpenedOn] = useState(pathname);
+  if (drawerOpen && openedOn !== pathname) {
+    setDrawerOpen(false);
+    setOpenedOn(pathname);
+  }
+
+  function openMenu() {
+    setOpenedOn(pathname);
+    setDrawerOpen(true);
+  }
+
   function onSwitchBranch(id: string) {
     if (id === active.restaurantId) return setDrawerOpen(false);
 
@@ -90,10 +122,19 @@ export function ManagerShell({
         side="left"
         className="p-0"
       >
-        {sidebar}
+        {/* Any link tap closes the drawer — including a link to the page you
+            are already on, which no pathname change can ever tell us about. */}
+        <div
+          className="flex h-full flex-col"
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest("a")) setDrawerOpen(false);
+          }}
+        >
+          {sidebar}
+        </div>
       </Sheet>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
         {impersonating && (
           <ImpersonationBanner
             adminName={impersonating.adminName}
@@ -131,7 +172,7 @@ export function ManagerShell({
             className="lg:hidden"
             aria-label={t("nav.openMenu")}
             aria-expanded={drawerOpen}
-            onClick={() => setDrawerOpen(true)}
+            onClick={openMenu}
           >
             <Menu className="size-5" aria-hidden />
           </Button>
@@ -142,10 +183,12 @@ export function ManagerShell({
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <LocaleToggle />
-            <ThemeToggle />
+            {/* Theme and language live in the drawer below lg — the mobile bar
+                otherwise crowds the tenant name off the screen. */}
+            <LocaleToggle className="hidden lg:inline-flex" />
+            <ThemeToggle className="hidden lg:inline-flex" />
 
-            <div className="mx-1 h-6 w-px bg-border" aria-hidden />
+            <div className="hidden h-6 w-px bg-border lg:block" aria-hidden />
 
             {/* The identity doubles as the link to your own profile — where
                 people instinctively click when they want to change it. */}
@@ -171,6 +214,9 @@ export function ManagerShell({
           {children}
         </main>
       </div>
+
+      {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
+      <MobileTabBar items={tabItems} />
     </div>
   );
 }

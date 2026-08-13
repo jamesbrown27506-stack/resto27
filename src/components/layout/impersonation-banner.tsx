@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { VenetianMask, X } from "lucide-react";
 import { endImpersonation } from "@/lib/data/platform-actions";
 
@@ -22,6 +23,7 @@ export function ImpersonationBanner({
   adminName: string;
   targetName: string;
 }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   return (
@@ -32,16 +34,28 @@ export function ImpersonationBanner({
       <VenetianMask className="size-4 shrink-0" aria-hidden />
 
       <p className="min-w-0 flex-1 text-sm font-semibold">
-        You are viewing RestoLink as <strong className="underline">{targetName}</strong>.
+        <span>You are viewing the platform as </span>
+        <strong className="underline">{targetName}</strong>
+        <span>.</span>
         <span className="ml-2 font-normal opacity-85">
-          Every action is recorded against {adminName} as the impersonator.
+          <span>Every action is recorded against </span>
+          <span>{adminName}</span>
+          <span> as the impersonator.</span>
         </span>
       </p>
 
       <button
         type="button"
         disabled={pending}
-        onClick={() => startTransition(async () => void (await endImpersonation()))}
+        onClick={() =>
+          startTransition(async () => {
+            await endImpersonation();
+            // Back where impersonation is managed. Without this, stopping
+            // while on /m leaves an admin with no branches staring at the
+            // "no branch" page.
+            router.push("/a/impersonate");
+          })
+        }
         className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent-fg/15 px-3 py-1.5 text-xs font-bold transition-colors hover:bg-accent-fg/25 disabled:opacity-60"
       >
         <X className="size-3.5" aria-hidden />

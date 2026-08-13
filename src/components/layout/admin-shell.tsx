@@ -6,6 +6,7 @@ import { createContext, useContext, useState } from "react";
 import { Menu, ShieldCheck } from "lucide-react";
 import { NavIcon } from "./icon";
 import { BrandMark } from "./brand-mark";
+import { MobileTabBar, type TabItem } from "./mobile-tabbar";
 import { ImpersonationBanner } from "./impersonation-banner";
 import { LogoutButton } from "./logout-button";
 import { LocaleToggle } from "./locale-toggle";
@@ -103,6 +104,13 @@ function AdminNav({ brand }: { brand: BrandIdentity }) {
           </div>
         ))}
       </nav>
+
+      {/* Theme and language moved out of the top bar, where a row of icons and
+          the identity squeeze a phone (or even a laptop) too thin. */}
+      <div className="flex items-center justify-between gap-2 border-t border-border p-3">
+        <LocaleToggle />
+        <ThemeToggle />
+      </div>
     </div>
   );
 }
@@ -124,11 +132,37 @@ export function AdminShell({
   impersonating?: { adminName: string; targetName: string } | null;
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // The bottom app bar — the way home first, then the four desks an operator
+  // bounces between all day.
+  const tabs: TabItem[] = [
+    { href: "/", icon: "Home", labelKey: "nav.site" },
+    { href: "/a", icon: "LayoutDashboard", label: "Dashboard" },
+    { href: "/a/restaurants", icon: "Store", label: "Restaurants", matchPrefix: true },
+    { href: "/a/payments", icon: "CreditCard", label: "Payments", matchPrefix: true },
+    { href: "/a/users", icon: "Users", label: "Users", matchPrefix: true },
+  ];
+
+  // Close the drawer on navigation, like the marketing header — otherwise a
+  // tapped link leaves it open over the page you just moved to.
+  const [openedOn, setOpenedOn] = useState(pathname);
+  if (drawerOpen && openedOn !== pathname) {
+    setDrawerOpen(false);
+    setOpenedOn(pathname);
+  }
+
+  function openMenu() {
+    setOpenedOn(pathname);
+    setDrawerOpen(true);
+  }
 
   return (
     <AdminUserContext.Provider value={user}>
-      <div className="flex min-h-dvh bg-bg">
+      {/* overflow-x-clip: no accidental sideways page scroll (a fixed-width
+          sidebar plus wide tables used to push the whole page right). */}
+      <div className="flex min-h-dvh overflow-x-clip bg-bg">
         <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 border-r border-border bg-surface lg:block">
           <AdminNav brand={brand} />
         </aside>
@@ -140,10 +174,19 @@ export function AdminShell({
           side="left"
           className="p-0"
         >
-          <AdminNav brand={brand} />
+          {/* Any link tap closes the drawer — including a link to the page you
+              are already on, which no pathname change can ever tell us about. */}
+          <div
+            className="flex h-full flex-col"
+            onClick={(e) => {
+              if ((e.target as HTMLElement).closest("a")) setDrawerOpen(false);
+            }}
+          >
+            <AdminNav brand={brand} />
+          </div>
         </Sheet>
 
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
           {impersonating && (
             <ImpersonationBanner
               adminName={impersonating.adminName}
@@ -162,7 +205,7 @@ export function AdminShell({
               className="lg:hidden"
               aria-label="Open navigation"
               aria-expanded={drawerOpen}
-              onClick={() => setDrawerOpen(true)}
+              onClick={openMenu}
             >
               <Menu className="size-5" aria-hidden />
             </Button>
@@ -172,10 +215,11 @@ export function AdminShell({
             <BrandMark name={brand.name} logoUrl={brand.logoUrl} size="sm" className="lg:hidden" />
 
             <div className="ml-auto flex items-center gap-2">
-              <LocaleToggle />
-              <ThemeToggle />
+              {/* Theme and language live in the sidebar drawer below lg. */}
+              <LocaleToggle className="hidden lg:inline-flex" />
+              <ThemeToggle className="hidden lg:inline-flex" />
 
-              <div className="mx-1 h-6 w-px bg-border" aria-hidden />
+              <div className="hidden h-6 w-px bg-border lg:block" aria-hidden />
 
               {/* The identity doubles as the link to your own profile — where
                   people instinctively click when they want to change it. */}
@@ -204,6 +248,9 @@ export function AdminShell({
             {children}
           </main>
         </div>
+
+        {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
+        <MobileTabBar items={tabs} />
       </div>
     </AdminUserContext.Provider>
   );

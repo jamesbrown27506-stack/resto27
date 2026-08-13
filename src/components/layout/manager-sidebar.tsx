@@ -7,6 +7,8 @@ import { NavIcon } from "./icon";
 import { BrandMark } from "./brand-mark";
 import { LogoutButton } from "./logout-button";
 import { BranchSwitcher } from "./branch-switcher";
+import { LocaleToggle } from "./locale-toggle";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { can } from "@/lib/capabilities";
 import { MANAGER_NAV, isActive } from "@/lib/nav";
 import { useLocale } from "@/lib/i18n/use-locale";
@@ -138,6 +140,16 @@ export function ManagerSidebar({
           any `<img src="/logout">` on any page could fire. Now a POST behind a
           confirmation. */}
       <div className="border-t border-border p-3">
+        {/* Theme and language live here, not only in the crowded top bar —
+            and for phones this is the drawer, so the toggles stay reachable. */}
+        <div className="mb-2 flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-surface-2">
+          <span className="text-sm text-text-secondary">{t("nav.language")}</span>
+          <LocaleToggle />
+        </div>
+        <div className="mb-2 flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-surface-2">
+          <span className="text-sm text-text-secondary">{t("nav.theme")}</span>
+          <ThemeToggle />
+        </div>
         <LogoutButton variant="full" />
       </div>
     </div>

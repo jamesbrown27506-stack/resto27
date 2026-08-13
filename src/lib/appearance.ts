@@ -66,13 +66,13 @@ export const APPEARANCE_IMAGES = [
     key: "home_branches_image",
     field: "homeBranches",
     default:
-      "https://images.unsplash.com/photo-1517248135467-9df32ab5c56e?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1552566626-52f8b828add9?auto=format&fit=crop&w=1200&q=80",
   },
   {
     key: "home_payment_image",
     field: "homePayment",
     default:
-      "https://images.unsplash.com/photo-1556742098-b5536fc942f8?auto=format&fit=crop&w=1200&q=80",
+      "https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=1200&q=80",
   },
 ] as const satisfies readonly {
   key: string;

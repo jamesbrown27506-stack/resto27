@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, Search, Store, VenetianMask } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ export function ImpersonatePicker({
   history: AuditRow[];
 }) {
   const { toast } = useToast();
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
   const [target, setTarget] = useState<AdminRestaurant | null>(null);
@@ -156,7 +158,13 @@ export function ImpersonatePicker({
           startTransition(async () => {
             const result = await beginImpersonation(restaurant.id);
             if (result.ok) {
-              toast(`Impersonation of ${restaurant.name} recorded in the audit log.`, "info");
+              /**
+               * GO THERE. The whole point of impersonating is seeing what the
+               * tenant sees, and this used to stop at a toast — cookie set,
+               * audit row written, admin still parked on /a/impersonate
+               * wondering where the restaurant's pages were.
+               */
+              router.push("/m");
             } else {
               toast(result.error, "error");
             }

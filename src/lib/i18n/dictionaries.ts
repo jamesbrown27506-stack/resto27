@@ -55,6 +55,8 @@ export const LOCALE_SHORT: Record<Locale, string> = {
  */
 const baseFr = {
   /* ── Chrome ────────────────────────────────────────────────────────── */
+  "nav.home": "Accueil",
+  "nav.site": "Site",
   "nav.restaurants": "Restaurants",
   "nav.pricing": "Tarifs",
   "nav.contact": "Contact",
@@ -644,6 +646,8 @@ const baseFr = {
 
 const baseEn: Record<keyof typeof baseFr, string> = {
   /* ── Chrome ────────────────────────────────────────────────────────── */
+  "nav.home": "Home",
+  "nav.site": "Site",
   "nav.restaurants": "Restaurants",
   "nav.pricing": "Pricing",
   "nav.contact": "Contact",
