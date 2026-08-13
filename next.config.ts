@@ -33,23 +33,43 @@ const supabaseHostname = (() => {
  *    bundle does not require it, but a config that breaks `next dev` is worse
  *    than a CSP that is slightly looser in prod.
  *  · `connect-src` is widened to the Supabase project (REST + Realtime
- *    websocket); `img-src` to Unsplash and the Supabase storage bucket.
+ *    websocket); `img-src` and `media-src` to the Supabase storage bucket.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  WHY `media-src` IS SPELLED OUT RATHER THAN LEFT TO `default-src`.
+ *
+ *  It was left to `default-src 'self'`, and that silently broke the custom
+ *  notification sound the day the feature shipped. The six built-in sounds
+ *  are same-origin files in public/sounds, so they satisfied `'self'` and
+ *  everything looked fine; an UPLOADED sound is served from the Supabase
+ *  CDN, and `Audio.play()` rejected with nothing to say for itself — the
+ *  file was stored perfectly, publicly readable, correct bytes and correct
+ *  content type, and the browser would still not touch it.
+ *
+ *  `img-src` had already been widened for exactly this reason. Audio needed
+ *  the same widening and did not get it, because no audio had ever come from
+ *  off-origin before.
+ * ─────────────────────────────────────────────────────────────────────────
  *
  * Everything else is locked down: no frames, no plugin objects, no external
  * fonts/scripts, base-uri and form-action pinned to self.
  */
 function contentSecurityPolicy(production: boolean): string {
-  const supabase = supabaseHostname
-    ? ` https://${supabaseHostname} wss://${supabaseHostname}`
-    : "";
+  // The REST/CDN origin, and the websocket origin Realtime dials. Only
+  // `connect-src` has any use for the wss:// form.
+  const https = supabaseHostname ? ` https://${supabaseHostname}` : "";
+  const sockets = supabaseHostname ? ` wss://${supabaseHostname}` : "";
   const upgrade = production ? " upgrade-insecure-requests;" : "";
   return [
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline' 'unsafe-eval'`,
     "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: blob: https://images.unsplash.com${supabase}`,
+    `img-src 'self' data: blob: https://images.unsplash.com${https}`,
+    // The notification sound: the built-ins from our own origin, an uploaded
+    // one from the storage bucket.
+    `media-src 'self' data: blob:${https}`,
     "font-src 'self' data:",
-    `connect-src 'self'${supabase}`,
+    `connect-src 'self'${https}${sockets}`,
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",

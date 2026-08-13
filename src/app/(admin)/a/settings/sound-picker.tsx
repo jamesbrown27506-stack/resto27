@@ -55,17 +55,42 @@ export function SoundPicker({
   const custom = isCustomSound(value);
   const selected = custom ? "" : (value || DEFAULT_SOUND);
 
+  /**
+   * Play it, and if it will not play, say WHY.
+   *
+   * The first version blamed storage for every failure ("the file may not
+   * have stored correctly"), which sent someone hunting through a bucket
+   * where the object was already perfect — right size, right content type,
+   * publicly readable. The actual cause was the Content-Security-Policy:
+   * `media-src` was inherited from `default-src 'self'`, so a sound served
+   * from the CDN was refused by the browser before a byte was decoded.
+   *
+   * The three rejections mean genuinely different things and now read that
+   * way. `NotSupportedError` is the ambiguous one — the browser uses it both
+   * for "I cannot decode this" and for "something stopped me fetching it" —
+   * so for an off-origin file it names the CSP as the first thing to check.
+   */
   function preview() {
     setPlaying(true);
     const audio = new Audio(notificationSoundUrl(value));
     audio.volume = 0.6;
     audio.addEventListener("ended", () => setPlaying(false), { once: true });
-    void audio.play().catch(() => {
+
+    void audio.play().catch((error: unknown) => {
       setPlaying(false);
+      const name = (error as Error)?.name;
+      console.error("[sound] preview failed", name, error);
+
+      if (name === "NotAllowedError") {
+        toast("The browser blocked playback. Click anywhere on the page, then try again.", "warning");
+        return;
+      }
+      if (!custom) {
+        toast("That sound file is missing from public/sounds.", "error");
+        return;
+      }
       toast(
-        custom
-          ? "The uploaded sound could not be played — the file may not have stored correctly."
-          : "That sound file is missing from public/sounds.",
+        "The uploaded sound would not play. If it downloads fine on its own, the page's media-src Content-Security-Policy is what is blocking it.",
         "error",
       );
     });
