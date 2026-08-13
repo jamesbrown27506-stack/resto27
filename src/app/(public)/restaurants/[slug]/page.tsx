@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Bike, CalendarCheck, Clock, MapPin, Phone, ShoppingBag, Store } from "lucide-react";
+import { BadgeCheck, Bike, CalendarCheck, Clock, MapPin, Phone, ShoppingBag, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
@@ -97,6 +97,15 @@ export default async function RestaurantDetailPage({
 
             <h1 className="mt-4 font-display text-3xl font-bold sm:text-4xl">
               {restaurant.name}
+              {restaurant.isVerified && (
+                <span
+                  title="Vérifié par RestoLink"
+                  className="ml-2 inline-flex translate-y-1 items-center gap-1 text-xl font-semibold text-primary"
+                >
+                  <BadgeCheck className="size-6" aria-hidden />
+                  <span className="sr-only">Vérifié</span>
+                </span>
+              )}
               {!restaurant.isPrimary && (
                 <span className="ml-2 text-xl font-normal text-text-light">
                   {restaurant.branchLabel}

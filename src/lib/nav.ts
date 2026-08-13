@@ -61,6 +61,7 @@ export const MANAGER_NAV: NavGroup[] = [
       { href: "/m/tables", labelKey: "nav.m.tables", icon: "Armchair", capability: "tables.view" },
       // No capability gate: every active staff member may answer customers.
       { href: "/m/messages", labelKey: "nav.m.messages", icon: "MessageSquare" },
+      { href: "/m/wallet", labelKey: "nav.m.wallet", icon: "Wallet", capability: "finance.manage" },
     ],
   },
   {
@@ -157,6 +158,8 @@ export const ADMIN_NAV: NavGroup[] = [
       { href: "/a/commissions", label: "Commissions", icon: "Percent" },
       { href: "/a/refunds", label: "Refunds", icon: "Undo2" },
       { href: "/a/camerpay", label: "CamerPay", icon: "Smartphone" },
+      { href: "/a/coupons", label: "Coupons", icon: "TicketPercent" },
+      { href: "/a/wallet", label: "Wallet", icon: "Wallet" },
     ],
   },
   {

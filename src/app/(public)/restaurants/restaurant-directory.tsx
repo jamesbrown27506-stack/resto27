@@ -37,6 +37,9 @@ export function RestaurantDirectory({
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [quartier, setQuartier] = useState(params.get("quartier") ?? "all");
   const [cuisine, setCuisine] = useState(params.get("cuisine") ?? "all");
+  const [rating, setRating] = useState(params.get("rating") ?? "all");
+  const [price, setPrice] = useState(params.get("price") ?? "all");
+  const [delivery, setDelivery] = useState(params.get("delivery") ?? "all");
   const [sort, setSort] = useState(params.get("sort") ?? "rating");
 
   const results = useMemo(() => {
@@ -45,6 +48,11 @@ export function RestaurantDirectory({
     const filtered = restaurants.filter((r) => {
       if (quartier !== "all" && r.quartier !== quartier) return false;
       if (cuisine !== "all" && r.cuisine !== cuisine) return false;
+      if (rating !== "all" && r.rating < Number(rating)) return false;
+      // Price here means the restaurant's minimum order — what a basket has to
+      // reach — bucketed so the filter reads as a budget, not a threshold.
+      if (price !== "all" && r.minimumOrder > Number(price)) return false;
+      if (delivery !== "all" && r.deliveryEstimateMin > Number(delivery)) return false;
       if (!q) return true;
       return (
         r.name.toLowerCase().includes(q) ||
@@ -59,12 +67,15 @@ export function RestaurantDirectory({
       if (sort === "name") return a.name.localeCompare(b.name, "fr");
       return b.rating - a.rating;
     });
-  }, [query, quartier, cuisine, sort, restaurants]);
+  }, [query, quartier, cuisine, rating, price, delivery, sort, restaurants]);
 
   function clear() {
     setQuery("");
     setQuartier("all");
     setCuisine("all");
+    setRating("all");
+    setPrice("all");
+    setDelivery("all");
     setSort("rating");
   }
 
@@ -94,6 +105,40 @@ export function RestaurantDirectory({
             options: [
               { value: "all", label: "Toutes cuisines" },
               ...cuisines.map((c) => ({ value: c, label: c })),
+            ],
+          },
+          {
+            key: "rating",
+            label: "Note",
+            value: rating,
+            onChange: setRating,
+            options: [
+              { value: "all", label: "Toutes notes" },
+              { value: "4", label: "4 étoiles et +" },
+              { value: "3", label: "3 étoiles et +" },
+            ],
+          },
+          {
+            key: "price",
+            label: "Budget",
+            value: price,
+            onChange: setPrice,
+            options: [
+              { value: "all", label: "Tous budgets" },
+              { value: "2000", label: "Commande min. ≤ 2 000 FCFA" },
+              { value: "5000", label: "Commande min. ≤ 5 000 FCFA" },
+            ],
+          },
+          {
+            key: "delivery",
+            label: "Livraison",
+            value: delivery,
+            onChange: setDelivery,
+            options: [
+              { value: "all", label: "Tous délais" },
+              { value: "15", label: "≤ 15 min" },
+              { value: "30", label: "≤ 30 min" },
+              { value: "45", label: "≤ 45 min" },
             ],
           },
           {

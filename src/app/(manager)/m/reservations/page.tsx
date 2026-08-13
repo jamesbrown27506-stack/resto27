@@ -3,6 +3,7 @@ import { ManagerPage } from "@/components/layout/manager-shell";
 import { ReservationBoard } from "./reservation-board";
 import { requireCapability } from "@/lib/auth/branch";
 import { can } from "@/lib/capabilities";
+import { createAdminClient } from "@/lib/supabase/server";
 import { fetchReservations, fetchTables } from "@/lib/data/manager";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
@@ -26,9 +27,18 @@ export default async function ReservationsPage() {
   const from = new Date();
   from.setHours(0, 0, 0, 0);
 
-  const [reservations, tables] = await Promise.all([
+  const [reservations, tables, depositRow] = await Promise.all([
     fetchReservations(active.restaurantId, { from }),
     fetchTables(active.restaurantId),
+    (async () => {
+      const supabase = createAdminClient();
+      const { data } = await supabase
+        .from("restaurants")
+        .select("deposit_amount")
+        .eq("id", active.restaurantId)
+        .maybeSingle();
+      return Number((data as { deposit_amount?: number } | null)?.deposit_amount ?? 0);
+    })(),
   ]);
 
   return (
@@ -40,6 +50,8 @@ export default async function ReservationsPage() {
         reservations={reservations}
         tables={tables}
         canDecide={can(active.role, "reservations.decide")}
+        depositAmount={depositRow}
+        canCollectDeposit={can(active.role, "finance.manage")}
       />
     </ManagerPage>
   );

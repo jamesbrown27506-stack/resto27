@@ -36,6 +36,8 @@ export interface RestaurantReview {
   repliedBy: string | null;
   isReported: boolean;
   reportReason: string | null;
+  /** Uploaded photos (migration 0026), in the customer's chosen order. */
+  photos: string[];
   createdAt: string;
 }
 
@@ -81,7 +83,28 @@ export async function fetchReviews(restaurantId: string): Promise<RestaurantRevi
     return [];
   }
 
-  return ((data ?? []) as DbReview[]).map((r) => ({
+const rows = (data ?? []) as DbReview[];
+
+  // Photos in one round trip, keyed by review id — never N+1.
+  const photoByReview = new Map<string, string[]>();
+  if (rows.length > 0) {
+    const { data: photoRows } = await supabase
+      .from("review_photos")
+      .select("review_id, url")
+      .in(
+        "review_id",
+        rows.map((r) => r.id),
+      )
+      .order("sort_order");
+
+    for (const p of (photoRows ?? []) as { review_id: string; url: string }[]) {
+      const list = photoByReview.get(p.review_id) ?? [];
+      list.push(p.url);
+      photoByReview.set(p.review_id, list);
+    }
+  }
+
+  return rows.map((r) => ({
     id: r.id,
     customerId: r.customer_id,
     orderId: r.order_id,
@@ -93,6 +116,7 @@ export async function fetchReviews(restaurantId: string): Promise<RestaurantRevi
     repliedBy: r.replied_by,
     isReported: r.is_reported,
     reportReason: r.report_reason,
+    photos: photoByReview.get(r.id) ?? [],
     createdAt: r.created_at,
   }));
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Check, Store, X } from "lucide-react";
+import { BadgeCheck, Check, Store, X } from "lucide-react";
 import { FilterBar } from "@/components/data/filter-bar";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,8 +11,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { RatingStars } from "@/components/ui/rating-stars";
 import { useToast } from "@/components/ui/toast";
 import { formatDate } from "@/lib/format/datetime";
-import { setRestaurantStatus } from "@/lib/data/admin-actions";
+import { setRestaurantStatus, setRestaurantVerified } from "@/lib/data/admin-actions";
 import type { AdminRestaurant } from "@/lib/data/admin";
+import { cn } from "@/lib/utils";
 
 const STATUS_LABEL: Record<AdminRestaurant["status"], string> = {
   active: "Active",
@@ -89,6 +90,21 @@ export function RestaurantsTable({
       );
     });
   }, [restaurants, query, status, quartier]);
+
+  /** One-click verified toggle — the badge is earned, so no confirm dialog. */
+  function runVerified(id: string, verified: boolean) {
+    startTransition(async () => {
+      const result = await setRestaurantVerified(id, verified);
+      toast(
+        result.ok
+          ? verified
+            ? "Restaurant verified — badge now public."
+            : "Badge removed."
+          : (result.error ?? "Could not update."),
+        result.ok ? "success" : "error",
+      );
+    });
+  }
 
   function run() {
     if (!confirming) return;
@@ -204,6 +220,30 @@ export function RestaurantsTable({
       key: "status",
       header: "Status",
       cell: (r) => <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status]}</Badge>,
+    },
+    {
+      key: "verified",
+      header: "Verified",
+      hideBelow: "md",
+      cell: (r) => (
+        <button
+          type="button"
+          aria-pressed={r.isVerified}
+          disabled={pending || r.status !== "active"}
+          title={r.status !== "active" ? "Only active restaurants can be verified" : undefined}
+          onClick={() => runVerified(r.id, !r.isVerified)}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors",
+            r.isVerified
+              ? "border-success/40 bg-success-light text-success"
+              : "border-border bg-surface-2 text-text-light hover:text-text",
+            (pending || r.status !== "active") && "cursor-not-allowed opacity-50",
+          )}
+        >
+          <BadgeCheck className="size-3.5" aria-hidden />
+          <span>{r.isVerified ? "Verified" : "Verify"}</span>
+        </button>
+      ),
     },
     {
       key: "rating",

@@ -1,16 +1,21 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { CalendarCheck, Check, Phone, Users, X } from "lucide-react";
+import { Banknote, CalendarCheck, Check, Phone, Users, X } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Field, Select, Textarea } from "@/components/ui/input";
+import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Sheet, SheetActions } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
 import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
-import { decideReservation, setReservationStatus } from "@/lib/data/manager-actions";
+import {
+  collectReservationDeposit,
+  decideReservation,
+  setReservationStatus,
+  setRestaurantDeposit,
+} from "@/lib/data/manager-actions";
 import type { Reservation, RestaurantTable } from "@/lib/data/manager";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
@@ -27,10 +32,15 @@ export function ReservationBoard({
   reservations,
   tables,
   canDecide,
+  depositAmount,
+  canCollectDeposit,
 }: {
   reservations: Reservation[];
   tables: RestaurantTable[];
   canDecide: boolean;
+  /** The restaurant's current acompte (migration 0025). */
+  depositAmount: number;
+  canCollectDeposit: boolean;
 }) {
   const { t } = useLocale();
   const dates = useDates();
@@ -41,6 +51,7 @@ export function ReservationBoard({
   const [tableId, setTableId] = useState("");
   const [declining, setDeclining] = useState<Reservation | null>(null);
   const [reason, setReason] = useState("");
+  const [depositDraft, setDepositDraft] = useState(String(depositAmount));
 
   // Pending first, whatever the time. A decision waiting is more urgent than a
   // booking already settled, even one that is sooner.
@@ -108,6 +119,34 @@ export function ReservationBoard({
           {reservation.declineReason && (
             <p className="mt-1.5 text-sm text-error">
               {t("res.declined")} {reservation.declineReason}
+            </p>
+          )}
+
+          {reservation.depositAmount > 0 && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+              <Badge
+                tone={reservation.depositPaid ? "success" : "warning"}
+                className={reservation.depositPaid ? undefined : "border-transparent"}
+              >
+                <Banknote className="size-3" aria-hidden />
+                {t("res.deposit", { amount: reservation.depositAmount.toLocaleString("fr-CM") })}
+              </Badge>
+              {reservation.depositPaid && (
+                <span className="text-success">{t("res.depositPaid")}</span>
+              )}
+              {!reservation.depositPaid && canCollectDeposit && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pending}
+                  onClick={() =>
+                    run(() => collectReservationDeposit(reservation.id), t("res.depositCollected"))
+                  }
+                >
+                  <Banknote className="size-3.5" aria-hidden />
+                  {t("res.collectDeposit")}
+                </Button>
+              )}
             </p>
           )}
         </div>
@@ -188,6 +227,37 @@ export function ReservationBoard({
 
   return (
     <>
+      {canCollectDeposit && (
+        <section className="mb-6 rounded-lg border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">{t("res.depositTitle")}</p>
+              <p className="text-xs text-text-light">{t("res.depositBody")}</p>
+            </div>
+            <Input
+              type="number"
+              min={0}
+              step={100}
+              value={depositDraft}
+              onChange={(e) => setDepositDraft(e.target.value)}
+              className="w-36"
+              aria-label={t("res.depositTitle")}
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              onClick={() =>
+                run(() => setRestaurantDeposit(Number(depositDraft) || 0), t("res.depositSaved"))
+              }
+            >
+              <Banknote className="size-3.5" aria-hidden />
+              {t("common.save")}
+            </Button>
+          </div>
+        </section>
+      )}
+
       {awaiting.length > 0 && (
         <section className="mb-6">
           <h2 className="mb-3 font-display text-lg font-bold">

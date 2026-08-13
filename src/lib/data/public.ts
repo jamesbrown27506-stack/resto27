@@ -28,6 +28,8 @@ export interface PublicRestaurant {
   branchLabel: string;
   isPrimary: boolean;
   status: "active" | "pending" | "suspended";
+  /** The platform's verified badge (migration 0023) — trust, not marketing. */
+  isVerified: boolean;
   cuisine: string;
   description: string;
   quartier: string;
@@ -39,6 +41,8 @@ export interface PublicRestaurant {
   acceptsDelivery: boolean;
   acceptsPickup: boolean;
   isAcceptingOrders: boolean;
+  /** The acompte a booking requires (migration 0025). 0 = none. */
+  depositAmount: number;
   hours: RestaurantHours[];
   createdAt: string;
 }
@@ -50,6 +54,7 @@ interface DbRestaurant {
   branch_label: string;
   is_primary: boolean;
   status: string;
+  is_verified: boolean;
   description: string;
   phone: string | null;
   rating: number;
@@ -59,13 +64,14 @@ interface DbRestaurant {
   accepts_delivery: boolean;
   accepts_pickup: boolean;
   is_accepting_orders: boolean;
+  deposit_amount: number;
   created_at: string;
   cuisines: { name: string }[] | null;
   quartiers: { name: string }[] | null;
 }
 
 const RESTAURANT_COLUMNS =
-  "id, slug, name, branch_label, is_primary, status, description, phone, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, created_at, cuisines ( name ), quartiers ( name )";
+  "id, slug, name, branch_label, is_primary, status, is_verified, description, phone, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, deposit_amount, created_at, cuisines ( name ), quartiers ( name )";
 
 async function attachHours(
   rows: DbRestaurant[],
@@ -105,6 +111,7 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
     branchLabel: r.branch_label,
     isPrimary: r.is_primary,
     status: r.status as PublicRestaurant["status"],
+    isVerified: r.is_verified,
     cuisine: r.cuisines?.[0]?.name ?? "",
     description: r.description,
     quartier: r.quartiers?.[0]?.name ?? "",
@@ -116,6 +123,7 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
     acceptsDelivery: r.accepts_delivery,
     acceptsPickup: r.accepts_pickup,
     isAcceptingOrders: r.is_accepting_orders,
+    depositAmount: Number(r.deposit_amount),
     hours,
     createdAt: r.created_at,
   };

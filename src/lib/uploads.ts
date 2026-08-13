@@ -36,7 +36,7 @@ import { createAdminClient } from "@/lib/supabase/server";
  * ─────────────────────────────────────────────────────────────────────────
  */
 
-export type UploadKind = "branding" | "avatars" | "restaurants" | "menu" | "appearance";
+export type UploadKind = "branding" | "avatars" | "restaurants" | "menu" | "appearance" | "reviews";
 
 /**
  * Created by migration 0016.

@@ -310,6 +310,9 @@ export interface Reservation {
   tableNumber: string | null;
   notes: string | null;
   declineReason: string | null;
+  /** The acompte required for this booking (migration 0025). 0 = none. */
+  depositAmount: number;
+  depositPaid: boolean;
   createdAt: string;
 }
 
@@ -323,7 +326,7 @@ export async function fetchReservations(
     .from("reservations")
     .select(
       `id, reference, guest_name, guest_phone, guest_email, party_size, reserved_for,
-       duration_min, status, table_id, notes, decline_reason, created_at,
+       duration_min, status, table_id, notes, decline_reason, deposit_amount, deposit_paid, created_at,
        restaurant_tables ( number )`,
     )
     .eq("restaurant_id", restaurantId)
@@ -353,6 +356,8 @@ export async function fetchReservations(
       table_id: string | null;
       notes: string | null;
       decline_reason: string | null;
+      deposit_amount: number;
+      deposit_paid: boolean;
       created_at: string;
       restaurant_tables: { number: string } | null;
     };
@@ -371,6 +376,8 @@ export async function fetchReservations(
       tableNumber: r.restaurant_tables?.number ?? null,
       notes: r.notes,
       declineReason: r.decline_reason,
+      depositAmount: Number(r.deposit_amount),
+      depositPaid: Boolean(r.deposit_paid),
       createdAt: r.created_at,
     };
   });

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Bike, Clock, MapPin } from "lucide-react";
+import { BadgeCheck, Bike, Clock, MapPin } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { RatingStars } from "@/components/ui/rating-stars";
 import { formatMoney } from "@/lib/format/currency";
@@ -66,6 +66,15 @@ export function RestaurantCard({
             <Link href={target} className="after:absolute after:inset-0">
               {restaurant.name}
             </Link>
+            {restaurant.isVerified && (
+              <span
+                title="Vérifié par RestoLink"
+                className="ml-1.5 inline-flex translate-y-0.5 items-center gap-0.5 text-sm font-semibold text-primary"
+              >
+                <BadgeCheck className="size-4" aria-hidden />
+                <span className="sr-only">Vérifié</span>
+              </span>
+            )}
             {!restaurant.isPrimary && (
               <span className="ml-1.5 text-sm font-normal text-text-light">
                 {restaurant.branchLabel}

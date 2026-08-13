@@ -35,6 +35,7 @@ export const CAPABILITIES = [
   "reports.view",
   "staff.manage",
   "billing.manage",
+  "finance.manage",
   "profile.edit",
   "settings.manage",
 ] as const;
@@ -52,7 +53,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * Until then this file is 17, and that gap is deliberate and visible rather
  * than papered over with three plausible guesses.
  */
-export const KNOWN_CAPABILITY_COUNT = 17;
+export const KNOWN_CAPABILITY_COUNT = 18;
 export const EXPECTED_CAPABILITY_COUNT = 20;
 
 export const BRANCH_ROLES = ["owner", "manager", "kitchen", "cashier", "waiter"] as const;
@@ -84,8 +85,9 @@ export const BRANCH_ROLE_DESCRIPTION: Record<BranchRole, string> = {
 const MATRIX: Record<BranchRole, Capability[]> = {
   owner: [...CAPABILITIES],
 
-  // Everything except money. Billing stays with the owner because a plan
-  // change is a financial commitment on their account.
+  // Everything except billing. The wallet is the restaurant's OWN money —
+  // a manager may see it and request a withdrawal; plan changes stay with
+  // the owner because they are a financial commitment.
   manager: CAPABILITIES.filter((c) => c !== "billing.manage"),
 
   kitchen: ["orders.view", "orders.advance", "kitchen.display", "menu.view"],
@@ -136,6 +138,7 @@ export const CAPABILITY_LABEL: Record<Capability, string> = {
   "reports.view": "Voir les rapports",
   "staff.manage": "Gérer le personnel",
   "billing.manage": "Gérer la facturation",
+  "finance.manage": "Voir le portefeuille et retirer",
   "profile.edit": "Modifier le profil",
   "settings.manage": "Gérer les paramètres",
 };

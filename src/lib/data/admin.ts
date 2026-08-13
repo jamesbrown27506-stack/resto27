@@ -71,6 +71,8 @@ export interface AdminRestaurant {
   branchLabel: string;
   isPrimary: boolean;
   status: "active" | "pending" | "suspended";
+  /** The public verified badge — set by an admin, never bought (§0023). */
+  isVerified: boolean;
   cuisine: string | null;
   quartier: string | null;
   city: string | null;
@@ -111,6 +113,7 @@ interface RestaurantRow {
   branch_label: string;
   is_primary: boolean;
   status: string;
+  is_verified: boolean;
   description: string;
   phone: string | null;
   rating: number;
@@ -179,6 +182,7 @@ function toAdminRestaurant(row: RestaurantRow): AdminRestaurant {
     branchLabel: row.branch_label,
     isPrimary: row.is_primary,
     status: row.status as AdminRestaurant["status"],
+    isVerified: row.is_verified,
     cuisine: row.cuisines?.name ?? null,
     quartier: row.quartiers?.name ?? null,
     city: row.service_areas?.city ?? null,
@@ -199,7 +203,7 @@ function toAdminRestaurant(row: RestaurantRow): AdminRestaurant {
 }
 
 const RESTAURANT_SELECT = `
-  id, slug, name, branch_label, is_primary, status, description, phone,
+  id, slug, name, branch_label, is_primary, status, is_verified, description, phone,
   rating, review_count, minimum_order, delivery_estimate_min,
   accepts_delivery, accepts_pickup, owner_id, created_at,
   cuisines ( name ),

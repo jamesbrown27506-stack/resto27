@@ -282,6 +282,50 @@ export async function getWithdrawalFeeSummary(): Promise<WithdrawalFeeSummary> {
   };
 }
 
+/* ── Platform coupons (migration 0023) ────────────────────────────────── */
+
+export interface PlatformCouponRow {
+  id: string;
+  code: string;
+  label: string;
+  discountType: string;
+  discountValue: number;
+  minOrder: number;
+  maxDiscount: number | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  usageLimit: number | null;
+  usedCount: number;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export async function listPlatformCoupons(): Promise<PlatformCouponRow[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("platform_coupons")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) return soft("platform_coupons", error);
+
+  return ((data ?? []) as Record<string, unknown>[]).map((c) => ({
+    id: String(c.id),
+    code: String(c.code),
+    label: String(c.label ?? ""),
+    discountType: String(c.discount_type),
+    discountValue: Number(c.discount_value),
+    minOrder: Number(c.min_order),
+    maxDiscount: c.max_discount === null ? null : Number(c.max_discount),
+    startsAt: (c.starts_at as string | null) ?? null,
+    endsAt: (c.ends_at as string | null) ?? null,
+    usageLimit: c.usage_limit === null ? null : Number(c.usage_limit),
+    usedCount: Number(c.used_count),
+    isActive: Boolean(c.is_active),
+    createdAt: String(c.created_at),
+  }));
+}
+
 /* ── Support ───────────────────────────────────────────────────────────── */
 
 export interface SupportRow {
@@ -393,6 +437,11 @@ const EXPECTED_TABLES: { table: string; migration: string }[] = [
   { table: "plan_changes", migration: "0005" },
   { table: "push_subscriptions", migration: "0018" },
   { table: "withdrawal_fees", migration: "0022" },
+  { table: "platform_coupons", migration: "0023" },
+  { table: "restaurant_wallets", migration: "0024" },
+  { table: "wallet_ledger", migration: "0024" },
+  { table: "withdrawal_requests", migration: "0024" },
+  { table: "review_photos", migration: "0026" },
 ];
 
 /**

@@ -63,6 +63,21 @@ export function ReviewList({ reviews }: { reviews: Review[] }) {
               </div>
               <p className="mt-2 leading-relaxed text-text-secondary">{review.body}</p>
 
+              {review.photos.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {review.photos.map((url) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={url}
+                      src={url}
+                      alt="Photo jointe à l'avis"
+                      className="size-20 rounded-md border border-border object-cover"
+                      loading="lazy"
+                    />
+                  ))}
+                </div>
+              )}
+
               {review.reply && (
                 <div className="mt-4 rounded-md border-l-2 border-primary bg-primary-light p-3.5">
                   <p className="text-xs font-bold tracking-wide text-primary uppercase">

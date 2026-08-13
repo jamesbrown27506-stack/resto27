@@ -44,6 +44,49 @@ const RESTAURANT_TRANSITIONS: Record<string, RestaurantStatus> = {
   reinstate: "active",
 };
 
+/**
+ * Toggle the public verified badge (migration 0023).
+ *
+ * A badge is earned, never bought — it is a boolean an admin sets, not a plan
+ * perk. Audited like every other admin mutation.
+ */
+export async function setRestaurantVerified(
+  restaurantId: string,
+  verified: boolean,
+): Promise<ActionResult> {
+  const admin = await requireRole("admin");
+  const supabase = createAdminClient();
+
+  const { data: restaurant } = await supabase
+    .from("restaurants")
+    .select("name")
+    .eq("id", restaurantId)
+    .maybeSingle();
+
+  if (!restaurant) return { ok: false, error: "Restaurant not found." };
+
+  const { error } = await supabase
+    .from("restaurants")
+    .update({ is_verified: verified })
+    .eq("id", restaurantId);
+
+  if (error) {
+    console.error("[admin:setRestaurantVerified]", restaurantId, error.message);
+    return { ok: false, error: "The update failed." };
+  }
+
+  await writeAudit(admin, {
+    action: verified ? "restaurant.verified" : "restaurant.unverified",
+    entityType: "restaurant",
+    entityId: restaurantId,
+    summary: `${verified ? "Verified" : "Unverified"} ${restaurant.name}`,
+  });
+
+  revalidatePath("/a/restaurants");
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
 export async function setRestaurantStatus(
   restaurantId: string,
   action: "approve" | "reject" | "suspend" | "reinstate",

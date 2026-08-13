@@ -7,8 +7,10 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/session";
 import { canCustomerCancel } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
+import { saveUpload, type UploadKind } from "@/lib/uploads";
 import type { ActionResult } from "./admin-actions";
 import type { CustomerPreferences } from "./customer";
+import type { UploadActionResult } from "./profile-actions";
 
 /**
  * Customer-side mutations.
@@ -114,10 +116,28 @@ export async function rateOwnDelivery(orderId: string, rating: number): Promise<
  * arrived. Rating 1–5, body at least 10 characters, exactly what the dialog
  * asks for.
  */
+/**
+ * Upload one review photo and hand back its URL. The review is written
+ * separately — a photo uploaded and then abandoned is an orphan, not a
+ * broken review. Files validated by bytes, like every upload (§9).
+ */
+export async function uploadReviewPhoto(formData: FormData): Promise<UploadActionResult> {
+  await requireUser();
+
+  const file = formData.get("file");
+  if (!(file instanceof File)) return { ok: false, error: "No file received." };
+
+  const result = await saveUpload(file, "reviews" satisfies UploadKind);
+  if (!result.ok) return { ok: false, error: result.error };
+
+  return { ok: true, url: result.url };
+}
+
 export async function submitOwnReview(
   orderId: string,
   rating: number,
   body: string,
+  photoUrls: string[] = [],
 ): Promise<ActionResult> {
   const user = await requireUser();
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
@@ -145,16 +165,33 @@ export async function submitOwnReview(
   if (dupError) return { ok: false, error: "Un avis existe déjà pour cette commande." };
   if (existing) return { ok: false, error: "Un avis existe déjà pour cette commande." };
 
-  const { error: insertError } = await supabase.from("reviews").insert({
-    restaurant_id: order.restaurant_id,
-    customer_id: user.id,
-    order_id: orderId,
-    customer_name: user.name,
-    rating,
-    body: body.trim(),
-  });
+  // Photos are capped at three and must be URLs on our own storage — a
+  // review must not embed arbitrary external content.
+  const photos = photoUrls
+    .filter((url): url is string => typeof url === "string" && url.includes("/storage/v1/object/public/"))
+    .slice(0, 3);
 
-  if (insertError) return { ok: false, error: "La publication a échoué." };
+  const { data: created, error: insertError } = await supabase
+    .from("reviews")
+    .insert({
+      restaurant_id: order.restaurant_id,
+      customer_id: user.id,
+      order_id: orderId,
+      customer_name: user.name,
+      rating,
+      body: body.trim(),
+    })
+    .select("id")
+    .single();
+
+  if (insertError || !created) return { ok: false, error: "La publication a échoué." };
+
+  if (photos.length > 0) {
+    const { error: photoError } = await supabase.from("review_photos").insert(
+      photos.map((url, i) => ({ review_id: created.id, url, sort_order: i })),
+    );
+    if (photoError) console.error("[customer:submitOwnReview] photos", photoError.message);
+  }
 
   // A review is a public word about the restaurant — the manager should hear
   // about it the moment it lands.
@@ -247,12 +284,13 @@ export async function createOwnReservation(input: z.infer<typeof ReservationSche
 
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
-    .select("id, status")
+    .select("id, status, deposit_amount")
     .eq("id", restaurantId)
     .eq("status", "active")
     .maybeSingle();
 
   if (restaurantError || !restaurant) return { ok: false, error: "Restaurant introuvable." };
+  const depositAmount = Number((restaurant as { deposit_amount?: number }).deposit_amount ?? 0);
 
   const slotStart = new Date(when.getTime() - 30 * 60_000).toISOString();
   const slotEnd = new Date(when.getTime() + 90 * 60_000).toISOString();
@@ -288,6 +326,9 @@ export async function createOwnReservation(input: z.infer<typeof ReservationSche
     party_size: partySize,
     reserved_for: reservedFor,
     status: "pending",
+    // Snapshotted from the restaurant's price at booking time (0025) — a
+    // price change after the customer booked must not rewrite their booking.
+    deposit_amount: depositAmount,
     notes: notes.trim() || null,
   });
 

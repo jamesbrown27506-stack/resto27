@@ -86,6 +86,7 @@ const baseFr = {
   "nav.m.reservations": "Réservations",
   "nav.m.tables": "Tables",
   "nav.m.messages": "Messages",
+  "nav.m.wallet": "Portefeuille",
   "nav.m.menu": "Menu",
   "nav.m.categories": "Catégories",
   "nav.m.promotions": "Promotions",
@@ -437,6 +438,13 @@ const baseFr = {
   "res.tableHint": "Facultatif — vous pourrez l'attribuer à l'arrivée.",
   "res.noTableYet": "Pas encore attribuée",
   "res.reason": "Motif",
+  "res.deposit": "Acompte {amount} FCFA",
+  "res.depositPaid": "Acompte encaissé",
+  "res.collectDeposit": "Encaisser l'acompte",
+  "res.depositCollected": "Acompte crédité au portefeuille.",
+  "res.depositTitle": "Acompte de réservation",
+  "res.depositBody": "Montant demandé pour réserver une table (0 = aucun). L'encaissement crédite le portefeuille.",
+  "res.depositSaved": "Acompte enregistré.",
   "res.reasonHint": "Le client le lit. Une phrase suffit — un refus sans explication est ce dont les clients se plaignent.",
   "res.reasonPh": "Complet à cette heure. Nous avons de la place à 20h30 si cela vous convient.",
 
@@ -556,6 +564,8 @@ const baseFr = {
 
   "m.tables.title": "Tables",
   "m.tables.seats": "{count} place(s)",
+
+  "m.wallet.title": "Portefeuille",
 
   /* -- Statuts de commande ------------------------------------------- */
   "order.status.pending": "En attente",
@@ -686,6 +696,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "nav.m.reservations": "Reservations",
   "nav.m.tables": "Tables",
   "nav.m.messages": "Messages",
+  "nav.m.wallet": "Wallet",
   "nav.m.menu": "Menu",
   "nav.m.categories": "Categories",
   "nav.m.promotions": "Promotions",
@@ -1034,6 +1045,13 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "res.tableHint": "Optional — you can assign one on arrival.",
   "res.noTableYet": "Not assigned yet",
   "res.reason": "Reason",
+  "res.deposit": "Deposit {amount} FCFA",
+  "res.depositPaid": "Deposit collected",
+  "res.collectDeposit": "Collect deposit",
+  "res.depositCollected": "Deposit credited to the wallet.",
+  "res.depositTitle": "Reservation deposit",
+  "res.depositBody": "Amount required to hold a table (0 = none). Collecting it credits the wallet.",
+  "res.depositSaved": "Deposit saved.",
   "res.reasonHint": "The guest reads this. One sentence is enough — a refusal with no explanation is what people complain about.",
   "res.reasonPh": "Fully booked at that time. We have space at 8.30pm if that suits you.",
 
@@ -1153,6 +1171,8 @@ const baseEn: Record<keyof typeof baseFr, string> = {
 
   "m.tables.title": "Tables",
   "m.tables.seats": "{count} seat(s)",
+
+  "m.wallet.title": "Wallet",
 
   /* -- Order statuses ------------------------------------------------- */
   "order.status.pending": "Pending",

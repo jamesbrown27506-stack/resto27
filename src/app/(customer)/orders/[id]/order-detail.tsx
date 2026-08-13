@@ -19,7 +19,7 @@ import {
   canCustomerCancel,
   type PaymentMethod,
 } from "@/lib/format/order-status";
-import { cancelOwnOrder, rateOwnDelivery, submitOwnReview } from "@/lib/data/customer-actions";
+import { cancelOwnOrder, rateOwnDelivery, submitOwnReview, uploadReviewPhoto } from "@/lib/data/customer-actions";
 import type { CustomerOrder as Order } from "@/lib/data/customer";
 
 /**
@@ -36,6 +36,8 @@ export function OrderDetail({ order }: { order: Order }) {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [rating, setRating] = useState(5);
   const [body, setBody] = useState("");
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [deliveryRating, setDeliveryRating] = useState(order.deliveryRating ?? 0);
 
@@ -49,13 +51,29 @@ export function OrderDetail({ order }: { order: Order }) {
     toast(result.ok ? "Commande annulée." : result.error, result.ok ? "success" : "error");
   }
 
+  async function addPhotos(files: FileList | null) {
+    if (!files || photos.length >= 3) return;
+    setUploading(true);
+    const added: string[] = [];
+    for (const file of Array.from(files).slice(0, 3 - photos.length)) {
+      const formData = new FormData();
+      formData.append("file", file);
+      const result = await uploadReviewPhoto(formData);
+      if (result.ok && result.url) added.push(result.url);
+      else toast(result.error ?? "Photo refusée.", "error");
+    }
+    setPhotos((current) => [...current, ...added].slice(0, 3));
+    setUploading(false);
+  }
+
   async function publishReview() {
     setBusy(true);
-    const result = await submitOwnReview(order.id, rating, body);
+    const result = await submitOwnReview(order.id, rating, body, photos);
     setBusy(false);
     if (result.ok) {
       setReviewOpen(false);
       setBody("");
+      setPhotos([]);
       toast("Merci, votre avis est publié.", "success");
     } else {
       toast(result.error, "error");
@@ -299,6 +317,51 @@ export function OrderDetail({ order }: { order: Order }) {
             <p className="mt-1.5 text-xs text-text-light">
               Minimum 10 caractères. Votre avis est public sous votre nom.
             </p>
+          </div>
+
+          <div>
+            <label htmlFor="review-photos" className="mb-2 block text-sm font-semibold">
+              Photos (facultatif, 3 max)
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              {photos.map((url) => (
+                <span key={url} className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url}
+                    alt="Photo de l'avis"
+                    className="size-16 rounded-md border border-border object-cover"
+                  />
+                  <button
+                    type="button"
+                    aria-label="Retirer la photo"
+                    onClick={() => setPhotos((current) => current.filter((p) => p !== url))}
+                    className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full bg-text/70 text-white hover:bg-error"
+                  >
+                    <X className="size-3" aria-hidden />
+                  </button>
+                </span>
+              ))}
+              {photos.length < 3 && (
+                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs font-medium text-text-secondary hover:border-primary hover:text-primary">
+                  <Star className="size-3.5" aria-hidden />
+                  <span>{uploading ? "Envoi…" : "Ajouter une photo"}</span>
+                  <input
+                    id="review-photos"
+                    type="file"
+                    accept="image/png,image/jpeg,image/gif,image/webp"
+                    multiple
+                    className="sr-only"
+                    disabled={uploading || busy}
+                    onChange={(e) => {
+                      void addPhotos(e.target.files);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              )}
+            </div>
+            <p className="mt-1.5 text-xs text-text-light">PNG, JPG, GIF ou WebP — vérifiées au contenu.</p>
           </div>
         </div>
       </Dialog>

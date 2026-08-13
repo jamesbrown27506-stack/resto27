@@ -1030,6 +1030,102 @@ export async function setTableStatus(
   return { ok: true };
 }
 
+/* ── Reservation deposits (migration 0025) ────────────────────────────── */
+
+/**
+ * Set the acompte this restaurant asks for to hold a table. 0 = none.
+ */
+export async function setRestaurantDeposit(amount: number): Promise<ActionResult> {
+  const { active, profile } = await requireCapability("finance.manage");
+
+  const value = Math.round(amount);
+  if (!Number.isInteger(value) || value < 0) {
+    return { ok: false, error: "Amount must be zero or a positive number of francs." };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("restaurants")
+    .update({ deposit_amount: value })
+    .eq("id", active.restaurantId);
+
+  if (error) return { ok: false, error: "Could not save the deposit." };
+
+  await writeAudit(profile, {
+    action: "restaurant.deposit_set",
+    entityType: "restaurant",
+    entityId: active.restaurantId,
+    summary: `Set ${active.restaurantName} reservation deposit to ${value.toLocaleString("fr-CM")} FCFA`,
+  });
+
+  revalidatePath("/m/reservations");
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/**
+ * Mark a booking's acompte as collected — the moment the money is actually
+ * received, the restaurant's wallet is credited (migration 0024).
+ *
+ * The manager is not an admin, so the credit happens through the same RPC the
+ * admin action uses, scoped to their own branch by the reservation lookup.
+ */
+export async function collectReservationDeposit(reservationId: string): Promise<ActionResult> {
+  const { active, profile } = await requireCapability("finance.manage");
+  const supabase = createAdminClient();
+
+  const { data: reservation } = await supabase
+    .from("reservations")
+    .select("id, reference, deposit_amount, deposit_paid, status")
+    .eq("id", reservationId)
+    .eq("restaurant_id", active.restaurantId)
+    .maybeSingle();
+
+  const row = reservation as {
+    id: string;
+    reference: string;
+    deposit_amount: number;
+    deposit_paid: boolean;
+    status: string;
+  } | null;
+
+  if (!row) return { ok: false, error: "Reservation not found." };
+  if (row.deposit_amount <= 0) return { ok: false, error: "This booking has no deposit." };
+  if (row.deposit_paid) return { ok: false, error: "Deposit already collected." };
+
+  const { error: creditError } = await supabase.rpc("wallet_credit", {
+    p_restaurant_id: active.restaurantId,
+    p_amount: row.deposit_amount,
+    p_kind: "deposit",
+    p_note: `Acompte ${row.reference}`,
+    p_reference: row.reference,
+  });
+
+  if (creditError) {
+    console.error("[manager:collectReservationDeposit]", creditError.message);
+    return { ok: false, error: "Could not credit the wallet. Is migration 0024 applied?" };
+  }
+
+  const { error: updateError } = await supabase
+    .from("reservations")
+    .update({ deposit_paid: true })
+    .eq("id", reservationId)
+    .eq("restaurant_id", active.restaurantId);
+
+  if (updateError) return { ok: false, error: "Wallet credited, but could not mark the booking." };
+
+  await writeAudit(profile, {
+    action: "reservation.deposit_collected",
+    entityType: "reservation",
+    entityId: reservationId,
+    summary: `Collected ${row.deposit_amount.toLocaleString("fr-CM")} FCFA deposit for ${row.reference}`,
+  });
+
+  revalidatePath("/m/reservations");
+  revalidatePath("/m/wallet");
+  return { ok: true };
+}
+
 /* ── Profile ───────────────────────────────────────────────────────────── */
 
 export async function updateRestaurantProfile(input: {

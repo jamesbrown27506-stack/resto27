@@ -241,6 +241,17 @@ export function ReservationsClient({
               />
             </Field>
 
+            {(() => {
+              const selected = restaurants.find((r) => r.slug === restaurantSlug);
+              return selected && selected.depositAmount > 0 ? (
+                <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning">
+                  <strong>Acompte requis : {selected.depositAmount.toLocaleString("fr-CM")} FCFA.</strong>{" "}
+                  Ce restaurant demande un acompte pour réserver la table — il vous sera demandé
+                  pour confirmer.
+                </p>
+              ) : null;
+            })()}
+
             <Button
               fullWidth
               size="lg"

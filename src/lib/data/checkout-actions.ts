@@ -210,8 +210,40 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   let promoCode: string | null = null;
   let promoId: string | null = null;
 
+  /** One validation/application pass, shared by both promo sources below. */
+  function applyPromo(promo: {
+    id: string;
+    code: string;
+    discount_type: string;
+    discount_value: number;
+    min_order: number;
+    max_discount: number | null;
+    starts_at: string | null;
+    ends_at: string | null;
+    usage_limit: number | null;
+    used_count: number;
+    is_active: boolean;
+  }): boolean {
+    // Refused, not ignored. Dropping an invalid code and charging full price
+    // is how someone pays more than the screen told them they would.
+    if (!promo.is_active) return false;
+
+    const now = Date.now();
+    if (promo.starts_at && now < new Date(promo.starts_at).getTime()) return false;
+    if (promo.ends_at && now > new Date(promo.ends_at).getTime()) return false;
+    if (promo.usage_limit !== null && promo.used_count >= promo.usage_limit) return false;
+    if (subtotal < promo.min_order) return false;
+
+    discount = discountFor(promo, subtotal);
+    promoCode = promo.code;
+    promoId = promo.id;
+    return true;
+  }
+
   if (input.promoCode?.trim()) {
     const code = input.promoCode.trim().toUpperCase();
+
+    // First the restaurant's own codes (0006)…
     const { data: promoRow } = await supabase
       .from("promotions")
       .select("id, code, discount_type, discount_value, min_order, max_discount, starts_at, ends_at, usage_limit, used_count, is_active")
@@ -233,21 +265,53 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       is_active: boolean;
     } | null;
 
-    // Refused, not ignored. Dropping an invalid code and charging full price
-    // is how someone pays more than the screen told them they would.
-    if (!promo || !promo.is_active) return { ok: false, reason: "promoInvalid" };
+    if (promo && applyPromo(promo)) {
+      // Applied — done.
+    } else {
+      // …then the PLATFORM's codes (migration 0023), but only while the kill
+      // switch is on. A restaurant code that exists but is inactive/expired
+      // must not silently fall through to a platform code of the same name;
+      // only a code with no restaurant match gets the platform lookup.
+      const { data: platformSetting } = await supabase
+        .from("settings")
+        .select("value")
+        .eq("key", "platform_coupons_enabled")
+        .maybeSingle();
 
-    const now = Date.now();
-    if (promo.starts_at && now < new Date(promo.starts_at).getTime()) return { ok: false, reason: "promoInvalid" };
-    if (promo.ends_at && now > new Date(promo.ends_at).getTime()) return { ok: false, reason: "promoExpired" };
-    if (promo.usage_limit !== null && promo.used_count >= promo.usage_limit) {
-      return { ok: false, reason: "promoUsedUp" };
+      if (platformSetting?.value === "true" && !promo) {
+        const { data: platformRow } = await supabase
+          .from("platform_coupons")
+          .select("id, code, discount_type, discount_value, min_order, max_discount, starts_at, ends_at, usage_limit, used_count, is_active")
+          .eq("code", code)
+          .maybeSingle();
+
+        const platformPromo = platformRow as {
+          id: string;
+          code: string;
+          discount_type: string;
+          discount_value: number;
+          min_order: number;
+          max_discount: number | null;
+          starts_at: string | null;
+          ends_at: string | null;
+          usage_limit: number | null;
+          used_count: number;
+          is_active: boolean;
+        } | null;
+
+        if (platformPromo && applyPromo(platformPromo)) {
+          // Applied — done.
+        } else {
+          // No match, or the code exists but is not usable right now. Either
+          // way the customer gets told the code was refused, never charged
+          // full price silently.
+          return { ok: false, reason: "promoInvalid" };
+        }
+      } else if (promo) {
+        // A restaurant code exists but did not pass validation — refuse.
+        return { ok: false, reason: "promoInvalid" };
+      }
     }
-    if (subtotal < promo.min_order) return { ok: false, reason: "promoMinimum", detail: String(promo.min_order) };
-
-    discount = discountFor(promo, subtotal);
-    promoCode = promo.code;
-    promoId = promo.id;
   }
 
   // ── Loyalty, re-validated ───────────────────────────────────────────────
@@ -424,13 +488,6 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   }
 
   if (promoId) {
-    await supabase.from("promotion_redemptions").insert({
-      promotion_id: promoId,
-      order_id: created.id,
-      customer_id: profile?.id ?? null,
-      amount: totals.discount,
-    });
-
     // The counter `usage_limit` is checked against. Without this increment the
     // limit is decorative — a single-use code would be redeemable for ever.
     // Read-then-write rather than an atomic bump because PostgREST has no
@@ -442,10 +499,32 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       .eq("id", promoId)
       .maybeSingle();
 
-    await supabase
-      .from("promotions")
-      .update({ used_count: ((current?.used_count as number | undefined) ?? 0) + 1 })
-      .eq("id", promoId);
+    if (current) {
+      await supabase
+        .from("promotions")
+        .update({ used_count: ((current.used_count as number | undefined) ?? 0) + 1 })
+        .eq("id", promoId);
+
+      await supabase.from("promotion_redemptions").insert({
+        promotion_id: promoId,
+        order_id: created.id,
+        customer_id: profile?.id ?? null,
+        amount: totals.discount,
+      });
+    } else {
+      // The promo came from the PLATFORM coupon table — its id is not a
+      // promotion_redemptions fk. Bump the platform counter instead.
+      const { data: couponRow } = await supabase
+        .from("platform_coupons")
+        .select("used_count")
+        .eq("id", promoId)
+        .maybeSingle();
+
+      await supabase
+        .from("platform_coupons")
+        .update({ used_count: ((couponRow?.used_count as number | undefined) ?? 0) + 1 })
+        .eq("id", promoId);
+    }
   }
 
   if (pointsUsed > 0 && profile) {

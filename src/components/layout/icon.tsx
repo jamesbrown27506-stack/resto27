@@ -86,6 +86,7 @@ import {
   UtensilsCrossed,
   Vegan,
   VenetianMask,
+  Wallet,
   Wheat,
   Wine,
   type LucideIcon,
@@ -150,6 +151,7 @@ const REGISTRY = {
   UserCog,
   Users,
   VenetianMask,
+  Wallet,
 
   // ── Menu categories: savoury ──
   Beef,

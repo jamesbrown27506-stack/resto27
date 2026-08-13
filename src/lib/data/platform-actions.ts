@@ -394,6 +394,99 @@ export async function resolveSupport(messageId: string): Promise<ActionResult> {
   return { ok: true };
 }
 
+/* ── Platform coupons (migration 0023) ────────────────────────────────── */
+
+/**
+ * Create or update a platform coupon code.
+ *
+ * The whole programme is gated by the `platform_coupons_enabled` setting —
+ * an admin can kill it with one switch in /a/settings — but each coupon also
+ * carries its own `is_active`, so a single code can be retired without
+ * touching the rest.
+ */
+export async function savePlatformCoupon(input: {
+  id?: string;
+  code: string;
+  label?: string;
+  discountType: string;
+  discountValue: number;
+  minOrder?: number;
+  maxDiscount?: number | null;
+  endsAt?: string | null;
+  usageLimit?: number | null;
+  isActive: boolean;
+}): Promise<ActionResult> {
+  const admin = await requireRole("admin");
+
+  const code = input.code.trim().toUpperCase();
+  if (!/^[A-Z0-9_]{3,30}$/.test(code)) {
+    return { ok: false, error: "Code must be 3–30 characters: letters, digits, underscore." };
+  }
+  if (input.discountType !== "percent" && input.discountType !== "fixed") {
+    return { ok: false, error: "Discount type must be percent or fixed." };
+  }
+  const value = Math.round(input.discountValue);
+  if (!Number.isInteger(value) || value <= 0) return { ok: false, error: "A positive discount value is required." };
+  if (input.discountType === "percent" && value > 100) return { ok: false, error: "Percent cannot exceed 100." };
+
+  const supabase = createAdminClient();
+  const patch: Record<string, unknown> = {
+    code,
+    label: input.label?.trim() ?? "",
+    discount_type: input.discountType,
+    discount_value: value,
+    min_order: Math.round(input.minOrder ?? 0),
+    max_discount:
+      input.maxDiscount === null || input.maxDiscount === undefined ? null : Math.round(input.maxDiscount),
+    ends_at: input.endsAt || null,
+    usage_limit: input.usageLimit ?? null,
+    is_active: input.isActive,
+  };
+
+  const { error } = input.id
+    ? await supabase.from("platform_coupons").update(patch).eq("id", input.id)
+    : await supabase.from("platform_coupons").insert(patch);
+
+  if (error) {
+    if (error.code === "23505") return { ok: false, error: "That code already exists." };
+    console.error("[platform:savePlatformCoupon]", error.message);
+    return { ok: false, error: "Could not save the coupon." };
+  }
+
+  await writeAudit(admin, {
+    action: input.id ? "coupon.update" : "coupon.create",
+    entityType: "platform_coupon",
+    entityId: input.id,
+    summary: `${input.id ? "Updated" : "Created"} coupon ${code}`,
+  });
+
+  revalidatePath("/a/coupons");
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Flip one coupon's active flag. */
+export async function togglePlatformCoupon(id: string, active: boolean): Promise<ActionResult> {
+  const admin = await requireRole("admin");
+  const supabase = createAdminClient();
+
+  const { error } = await supabase
+    .from("platform_coupons")
+    .update({ is_active: active })
+    .eq("id", id);
+
+  if (error) return { ok: false, error: "Could not update the coupon." };
+
+  await writeAudit(admin, {
+    action: active ? "coupon.enable" : "coupon.disable",
+    entityType: "platform_coupon",
+    entityId: id,
+  });
+
+  revalidatePath("/a/coupons");
+  return { ok: true };
+}
+
 /* ── Settings ──────────────────────────────────────────────────────────── */
 
 export async function updateSettings(changes: Record<string, string>): Promise<ActionResult> {
