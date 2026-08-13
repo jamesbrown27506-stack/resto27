@@ -28,6 +28,7 @@ import { custSettingsDict } from "./dict/cust-settings";
 import { customersDict } from "./dict/customers";
 import { menuDict } from "./dict/menu";
 import { modifiersDict } from "./dict/modifiers";
+import { notificationsDict } from "./dict/notifications";
 import { profileDict } from "./dict/profile";
 import { promotionsDict } from "./dict/promotions";
 import { reportsDict } from "./dict/reports";
@@ -66,6 +67,10 @@ const baseFr = {
   "nav.register": "Créer un compte",
   "nav.registerRestaurant": "Inscrire mon restaurant",
   "nav.menu": "Menu",
+  "nav.more": "Plus",
+  "nav.myArea": "Mon espace",
+  "nav.moreTitle": "Mon compte",
+  "nav.moreBody": "Toutes vos pages, au même endroit.",
   "nav.cart": "Panier",
   "nav.cartEmpty": "Panier (vide)",
   "nav.openMenu": "Ouvrir le menu",
@@ -676,6 +681,10 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "nav.register": "Create account",
   "nav.registerRestaurant": "List my restaurant",
   "nav.menu": "Menu",
+  "nav.more": "More",
+  "nav.myArea": "My area",
+  "nav.moreTitle": "My account",
+  "nav.moreBody": "All your pages, in one place.",
   "nav.cart": "Cart",
   "nav.cartEmpty": "Cart (empty)",
   "nav.openMenu": "Open the menu",
@@ -1284,6 +1293,7 @@ const fr = {
   ...commonDict.fr,
   ...categoriesDict.fr,
   ...chatDict.fr,
+  ...notificationsDict.fr,
   ...menuDict.fr,
   ...modifiersDict.fr,
   ...customersDict.fr,
@@ -1316,6 +1326,7 @@ const en: Record<TranslationKey, string> = {
   ...commonDict.en,
   ...categoriesDict.en,
   ...chatDict.en,
+  ...notificationsDict.en,
   ...menuDict.en,
   ...modifiersDict.en,
   ...customersDict.en,

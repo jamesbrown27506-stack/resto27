@@ -4,7 +4,7 @@ import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
-import { PushToggle } from "@/components/notifications/push-toggle";
+import { NotificationSettings } from "@/components/notifications/notification-settings";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
 import { TypedConfirmDialog } from "@/components/ui/dialog";
@@ -107,15 +107,15 @@ export function SettingsClient({
           </div>
         </Panel>
 
-        <Panel title="Notifications sur cet appareil">
-          <div className="p-5">
-            <PushToggle tPrefix="cst" />
-          </div>
-        </Panel>
+        {/* The three channels — in-app, email, push — and the browser
+            permission behind push. The same panel the manager and the
+            administrator see; the switches below decide WHICH events, this
+            one decides how they reach you at all. */}
+        <NotificationSettings />
 
         <Panel
-          title="Notifications par email"
-          description="Les messages liés à une commande en cours sont toujours envoyés."
+          title="Ce que vous voulez recevoir"
+          description="Les événements qui déclenchent une notification, quel que soit le canal choisi ci-dessus."
         >
           <div className="flex flex-col gap-5 p-5">
             {NOTIFICATIONS.map((n) => (

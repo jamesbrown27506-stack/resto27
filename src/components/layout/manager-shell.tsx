@@ -180,7 +180,13 @@ export function ManagerShell({
           "who am I and where am I" is worth a permanent corner of the screen —
           the same reasoning as the admin shell.
         */}
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur-md">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border px-4">
+          {/* The frosted fill is a CHILD, not the header — an element with a
+              backdrop-filter becomes the containing block for its fixed
+              descendants, which trapped the bell's dropdown inside this 56px
+              bar. Same fix, same reason, as the admin shell and site header. */}
+          <div aria-hidden className="absolute inset-0 -z-10 bg-surface/95 backdrop-blur-md" />
+
           <Button
             variant="ghost"
             size="icon-sm"

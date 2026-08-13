@@ -2,49 +2,80 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { NavIcon } from "./icon";
 import { LogoutButton } from "./logout-button";
+import { NavMenuSheet, type NavMenuItem } from "./nav-menu-sheet";
 import { Avatar } from "@/components/ui/avatar";
 import { CUSTOMER_NAV, isActive } from "@/lib/nav";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
+import type { IconName } from "./icon";
 import type { SessionUser } from "@/lib/session";
 
 /**
  * Customer account navigation.
  *
- * On mobile this becomes a horizontal scrolling strip rather than a drawer:
- * the customer area is shallow (9 destinations) and a swipeable row keeps them
- * one tap away, where a hamburger would make every one of them two.
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE MOBILE HALF WAS A SIDEWAYS-SCROLLING STRIP, AND THAT WAS THE PROBLEM.
+ *
+ *  Nine pills in a horizontally scrolling row meant every account screen
+ *  opened with a menu you had to SWIPE to read: over half the destinations
+ *  were off the right edge, nothing on screen said they existed, and the row
+ *  still cost the vertical space a real menu would have. The old comment
+ *  argued it kept everything "one tap away" — it did not, because you cannot
+ *  tap what you cannot see.
+ *
+ *  It is now a single button naming the section you are in, which opens the
+ *  same bottom sheet the "More" tab opens: all nine at once, in a grid, with
+ *  the current one lit. Two taps, and both of them aimed at something visible.
+ * ─────────────────────────────────────────────────────────────────────────
  */
+
+const MENU_ITEMS: NavMenuItem[] = CUSTOMER_NAV.map((item) => ({
+  href: item.href,
+  icon: item.icon as IconName,
+  labelKey: item.labelKey,
+  label: item.label,
+  matchPrefix: item.matchPrefix,
+}));
+
 export function AccountSidebar({ user }: { user: SessionUser }) {
   const pathname = usePathname();
   const { t } = useLocale();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const current = CUSTOMER_NAV.find((item) => isActive(item, pathname));
+  const currentLabel = current
+    ? current.labelKey
+      ? t(current.labelKey)
+      : (current.label ?? "")
+    : t("nav.moreTitle");
 
   return (
     <>
-      {/* Mobile: scrolling strip */}
-      <nav
-        aria-label={t("common.accountNav")}
-        className="no-scrollbar -mx-6 flex gap-2 overflow-x-auto px-6 pb-1 lg:hidden"
-      >
-        {CUSTOMER_NAV.map((item) => (
-          <Link
-            key={item.href}
-            href={item.href}
-            aria-current={isActive(item, pathname) ? "page" : undefined}
-            className={cn(
-              "inline-flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors",
-              isActive(item, pathname)
-                ? "border-primary bg-primary text-primary-fg"
-                : "border-border bg-surface text-text-secondary",
-            )}
-          >
-            <NavIcon name={item.icon} className="size-3.5" />
-            <span>{item.labelKey ? t(item.labelKey) : item.label}</span>
-          </Link>
-        ))}
-      </nav>
+      {/* Mobile: the section switcher */}
+      <div className="lg:hidden">
+        <button
+          type="button"
+          aria-haspopup="dialog"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen(true)}
+          className="flex w-full items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 text-left transition-colors hover:bg-surface-2"
+        >
+          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-primary text-primary-fg">
+            <NavIcon name={(current?.icon ?? "LayoutDashboard") as IconName} className="size-4.5" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-semibold tracking-[0.08em] text-text-light uppercase">
+              {t("common.accountNav")}
+            </span>
+            <span className="block truncate text-sm font-semibold">{currentLabel}</span>
+          </span>
+          <ChevronDown className="size-4 shrink-0 text-text-light" aria-hidden />
+        </button>
+      </div>
 
       {/* Desktop: sidebar */}
       <aside className="hidden w-56 shrink-0 lg:block">
@@ -58,22 +89,25 @@ export function AccountSidebar({ user }: { user: SessionUser }) {
           </div>
 
           <nav aria-label={t("common.accountNav")} className="mt-4 flex flex-col gap-0.5">
-            {CUSTOMER_NAV.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={isActive(item, pathname) ? "page" : undefined}
-                className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  isActive(item, pathname)
-                    ? "bg-primary-light text-primary"
-                    : "text-text-secondary hover:bg-surface-2 hover:text-text",
-                )}
-              >
-                <NavIcon name={item.icon} className="size-4 shrink-0" />
-                <span>{item.labelKey ? t(item.labelKey) : item.label}</span>
-              </Link>
-            ))}
+            {CUSTOMER_NAV.map((item) => {
+              const active = isActive(item, pathname);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    active
+                      ? "bg-primary-light text-primary"
+                      : "text-text-secondary hover:bg-surface-2 hover:text-text",
+                  )}
+                >
+                  <NavIcon name={item.icon} className="size-4 shrink-0" />
+                  <span className="truncate">{item.labelKey ? t(item.labelKey) : item.label}</span>
+                </Link>
+              );
+            })}
 
             {/*
               Was `<Link href="/logout">` — a GET route that changes state,
@@ -88,6 +122,15 @@ export function AccountSidebar({ user }: { user: SessionUser }) {
           </nav>
         </div>
       </aside>
+
+      <NavMenuSheet
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        title={t("nav.moreTitle")}
+        description={t("nav.moreBody")}
+        items={MENU_ITEMS}
+        withAccountActions
+      />
     </>
   );
 }

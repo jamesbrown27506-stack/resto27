@@ -200,7 +200,20 @@ export function AdminShell({
               identity of whoever is signed in, and in a tool where one click
               suspends a tenant, "who am I right now" is worth a permanent
               corner of the screen. */}
-          <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-surface/95 px-4 backdrop-blur-md">
+          <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border px-4">
+            {/*
+              THE FROSTED FILL IS A CHILD, NOT THE HEADER ITSELF.
+
+              An element whose `backdrop-filter` is not `none` becomes the
+              containing block for its `position: fixed` descendants. With the
+              blur on the <header>, the notification bell's dropdown — which is
+              fixed to the viewport below lg — was being positioned inside a
+              56px-tall bar and clipped out of sight. The public site header
+              has always painted its blur on a pseudo-layer for exactly this
+              reason (see site-header.tsx); the two dashboard shells had not.
+            */}
+            <div aria-hidden className="absolute inset-0 -z-10 bg-surface/95 backdrop-blur-md" />
+
             <Button
               variant="ghost"
               size="icon-sm"

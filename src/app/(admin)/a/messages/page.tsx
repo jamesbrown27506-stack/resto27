@@ -12,7 +12,7 @@ export default async function AdminMessagesPage() {
   return (
     <AdminPage
       title="Messages"
-      description="Customer conversations with the RestoLink team."
+      description="Conversations with the RestoLink team — from customers and from restaurants."
     >
       <ChatInbox mode="admin" myId={admin.id} />
     </AdminPage>

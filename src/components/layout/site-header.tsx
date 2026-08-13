@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { LogOut, Menu, ShoppingBag } from "lucide-react";
 import { BrandMark } from "./brand-mark";
+import { NavIcon } from "./icon";
 import { Avatar } from "@/components/ui/avatar";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Sheet } from "@/components/ui/sheet";
@@ -12,6 +13,7 @@ import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { LocaleToggle } from "./locale-toggle";
 import { useCart } from "@/components/cart/cart-provider";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { CUSTOMER_NAV } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { NotificationProvider } from "@/components/notifications/notification-provider";
@@ -41,7 +43,17 @@ export interface HeaderUser {
   name: string;
   email: string;
   avatarUrl: string | null;
-  /** Where this person's own dashboard lives. */
+  /**
+   * WHICH SIDE OF THE PRODUCT THIS PERSON WORKS IN — not their raw role.
+   *
+   * An admin who is impersonating a tenant is "manager" here, because that
+   * is the area every link they follow should lead back into. The public
+   * layout uses it to decide the last bottom tab, so an administrator on the
+   * homepage gets a way back into administration rather than a contact form
+   * addressed to themselves.
+   */
+  area: "admin" | "manager" | "customer";
+  /** Where this person's own dashboard lives. Always agrees with `area`. */
   homeHref: string;
 }
 
@@ -233,9 +245,55 @@ export function SiteHeader({
           <div className="mt-6 flex flex-col gap-3 border-t border-border pt-6">
             {user ? (
               <>
-                <Link href={user.homeHref} className={buttonClasses({ fullWidth: true })}>
-                  {user.name}
+                {/*
+                  WHO YOU ARE, then WHERE YOU CAN GO.
+
+                  The drawer used to offer a signed-in customer exactly two
+                  things: a button with their own name on it, and sign out.
+                  Every account screen they actually wanted — orders, messages,
+                  addresses, loyalty — was reachable only from a different
+                  page. The identity card and the destination grid below are
+                  the same ones the account menu uses, so the drawer is now a
+                  real way around the product rather than a dead end.
+                */}
+                <Link
+                  href={user.homeHref}
+                  className="flex items-center gap-3 rounded-lg border border-border bg-surface-2 p-3 transition-colors hover:bg-surface"
+                >
+                  <Avatar name={user.name} src={user.avatarUrl} size="md" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold">{user.name}</span>
+                    <span className="block truncate text-xs text-text-light">{user.email}</span>
+                  </span>
                 </Link>
+
+                {user.area === "customer" ? (
+                  <ul className="grid grid-cols-2 gap-2">
+                    {CUSTOMER_NAV.map((item) => (
+                      <li key={item.href}>
+                        <Link
+                          href={item.href}
+                          className={cn(
+                            "flex h-full items-center gap-2.5 rounded-lg border p-3 text-sm font-medium transition-colors",
+                            pathname === item.href
+                              ? "border-primary bg-primary-light/50 text-primary"
+                              : "border-border text-text-secondary hover:bg-surface-2 hover:text-text",
+                          )}
+                        >
+                          <NavIcon name={item.icon} className="size-4 shrink-0" />
+                          <span className="min-w-0 truncate">
+                            {item.labelKey ? t(item.labelKey) : item.label}
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <Link href={user.homeHref} className={buttonClasses({ fullWidth: true })}>
+                    {t("nav.myArea")}
+                  </Link>
+                )}
+
                 <form action="/logout" method="post">
                   <Button type="submit" variant="outline" fullWidth>
                     <LogOut className="size-4" aria-hidden />

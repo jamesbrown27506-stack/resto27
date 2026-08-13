@@ -14,18 +14,22 @@ export async function getHeaderUser(): Promise<HeaderUser | null> {
   const [profile, impersonation] = await Promise.all([getCurrentProfile(), getImpersonation()]);
   if (!profile) return null;
 
+  // While impersonating, "my area" is the tenant's — the admin's own /a would
+  // bounce straight back out anyway (see the admin layout guard). `area` and
+  // `homeHref` are therefore derived together and always agree.
+  const area: HeaderUser["area"] = impersonation
+    ? "manager"
+    : profile.role === "admin"
+      ? "admin"
+      : profile.role === "manager"
+        ? "manager"
+        : "customer";
+
   return {
     name: profile.name,
     email: profile.email,
     avatarUrl: profile.avatarUrl,
-    // While impersonating, "my area" is the tenant's — the admin's own /a
-    // would bounce straight back out anyway (see the admin layout guard).
-    homeHref: impersonation
-      ? "/m"
-      : profile.role === "admin"
-        ? "/a"
-        : profile.role === "manager"
-          ? "/m"
-          : "/account",
+    area,
+    homeHref: area === "admin" ? "/a" : area === "manager" ? "/m" : "/account",
   };
 }

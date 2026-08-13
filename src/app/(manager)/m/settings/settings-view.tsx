@@ -11,7 +11,7 @@ import { Field, Switch, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { setAcceptingOrders } from "@/lib/data/manager-actions";
 import { saveNotificationPreferences } from "@/lib/data/settings-actions";
-import { PushToggle } from "@/components/notifications/push-toggle";
+import { NotificationSettings } from "@/components/notifications/notification-settings";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { NotificationEventKey, NotificationPreference } from "@/lib/data/settings";
@@ -159,6 +159,9 @@ export function SettingsView({
         </div>
       </Panel>
 
+      {/* ── Channels — the master switches, above the per-event grid ───── */}
+      <NotificationSettings />
+
       {/* ── Notifications ──────────────────────────────────────────────── */}
       <Panel title={t("mset.notif.title")} description={t("mset.notif.description")}>
         {/* The column headers only exist once the row IS a row. Below md each
@@ -263,12 +266,10 @@ export function SettingsView({
         </div>
       </Panel>
 
-      {/* ── Push on this device ─────────────────────────────────────── */}
-      <Panel title={t("mset.push.title")} description={t("mset.push.body")}>
-        <div className="p-5">
-          <PushToggle tPrefix="mset" />
-        </div>
-      </Panel>
+      {/* Push moved up into the channels panel above — the browser
+          permission and the "I want push" preference are one decision, and
+          splitting them across two cards was how a switch could read ON
+          while this device had never been subscribed. */}
 
       {/* ── Appearance ─────────────────────────────────────────────────── */}
       <Panel title={t("mset.appearance.title")}>

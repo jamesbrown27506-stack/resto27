@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { ArrowLeft, MessageSquare, Plus, Send, X } from "lucide-react";
+import { ArrowLeft, MessageSquare, Plus, Send, Store, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -26,12 +26,17 @@ import {
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
 /**
- * The messaging screen, shared by all three sides.
+ * The messaging screen, shared by every side.
  *
- *  · customer — /messages : their threads + a \"new conversation\" form
+ *  · customer — /messages   : their threads + a "new conversation" form
  *    (pick a restaurant, or write to the RestoLink team);
  *  · staff    — /m/messages : the ACTIVE branch's threads (branch-scoped);
- *  · admin    — /a/messages : platform threads (restaurant_id IS NULL).
+ *  · platform — /m/messages : the RESTAURANT'S OWN thread with the platform.
+ *    Same screen, other direction: here the manager is the one writing, and
+ *    an admin answers. Until this existed a tenant could be messaged by every
+ *    diner in Douala and had no way to reach the operator they pay.
+ *  · admin    — /a/messages : platform threads (restaurant_id IS NULL), which
+ *    now carry restaurants as well as customers.
  *
  *  An open thread subscribes to Realtime INSERTs on conversation_messages,
  *  filtered by conversation id and RLS-scoped to participants, so a reply
@@ -49,7 +54,10 @@ function timeLabel(value: string): string {
     : d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
-type Mode = "customer" | "staff" | "admin";
+type Mode = "customer" | "staff" | "admin" | "platform";
+
+/** Modes whose user may OPEN a thread, not only answer one. */
+const CAN_COMPOSE: Mode[] = ["customer", "platform"];
 
 export function ChatInbox({
   mode,
@@ -63,7 +71,8 @@ export function ChatInbox({
 }) {
   const { t } = useLocale();
   const { toast } = useToast();
-  const tKey = (key: string) => (mode === "staff" ? `mchat.${key}` : `cmsg.${key}`) as TranslationKey;
+  const prefix = mode === "staff" ? "mchat" : mode === "platform" ? "msup" : "cmsg";
+  const tKey = (key: string) => `${prefix}.${key}` as TranslationKey;
 
   const [list, setList] = useState<ChatConversationSummary[] | null>(null);
   const [thread, setThread] = useState<ChatThread | null>(null);
@@ -92,6 +101,7 @@ export function ChatInbox({
     const load = async () => {
       const fn: (id: string) => Promise<ChatConversationSummary[]> =
         mode === "staff" ? listBranchConversations : listMyConversations;
+      // listMyConversations ignores the argument; only the staff list reads it.
       const rows = await fn(restaurantId ?? "");
       if (!cancelled) setList(rows);
     };
@@ -220,7 +230,7 @@ export function ChatInbox({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
       {/* ── The list ─────────────────────────────────────────────────── */}
       <div className="lg:border-r lg:border-border lg:pr-4">
-        {mode === "customer" && (
+        {CAN_COMPOSE.includes(mode) && (
           <Button
             variant="outline"
             fullWidth
@@ -261,6 +271,15 @@ export function ChatInbox({
                       <span className="truncate text-sm font-semibold">{c.peerName}</span>
                       <span className="shrink-0 text-[10px] text-text-light">{timeLabel(c.lastMessageAt)}</span>
                     </span>
+                    {/* The platform inbox now holds restaurants as well as
+                        diners, and "your order is on its way" answered to a
+                        restaurant owner is a mistake worth one small tag. */}
+                    {c.peerRole === "manager" && (
+                      <span className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-bold text-accent-hover">
+                        <Store className="size-2.5" aria-hidden />
+                        <span>{t("mchat.peer.restaurant")}</span>
+                      </span>
+                    )}
                     <span className="mt-0.5 block truncate text-xs text-text-secondary">
                       {c.lastMessage ?? c.subject}
                     </span>
@@ -279,8 +298,12 @@ export function ChatInbox({
 
       {/* ── The thread (or the new-conversation form) ────────────────── */}
       <div className="min-w-0">
-        {composing && mode === "customer" ? (
+        {composing && CAN_COMPOSE.includes(mode) ? (
           <NewConversationForm
+            prefix={prefix}
+            // A restaurant has exactly one correspondent here — the platform —
+            // so there is no picker to show, and the server forces it anyway.
+            pickTarget={mode === "customer"}
             pending={pending}
             onCancel={() => setComposing(false)}
             onSend={startNew}
@@ -388,30 +411,39 @@ export function ChatInbox({
   );
 }
 
-/** Customer-only: pick a restaurant (or the team) and send the first message. */
+/**
+ * Open a thread: pick who it is with (customers only — a restaurant writes to
+ * the platform and nobody else) and send the first message.
+ */
 function NewConversationForm({
+  prefix,
+  pickTarget,
   pending,
   onCancel,
   onSend,
 }: {
+  /** `cmsg` for the customer screen, `msup` for the restaurant's support. */
+  prefix: string;
+  pickTarget: boolean;
   pending: boolean;
   onCancel: () => void;
   onSend: (input: { restaurantId: string | null; subject: string; body: string }) => void;
 }) {
   const { t } = useLocale();
-  const tKey = (key: string) => `cmsg.${key}` as TranslationKey;
+  const tKey = (key: string) => `${prefix}.${key}` as TranslationKey;
   const [targets, setTargets] = useState<{ id: string; name: string }[] | null>(null);
   const [restaurantId, setRestaurantId] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
 
   useEffect(() => {
+    if (!pickTarget) return;
     void listChatTargets()
       .then(setTargets)
       .catch(() => setTargets([]));
-  }, []);
+  }, [pickTarget]);
 
-  const toPlatform = restaurantId === "";
+  const toPlatform = !pickTarget || restaurantId === "";
   const canSend = body.trim().length > 0;
 
   return (
@@ -424,23 +456,25 @@ function NewConversationForm({
       </div>
 
       <div className="flex flex-col gap-4">
-        <Field label={t(tKey("pickTarget"))}>
-          <select
-            value={restaurantId}
-            onChange={(e) => setRestaurantId(e.target.value)}
-            className="h-10 rounded-md border border-border bg-bg px-3 text-sm"
-          >
-            <option value="">{t(tKey("platform"))}</option>
-            {targets?.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-          {targets === null && (
-            <p className="mt-1 text-xs text-text-light">{t("common.loading")}</p>
-          )}
-        </Field>
+        {pickTarget && (
+          <Field label={t(tKey("pickTarget"))}>
+            <select
+              value={restaurantId}
+              onChange={(e) => setRestaurantId(e.target.value)}
+              className="h-10 rounded-md border border-border bg-bg px-3 text-sm"
+            >
+              <option value="">{t(tKey("platform"))}</option>
+              {targets?.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+            {targets === null && (
+              <p className="mt-1 text-xs text-text-light">{t("common.loading")}</p>
+            )}
+          </Field>
+        )}
 
         <Field label={t(tKey("subject"))}>
           <Input

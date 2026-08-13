@@ -11,16 +11,33 @@ import { rateLimit } from "@/lib/rate-limit";
  * ─────────────────────────────────────────────────────────────────────────
  *  TWO KINDS OF THREAD, ONE TABLE:
  *
- *   · customer ↔ restaurant  (conversations.restaurant_id set) — the
+ *   · someone ↔ restaurant  (conversations.restaurant_id set) — the
  *     restaurant's ACTIVE staff are the staff side;
- *   · customer ↔ platform    (conversations.restaurant_id NULL) — admins are
+ *   · someone ↔ platform    (conversations.restaurant_id NULL) — admins are
  *     the staff side, which is the "write to the administrator" case.
  *
+ *  "SOMEONE" IS THE THREAD'S INITIATOR, NOT NECESSARILY A CUSTOMER. The
+ *  column is called customer_id because customers were the only people who
+ *  could open a thread; a RESTAURANT had no way to reach the platform at
+ *  all, which left the one relationship the business actually runs on —
+ *  tenant to operator — with no channel inside the product. A manager may now
+ *  open a platform thread (restaurant_id NULL, customer_id = their own
+ *  profile), and the existing RLS already covers it: the read policy grants
+ *  `customer_id = current_profile_id()` whatever role that profile holds.
+ *
+ *  Two ideas are therefore kept apart below:
+ *   · SIDE       — initiator or staff. It decides which unread counter moves
+ *                  and who gets notified.
+ *   · SENDER ROLE — customer / manager / admin, snapshotted on the message so
+ *                  a manager's words are not filed under "customer".
+ *
  *  EVERY MUTATION IS SCOPED BY SESSION:
- *   · the customer id always comes from requireUser(),
+ *   · the initiator id always comes from requireUser(),
  *   · staff membership is re-verified against restaurant_staff on every
  *     call — a role removed from the team loses access immediately,
- *   · admins only reach restaurant_id IS NULL threads.
+ *   · admins only reach restaurant_id IS NULL threads,
+ *   · a manager may only open a PLATFORM thread — they cannot write to
+ *     another restaurant by passing its id.
  *
  *  RATE LIMITED — a conversation that can be abused is a spam engine with
  *  a mail relay attached (each message notifies + emails the other side).
@@ -37,6 +54,12 @@ export interface ChatConversationSummary {
   restaurantId: string | null;
   /** The other side's display name, resolved per viewer role. */
   peerName: string;
+  /**
+   * What the other side IS. Only meaningful on the staff/admin side, where
+   * the platform inbox now carries restaurants as well as diners and
+   * answering one as though it were the other is a real mistake to make.
+   */
+  peerRole: "customer" | "manager" | "admin" | null;
   lastMessage: string | null;
   lastMessageAt: string;
   /** MY side's unread count. */
@@ -114,6 +137,39 @@ async function isActiveStaff(profileId: string, restaurantId: string): Promise<b
   return Boolean(data);
 }
 
+/**
+ * Who the caller is in a thread.
+ *
+ * `side` decides mechanics (which unread counter moves, who is notified);
+ * `senderRole` is what gets stamped on the message and never changes again.
+ * Splitting them is what lets a manager hold a platform thread without their
+ * messages being filed as a customer's.
+ */
+interface Participation {
+  side: "initiator" | "staff";
+  senderRole: "customer" | "manager" | "admin";
+}
+
+async function participationIn(
+  thread: { customerId: string; restaurantId: string | null },
+  profile: { id: string; role: string },
+): Promise<Participation | null> {
+  if (thread.customerId === profile.id) {
+    return {
+      side: "initiator",
+      senderRole:
+        profile.role === "manager" ? "manager" : profile.role === "admin" ? "admin" : "customer",
+    };
+  }
+  if (thread.restaurantId && (await isActiveStaff(profile.id, thread.restaurantId))) {
+    return { side: "staff", senderRole: "manager" };
+  }
+  if (!thread.restaurantId && profile.role === "admin") {
+    return { side: "staff", senderRole: "admin" };
+  }
+  return null;
+}
+
 /** "The staff side" of a thread — a restaurant's staff, or every admin. */
 async function notifyStaffSide(thread: { restaurantId: string | null }, preview: string) {
   if (thread.restaurantId) {
@@ -157,10 +213,14 @@ export async function startConversation(input: {
   subject?: string;
   body: string;
 }): Promise<ActionResult & { conversationId?: string }> {
-  const customer = await requireUser();
-  if (customer.role !== "customer") return { ok: false, error: "Only customers can start conversations." };
+  const initiator = await requireUser();
+  // Admins answer threads, they do not open them — there is no "the platform
+  // wrote to itself" inbox for the reply to land in.
+  if (initiator.role !== "customer" && initiator.role !== "manager") {
+    return { ok: false, error: "Only customers and restaurants can start conversations." };
+  }
 
-  const limited = await rateLimit({ key: "chat:start", limit: 5, windowMs: 60 * 60 * 1000, identifier: customer.id });
+  const limited = await rateLimit({ key: "chat:start", limit: 5, windowMs: 60 * 60 * 1000, identifier: initiator.id });
   if (!limited.ok) return { ok: false, error: "Trop de conversations ouvertes. Réessayez dans une heure." };
 
   const body = cleanBody(input.body);
@@ -168,7 +228,11 @@ export async function startConversation(input: {
   if (body.length < 1) return { ok: false, error: "Votre message est vide." };
 
   const supabase = createAdminClient();
-  const restaurantId = input.restaurantId?.trim() || null;
+  // A manager's only correspondent is the platform. Forced server-side rather
+  // than trusted from the form: a restaurant must not be able to open a
+  // thread inside a competitor's inbox by posting their id.
+  const restaurantId =
+    initiator.role === "manager" ? null : input.restaurantId?.trim() || null;
 
   if (restaurantId) {
     // The target must exist and be active — a conversation with a suspended
@@ -184,7 +248,7 @@ export async function startConversation(input: {
 
   const { data: conversation, error } = await supabase
     .from("conversations")
-    .insert({ customer_id: customer.id, restaurant_id: restaurantId, subject })
+    .insert({ customer_id: initiator.id, restaurant_id: restaurantId, subject })
     .select("id")
     .single();
 
@@ -195,8 +259,10 @@ export async function startConversation(input: {
 
   const { error: messageError } = await supabase.from("conversation_messages").insert({
     conversation_id: conversation.id,
-    sender_id: customer.id,
-    sender_role: "customer",
+    sender_id: initiator.id,
+    // Snapshotted: "manager" when a restaurant opened the thread, so the admin
+    // reading it sees who is actually on the other end.
+    sender_role: initiator.role === "manager" ? "manager" : "customer",
     body,
   });
 
@@ -235,21 +301,14 @@ export async function sendMessage(input: {
   if (!thread) return { ok: false, error: "Conversation introuvable." };
 
   // ── Who is the caller in this thread? ────────────────────────────────
-  let role: "customer" | "manager" | "admin" | null = null;
-  if (thread.customerId === profile.id) {
-    role = "customer";
-  } else if (thread.restaurantId && (await isActiveStaff(profile.id, thread.restaurantId))) {
-    role = "manager";
-  } else if (!thread.restaurantId && profile.role === "admin") {
-    role = "admin";
-  }
-  if (!role) return { ok: false, error: "Vous ne participez pas à cette conversation." };
+  const part = await participationIn(thread, profile);
+  if (!part) return { ok: false, error: "Vous ne participez pas à cette conversation." };
   if (thread.status === "closed") return { ok: false, error: "Cette conversation est fermée." };
 
   const { error } = await supabase.from("conversation_messages").insert({
     conversation_id: thread.id,
     sender_id: profile.id,
-    sender_role: role,
+    sender_role: part.senderRole,
     body,
   });
   if (error) {
@@ -258,8 +317,10 @@ export async function sendMessage(input: {
   }
 
   // The other side's unread bumps (read-then-write: the raw increment needs
-  // the current value); a reply reopens a closed thread.
-  const otherSide = role === "customer" ? "staff_unread" : "customer_unread";
+  // the current value); a reply reopens a closed thread. Keyed on SIDE, not
+  // on sender role — a manager writing into their own platform thread is the
+  // initiator, and it is the staff counter that must move.
+  const otherSide = part.side === "initiator" ? "staff_unread" : "customer_unread";
   const { data: conv } = await supabase
     .from("conversations")
     .select(otherSide)
@@ -276,16 +337,19 @@ export async function sendMessage(input: {
     })
     .eq("id", thread.id);
 
-  // The other side is told — with their own deep link.
+  // The other side is told — with their own deep link. The initiator is not
+  // always a customer any more, so the href follows their area rather than
+  // sending a restaurant to a page under (customer) it cannot open.
   const preview = body.slice(0, 80);
-  if (role === "customer") {
+  if (part.side === "initiator") {
     await notifyStaffSide(thread, preview);
   } else {
+    const initiatorRole = await roleOf(thread.customerId);
     await notify({
       event: "chat_reply",
       tone: "info",
       customerId: thread.customerId,
-      href: "/messages",
+      href: initiatorRole === "manager" ? "/m/messages" : "/messages",
       params: { preview },
     });
   }
@@ -293,26 +357,43 @@ export async function sendMessage(input: {
   return { ok: true };
 }
 
+/** One profile's platform role — used only to aim a deep link. */
+async function roleOf(profileId: string): Promise<string | null> {
+  const supabase = createAdminClient();
+  const { data } = await supabase.from("profiles").select("role").eq("id", profileId).maybeSingle();
+  return (data as { role?: string } | null)?.role ?? null;
+}
+
 /* ── Lists — role decides whose threads ────────────────────────────────── */
 
-async function listFor(scope: "customer" | "staff" | "admin", scopeId: string): Promise<ChatConversationSummary[]> {
+/**
+ * `mine` = threads I opened, whatever my role. `minePlatform` narrows that to
+ * the platform ones, which is what a restaurant's support inbox shows: a
+ * manager who once ordered dinner on their own account still has customer
+ * threads with restaurants, and those belong in the customer area, not in the
+ * tenant's conversation with the operator.
+ */
+type ListScope = "mine" | "minePlatform" | "staff" | "admin";
+
+async function listFor(scope: ListScope, scopeId: string): Promise<ChatConversationSummary[]> {
   const supabase = createAdminClient();
 
   let query;
-  if (scope === "customer") {
+  if (scope === "mine" || scope === "minePlatform") {
     query = supabase
       .from("conversations")
       .select("id, subject, status, restaurant_id, staff_unread, customer_unread, last_message_at, restaurants ( name )")
       .eq("customer_id", scopeId);
+    if (scope === "minePlatform") query = query.is("restaurant_id", null);
   } else if (scope === "staff") {
     query = supabase
       .from("conversations")
-      .select("id, subject, status, restaurant_id, staff_unread, customer_unread, last_message_at, profiles!conversations_customer_id_fkey ( name )")
+      .select("id, subject, status, restaurant_id, staff_unread, customer_unread, last_message_at, profiles!conversations_customer_id_fkey ( name, role )")
       .eq("restaurant_id", scopeId);
   } else {
     query = supabase
       .from("conversations")
-      .select("id, subject, status, restaurant_id, staff_unread, customer_unread, last_message_at, profiles!conversations_customer_id_fkey ( name )")
+      .select("id, subject, status, restaurant_id, staff_unread, customer_unread, last_message_at, profiles!conversations_customer_id_fkey ( name, role )")
       .is("restaurant_id", null);
   }
 
@@ -331,23 +412,26 @@ async function listFor(scope: "customer" | "staff" | "admin", scopeId: string): 
     customer_unread: number;
     last_message_at: string;
     restaurants: { name: string } | null;
-    profiles: { name: string } | null;
+    profiles: { name: string; role: string } | null;
   }[];
 
   const lastByThread = await lastMessageOf(rows.map((r) => r.id));
+  const mine = scope === "mine" || scope === "minePlatform";
 
   return rows.map((row) => ({
     id: row.id,
     subject: row.subject,
     status: row.status,
     restaurantId: row.restaurant_id,
-    peerName:
-      scope === "customer"
-        ? (row.restaurants?.name ?? "Équipe RestoLink")
-        : (row.profiles?.name ?? "Client"),
+    peerName: mine
+      ? (row.restaurants?.name ?? "Équipe RestoLink")
+      : (row.profiles?.name ?? "Client"),
+    peerRole: mine
+      ? null
+      : ((row.profiles?.role as ChatConversationSummary["peerRole"]) ?? "customer"),
     lastMessage: lastByThread.get(row.id)?.body ?? null,
     lastMessageAt: lastByThread.get(row.id)?.created_at ?? row.last_message_at,
-    unread: scope === "customer" ? row.customer_unread : row.staff_unread,
+    unread: mine ? row.customer_unread : row.staff_unread,
   }));
 }
 
@@ -372,10 +456,12 @@ async function lastMessageOf(conversationIds: string[]): Promise<Map<string, { b
 
 export async function listMyConversations(): Promise<ChatConversationSummary[]> {
   const profile = await requireUser();
-  if (profile.role === "customer") return listFor("customer", profile.id);
+  if (profile.role === "customer") return listFor("mine", profile.id);
   if (profile.role === "admin") return listFor("admin", profile.id);
-  // Manager — but /m is branch-scoped; the page passes the active branch.
-  return [];
+  // Manager: their OWN threads with the platform. The branch's customer
+  // threads are a different inbox and come from listBranchConversations —
+  // this one is the restaurant writing to the operator, not answering diners.
+  return listFor("minePlatform", profile.id);
 }
 
 /** The branch-scoped staff list — the /m/messages page calls this. */
@@ -394,11 +480,8 @@ export async function getConversation(conversationId: string): Promise<ChatThrea
   if (!thread) return null;
 
   // Same participant gate as sendMessage — reading is not broadcasting.
-  let role: "customer" | "manager" | "admin" | null = null;
-  if (thread.customerId === profile.id) role = "customer";
-  else if (thread.restaurantId && (await isActiveStaff(profile.id, thread.restaurantId))) role = "manager";
-  else if (!thread.restaurantId && profile.role === "admin") role = "admin";
-  if (!role) return null;
+  const part = await participationIn(thread, profile);
+  if (!part) return null;
 
   const { data: messages, error } = await supabase
     .from("conversation_messages")
@@ -408,10 +491,12 @@ export async function getConversation(conversationId: string): Promise<ChatThrea
 
   if (error) return null;
 
+  // Who the OTHER side is, from where I stand: the restaurant (or the
+  // platform team) when I opened the thread, the initiator when I answer it.
   const peerName =
-    role === "customer"
-      ? (await restaurantName(thread.restaurantId)) ?? "Équipe RestoLink"
-      : (await profileName(thread.customerId)) ?? "Client";
+    part.side === "initiator"
+      ? ((await restaurantName(thread.restaurantId)) ?? "Équipe RestoLink")
+      : ((await profileName(thread.customerId)) ?? "Client");
 
   return {
     id: thread.id,
@@ -460,9 +545,8 @@ export async function markConversationRead(conversationId: string): Promise<Acti
   const thread = await loadThread(conversationId);
   if (!thread) return { ok: false, error: "Conversation introuvable." };
 
-  const isCustomer = thread.customerId === profile.id;
-  const isStaff = thread.restaurantId ? await isActiveStaff(profile.id, thread.restaurantId) : profile.role === "admin" && !thread.restaurantId;
-  if (!isCustomer && !isStaff) return { ok: false, error: "Vous ne participez pas à cette conversation." };
+  const part = await participationIn(thread, profile);
+  if (!part) return { ok: false, error: "Vous ne participez pas à cette conversation." };
 
   // My side's messages become read; my counter zeroes.
   await supabase
@@ -472,7 +556,7 @@ export async function markConversationRead(conversationId: string): Promise<Acti
     .neq("sender_id", profile.id)
     .is("read_at", null);
 
-  const patch = isCustomer ? { customer_unread: 0 } : { staff_unread: 0 };
+  const patch = part.side === "initiator" ? { customer_unread: 0 } : { staff_unread: 0 };
   await supabase.from("conversations").update(patch).eq("id", conversationId);
 
   return { ok: true };
@@ -484,9 +568,9 @@ export async function closeConversation(conversationId: string): Promise<ActionR
   const thread = await loadThread(conversationId);
   if (!thread) return { ok: false, error: "Conversation introuvable." };
 
-  const isCustomer = thread.customerId === profile.id;
-  const isStaff = thread.restaurantId ? await isActiveStaff(profile.id, thread.restaurantId) : profile.role === "admin" && !thread.restaurantId;
-  if (!isCustomer && !isStaff) return { ok: false, error: "Vous ne participez pas à cette conversation." };
+  if (!(await participationIn(thread, profile))) {
+    return { ok: false, error: "Vous ne participez pas à cette conversation." };
+  }
 
   await supabase
     .from("conversations")

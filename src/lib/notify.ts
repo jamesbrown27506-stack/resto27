@@ -3,6 +3,11 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { trySendMail } from "@/lib/mail";
 import { sendPush } from "@/lib/push";
 import { NOTIFICATION_EVENTS } from "@/lib/data/settings";
+import {
+  fetchNotificationChannelsFor,
+  NOTIFICATION_CHANNELS_DEFAULT,
+  type NotificationChannels,
+} from "@/lib/data/notification-channels";
 import { formatMoney } from "@/lib/format/currency";
 
 /**
@@ -53,7 +58,8 @@ export type NotifyEvent =
   | "new_subscription" //    → admin   : a tenant chose a plan / started a trial
   | "support" //             → admin   : a support message arrived
   | "chat" //                → staff   : a customer sent a message (restaurant or platform thread)
-  | "chat_reply"; //         → customer: the other side replied
+  | "chat_reply" //          → customer: the other side replied
+  | "push_enabled"; //       → self    : "push is on", sent the moment it is
 
 export interface NotifyParams {
   reference?: string;
@@ -393,6 +399,21 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
             title: `Reply from ${p.restaurantName ?? "the RestoLink team"}`,
             body: p.preview ?? "",
           };
+
+    case "push_enabled":
+      // The proof, not a promise. Sent to whoever just switched push on, over
+      // the very channel they enabled — if this one does not arrive, push does
+      // not work on that device, and they find out now rather than the night a
+      // real order goes missing.
+      return fr
+        ? {
+            title: "Notifications push activées",
+            body: "Vous recevrez désormais les alertes sur cet appareil, même quand l'onglet est fermé.",
+          }
+        : {
+            title: "Push notifications enabled",
+            body: "You will now get alerts on this device, even when the tab is closed.",
+          };
   }
 }
 
@@ -515,13 +536,17 @@ const CUSTOMER_DEFAULTS: Record<string, boolean> = {
   promotions: true,
 };
 
-async function channelsFor(
+/**
+ * WHICH EVENT reaches this person — the per-role, per-event answer only.
+ * The master channel switches are applied on top of this by `channelsFor`.
+ */
+function eventChannelsFor(
   recipient: Recipient,
   event: NotifyEvent,
   restaurantId: string | undefined,
   managerPrefs: Map<string, { in_app: boolean; email: boolean; push: boolean }>,
   customerPrefs: Map<string, { notification_json: Record<string, boolean>; push_enabled: boolean }>,
-): Promise<Channels> {
+): Channels {
   if (recipient.kind === "admin") return { inApp: true, email: true, push: true };
 
   if (recipient.kind === "manager" && restaurantId) {
@@ -543,6 +568,33 @@ async function channelsFor(
   }
 
   return { inApp: true, email: true, push: true };
+}
+
+/**
+ * The resolved answer: the event's own preference AND the person's master
+ * channel switches (migration 0027).
+ *
+ * Both must say yes. A manager who wants "new order" by email still gets no
+ * email if they turned email off entirely, and an admin — who has no
+ * per-event grid at all — is now governed by the master switches instead of
+ * the hardcoded all-on this function used to return.
+ */
+function channelsFor(
+  recipient: Recipient,
+  event: NotifyEvent,
+  restaurantId: string | undefined,
+  managerPrefs: Map<string, { in_app: boolean; email: boolean; push: boolean }>,
+  customerPrefs: Map<string, { notification_json: Record<string, boolean>; push_enabled: boolean }>,
+  masters: Map<string, NotificationChannels>,
+): Channels {
+  const perEvent = eventChannelsFor(recipient, event, restaurantId, managerPrefs, customerPrefs);
+  const master = masters.get(recipient.profileId) ?? NOTIFICATION_CHANNELS_DEFAULT;
+
+  return {
+    inApp: perEvent.inApp && master.inApp,
+    email: perEvent.email && master.email,
+    push: perEvent.push && master.push,
+  };
 }
 
 /* ── The writer ────────────────────────────────────────────────────────── */
@@ -609,6 +661,10 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
       }
     }
 
+    // The master switches (0027) — one query for the whole recipient list,
+    // every role, defaults for anyone who has never opened the screen.
+    const masterChannels = await fetchNotificationChannelsFor(recipients.map((r) => r.profileId));
+
     const tone = input.tone ?? "info";
     const params = input.params ?? {};
     const href = input.href ?? null;
@@ -621,7 +677,14 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
     for (const recipient of recipients) {
       const locale: Locale = recipient.kind === "admin" ? "en" : "fr";
       const text = copy(input.event, params, locale);
-      const prefs = await channelsFor(recipient, input.event, input.restaurantId, managerPrefs, customerPrefs);
+      const prefs = channelsFor(
+        recipient,
+        input.event,
+        input.restaurantId,
+        managerPrefs,
+        customerPrefs,
+        masterChannels,
+      );
 
       const inApp = input.inApp !== false && (input.channels?.inApp ?? prefs.inApp);
       const email = input.email !== false && (input.channels?.email ?? prefs.email);

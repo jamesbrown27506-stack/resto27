@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertTriangle, Bell, BellOff, Check, CheckCheck, Info, XCircle } from "lucide-react";
@@ -117,13 +116,21 @@ export function NotificationBell() {
 
       {open && (
         <div
+          // The bottom offset clears the mobile tab bar (min-h-16 plus the
+          // phone's gesture inset) instead of overlaying it — the tab bar is
+          // how you leave this screen, and covering it while a panel is open
+          // is the one moment you most want it.
+          style={{ bottom: "calc(4.5rem + env(safe-area-inset-bottom, 0px))" }}
           className={cn(
-            "fixed inset-x-2 bottom-2 z-50 overflow-hidden rounded-lg border border-border bg-surface shadow-xl",
+            "fixed inset-x-2 z-50 overflow-hidden rounded-lg border border-border bg-surface shadow-xl",
             // Desktop: the anchored dropdown under the bell, as before. Mobile:
             // a full-width bottom sheet — a narrow right-aligned dropdown on a
             // phone is exactly what gets clipped and unreadable, so it becomes
             // a sheet that is never off-screen, clear of the tab bar.
-            "lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:bottom-auto lg:mt-2 lg:w-[22rem] lg:max-w-[calc(100vw-2rem)]",
+            //
+            // `lg:bottom-auto!` beats the inline style above, which no class
+            // could otherwise override.
+            "lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:bottom-auto! lg:mt-2 lg:w-88 lg:max-w-[calc(100vw-2rem)]",
           )}
         >
           <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">

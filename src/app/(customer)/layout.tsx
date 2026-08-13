@@ -1,6 +1,7 @@
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { MobileTabBar, type TabItem } from "@/components/layout/mobile-tabbar";
+import { CUSTOMER_MORE } from "@/components/layout/more-tabs";
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getBranding } from "@/lib/branding";
 
@@ -13,15 +14,21 @@ import { getBranding } from "@/lib/branding";
  * opt into <AccountShell> themselves rather than the layout forcing a sidebar
  * onto a checkout flow that should have nothing else on screen.
  *
- * The signed-in client is the platform's least navigable person, so they get
- * the phone-app bottom tab bar: the way home sits first (the public site),
- * then restaurants, contact, and their dashboard — never Pricing.
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE BOTTOM BAR IS FOUR TABS, AND THE FOURTH IS "MORE".
+ *
+ *  It used to be Site / Restaurants / Contact / Dashboard, with the nine
+ *  account destinations exiled to a sideways-scrolling strip at the top of
+ *  every account page. Contact was the odd one out — a signed-in customer
+ *  with a Messages screen does not need a public contact form in their thumb
+ *  reach — so that slot now carries the whole account menu instead, opened as
+ *  a grid where all nine are visible at once.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 const TABS: TabItem[] = [
   { href: "/", icon: "Home", labelKey: "nav.site" },
   { href: "/restaurants", icon: "Store", labelKey: "nav.restaurants" },
-  { href: "/contact", icon: "LifeBuoy", labelKey: "nav.contact" },
-  { href: "/account", icon: "LayoutDashboard", labelKey: "cac.title", matchPrefix: true },
+  { href: "/account", icon: "LayoutDashboard", labelKey: "cac.title" },
 ];
 
 export default async function CustomerLayout({ children }: { children: React.ReactNode }) {
@@ -35,7 +42,7 @@ export default async function CustomerLayout({ children }: { children: React.Rea
         {children}
       </div>
       <SiteFooter brand={brand} />
-      <MobileTabBar items={TABS} />
+      <MobileTabBar items={TABS} more={CUSTOMER_MORE} />
     </div>
   );
 }

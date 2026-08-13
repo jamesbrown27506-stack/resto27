@@ -5,7 +5,11 @@ import { BellRing, Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { useLocale } from "@/lib/i18n/use-locale";
-import { getPromptUserState, savePushSubscription } from "@/lib/data/notify-actions";
+import {
+  announcePushEnabled,
+  getPromptUserState,
+  savePushSubscription,
+} from "@/lib/data/notify-actions";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
 /**
@@ -183,44 +187,78 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
     writeDismissed(NOTIF_KEY);
   }
 
+  /**
+   * The banner's Enable button — the same work the settings panel does, and
+   * it now REPORTS THE SAME REASONS.
+   *
+   * It used to skip subscribing whenever the VAPID key was missing and then
+   * toast "Notifications enabled" regardless, so the one configuration
+   * problem that makes push impossible announced itself as success. Every
+   * cause now names itself, and a real confirmation notification is sent on
+   * the way out — proof, rather than a claim.
+   */
   async function handleNotifications() {
-    if (!("Notification" in window)) return;
+    if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+      toast(t("nset.push.unsupported"), "warning");
+      dismissNotif();
+      return;
+    }
     setBusy(true);
     try {
+      if (!window.isSecureContext) {
+        toast(t("nset.push.insecure"), "warning");
+        dismissNotif();
+        return;
+      }
+
+      const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!key || key.includes("REPLACE_ME")) {
+        // Nothing the visitor can do — do not ask for a permission we cannot
+        // use, and do not claim it worked.
+        toast(t("nset.push.notConfigured"), "warning");
+        dismissNotif();
+        return;
+      }
+
       const result = await Notification.requestPermission();
       setPermission(result);
       if (result !== "granted") {
         // Blocked (or refused) — the browser will not re-ask; an hour from
         // now we point them at the site settings instead.
+        toast(t(result === "denied" ? "nset.push.denied" : "nset.push.dismissed"), "warning");
         dismissNotif();
         return;
       }
 
       // Granted: subscribe this browser and record it, exactly like the
       // settings toggle — otherwise the permission is earned and unused.
-      const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (key && !key.includes("REPLACE_ME")) {
-        const registration = await navigator.serviceWorker.register("/sw.js");
-        const subscription = await registration.pushManager.subscribe({
+      const registration = await navigator.serviceWorker.register("/sw.js");
+      const existing = await registration.pushManager.getSubscription();
+      const subscription =
+        existing ??
+        (await registration.pushManager.subscribe({
           userVisibleOnly: true,
           // Cast: our decoder returns Uint8Array<ArrayBufferLike>, the DOM
           // wants BufferSource — same bytes, narrower generic.
           applicationServerKey: urlBase64ToUint8Array(key) as unknown as BufferSource,
-        });
-        const saved = await savePushSubscription({
-          endpoint: subscription.endpoint,
-          p256dh: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey("p256dh")!))),
-          auth: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey("auth")!))),
-        });
-        if (!saved.ok) {
-          await subscription.unsubscribe().catch(() => {});
-          toast(t(tKey("notif.failed")), "error");
-          return;
-        }
+        }));
+
+      const saved = await savePushSubscription({
+        endpoint: subscription.endpoint,
+        p256dh: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey("p256dh")!))),
+        auth: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey("auth")!))),
+      });
+      if (!saved.ok) {
+        if (!existing) await subscription.unsubscribe().catch(() => {});
+        toast(t("nset.push.failed"), "error");
+        return;
       }
-      toast(t(tKey("notif.enabled")), "success");
-    } catch {
-      toast(t(tKey("notif.failed")), "error");
+
+      const announced = await announcePushEnabled().catch(() => ({ ok: false as const }));
+      toast(t(announced.ok ? "nset.push.enabled" : "nset.push.enabledNoSend"), "success");
+    } catch (error) {
+      console.error("[push] banner enable failed", error);
+      toast(t("nset.push.failed"), "error");
     } finally {
       setBusy(false);
     }

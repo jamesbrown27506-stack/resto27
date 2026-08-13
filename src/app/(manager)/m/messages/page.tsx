@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { ManagerPage } from "@/components/layout/manager-shell";
-import { ChatInbox } from "@/components/chat/chat-inbox";
+import { ManagerMessagesView } from "./messages-view";
 import { requireBranch } from "@/lib/auth/branch";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
@@ -16,18 +16,10 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function ManagerMessagesPage() {
   const { active, profile } = await requireBranch();
-  const locale = await getLocale();
 
   return (
     <ManagerPage titleKey="mchat.title" descriptionKey="mchat.subtitle">
-      {/* Keyed on the branch: staff inboxes are per-branch, and switching
-          location must not carry one restaurant's threads into another's. */}
-      <ChatInbox
-        key={active.restaurantId}
-        mode="staff"
-        myId={profile.id}
-        restaurantId={active.restaurantId}
-      />
+      <ManagerMessagesView myId={profile.id} restaurantId={active.restaurantId} />
     </ManagerPage>
   );
 }

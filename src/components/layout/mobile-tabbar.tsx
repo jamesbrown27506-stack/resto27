@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import { NavIcon, type IconName } from "./icon";
+import { NavMenuSheet, type NavMenuItem } from "./nav-menu-sheet";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
@@ -22,6 +24,11 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
  *  By convention the FIRST tab of the signed-in areas points back at the
  *  public site: whatever corner of the platform someone works in, the way
  *  home is always in the same place.
+ *
+ *  THE LAST TAB CAN BE "MORE" instead of a link. An area with more
+ *  destinations than tabs (the customer's nine account screens) hands them to
+ *  `more`, and they open as a grid in a bottom sheet rather than being hidden
+ *  behind a sideways-scrolling strip at the top of every page.
  * ─────────────────────────────────────────────────────────────────────────
  *
  *  `labelKey` for the bilingual areas; plain `label` for the admin area,
@@ -48,64 +55,146 @@ export interface TabItem {
   badge?: number;
 }
 
-export function MobileTabBar({ items, ariaLabel }: { items: TabItem[]; ariaLabel?: string }) {
+/**
+ * The last tab, when it opens a menu instead of navigating.
+ *
+ * Keys rather than strings for the heading, because the layouts that build
+ * this are Server Components and cannot call useLocale — the same reason
+ * ManagerPage takes a `titleKey`.
+ */
+export interface MoreTab {
+  labelKey?: TranslationKey;
+  label?: string;
+  icon?: IconName;
+  /** Heading of the sheet it opens. */
+  titleKey?: TranslationKey;
+  title?: string;
+  descriptionKey?: TranslationKey;
+  description?: string;
+  items: NavMenuItem[];
+  /** Sign out, theme and language under the grid — the account areas. */
+  withAccountActions?: boolean;
+}
+
+export function MobileTabBar({
+  items,
+  more,
+  ariaLabel,
+}: {
+  items: TabItem[];
+  more?: MoreTab;
+  ariaLabel?: string;
+}) {
   const pathname = usePathname();
   const { t } = useLocale();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   function isActive(item: TabItem): boolean {
     if (item.matchPrefix) return pathname.startsWith(item.href);
     return pathname === item.href;
   }
 
+  // "More" lights up when the page you are on lives inside it — otherwise the
+  // whole account area reads as "nowhere" on the bar.
+  const moreActive =
+    more?.items.some((item) =>
+      item.matchPrefix ? pathname === item.href || pathname.startsWith(`${item.href}/`) : pathname === item.href,
+    ) ?? false;
+
   return (
-    <nav
-      aria-label={ariaLabel ?? t("nav.menu")}
-      className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur-md lg:hidden"
-      // The gesture bar on phones that have one. Padding, not margin, so the
-      // frosted surface still reaches the physical bottom edge.
-      style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-    >
-      <ul className="grid auto-cols-fr grid-flow-col">
-        {items.map((item) => {
-          const active = isActive(item);
-          return (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "relative flex min-h-16 flex-col items-center justify-center gap-1 px-1 pt-2 pb-1.5",
-                  "text-[11px] font-medium transition-colors",
-                  active ? "text-primary" : "text-text-light hover:text-text-secondary",
-                )}
+    <>
+      <nav
+        aria-label={ariaLabel ?? t("nav.menu")}
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur-md lg:hidden"
+        // The gesture bar on phones that have one. Padding, not margin, so the
+        // frosted surface still reaches the physical bottom edge.
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
+        <ul className="grid auto-cols-fr grid-flow-col">
+          {items.map((item) => {
+            const active = isActive(item);
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  aria-current={active ? "page" : undefined}
+                  className={tabClasses(active)}
+                >
+                  <Lit active={active} />
+                  <span className="relative">
+                    <NavIcon name={item.icon} className="size-5" />
+                    {item.badge !== undefined && item.badge > 0 && <Bubble count={item.badge} />}
+                  </span>
+                  <span className="max-w-full truncate">
+                    {item.labelKey ? t(item.labelKey) : item.label}
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
+
+          {more && (
+            <li>
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen(true)}
+                className={cn(tabClasses(moreActive || menuOpen), "w-full")}
               >
-                {/* The lit indicator — a pill above the active icon, so state
-                    reads at a glance without recolouring the whole tab. */}
-                <span
-                  aria-hidden
-                  className={cn(
-                    "absolute top-0 h-0.5 w-8 rounded-full transition-colors",
-                    active ? "bg-primary" : "bg-transparent",
-                  )}
-                />
-
+                <Lit active={moreActive || menuOpen} />
                 <span className="relative">
-                  <NavIcon name={item.icon} className="size-5" />
-                  {item.badge !== undefined && item.badge > 0 && (
-                    <span className="tnum absolute -top-1.5 -right-2.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-fg">
-                      {item.badge > 99 ? "99+" : item.badge}
-                    </span>
-                  )}
+                  <NavIcon name={more.icon ?? "Ellipsis"} className="size-5" />
                 </span>
-
                 <span className="max-w-full truncate">
-                  {item.labelKey ? t(item.labelKey) : item.label}
+                  {more.labelKey ? t(more.labelKey) : more.label}
                 </span>
-              </Link>
+              </button>
             </li>
-          );
-        })}
-      </ul>
-    </nav>
+          )}
+        </ul>
+      </nav>
+
+      {more && (
+        <NavMenuSheet
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+          title={more.titleKey ? t(more.titleKey) : (more.title ?? "")}
+          description={more.descriptionKey ? t(more.descriptionKey) : more.description}
+          items={more.items}
+          withAccountActions={more.withAccountActions}
+        />
+      )}
+    </>
+  );
+}
+
+function tabClasses(active: boolean): string {
+  return cn(
+    "relative flex min-h-16 flex-col items-center justify-center gap-1 px-1 pt-2 pb-1.5",
+    "text-[11px] font-medium transition-colors",
+    active ? "text-primary" : "text-text-light hover:text-text-secondary",
+  );
+}
+
+/** The lit indicator — a pill above the active icon, so state reads at a
+    glance without recolouring the whole tab. */
+function Lit({ active }: { active: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "absolute top-0 h-0.5 w-8 rounded-full transition-colors",
+        active ? "bg-primary" : "bg-transparent",
+      )}
+    />
+  );
+}
+
+function Bubble({ count }: { count: number }) {
+  return (
+    <span className="tnum absolute -top-1.5 -right-2.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-fg">
+      {count > 99 ? "99+" : count}
+    </span>
   );
 }

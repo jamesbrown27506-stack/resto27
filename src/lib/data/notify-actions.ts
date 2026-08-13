@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getCurrentProfile, requireUser } from "@/lib/auth/session";
-import type { NotifyTone } from "@/lib/notify";
+import { notify, type NotifyTone } from "@/lib/notify";
+import {
+  fetchNotificationChannels,
+  saveNotificationChannels,
+  type NotificationChannels,
+} from "@/lib/data/notification-channels";
 
 /**
  * Notification actions shared by every shell — bell state, mark-read, nav
@@ -154,7 +159,7 @@ export async function getManagerNavCounts(restaurantId: string): Promise<{
 
   if (!staff) return { orders: 0, reservations: 0, messages: 0 };
 
-  const [orders, reservations, messages] = await Promise.all([
+  const [orders, reservations, messages, support] = await Promise.all([
     supabase
       .from("orders")
       .select("*", { count: "exact", head: true })
@@ -171,12 +176,23 @@ export async function getManagerNavCounts(restaurantId: string): Promise<{
       .eq("restaurant_id", restaurantId)
       .eq("status", "open")
       .gt("staff_unread", 0),
+    // The other inbox on the same screen: this person's own thread with the
+    // platform, where an admin's reply is unread on the CUSTOMER counter
+    // because the manager is the one who opened it. Without this the support
+    // tab could hold an answer while the Messages badge stayed quiet.
+    supabase
+      .from("conversations")
+      .select("*", { count: "exact", head: true })
+      .is("restaurant_id", null)
+      .eq("customer_id", profile.id)
+      .eq("status", "open")
+      .gt("customer_unread", 0),
   ]);
 
   return {
     orders: orders.count ?? 0,
     reservations: reservations.count ?? 0,
-    messages: messages.count ?? 0,
+    messages: (messages.count ?? 0) + (support.count ?? 0),
   };
 }
 
@@ -231,5 +247,77 @@ export async function removePushSubscription(endpoint: string): Promise<{ ok: bo
     .eq("endpoint", endpoint)
     .eq("profile_id", profile.id);
 
+  return { ok: true };
+}
+
+/* ── Master channel switches (migration 0027) ──────────────────────────── */
+
+/**
+ * MY three switches. Every role calls this one action — the settings panel is
+ * the same component in the customer, manager and admin areas, and the answer
+ * is per person, not per role.
+ */
+export async function getMyNotificationChannels(): Promise<NotificationChannels> {
+  const profile = await requireUser();
+  return fetchNotificationChannels(profile.id);
+}
+
+export async function saveMyNotificationChannels(
+  input: NotificationChannels,
+): Promise<{ ok: boolean; error?: string }> {
+  const profile = await requireUser();
+
+  const result = await saveNotificationChannels(profile.id, {
+    inApp: Boolean(input.inApp),
+    email: Boolean(input.email),
+    push: Boolean(input.push),
+  });
+  if (!result.ok) return result;
+
+  // The three screens that render the panel.
+  revalidatePath("/settings");
+  revalidatePath("/m/settings");
+  revalidatePath("/a/notifications");
+  return { ok: true };
+}
+
+/**
+ * "Push notifications are now on" — sent to the person who just turned them
+ * on, through the channel they just turned on.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THIS IS THE TEST, AND IT IS WHY THE ADMIN TEST PAGE IS NOT.
+ *
+ *  Verifying push used to mean an admin opening /a/tests and firing a sample
+ *  event at themselves — which tells a customer or a manager nothing about
+ *  their own phone. Sending the confirmation at the moment of subscribing
+ *  puts the proof where the action is: the browser prompt is accepted, the
+ *  subscription is stored, and a real notification comes straight back
+ *  through lib/notify — same writer, same delivery path, same preference
+ *  gating as an actual order.
+ *
+ *  `channels` forces in-app + push for this one message: the person is
+ *  standing in front of the switch, so the bell row is the on-screen half of
+ *  the receipt and the push is the off-screen half. Email is deliberately
+ *  off — nobody needs a mail to say a browser setting changed.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function announcePushEnabled(): Promise<{ ok: boolean; error?: string }> {
+  const profile = await requireUser();
+
+  const href =
+    profile.role === "admin" ? "/a/notifications" : profile.role === "manager" ? "/m/settings" : "/settings";
+
+  const { delivered } = await notify({
+    event: "push_enabled",
+    tone: "success",
+    profileId: profile.id,
+    href,
+    channels: { inApp: true, email: false, push: true },
+  });
+
+  if (delivered === 0) {
+    return { ok: false, error: "The confirmation could not be delivered." };
+  }
   return { ok: true };
 }
