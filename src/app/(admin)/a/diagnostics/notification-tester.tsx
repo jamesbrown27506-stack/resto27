@@ -12,9 +12,9 @@ import {
   UserCog,
   XCircle,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { CardBody } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
+import { RealtimeStatus } from "./realtime-status";
 import { sendTestNotification, type NotifyTestChannels, type NotifyTestKey } from "@/lib/data/notify-test-actions";
 import { cn } from "@/lib/utils";
 
@@ -154,6 +154,10 @@ export function NotificationTester() {
         bell — the same copy, tone, deep link and preference gating a live event produces — but
         only through the channels ticked below. Nothing reaches a real customer.
       </p>
+
+      {/* The half the buttons below cannot report on: whether the row makes
+          it back down the websocket into this tab. */}
+      <RealtimeStatus />
 
       {/* ── Which channels to exercise ──────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Channels to test">

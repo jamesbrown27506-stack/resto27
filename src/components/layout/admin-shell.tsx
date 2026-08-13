@@ -162,9 +162,19 @@ export function AdminShell({
 
   return (
     <AdminUserContext.Provider value={user}>
-      {/* overflow-x-clip: no accidental sideways page scroll (a fixed-width
-          sidebar plus wide tables used to push the whole page right). */}
-      <div className="flex min-h-dvh overflow-x-clip bg-bg">
+      {/*
+        The provider wraps the WHOLE shell, not just the bell.
+
+        It used to sit around <NotificationBell /> alone, which meant no page
+        could ask whether realtime was actually connected — and realtime's
+        failure mode is silence, so /a/diagnostics had no way to tell "nothing
+        happened" from "the channel is dead". Everything under here can now
+        read that state; the bell is still inside it.
+      */}
+      <NotificationProvider>
+        {/* overflow-x-clip: no accidental sideways page scroll (a fixed-width
+            sidebar plus wide tables used to push the whole page right). */}
+        <div className="flex min-h-dvh overflow-x-clip bg-bg">
         <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 border-r border-border bg-surface lg:block">
           <AdminNav brand={brand} />
         </aside>
@@ -230,9 +240,7 @@ export function AdminShell({
             <BrandMark name={brand.name} logoUrl={brand.logoUrl} size="sm" className="lg:hidden" />
 
             <div className="ml-auto flex items-center gap-2">
-              <NotificationProvider>
-                <NotificationBell />
-              </NotificationProvider>
+              <NotificationBell />
 
               {/* Theme and language live in the sidebar drawer below lg. */}
               <LocaleToggle className="hidden lg:inline-flex" />
@@ -268,9 +276,10 @@ export function AdminShell({
           </main>
         </div>
 
-        {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
-        <MobileTabBar items={tabs} />
-      </div>
+          {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
+          <MobileTabBar items={tabs} />
+        </div>
+      </NotificationProvider>
     </AdminUserContext.Provider>
   );
 }

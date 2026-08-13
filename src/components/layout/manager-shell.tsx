@@ -125,7 +125,13 @@ export function ManagerShell({
   );
 
   return (
-    <div className="flex min-h-dvh bg-bg">
+    /*
+      The provider wraps the WHOLE shell, not just the bell — realtime's
+      failure mode is silence, and no page could previously ask whether the
+      channel was actually connected. See the admin shell for the full note.
+    */
+    <NotificationProvider>
+      <div className="flex min-h-dvh bg-bg">
       <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 border-r border-border bg-surface lg:block">
         {sidebar}
       </aside>
@@ -204,9 +210,7 @@ export function ManagerShell({
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <NotificationProvider>
-              <NotificationBell />
-            </NotificationProvider>
+            <NotificationBell />
 
             {/* Theme and language live in the drawer below lg — the mobile bar
                 otherwise crowds the tenant name off the screen. */}
@@ -241,8 +245,9 @@ export function ManagerShell({
       </div>
 
       {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
-      <MobileTabBar items={tabItems} />
-    </div>
+        <MobileTabBar items={tabItems} />
+      </div>
+    </NotificationProvider>
   );
 }
 

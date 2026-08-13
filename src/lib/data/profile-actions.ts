@@ -5,7 +5,8 @@ import { z } from "zod";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { requireRole, requireUser } from "@/lib/auth/session";
-import { saveUpload, type UploadKind } from "@/lib/uploads";
+import { deleteUpload, saveAudioUpload, saveUpload, type UploadKind } from "@/lib/uploads";
+import { isCustomSound } from "@/lib/notification-sound";
 import { writeAudit } from "./platform-actions";
 import type { ActionResult } from "./admin-actions";
 
@@ -68,6 +69,69 @@ export async function uploadBrandingAsset(
   // Branding is read by every page, tab, email, the PWA manifest and the
   // share cards (§9), so the whole layout is revalidated rather than just
   // this route.
+  revalidatePath("/", "layout");
+  return { ok: true, url: result.url };
+}
+
+/**
+ * Upload a custom notification sound and make it the platform's sound.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  IT WRITES THE SAME SETTING THE BUILT-IN PICKER WRITES.
+ *
+ *  `notification_sound` holds either a built-in name ("tri-tone") or a URL.
+ *  Uploading stores the URL there, so every reader — the realtime provider,
+ *  the preview button, anything added later — resolves it through the one
+ *  helper in lib/notification-sound and neither knows nor cares which kind it
+ *  got. Switching back to a built-in is just picking one from the list.
+ *
+ *  The PREVIOUS custom sound is deleted after the new value is saved, not
+ *  before: if the settings write fails, the sound currently playing on the
+ *  platform must still exist. Deletion is best-effort — an orphaned object
+ *  costs a fraction of a cent, a broken sound costs every notification.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function uploadNotificationSound(formData: FormData): Promise<UploadActionResult> {
+  const admin = await requireRole("admin");
+
+  const file = formData.get("file");
+  if (!(file instanceof File)) return { ok: false, error: "No file received." };
+
+  const result = await saveAudioUpload(file);
+  if (!result.ok) return { ok: false, error: result.error };
+
+  const supabase = createAdminClient();
+
+  const { data: current } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "notification_sound")
+    .maybeSingle();
+  const previous = (current as { value: string | null } | null)?.value ?? null;
+
+  const { error } = await supabase
+    .from("settings")
+    .update({ value: result.url })
+    .eq("key", "notification_sound");
+
+  if (error) {
+    console.error("[profile:uploadNotificationSound]", error.message);
+    await deleteUpload(result.url);
+    return { ok: false, error: "Uploaded, but could not save it to settings." };
+  }
+
+  // Only now is the old one unreachable.
+  if (previous && isCustomSound(previous)) await deleteUpload(previous);
+
+  await writeAudit(admin, {
+    action: "settings.sound_upload",
+    entityType: "settings",
+    entityId: "notification_sound",
+    summary: `Uploaded a custom notification sound (${(result.bytes / 1024).toFixed(0)} KB)`,
+    metadata: { url: result.url, bytes: result.bytes, mime: result.mime },
+  });
+
+  // The sound is read by every signed-in shell.
   revalidatePath("/", "layout");
   return { ok: true, url: result.url };
 }

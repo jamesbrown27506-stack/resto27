@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Banknote, Bell, CreditCard, Palette, ReceiptText, Save, Settings as Cog, Volume2 } from "lucide-react";
+import { Banknote, Bell, CreditCard, Palette, ReceiptText, Save, Settings as Cog } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardBody, Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -10,6 +10,7 @@ import { Field, Input, Switch } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { updateSettings } from "@/lib/data/platform-actions";
 import { clearBrandingAsset, uploadBrandingAsset } from "@/lib/data/profile-actions";
+import { SoundPicker } from "./sound-picker";
 import type { SettingRow } from "@/lib/data/platform";
 import { cn } from "@/lib/utils";
 
@@ -31,16 +32,6 @@ const TABS = [
   { id: "notifications", label: "Notifications", icon: Bell, hint: "The sound played on realtime notifications, and the web push master switch." },
   { id: "payments", label: "Payments", icon: CreditCard, hint: "Switch on only once the provider is verified end to end." },
   { id: "general", label: "General", icon: Cog, hint: "" },
-] as const;
-
-/** The notification sounds the platform can play — file names in public/sounds/. */
-const NOTIFICATION_SOUNDS = [
-  { value: "chime", label: "Chime (default)" },
-  { value: "ding", label: "Ding" },
-  { value: "pop", label: "Pop" },
-  { value: "triple", label: "Triple ding" },
-  { value: "alert", label: "Alert" },
-  { value: "tri-tone", label: "Tri-tone (iPhone-style)" },
 ] as const;
 
 /**
@@ -307,38 +298,12 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
                       htmlFor={`set-${setting.key}`}
                       hint={setting.description ?? undefined}
                     >
-                      <div className="flex flex-wrap items-center gap-3">
-                        <select
-                          id={`set-${setting.key}`}
-                          value={value}
-                          onChange={(e) =>
-                            setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
-                          }
-                          className="h-10 rounded-md border border-border bg-bg px-3 text-sm"
-                        >
-                          {NOTIFICATION_SOUNDS.map((s) => (
-                            <option key={s.value} value={s.value}>
-                              {s.label}
-                            </option>
-                          ))}
-                        </select>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            const sound = NOTIFICATION_SOUNDS.find((s) => s.value === value);
-                            if (sound) {
-                              const audio = new Audio(`/sounds/${sound.value}.wav`);
-                              audio.volume = 0.6;
-                              void audio.play().catch(() => {});
-                            }
-                          }}
-                        >
-                          <Volume2 className="size-4" aria-hidden />
-                          <span>Preview</span>
-                        </Button>
-                      </div>
+                      <SoundPicker
+                        value={value}
+                        onChange={(next) =>
+                          setDraft((prev) => ({ ...prev, [setting.key]: next }))
+                        }
+                      />
                       <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
                     </Field>
                   );

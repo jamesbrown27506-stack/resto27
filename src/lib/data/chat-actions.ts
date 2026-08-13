@@ -47,6 +47,45 @@ import { rateLimit } from "@/lib/rate-limit";
 const MAX_BODY = 2000;
 const MAX_SUBJECT = 120;
 
+/** The migration that creates conversations + conversation_messages. */
+const CHAT_MIGRATION = "0019_chat.sql";
+
+/**
+ * Turn a database error into something the person reading it can act on.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  "IMPOSSIBLE D'OUVRIR LA CONVERSATION" WAS TRUE AND USELESS.
+ *
+ *  Every failure in here — a missing table, a constraint, a dropped
+ *  connection — came out as the same sentence, with the real reason logged to
+ *  a server console the person hitting the button cannot see. The single most
+ *  likely cause on a fresh or partially-migrated database is that the chat
+ *  tables do not exist at all: PostgREST answers that with PGRST205 ("Could
+ *  not find the table 'public.conversations' in the schema cache"), which is
+ *  perfectly diagnostic and was being thrown away.
+ *
+ *  So that one case now names itself and names the file to run. Everything
+ *  else keeps the generic sentence — a constraint violation is not something
+ *  to paste at a customer.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+function schemaMissing(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  // PGRST205 = unknown table; 42P01 = undefined_table straight from Postgres.
+  if (error.code === "PGRST205" || error.code === "42P01") return true;
+  return /schema cache|does not exist/i.test(error.message ?? "");
+}
+
+function chatError(
+  error: { code?: string; message?: string } | null | undefined,
+  fallback: string,
+): string {
+  if (schemaMissing(error)) {
+    return `La messagerie n'est pas installée sur cette base de données — exécutez la migration ${CHAT_MIGRATION} dans Supabase.`;
+  }
+  return fallback;
+}
+
 export interface ChatConversationSummary {
   id: string;
   subject: string;
@@ -254,7 +293,7 @@ export async function startConversation(input: {
 
   if (error || !conversation) {
     console.error("[chat:start]", error?.message);
-    return { ok: false, error: "Impossible d'ouvrir la conversation." };
+    return { ok: false, error: chatError(error, "Impossible d'ouvrir la conversation.") };
   }
 
   const { error: messageError } = await supabase.from("conversation_messages").insert({
@@ -268,7 +307,7 @@ export async function startConversation(input: {
 
   if (messageError) {
     console.error("[chat:start] first message", messageError.message);
-    return { ok: false, error: "Impossible d'envoyer le message." };
+    return { ok: false, error: chatError(messageError, "Impossible d'envoyer le message.") };
   }
 
   // The first message IS the unread signal for the other side.
@@ -313,7 +352,7 @@ export async function sendMessage(input: {
   });
   if (error) {
     console.error("[chat:send]", error.message);
-    return { ok: false, error: "Impossible d'envoyer le message." };
+    return { ok: false, error: chatError(error, "Impossible d'envoyer le message.") };
   }
 
   // The other side's unread bumps (read-then-write: the raw increment needs

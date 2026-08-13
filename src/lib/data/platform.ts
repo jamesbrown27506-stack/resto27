@@ -435,7 +435,21 @@ const EXPECTED_TABLES: { table: string; migration: string }[] = [
   { table: "refunds", migration: "0005" },
   { table: "commission_statements", migration: "0005" },
   { table: "plan_changes", migration: "0005" },
+  /*
+   * The notification and messaging tables.
+   *
+   * Absent from this list until now, which is exactly how three unapplied
+   * migrations stayed invisible: every one of these fails SOFT by design —
+   * preferences fall back to defaults, an inbox returns an empty list — so
+   * the app looks finished and quietly cannot save a setting or open a
+   * conversation. A health page that omits a table cannot report it missing.
+   */
+  { table: "notification_preferences", migration: "0012" },
+  { table: "customer_preferences", migration: "0014" },
   { table: "push_subscriptions", migration: "0018" },
+  { table: "conversations", migration: "0019" },
+  { table: "conversation_messages", migration: "0019" },
+  { table: "notification_channels", migration: "0027" },
   { table: "withdrawal_fees", migration: "0022" },
   { table: "platform_coupons", migration: "0023" },
   { table: "restaurant_wallets", migration: "0024" },

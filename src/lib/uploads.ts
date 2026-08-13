@@ -36,7 +36,14 @@ import { createAdminClient } from "@/lib/supabase/server";
  * ─────────────────────────────────────────────────────────────────────────
  */
 
-export type UploadKind = "branding" | "avatars" | "restaurants" | "menu" | "appearance" | "reviews";
+export type UploadKind =
+  | "branding"
+  | "avatars"
+  | "restaurants"
+  | "menu"
+  | "appearance"
+  | "reviews"
+  | "sounds";
 
 /**
  * Created by migration 0016.
@@ -138,6 +145,103 @@ export async function saveUpload(
       ok: false,
       error:
         "Could not store the file. If this is a fresh deployment, check that migration 0016 has been run — it creates the storage bucket.",
+    };
+  }
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(BUCKET).getPublicUrl(objectPath);
+
+  return { ok: true, url: publicUrl, mime: detected.mime, bytes: buffer.length };
+}
+
+/* ── Audio: the notification sound ─────────────────────────────────────── */
+
+/**
+ * One megabyte. A notification chime is a second of audio; anything larger is
+ * a music file, and this one downloads in every signed-in tab on the platform
+ * and plays on every order.
+ */
+const MAX_AUDIO_BYTES = 1024 * 1024;
+
+/**
+ * Audio signatures, checked the same way as the image ones — by BYTES.
+ *
+ * MP3 is the awkward member: it has no single magic number. A file either
+ * opens with an ID3 tag ("ID3") or straight into a frame header, whose first
+ * eleven bits are all set — 0xFF followed by a byte whose top three bits are
+ * set (0xE0 mask). Both forms are accepted below.
+ */
+const AUDIO_SIGNATURES: { ext: string; mime: string; bytes: number[]; offset?: number }[] = [
+  // "RIFF....WAVE" — the tag sits at offset 8, after the size field.
+  { ext: "wav", mime: "audio/wav", bytes: [0x57, 0x41, 0x56, 0x45], offset: 8 },
+  { ext: "ogg", mime: "audio/ogg", bytes: [0x4f, 0x67, 0x67, 0x53] }, // "OggS"
+  { ext: "m4a", mime: "audio/mp4", bytes: [0x66, 0x74, 0x79, 0x70], offset: 4 }, // "ftyp"
+  { ext: "mp3", mime: "audio/mpeg", bytes: [0x49, 0x44, 0x33] }, // "ID3"
+];
+
+function detectAudio(buffer: Buffer): { ext: string; mime: string } | null {
+  for (const signature of AUDIO_SIGNATURES) {
+    const offset = signature.offset ?? 0;
+    if (buffer.length < offset + signature.bytes.length) continue;
+    if (signature.bytes.every((byte, i) => buffer[offset + i] === byte)) {
+      return { ext: signature.ext, mime: signature.mime };
+    }
+  }
+
+  // A bare MPEG frame header: 0xFF, then three set bits at the top of byte 2.
+  if (buffer.length > 2 && buffer[0] === 0xff && (buffer[1]! & 0xe0) === 0xe0) {
+    return { ext: "mp3", mime: "audio/mpeg" };
+  }
+  return null;
+}
+
+/**
+ * Store an uploaded notification sound and return its public URL.
+ *
+ * Same rules as `saveUpload`: the bytes decide the type, the object path comes
+ * from us and never from the file name, and the object is written server-side
+ * with the service-role key. The bucket's own allow-list has to permit these
+ * mime types too — that is migration 0028.
+ */
+export async function saveAudioUpload(file: File): Promise<UploadResult | UploadError> {
+  if (!file || file.size === 0) return { ok: false, error: "No file received." };
+
+  if (file.size > MAX_AUDIO_BYTES) {
+    return {
+      ok: false,
+      error: `The sound is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 1 MB — a notification chime should be a second or two.`,
+    };
+  }
+
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const detected = detectAudio(buffer);
+
+  if (!detected) {
+    return {
+      ok: false,
+      error:
+        "That file is not a WAV, MP3, OGG or M4A. The contents are checked, not the file name.",
+    };
+  }
+
+  const objectPath = `sounds/${crypto.randomUUID()}.${detected.ext}`;
+  const supabase = createAdminClient();
+
+  const { error } = await supabase.storage.from(BUCKET).upload(objectPath, buffer, {
+    contentType: detected.mime,
+    cacheControl: "31536000",
+    upsert: false,
+  });
+
+  if (error) {
+    console.error("[upload] storage rejected the sound", error.message);
+    const mimeRejected = /mime|content type/i.test(error.message);
+    return {
+      ok: false,
+      error: mimeRejected
+        ? "The storage bucket does not accept audio yet — run migration 0028_notification_sound_uploads.sql in Supabase."
+        : "Could not store the sound. If this is a fresh deployment, check that migration 0016 has been run — it creates the storage bucket.",
     };
   }
 

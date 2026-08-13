@@ -114,11 +114,6 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
   useEffect(() => {
     let cancelled = false;
 
-    setInstallDismissedAt(readDismissed(INSTALL_KEY));
-    setNotifDismissedAt(readDismissed(NOTIF_KEY));
-    setInstalled(isStandalone());
-    setPermission("Notification" in window ? Notification.permission : null);
-
     const onBeforeInstall = (e: Event) => {
       // The event is cancellable; preventDefault keeps the browser from
       // showing its own prompt before our banner offers it.
@@ -137,14 +132,27 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
     window.addEventListener("appinstalled", onInstalled);
     window.addEventListener("visibilitychange", onVisible);
 
-    void getPromptUserState()
-      .then((s) => {
-        if (!cancelled) setSignedIn(s.signedIn);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setReady(true);
-      });
+    /*
+      Every first read happens HERE, in one pass, rather than synchronously in
+      the effect body. Same values, same moment in practice — but written as
+      one update from a callback instead of four cascading renders on mount,
+      which is the shape React asks for and the linter enforces.
+
+      All of it is browser-only state (localStorage, display-mode, the
+      Notification permission), so it cannot be lazy initial state either: none
+      of it exists during the server render.
+    */
+    void (async () => {
+      const state = await getPromptUserState().catch(() => ({ signedIn: false }));
+      if (cancelled) return;
+
+      setInstallDismissedAt(readDismissed(INSTALL_KEY));
+      setNotifDismissedAt(readDismissed(NOTIF_KEY));
+      setInstalled(isStandalone());
+      setPermission("Notification" in window ? Notification.permission : null);
+      setSignedIn(state.signedIn);
+      setReady(true);
+    })();
 
     return () => {
       cancelled = true;
