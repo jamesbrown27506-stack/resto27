@@ -1352,3 +1352,23 @@ const en: Record<TranslationKey, string> = {
 };
 
 export const DICTIONARIES: Record<Locale, Record<TranslationKey, string>> = { fr, en };
+
+/**
+ * Fill `{name}`-style placeholders.
+ *
+ * Shared by the client hook (use-locale) and the server helper
+ * (locale-server), so a string interpolates identically whichever side of the
+ * boundary renders it — a Server Component cannot call useLocale, and before
+ * this the two had separate implementations waiting to drift.
+ */
+export function interpolate(
+  template: string,
+  vars?: Record<string, string | number>,
+): string {
+  if (!vars) return template;
+  let out = template;
+  for (const [name, value] of Object.entries(vars)) {
+    out = out.replaceAll(`{${name}}`, String(value));
+  }
+  return out;
+}

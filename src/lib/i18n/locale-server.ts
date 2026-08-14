@@ -1,6 +1,6 @@
 import "server-only";
 import { cookies, headers } from "next/headers";
-import { LOCALES, type Locale } from "./dictionaries";
+import { DICTIONARIES, interpolate, LOCALES, type Locale, type TranslationKey } from "./dictionaries";
 
 export const DEFAULT_LOCALE: Locale = "fr";
 export const LOCALE_COOKIE = "restolink-locale";
@@ -52,4 +52,30 @@ export function localeFromAcceptLanguage(header: string | null): Locale {
   }
 
   return DEFAULT_LOCALE;
+}
+
+/**
+ * `t` for Server Components.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE CUSTOMER AREA WAS HARDCODED FRENCH BECAUSE OF A MISSING FUNCTION.
+ *
+ *  Every screen under (customer) is a Server Component, `useLocale` is a
+ *  hook, and hooks do not run on the server — so each page wrote its French
+ *  sentences inline and the FR/EN toggle did nothing to any of them. The few
+ *  pages that tried reached for `DICTIONARIES[locale]["key"]` directly, which
+ *  works but cannot interpolate and reads nothing like the client call.
+ *
+ *  This is the same `t(key, vars)` signature useLocale returns, awaited once
+ *  at the top of a page. Same keys, same dictionary, same interpolation.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function getTranslator(): Promise<
+  (key: TranslationKey, vars?: Record<string, string | number>) => string
+> {
+  const locale = await getLocale();
+  const dictionary = DICTIONARIES[locale];
+  // Falls back to the key rather than to French, so a missing string is
+  // visible in review instead of silently shipping the wrong language.
+  return (key, vars) => interpolate(dictionary[key] ?? key, vars);
 }

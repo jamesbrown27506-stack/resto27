@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { ArrowLeft, MessageSquare, Plus, Send, Store, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
@@ -63,16 +63,37 @@ export function ChatInbox({
   mode,
   myId,
   restaurantId,
+  platformName,
 }: {
   mode: Mode;
   myId: string;
   /** Staff mode: the active branch. */
   restaurantId?: string | null;
+  /**
+   * THE PLATFORM'S OWN NAME, from /a/settings — not the string "RestoLink".
+   *
+   * Half this screen is about writing to "the team", and every one of those
+   * sentences had the default brand name baked into the translation. Renaming
+   * the platform therefore renamed it everywhere except the place where
+   * customers talk to it. Every `{name}` in the chat dictionary is filled
+   * from here.
+   */
+  platformName: string;
 }) {
-  const { t } = useLocale();
+  const { locale, t: translate } = useLocale();
   const { toast } = useToast();
-  const prefix = mode === "staff" ? "mchat" : mode === "platform" ? "msup" : "cmsg";
+  const prefix =
+    mode === "staff" ? "mchat" : mode === "platform" ? "msup" : mode === "admin" ? "achat" : "cmsg";
+
+  // Every string on this screen may interpolate the platform name, so it is
+  // supplied once here rather than at forty call sites.
+  const t = useCallback(
+    (key: TranslationKey, vars?: Record<string, string | number>) =>
+      translate(key, { name: platformName, ...vars }),
+    [translate, platformName],
+  );
   const tKey = (key: string) => `${prefix}.${key}` as TranslationKey;
+  void locale;
 
   const [list, setList] = useState<ChatConversationSummary[] | null>(null);
   const [thread, setThread] = useState<ChatThread | null>(null);
@@ -226,10 +247,26 @@ export function ChatInbox({
 
   const selectedSummary = list.find((c) => c.id === selectedId);
 
+  /*
+    ONE PANE AT A TIME ON A PHONE.
+
+    Both panes always rendered, so a phone showed the list AND, stacked under
+    it, the other pane — which is why an inbox with conversations in it also
+    displayed "No conversations" a few centimetres below them. The back arrow
+    in the thread header has always implied master/detail; this is the half
+    that was missing. Above lg both panes sit side by side as before.
+  */
+  const detailOpen = composing || Boolean(thread && selectedId);
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
+    <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
       {/* ── The list ─────────────────────────────────────────────────── */}
-      <div className="lg:border-r lg:border-border lg:pr-4">
+      <div
+        className={cn(
+          "min-w-0 lg:block lg:border-r lg:border-border lg:pr-4",
+          detailOpen && "hidden",
+        )}
+      >
         {CAN_COMPOSE.includes(mode) && (
           <Button
             variant="outline"
@@ -297,10 +334,11 @@ export function ChatInbox({
       </div>
 
       {/* ── The thread (or the new-conversation form) ────────────────── */}
-      <div className="min-w-0">
+      <div className={cn("min-w-0", !detailOpen && "hidden lg:block")}>
         {composing && CAN_COMPOSE.includes(mode) ? (
           <NewConversationForm
             prefix={prefix}
+            platformName={platformName}
             // A restaurant has exactly one correspondent here — the platform —
             // so there is no picker to show, and the server forces it anyway.
             pickTarget={mode === "customer"}
@@ -309,7 +347,7 @@ export function ChatInbox({
             onSend={startNew}
           />
         ) : thread && selectedId ? (
-          <div className="flex h-[32rem] flex-col overflow-hidden rounded-lg border border-border">
+          <div className="flex h-[68dvh] min-h-80 flex-col overflow-hidden rounded-lg border border-border lg:h-[32rem]">
             <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
               <div className="flex min-w-0 items-center gap-2">
                 <Button
@@ -329,7 +367,9 @@ export function ChatInbox({
                     {thread.subject ? thread.subject : thread.peerName}
                   </p>
                   <p className="truncate text-xs text-text-light">
-                    {selectedSummary?.unread ? `${selectedSummary.unread} non lu(s) · ` : ""}
+                    {selectedSummary?.unread
+                      ? `${t("notif.unreadCount", { count: selectedSummary.unread })} · `
+                      : ""}
                     {thread.peerName}
                   </p>
                 </div>
@@ -349,16 +389,22 @@ export function ChatInbox({
                   <div key={m.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
                     <div
                       className={cn(
-                        "max-w-[80%] rounded-2xl px-3.5 py-2 text-sm",
+                        // min-w-0 so the bubble may actually shrink, and
+                        // wrap-anywhere so an unbroken 200-character URL
+                        // breaks instead of pushing the whole thread — and
+                        // the timestamp under it — off the side of a phone.
+                        "min-w-0 max-w-[85%] rounded-2xl px-3.5 py-2 text-sm sm:max-w-[80%]",
                         mine
                           ? "rounded-br-sm bg-primary text-primary-fg"
                           : "rounded-bl-sm bg-surface-2 text-text",
                       )}
                     >
                       {!mine && (
-                        <p className="mb-0.5 text-[10px] font-semibold text-text-light">{m.senderName}</p>
+                        <p className="mb-0.5 truncate text-[10px] font-semibold text-text-light">
+                          {m.senderName}
+                        </p>
                       )}
-                      <p className="break-words whitespace-pre-wrap">{m.body}</p>
+                      <p className="wrap-anywhere whitespace-pre-wrap">{m.body}</p>
                       <p className={cn("mt-1 text-right text-[10px]", mine ? "text-primary-fg/70" : "text-text-light")}>
                         {timeLabel(m.createdAt)}
                       </p>
@@ -400,10 +446,15 @@ export function ChatInbox({
             )}
           </div>
         ) : (
+          /*
+            DIFFERENT COPY FROM THE LIST'S EMPTY STATE, on purpose. This pane
+            is "you have not opened one yet"; the list's is "there are none".
+            Sharing one string made a full inbox announce that it was empty.
+          */
           <EmptyState
             icon={<MessageSquare />}
-            title={t(tKey("empty"))}
-            description={t(tKey("emptyBody"))}
+            title={t(tKey(list.length === 0 ? "empty" : "pick"))}
+            description={t(tKey(list.length === 0 ? "emptyBody" : "pickBody"))}
           />
         )}
       </div>
@@ -417,6 +468,7 @@ export function ChatInbox({
  */
 function NewConversationForm({
   prefix,
+  platformName,
   pickTarget,
   pending,
   onCancel,
@@ -424,12 +476,14 @@ function NewConversationForm({
 }: {
   /** `cmsg` for the customer screen, `msup` for the restaurant's support. */
   prefix: string;
+  platformName: string;
   pickTarget: boolean;
   pending: boolean;
   onCancel: () => void;
   onSend: (input: { restaurantId: string | null; subject: string; body: string }) => void;
 }) {
-  const { t } = useLocale();
+  const { t: translate } = useLocale();
+  const t = (key: TranslationKey) => translate(key, { name: platformName });
   const tKey = (key: string) => `${prefix}.${key}` as TranslationKey;
   const [targets, setTargets] = useState<{ id: string; name: string }[] | null>(null);
   const [restaurantId, setRestaurantId] = useState("");

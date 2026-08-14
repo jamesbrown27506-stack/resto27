@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useContext } from "react";
-import { DICTIONARIES, type Locale, type TranslationKey } from "./dictionaries";
+import { DICTIONARIES, interpolate, type Locale, type TranslationKey } from "./dictionaries";
 import { LocaleContext } from "./locale-provider";
 
 export const DEFAULT_LOCALE: Locale = "fr";
@@ -23,15 +23,8 @@ export function useLocale() {
    * wrong language.
    */
   const t = useCallback(
-    (key: TranslationKey, vars?: Record<string, string | number>): string => {
-      let value: string = DICTIONARIES[locale][key] ?? key;
-      if (vars) {
-        for (const [name, replacement] of Object.entries(vars)) {
-          value = value.replaceAll(`{${name}}`, String(replacement));
-        }
-      }
-      return value;
-    },
+    (key: TranslationKey, vars?: Record<string, string | number>): string =>
+      interpolate(DICTIONARIES[locale][key] ?? key, vars),
     [locale],
   );
 

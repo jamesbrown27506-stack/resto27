@@ -26,9 +26,12 @@ import { useLocale } from "@/lib/i18n/use-locale";
 export function ManagerMessagesView({
   myId,
   restaurantId,
+  platformName,
 }: {
   myId: string;
   restaurantId: string;
+  /** The platform's own name, so "write to the team" names the right team. */
+  platformName: string;
 }) {
   const { t } = useLocale();
   const [tab, setTab] = useState<"customers" | "platform">("customers");
@@ -56,14 +59,20 @@ export function ManagerMessagesView({
       {tab === "customers" ? (
         // Keyed on the branch: staff inboxes are per-branch, and switching
         // location must not carry one restaurant's threads into another's.
-        <ChatInbox key={restaurantId} mode="staff" myId={myId} restaurantId={restaurantId} />
+        <ChatInbox
+          key={restaurantId}
+          mode="staff"
+          myId={myId}
+          restaurantId={restaurantId}
+          platformName={platformName}
+        />
       ) : (
         <div>
           <p className="mb-4 flex items-start gap-2.5 rounded-md border border-border bg-surface-2 p-4 text-sm text-text-secondary">
             <LifeBuoy className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
-            <span>{t("msup.subtitle")}</span>
+            <span>{t("msup.subtitle", { name: platformName })}</span>
           </p>
-          <ChatInbox mode="platform" myId={myId} />
+          <ChatInbox mode="platform" myId={myId} platformName={platformName} />
         </div>
       )}
     </>

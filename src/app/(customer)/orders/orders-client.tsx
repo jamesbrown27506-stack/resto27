@@ -9,15 +9,13 @@ import { FilterChips } from "@/components/data/filter-bar";
 import { buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { isTerminal } from "@/lib/format/order-status";
+import { useLocale } from "@/lib/i18n/use-locale";
 import type { CustomerOrder } from "@/lib/data/customer";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SessionUser } from "@/lib/session";
 
-const FILTERS = [
-  { value: "all", label: "Toutes" },
-  { value: "active", label: "En cours" },
-  { value: "delivered", label: "Livrées" },
-  { value: "cancelled", label: "Annulées" },
-];
+/** Values only — the words come from the dictionary at render time. */
+const FILTERS = ["all", "active", "delivered", "cancelled"] as const;
 
 export function OrdersClient({
   user,
@@ -26,7 +24,8 @@ export function OrdersClient({
   user: SessionUser;
   orders: CustomerOrder[];
 }) {
-  const [filter, setFilter] = useState("all");
+  const { t } = useLocale();
+  const [filter, setFilter] = useState<string>("all");
 
   const counts = useMemo(
     () => ({
@@ -46,9 +45,13 @@ export function OrdersClient({
   });
 
   return (
-    <AccountShell user={user} title="Mes commandes" description="Historique et suivi en direct.">
+    <AccountShell user={user} title={t("cor.title")} description={t("cor.subtitle")}>
       <FilterChips
-        items={FILTERS.map((f) => ({ ...f, count: counts[f.value as keyof typeof counts] }))}
+        items={FILTERS.map((value) => ({
+          value,
+          label: t(`cor.filter.${value}` as TranslationKey),
+          count: counts[value],
+        }))}
         value={filter}
         onChange={setFilter}
       />
@@ -58,16 +61,14 @@ export function OrdersClient({
           <div className="rounded-lg border border-border bg-surface">
             <EmptyState
               icon={<ReceiptText />}
-              title="Aucune commande ici"
+              title={t("cor.empty")}
               description={
-                filter === "all"
-                  ? "Vos commandes apparaîtront dans cette liste."
-                  : "Aucune commande ne correspond à ce filtre."
+                filter === "all" ? t("cor.emptyAll") : t("cor.emptyFilter")
               }
               action={
                 filter === "all" ? (
                   <Link href="/browse" className={buttonClasses()}>
-                    Commander
+                    {t("cor.order")}
                   </Link>
                 ) : undefined
               }

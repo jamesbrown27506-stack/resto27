@@ -11,10 +11,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { cancelOwnReservation, createOwnReservation } from "@/lib/data/customer-actions";
-import { RESERVATION_STATUS_LABEL, RESERVATION_STATUS_TONE } from "@/lib/format/reservation-status";
+import { reservationStatusLabel, RESERVATION_STATUS_TONE } from "@/lib/format/reservation-status";
+import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { CustomerReservation } from "@/lib/data/customer";
 import type { PublicRestaurant } from "@/lib/data/public";
 import { formatDayLabel, formatTime } from "@/lib/format/datetime";
+import { formatMoney } from "@/lib/format/currency";
 import type { SessionUser } from "@/lib/session";
 
 const SLOTS = ["12:00", "12:30", "13:00", "13:30", "19:00", "19:30", "20:00", "20:30", "21:00"];
@@ -34,6 +36,8 @@ export function ReservationsClient({
   restaurants: PublicRestaurant[];
 }) {
   const { toast } = useToast();
+  const { locale, t } = useLocale();
+  const dateLocale = intlLocale(locale);
 
   const [mine, setMine] = useState(initial);
   const [restaurantSlug, setRestaurantSlug] = useState(restaurants[0]?.slug ?? "");
@@ -66,7 +70,7 @@ export function ReservationsClient({
     setBusy(false);
 
     if (result.ok) {
-      toast("Demande envoyée. Le restaurant confirme sous peu.", "success");
+      toast(t("crs.sent"), "success");
       setDate("");
       setTime("");
       setNotes("");
@@ -82,7 +86,7 @@ export function ReservationsClient({
     setBusy(false);
     if (result.ok) {
       setMine((c) => c.filter((r) => r.id !== cancelId));
-      toast("Réservation annulée.", "info");
+      toast(t("crs.cancelled"), "info");
     } else {
       toast(result.error, "error");
     }
@@ -92,17 +96,17 @@ export function ReservationsClient({
   return (
     <AccountShell
       user={user}
-      title="Réservations"
-      description="Réservez une table et suivez vos demandes."
+      title={t("crs.title")}
+      description={t("crs.subtitle")}
     >
       <div className="grid items-start gap-6 lg:grid-cols-[1fr_20rem]">
         <div className="flex flex-col gap-6">
-          <Panel title="À venir">
+          <Panel title={t("crs.upcoming")}>
             {upcoming.length === 0 ? (
               <EmptyState
                 icon={<CalendarCheck />}
-                title="Aucune réservation à venir"
-                description="Utilisez le formulaire pour réserver une table."
+                title={t("crs.upcomingEmpty")}
+                description={t("crs.upcomingEmptyBody")}
               />
             ) : (
               <ul className="divide-y divide-border">
@@ -111,9 +115,10 @@ export function ReservationsClient({
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold">{r.restaurantName}</p>
                       <p className="tnum mt-0.5 text-sm text-text-secondary">
-                        {formatDayLabel(r.reservedFor)} à {formatTime(r.reservedFor)} ·{" "}
-                        {r.partySize} personne{r.partySize > 1 ? "s" : ""}
-                        {r.tableNumber && ` · table ${r.tableNumber}`}
+                        {formatDayLabel(r.reservedFor, dateLocale)} ·{" "}
+                        {formatTime(r.reservedFor, dateLocale)} ·{" "}
+                        {t("crs.people", { count: r.partySize })}
+                        {r.tableNumber && ` · ${t("crs.table", { number: r.tableNumber })}`}
                       </p>
                       {r.notes && (
                         <p className="mt-1 text-xs text-text-light italic">« {r.notes} »</p>
@@ -121,11 +126,11 @@ export function ReservationsClient({
                     </div>
 
                     <Badge tone={RESERVATION_STATUS_TONE[r.status]}>
-                      {RESERVATION_STATUS_LABEL[r.status]}
+                      {reservationStatusLabel(r.status, t)}
                     </Badge>
 
                     <Button variant="ghost" size="sm" onClick={() => setCancelId(r.id)}>
-                      Annuler
+                      {t("crs.cancel")}
                     </Button>
                   </li>
                 ))}
@@ -133,9 +138,9 @@ export function ReservationsClient({
             )}
           </Panel>
 
-          <Panel title="Historique">
+          <Panel title={t("crs.history")}>
             {past.length === 0 ? (
-              <EmptyState title="Aucune réservation passée" />
+              <EmptyState title={t("crs.historyEmpty")} />
             ) : (
               <ul className="divide-y divide-border">
                 {past.map((r) => (
@@ -143,12 +148,13 @@ export function ReservationsClient({
                     <div className="min-w-0 flex-1">
                       <p className="font-medium">{r.restaurantName}</p>
                       <p className="tnum mt-0.5 text-sm text-text-light">
-                        {formatDayLabel(r.reservedFor)} à {formatTime(r.reservedFor)} ·{" "}
-                        {r.partySize} pers.
+                        {formatDayLabel(r.reservedFor, dateLocale)} ·{" "}
+                        {formatTime(r.reservedFor, dateLocale)} ·{" "}
+                        {t("crs.people", { count: r.partySize })}
                       </p>
                     </div>
                     <Badge tone={RESERVATION_STATUS_TONE[r.status]}>
-                      {RESERVATION_STATUS_LABEL[r.status]}
+                      {reservationStatusLabel(r.status, t)}
                     </Badge>
                   </li>
                 ))}
@@ -158,10 +164,10 @@ export function ReservationsClient({
         </div>
 
         <aside className="rounded-lg border border-border bg-surface p-5 lg:sticky lg:top-24">
-          <h2 className="font-display text-lg font-bold">Réserver une table</h2>
+          <h2 className="font-display text-lg font-bold">{t("crs.book")}</h2>
 
           <div className="mt-4 flex flex-col gap-4">
-            <Field label="Restaurant" htmlFor="res-restaurant" required>
+            <Field label={t("crs.restaurant")} htmlFor="res-restaurant" required>
               <Select
                 id="res-restaurant"
                 value={restaurantSlug}
@@ -177,7 +183,7 @@ export function ReservationsClient({
             </Field>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-              <Field label="Date" htmlFor="res-date" required>
+              <Field label={t("crs.date")} htmlFor="res-date" required>
                 <Input
                   id="res-date"
                   type="date"
@@ -186,7 +192,7 @@ export function ReservationsClient({
                 />
               </Field>
 
-              <Field label="Convives" htmlFor="res-guests" required>
+              <Field label={t("crs.guests")} htmlFor="res-guests" required>
                 <Input
                   id="res-guests"
                   type="number"
@@ -201,7 +207,7 @@ export function ReservationsClient({
 
             <fieldset>
               <legend className="mb-2 text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
-                Créneau
+                {t("crs.slot")}
               </legend>
               <div className="grid grid-cols-3 gap-2">
                 {SLOTS.map((slot) => {
@@ -227,17 +233,17 @@ export function ReservationsClient({
                 })}
               </div>
               {!date && (
-                <p className="mt-2 text-xs text-text-light">Choisissez d&apos;abord une date.</p>
+                <p className="mt-2 text-xs text-text-light">{t("crs.pickDateFirst")}</p>
               )}
             </fieldset>
 
-            <Field label="Précisions" htmlFor="res-notes">
+            <Field label={t("crs.notes")} htmlFor="res-notes">
               <Textarea
                 id="res-notes"
                 rows={3}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Anniversaire, près de la fenêtre…"
+                placeholder={t("crs.notesPh")}
               />
             </Field>
 
@@ -245,9 +251,8 @@ export function ReservationsClient({
               const selected = restaurants.find((r) => r.slug === restaurantSlug);
               return selected && selected.depositAmount > 0 ? (
                 <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning">
-                  <strong>Acompte requis : {selected.depositAmount.toLocaleString("fr-CM")} FCFA.</strong>{" "}
-                  Ce restaurant demande un acompte pour réserver la table — il vous sera demandé
-                  pour confirmer.
+                  <strong>{t("crs.deposit", { amount: formatMoney(selected.depositAmount) })}</strong>{" "}
+                  {t("crs.depositBody")}
                 </p>
               ) : null;
             })()}
@@ -259,12 +264,10 @@ export function ReservationsClient({
               onClick={submit}
             >
               <Check className="size-4" aria-hidden />
-              Demander la réservation
+              {t("crs.submit")}
             </Button>
 
-            <p className="text-xs leading-relaxed text-text-light">
-              Votre demande est envoyée au restaurant, qui la confirme ou propose un autre créneau.
-            </p>
+            <p className="text-xs leading-relaxed text-text-light">{t("crs.formHint")}</p>
           </div>
         </aside>
       </div>
@@ -273,10 +276,10 @@ export function ReservationsClient({
         open={cancelId !== null}
         onClose={() => setCancelId(null)}
         onConfirm={confirmCancel}
-        title="Annuler cette réservation ?"
-        message="Le restaurant sera prévenu et la table sera libérée."
-        confirmLabel="Annuler la réservation"
-        cancelLabel="Garder"
+        title={t("crs.cancelTitle")}
+        message={t("crs.cancelBody")}
+        confirmLabel={t("crs.cancelConfirm")}
+        cancelLabel={t("crs.cancelKeep")}
         destructive
       />
     </AccountShell>

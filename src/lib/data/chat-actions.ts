@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { getCurrentProfile, requireUser } from "@/lib/auth/session";
 import { notify } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
+import { getBranding } from "@/lib/branding";
 
 /**
  * In-app messaging — threaded conversations.
@@ -389,7 +390,9 @@ export async function sendMessage(input: {
       tone: "info",
       customerId: thread.customerId,
       href: initiatorRole === "manager" ? "/m/messages" : "/messages",
-      params: { preview },
+      // No restaurantName on a platform thread: the reply is from the
+      // platform, and it should say so by its real name.
+      params: { preview, platformName: (await getBranding()).name },
     });
   }
 
@@ -456,6 +459,10 @@ async function listFor(scope: ListScope, scopeId: string): Promise<ChatConversat
 
   const lastByThread = await lastMessageOf(rows.map((r) => r.id));
   const mine = scope === "mine" || scope === "minePlatform";
+  // "The team" is whatever the platform is called in /a/settings — not the
+  // default brand name frozen into a string literal. getBranding is
+  // request-cached, so this costs nothing extra.
+  const platform = (await getBranding()).name;
 
   return rows.map((row) => ({
     id: row.id,
@@ -463,7 +470,7 @@ async function listFor(scope: ListScope, scopeId: string): Promise<ChatConversat
     status: row.status,
     restaurantId: row.restaurant_id,
     peerName: mine
-      ? (row.restaurants?.name ?? "Équipe RestoLink")
+      ? (row.restaurants?.name ?? platform)
       : (row.profiles?.name ?? "Client"),
     peerRole: mine
       ? null
@@ -534,7 +541,7 @@ export async function getConversation(conversationId: string): Promise<ChatThrea
   // platform team) when I opened the thread, the initiator when I answer it.
   const peerName =
     part.side === "initiator"
-      ? ((await restaurantName(thread.restaurantId)) ?? "Équipe RestoLink")
+      ? ((await restaurantName(thread.restaurantId)) ?? (await getBranding()).name)
       : ((await profileName(thread.customerId)) ?? "Client");
 
   return {

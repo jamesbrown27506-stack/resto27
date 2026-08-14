@@ -14,10 +14,12 @@ import {
   updateOwnProfile,
   uploadOwnAvatar,
 } from "@/lib/data/profile-actions";
+import { useLocale } from "@/lib/i18n/use-locale";
 import type { SessionUser } from "@/lib/session";
 
 export function ProfileClient({ user }: { user: SessionUser }) {
   const { toast } = useToast();
+  const { t } = useLocale();
 
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone ?? "");
@@ -34,7 +36,7 @@ export function ProfileClient({ user }: { user: SessionUser }) {
     formData.set("phone", phone);
     const result = await updateOwnProfile(formData);
     setBusy(false);
-    if (result.ok) toast("Profil mis à jour.", "success");
+    if (result.ok) toast(t("cpf.saved"), "success");
     else toast(result.error, "error");
   }
 
@@ -48,7 +50,7 @@ export function ProfileClient({ user }: { user: SessionUser }) {
     if (result.ok) {
       setPassword("");
       setConfirm("");
-      toast("Mot de passe modifié. Vos autres sessions ont été déconnectées.", "success");
+      toast(t("cpf.passwordChanged"), "success");
     } else {
       toast(result.error, "error");
     }
@@ -60,14 +62,14 @@ export function ProfileClient({ user }: { user: SessionUser }) {
     formData.set("file", file);
     const result = await uploadOwnAvatar(formData);
     setBusy(false);
-    if (result.ok) toast("Photo mise à jour.", "success");
-    else toast(result.error ?? "Impossible de mettre à jour la photo.", "error");
+    if (result.ok) toast(t("cpf.photoUpdated"), "success");
+    else toast(result.error ?? t("cpf.photoFailed"), "error");
   }
 
   return (
-    <AccountShell user={user} title="Profil" description="Vos informations personnelles.">
+    <AccountShell user={user} title={t("cpf.title")} description={t("cpf.subtitle")}>
       <div className="flex flex-col gap-6">
-        <Panel title="Photo de profil">
+        <Panel title={t("cpf.photo")}>
           <div className="flex flex-wrap items-center gap-5 p-5">
             <Avatar name={user.name} src={user.avatarUrl} size="xl" />
             <div>
@@ -84,18 +86,16 @@ export function ProfileClient({ user }: { user: SessionUser }) {
               />
               <Button variant="outline" onClick={() => fileRef.current?.click()}>
                 <Camera className="size-4" aria-hidden />
-                Choisir une image
+                {t("cpf.pickImage")}
               </Button>
-              <p className="mt-2 text-xs text-text-light">
-                JPG ou PNG, 2 Mo maximum. Le format est vérifié à l&apos;envoi.
-              </p>
+              <p className="mt-2 text-xs text-text-light">{t("cpf.photoHint")}</p>
             </div>
           </div>
         </Panel>
 
-        <Panel title="Informations">
+        <Panel title={t("cpf.info")}>
           <div className="grid gap-5 p-5 sm:grid-cols-2">
-            <Field label="Nom complet" htmlFor="pf-name" required>
+            <Field label={t("cpf.name")} htmlFor="pf-name" required>
               <Input
                 id="pf-name"
                 icon={<User />}
@@ -106,10 +106,10 @@ export function ProfileClient({ user }: { user: SessionUser }) {
             </Field>
 
             <Field
-              label="Téléphone"
+              label={t("cpf.phone")}
               htmlFor="pf-phone"
               required
-              hint="Utilisé par le restaurant pour vous joindre."
+              hint={t("cpf.phoneHint")}
             >
               <Input
                 id="pf-phone"
@@ -122,10 +122,10 @@ export function ProfileClient({ user }: { user: SessionUser }) {
             </Field>
 
             <Field
-              label="Adresse email"
+              label={t("cpf.email")}
               htmlFor="pf-email"
               className="sm:col-span-2"
-              hint="Changer d'adresse demande une vérification par email."
+              hint={t("cpf.emailHint")}
             >
               <Input
                 id="pf-email"
@@ -140,17 +140,17 @@ export function ProfileClient({ user }: { user: SessionUser }) {
 
           <div className="border-t border-border p-5">
             <Button disabled={busy} onClick={saveInfo}>
-              Enregistrer les modifications
+              {t("cpf.saveInfo")}
             </Button>
           </div>
         </Panel>
 
         <Panel
-          title="Mot de passe"
-          description="Choisissez un mot de passe que vous n'utilisez nulle part ailleurs."
+          title={t("cpf.password")}
+          description={t("cpf.passwordBody")}
         >
           <div className="grid gap-5 p-5 sm:grid-cols-2">
-            <Field label="Nouveau mot de passe" htmlFor="pf-new" required className="sm:col-span-2">
+            <Field label={t("cpf.newPassword")} htmlFor="pf-new" required className="sm:col-span-2">
               <PasswordInput
                 id="pf-new"
                 autoComplete="new-password"
@@ -161,11 +161,11 @@ export function ProfileClient({ user }: { user: SessionUser }) {
             </Field>
 
             <Field
-              label="Confirmer"
+              label={t("cpf.confirm")}
               htmlFor="pf-confirm"
               required
               className="sm:col-span-2"
-              error={mismatch ? "Les deux mots de passe ne correspondent pas." : undefined}
+              error={mismatch ? t("cpf.mismatch") : undefined}
             >
               <PasswordInput
                 id="pf-confirm"
@@ -182,12 +182,12 @@ export function ProfileClient({ user }: { user: SessionUser }) {
               disabled={busy || !passwordMeetsPolicy(password) || password !== confirm}
               onClick={savePassword}
             >
-              Modifier le mot de passe
+              {t("cpf.changePassword")}
             </Button>
             {/* Changing the password must revoke every other session (§14.2). */}
             <p className="flex items-center gap-2 text-xs text-text-light">
               <ShieldCheck className="size-3.5 shrink-0 text-primary" aria-hidden />
-              Toutes vos autres sessions seront déconnectées.
+              {t("cpf.sessionsNote")}
             </p>
           </div>
         </Panel>

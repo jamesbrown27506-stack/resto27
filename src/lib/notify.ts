@@ -95,6 +95,8 @@ export interface NotifyParams {
   detail?: string;
   /** First ~80 characters of a chat message — the notification preview. */
   preview?: string;
+  /** The platform's own name, for copy that would otherwise hardcode it. */
+  platformName?: string;
 }
 
 export interface NotifyInput {
@@ -392,11 +394,11 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
       // The customer side: someone answered.
       return fr
         ? {
-            title: `Réponse de ${p.restaurantName ?? "l'équipe RestoLink"}`,
+            title: `Réponse de ${p.restaurantName ?? p.platformName ?? "l'équipe"}`,
             body: p.preview ?? "",
           }
         : {
-            title: `Reply from ${p.restaurantName ?? "the RestoLink team"}`,
+            title: `Reply from ${p.restaurantName ?? p.platformName ?? "the team"}`,
             body: p.preview ?? "",
           };
 

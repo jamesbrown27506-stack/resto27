@@ -15,6 +15,7 @@ import {
   saveOwnAddress,
   updateOwnAddress,
 } from "@/lib/data/customer-actions";
+import { useLocale } from "@/lib/i18n/use-locale";
 import type { CustomerAddress } from "@/lib/data/customer";
 import type { SessionUser } from "@/lib/session";
 
@@ -48,6 +49,7 @@ export function AddressesClient({
   quartiers: string[];
 }) {
   const { toast } = useToast();
+  const { t } = useLocale();
 
   const [addresses, setAddresses] = useState(initial);
   const [editing, setEditing] = useState<CustomerAddress | null>(null);
@@ -78,7 +80,7 @@ export function AddressesClient({
 
   async function save() {
     if (!draft.label.trim() || !draft.recipientName.trim() || !draft.phone.trim() || !draft.addressLine.trim() || !draft.quartier) {
-      toast("Vérifiez les champs obligatoires.", "error");
+      toast(t("cad.required"), "error");
       return;
     }
 
@@ -100,7 +102,7 @@ export function AddressesClient({
 
     if (result.ok) {
       setSheetOpen(false);
-      toast(editing ? "Adresse mise à jour." : "Adresse ajoutée.", "success");
+      toast(t(editing ? "cad.updated" : "cad.added"), "success");
     } else {
       toast(result.error, "error");
     }
@@ -113,7 +115,7 @@ export function AddressesClient({
     setBusy(false);
     if (result.ok) {
       setAddresses((c) => c.filter((a) => a.id !== deleteId));
-      toast("Adresse supprimée.", "info");
+      toast(t("cad.deleted"), "info");
     } else {
       toast(result.error, "error");
     }
@@ -123,12 +125,12 @@ export function AddressesClient({
   return (
     <AccountShell
       user={user}
-      title="Adresses"
-      description="Vos adresses de livraison enregistrées."
+      title={t("cad.title")}
+      description={t("cad.subtitle")}
       action={
         <Button onClick={openNew}>
           <Plus className="size-4" aria-hidden />
-          Nouvelle adresse
+          {t("cad.new")}
         </Button>
       }
     >
@@ -139,19 +141,16 @@ export function AddressesClient({
       */}
       <p className="mb-5 flex items-start gap-2.5 rounded-md border border-info/25 bg-info-light p-3 text-sm text-info">
         <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <span>
-          Modifier une adresse ici ne change rien à vos commandes déjà passées : chacune conserve
-          l&apos;adresse telle qu&apos;elle était au moment de la commande.
-        </span>
+        <span>{t("cad.notice")}</span>
       </p>
 
       {addresses.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface">
           <EmptyState
             icon={<MapPin />}
-            title="Aucune adresse enregistrée"
-            description="Ajoutez-en une pour aller plus vite au moment de commander."
-            action={<Button onClick={openNew}>Ajouter une adresse</Button>}
+            title={t("cad.empty")}
+            description={t("cad.emptyBody")}
+            action={<Button onClick={openNew}>{t("cad.add")}</Button>}
           />
         </div>
       ) : (
@@ -165,7 +164,7 @@ export function AddressesClient({
                 <div className="min-w-0">
                   <p className="flex items-center gap-2 font-semibold">
                     {address.label}
-                    {address.isDefault && <Badge tone="primary">Par défaut</Badge>}
+                    {address.isDefault && <Badge tone="primary">{t("cad.default")}</Badge>}
                   </p>
                   <p className="mt-1 text-sm text-text-secondary">{address.recipientName}</p>
                 </div>
@@ -174,7 +173,9 @@ export function AddressesClient({
 
               <address className="mt-3 flex-1 text-sm leading-relaxed text-text-secondary not-italic">
                 {address.addressLine}
-                <span className="block">{address.quartier}, Douala</span>
+                <span className="block">
+                  {address.quartier}, {t("cad.city")}
+                </span>
                 {address.landmark && (
                   <span className="block text-text-light">{address.landmark}</span>
                 )}
@@ -184,7 +185,7 @@ export function AddressesClient({
               <div className="mt-4 flex gap-2 border-t border-border pt-3">
                 <Button variant="ghost" size="sm" onClick={() => openEdit(address)}>
                   <Pencil className="size-3.5" aria-hidden />
-                  Modifier
+                  {t("cad.edit")}
                 </Button>
                 <Button
                   variant="ghost"
@@ -193,7 +194,7 @@ export function AddressesClient({
                   onClick={() => setDeleteId(address.id)}
                 >
                   <Trash2 className="size-3.5" aria-hidden />
-                  Supprimer
+                  {t("cad.delete")}
                 </Button>
               </div>
             </li>
@@ -204,29 +205,29 @@ export function AddressesClient({
       <Sheet
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
-        title={editing ? "Modifier l'adresse" : "Nouvelle adresse"}
+        title={t(editing ? "cad.editTitle" : "cad.new")}
         footer={
           <div className="flex gap-3">
             <Button variant="outline" fullWidth onClick={() => setSheetOpen(false)}>
-              Annuler
+              {t("common.cancel")}
             </Button>
             <Button fullWidth disabled={busy} onClick={save}>
-              Enregistrer
+              {t("common.save")}
             </Button>
           </div>
         }
       >
         <div className="flex flex-col gap-4">
-          <Field label="Libellé" htmlFor="ad-label" required hint="Domicile, Bureau…">
+          <Field label={t("cad.label")} htmlFor="ad-label" required hint={t("cad.labelHint")}>
             <Input
               id="ad-label"
               value={draft.label}
               onChange={(e) => setDraft({ ...draft, label: e.target.value })}
-              placeholder="Domicile"
+              placeholder={t("cad.labelPh")}
             />
           </Field>
 
-          <Field label="Nom du destinataire" htmlFor="ad-name" required>
+          <Field label={t("cad.recipient")} htmlFor="ad-name" required>
             <Input
               id="ad-name"
               value={draft.recipientName}
@@ -234,7 +235,7 @@ export function AddressesClient({
             />
           </Field>
 
-          <Field label="Téléphone" htmlFor="ad-phone" required>
+          <Field label={t("cad.phone")} htmlFor="ad-phone" required>
             <Input
               id="ad-phone"
               type="tel"
@@ -244,14 +245,14 @@ export function AddressesClient({
             />
           </Field>
 
-          <Field label="Quartier" htmlFor="ad-quartier" required>
+          <Field label={t("cad.quartier")} htmlFor="ad-quartier" required>
             <Select
               id="ad-quartier"
               value={draft.quartier}
               onChange={(e) => setDraft({ ...draft, quartier: e.target.value })}
             >
               <option value="" disabled>
-                Choisir un quartier
+                {t("cad.quartierPick")}
               </option>
               {quartiers.map((q) => (
                 <option key={q} value={q}>
@@ -261,31 +262,31 @@ export function AddressesClient({
             </Select>
           </Field>
 
-          <Field label="Adresse" htmlFor="ad-line" required>
+          <Field label={t("cad.line")} htmlFor="ad-line" required>
             <Input
               id="ad-line"
               value={draft.addressLine}
               onChange={(e) => setDraft({ ...draft, addressLine: e.target.value })}
-              placeholder="Rue, immeuble, étage"
+              placeholder={t("cad.linePh")}
             />
           </Field>
 
           <Field
-            label="Point de repère"
+            label={t("cad.landmark")}
             htmlFor="ad-landmark"
-            hint="Souvent plus utile que l'adresse elle-même pour le livreur."
+            hint={t("cad.landmarkHint")}
           >
             <Input
               id="ad-landmark"
               value={draft.landmark}
               onChange={(e) => setDraft({ ...draft, landmark: e.target.value })}
-              placeholder="En face de la pharmacie du Golfe"
+              placeholder={t("cad.landmarkPh")}
             />
           </Field>
 
           <Switch
-            label="Adresse par défaut"
-            description="Pré-sélectionnée lors de vos prochaines commandes."
+            label={t("cad.isDefault")}
+            description={t("cad.isDefaultHint")}
             checked={draft.isDefault}
             onChange={(e) => setDraft({ ...draft, isDefault: e.target.checked })}
           />
@@ -296,9 +297,9 @@ export function AddressesClient({
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}
         onConfirm={confirmDelete}
-        title="Supprimer cette adresse ?"
-        message="Vos commandes passées ne sont pas affectées — elles conservent leur propre copie de l'adresse."
-        confirmLabel="Supprimer"
+        title={t("cad.deleteTitle")}
+        message={t("cad.deleteBody")}
+        confirmLabel={t("cad.delete")}
         destructive
       />
     </AccountShell>

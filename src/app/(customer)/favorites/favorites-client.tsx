@@ -9,6 +9,7 @@ import { buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useToast } from "@/components/ui/toast";
 import { toggleFavorite } from "@/lib/data/customer-actions";
+import { useLocale } from "@/lib/i18n/use-locale";
 import type { PublicRestaurant } from "@/lib/data/public";
 import type { SessionUser } from "@/lib/session";
 
@@ -22,6 +23,7 @@ export function FavoritesClient({
   restaurants: PublicRestaurant[];
 }) {
   const { toast } = useToast();
+  const { t } = useLocale();
   const [ids, setIds] = useState<string[]>(initial);
   const favorites = restaurants.filter((r) => ids.includes(r.id));
 
@@ -37,18 +39,18 @@ export function FavoritesClient({
   return (
     <AccountShell
       user={user}
-      title="Favoris"
-      description="Les restaurants que vous avez enregistrés."
+      title={t("cfv.title")}
+      description={t("cfv.subtitle")}
     >
       {favorites.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface">
           <EmptyState
             icon={<Heart />}
-            title="Aucun favori"
-            description="Touchez le cœur sur un restaurant pour le retrouver ici."
+            title={t("cfv.empty")}
+            description={t("cfv.emptyBody")}
             action={
               <Link href="/browse" className={buttonClasses()}>
-                Découvrir des restaurants
+                {t("cfv.discover")}
               </Link>
             }
           />
@@ -64,7 +66,7 @@ export function FavoritesClient({
                 <button
                   type="button"
                   onClick={() => remove(r)}
-                  aria-label={`Retirer ${r.name} des favoris`}
+                  aria-label={t("cfv.remove", { name: r.name })}
                   className="relative z-10 grid size-9 place-items-center rounded-full bg-surface text-error backdrop-blur-sm transition-transform hover:scale-110"
                 >
                   <Heart className="size-4 fill-current" aria-hidden />

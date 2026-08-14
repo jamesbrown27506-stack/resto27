@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { ManagerPage } from "@/components/layout/manager-shell";
 import { ManagerMessagesView } from "./messages-view";
 import { requireBranch } from "@/lib/auth/branch";
+import { getBranding } from "@/lib/branding";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -15,11 +16,15 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function ManagerMessagesPage() {
-  const { active, profile } = await requireBranch();
+  const [{ active, profile }, brand] = await Promise.all([requireBranch(), getBranding()]);
 
   return (
     <ManagerPage titleKey="mchat.title" descriptionKey="mchat.subtitle">
-      <ManagerMessagesView myId={profile.id} restaurantId={active.restaurantId} />
+      <ManagerMessagesView
+        myId={profile.id}
+        restaurantId={active.restaurantId}
+        platformName={brand.name}
+      />
     </ManagerPage>
   );
 }

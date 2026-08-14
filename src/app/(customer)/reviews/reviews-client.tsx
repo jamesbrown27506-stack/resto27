@@ -13,6 +13,7 @@ import { useToast } from "@/components/ui/toast";
 import { updateOwnReview, deleteOwnReview } from "@/lib/data/customer-actions";
 import type { OwnReview } from "@/lib/data/customer";
 import { formatDate, isoAttr } from "@/lib/format/datetime";
+import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { SessionUser } from "@/lib/session";
 
 export function ReviewsClient({
@@ -23,6 +24,7 @@ export function ReviewsClient({
   initial: OwnReview[];
 }) {
   const { toast } = useToast();
+  const { locale, t } = useLocale();
 
   const [reviews, setReviews] = useState(initial);
   const [editing, setEditing] = useState<OwnReview | null>(null);
@@ -47,7 +49,7 @@ export function ReviewsClient({
         c.map((r) => (r.id === editing.id ? { ...r, rating, body: body.trim() } : r)),
       );
       setEditing(null);
-      toast("Avis mis à jour.", "success");
+      toast(t("crv.updated"), "success");
     } else {
       toast(result.error, "error");
     }
@@ -60,7 +62,7 @@ export function ReviewsClient({
     setBusy(false);
     if (result.ok) {
       setReviews((c) => c.filter((r) => r.id !== deleteId));
-      toast("Avis supprimé.", "info");
+      toast(t("crv.deleted"), "info");
     } else {
       toast(result.error, "error");
     }
@@ -70,18 +72,18 @@ export function ReviewsClient({
   return (
     <AccountShell
       user={user}
-      title="Mes avis"
-      description="Les avis que vous avez publiés, et les réponses des restaurants."
+      title={t("crv.title")}
+      description={t("crv.subtitle")}
     >
       {reviews.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface">
           <EmptyState
             icon={<Star />}
-            title="Aucun avis publié"
-            description="Après une commande livrée, vous pouvez noter le restaurant."
+            title={t("crv.empty")}
+            description={t("crv.emptyBody")}
             action={
               <Link href="/orders" className={buttonClasses()}>
-                Voir mes commandes
+                {t("crv.seeOrders")}
               </Link>
             }
           />
@@ -104,7 +106,7 @@ export function ReviewsClient({
                       dateTime={isoAttr(review.createdAt)}
                       className="text-xs text-text-light"
                     >
-                      {formatDate(review.createdAt)}
+                      {formatDate(review.createdAt, intlLocale(locale))}
                     </time>
                   </div>
                 </div>
@@ -112,7 +114,7 @@ export function ReviewsClient({
                 <div className="flex gap-1">
                   <Button variant="ghost" size="sm" onClick={() => openEdit(review)}>
                     <Pencil className="size-3.5" aria-hidden />
-                    Modifier
+                    {t("crv.edit")}
                   </Button>
                   <Button
                     variant="ghost"
@@ -130,7 +132,7 @@ export function ReviewsClient({
               {review.reply && (
                 <div className="mt-4 rounded-md border-l-2 border-primary bg-primary-light p-3.5">
                   <p className="text-xs font-bold tracking-wide text-primary uppercase">
-                    Réponse de {review.restaurantName}
+                    {t("crv.replyFrom", { name: review.restaurantName })}
                   </p>
                   <p className="mt-1.5 text-sm text-text-secondary">{review.reply}</p>
                 </div>
@@ -143,27 +145,27 @@ export function ReviewsClient({
       <Dialog
         open={editing !== null}
         onClose={() => setEditing(null)}
-        title="Modifier mon avis"
+        title={t("crv.editTitle")}
         description={editing?.restaurantName}
         footer={
           <>
             <Button variant="outline" onClick={() => setEditing(null)}>
-              Annuler
+              {t("common.cancel")}
             </Button>
             <Button disabled={body.trim().length < 10 || busy} onClick={saveEdit}>
-              Enregistrer
+              {t("common.save")}
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-4">
           <div>
-            <p className="mb-2 text-sm font-semibold">Votre note</p>
+            <p className="mb-2 text-sm font-semibold">{t("crv.rating")}</p>
             <RatingInput name="edit-rating" value={rating} onChange={setRating} />
           </div>
           <div>
             <label htmlFor="edit-body" className="mb-2 block text-sm font-semibold">
-              Votre commentaire
+              {t("crv.body")}
             </label>
             <Textarea
               id="edit-body"
@@ -179,9 +181,9 @@ export function ReviewsClient({
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}
         onConfirm={confirmDelete}
-        title="Supprimer cet avis ?"
-        message="Il ne sera plus visible sur la fiche du restaurant. Cette action est définitive."
-        confirmLabel="Supprimer"
+        title={t("crv.deleteTitle")}
+        message={t("crv.deleteBody")}
+        confirmLabel={t("crv.delete")}
         destructive
       />
     </AccountShell>

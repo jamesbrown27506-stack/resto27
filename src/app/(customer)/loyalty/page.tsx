@@ -9,6 +9,8 @@ import { getLoyaltyState } from "@/lib/data/cart-actions";
 import { fetchLoyaltyLedger } from "@/lib/data/customer";
 import { formatMoney } from "@/lib/format/currency";
 import { formatDate, isoAttr } from "@/lib/format/datetime";
+import { getLocale, getTranslator } from "@/lib/i18n/locale-server";
+import { intlLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,6 +23,8 @@ import { cn } from "@/lib/utils";
  */
 export default async function LoyaltyPage() {
   const user = await requireUser();
+  const [t, locale] = await Promise.all([getTranslator(), getLocale()]);
+  const numbers = intlLocale(locale);
 
   const [entries, loyalty] = await Promise.all([
     fetchLoyaltyLedger(user.id),
@@ -35,53 +39,52 @@ export default async function LoyaltyPage() {
   return (
     <AccountShell
       user={user}
-      title="Fidélité"
-      description="Vos points, et d'où vient chacun d'eux."
+      title={t("cly.title")}
+      description={t("cly.subtitle")}
     >
       <Card className="bg-primary text-primary-fg">
         <CardBody className="sm:p-8">
           <Gift className="size-6 opacity-80" aria-hidden />
           <p className="tnum mt-4 font-display text-5xl leading-none font-bold">
-            {balance.toLocaleString("fr-CM")}
+            {balance.toLocaleString(numbers)}
           </p>
           <p className="mt-2 opacity-75">
-            points disponibles, soit {formatMoney(balance * pointValue)} de réduction sur votre
-            prochaine commande.
+            {t("cly.available", { amount: formatMoney(balance * pointValue) })}
           </p>
           <Link
             href="/browse"
             className="mt-5 inline-block rounded-full bg-primary-fg px-6 py-2.5 text-sm font-semibold text-primary transition-opacity hover:opacity-90"
           >
-            Commander maintenant
+            {t("cly.orderNow")}
           </Link>
         </CardBody>
       </Card>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <StatTile
-          label="Points cumulés"
-          value={earned.toLocaleString("fr-CM")}
+          label={t("cly.earned")}
+          value={earned.toLocaleString(numbers)}
           icon={<TrendingUp />}
-          hint="depuis la création du compte"
+          hint={t("cly.earnedHint")}
         />
         <StatTile
-          label="Points utilisés"
-          value={spent.toLocaleString("fr-CM")}
+          label={t("cly.spent")}
+          value={spent.toLocaleString(numbers)}
           icon={<TrendingDown />}
-          hint={`soit ${formatMoney(spent * pointValue)} économisés`}
+          hint={t("cly.spentHint", { amount: formatMoney(spent * pointValue) })}
         />
       </div>
 
       <Panel
         className="mt-6"
-        title="Historique complet"
-        description="Chaque ligne est rattachée à la commande qui l'a générée."
+        title={t("cly.history")}
+        description={t("cly.historyBody")}
       >
         {entries.length === 0 ? (
           <EmptyState
             icon={<Gift />}
-            title="Aucun point pour l'instant"
-            description="Chaque commande livrée vous rapporte des points."
+            title={t("cly.empty")}
+            description={t("cly.emptyBody")}
           />
         ) : (
           <ul className="divide-y divide-border">
@@ -90,7 +93,7 @@ export default async function LoyaltyPage() {
                 <div className="min-w-0">
                   <p className="font-medium">{entry.note}</p>
                   <p className="mt-0.5 text-xs text-text-light">
-                    <time dateTime={isoAttr(entry.createdAt)}>{formatDate(entry.createdAt)}</time>
+                    <time dateTime={isoAttr(entry.createdAt)}>{formatDate(entry.createdAt, numbers)}</time>
                     {entry.orderReference && (
                       <>
                         {" · "}
@@ -112,7 +115,7 @@ export default async function LoyaltyPage() {
                   )}
                 >
                   {entry.points > 0 ? "+" : "−"}
-                  {Math.abs(entry.points).toLocaleString("fr-CM")}
+                  {Math.abs(entry.points).toLocaleString(numbers)}
                 </span>
               </li>
             ))}

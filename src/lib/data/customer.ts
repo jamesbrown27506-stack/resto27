@@ -279,7 +279,6 @@ export interface CustomerReservation {
 }
 
 export {
-  RESERVATION_STATUS_LABEL,
   RESERVATION_STATUS_TONE,
 } from "@/lib/format/reservation-status";
 

@@ -20,6 +20,7 @@ import {
   type PaymentMethod,
 } from "@/lib/format/order-status";
 import { cancelOwnOrder, rateOwnDelivery, submitOwnReview, uploadReviewPhoto } from "@/lib/data/customer-actions";
+import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { CustomerOrder as Order } from "@/lib/data/customer";
 
 /**
@@ -32,6 +33,8 @@ import type { CustomerOrder as Order } from "@/lib/data/customer";
  */
 export function OrderDetail({ order }: { order: Order }) {
   const { toast } = useToast();
+  const { locale, t } = useLocale();
+  const dates = intlLocale(locale);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [rating, setRating] = useState(5);
@@ -48,7 +51,7 @@ export function OrderDetail({ order }: { order: Order }) {
     setBusy(true);
     const result = await cancelOwnOrder(order.id);
     setBusy(false);
-    toast(result.ok ? "Commande annulée." : result.error, result.ok ? "success" : "error");
+    toast(result.ok ? t("cor.cancelled") : result.error, result.ok ? "success" : "error");
   }
 
   async function addPhotos(files: FileList | null) {
@@ -60,7 +63,7 @@ export function OrderDetail({ order }: { order: Order }) {
       formData.append("file", file);
       const result = await uploadReviewPhoto(formData);
       if (result.ok && result.url) added.push(result.url);
-      else toast(result.error ?? "Photo refusée.", "error");
+      else toast(result.error ?? t("cor.photoRejected"), "error");
     }
     setPhotos((current) => [...current, ...added].slice(0, 3));
     setUploading(false);
@@ -74,7 +77,7 @@ export function OrderDetail({ order }: { order: Order }) {
       setReviewOpen(false);
       setBody("");
       setPhotos([]);
-      toast("Merci, votre avis est publié.", "success");
+      toast(t("cor.reviewPublished"), "success");
     } else {
       toast(result.error, "error");
     }
@@ -84,7 +87,7 @@ export function OrderDetail({ order }: { order: Order }) {
     setDeliveryRating(value);
     const result = await rateOwnDelivery(order.id, value);
     toast(
-      result.ok ? "Merci pour votre retour." : result.error,
+      result.ok ? t("cor.thanksFeedback") : result.error,
       result.ok ? "success" : "error",
     );
   }
@@ -96,7 +99,7 @@ export function OrderDetail({ order }: { order: Order }) {
         className="inline-flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-primary"
       >
         <ArrowLeft className="size-3.5" aria-hidden />
-        Mes commandes
+        {t("cor.title")}
       </Link>
 
       <header className="mt-4 flex flex-wrap items-start justify-between gap-4">
@@ -107,11 +110,16 @@ export function OrderDetail({ order }: { order: Order }) {
           </div>
           <p className="tnum mt-1 text-sm text-text-secondary">
             {order.reference} · {ORDER_TYPE_LABEL[order.type]} ·{" "}
-            <time dateTime={isoAttr(order.createdAt)}>{formatDateTime(order.createdAt)}</time>
+            <time dateTime={isoAttr(order.createdAt)}>
+              {formatDateTime(order.createdAt, dates)}
+            </time>
           </p>
           {order.scheduledFor && (
             <p className="tnum mt-1 text-sm font-medium text-primary">
-              Prévue pour <time dateTime={isoAttr(order.scheduledFor)}>{formatDateTime(order.scheduledFor)}</time>
+              {t("cor.scheduledFor")}{" "}
+              <time dateTime={isoAttr(order.scheduledFor)}>
+                {formatDateTime(order.scheduledFor, dates)}
+              </time>
             </p>
           )}
         </div>
@@ -122,12 +130,12 @@ export function OrderDetail({ order }: { order: Order }) {
             className={buttonClasses({ variant: "outline", size: "sm" })}
           >
             <RotateCcw className="size-3.5" aria-hidden />
-            Recommander
+            {t("cor.reorder2")}
           </Link>
           {cancellable && (
             <Button variant="ghost" size="sm" onClick={() => setCancelOpen(true)}>
               <X className="size-3.5" aria-hidden />
-              Annuler
+              {t("cor.cancelShort")}
             </Button>
           )}
         </div>
@@ -137,7 +145,7 @@ export function OrderDetail({ order }: { order: Order }) {
         <div className="flex flex-col gap-6">
           <Card>
             <CardBody>
-              <CardTitle>Suivi</CardTitle>
+              <CardTitle>{t("cor.progress")}</CardTitle>
               <div className="mt-5">
                 <OrderStatusTimeline status={order.status} history={order.history} />
               </div>
@@ -147,21 +155,21 @@ export function OrderDetail({ order }: { order: Order }) {
           {order.status === "delivered" && (
             <Card>
               <CardBody>
-                <CardTitle>Votre avis</CardTitle>
+                <CardTitle>{t("cor.review")}</CardTitle>
                 <p className="mt-1 text-sm text-text-secondary">
-                  Aidez les autres clients — et le restaurant — avec un retour honnête.
+                  {t("cor.reviewBody")}
                 </p>
 
                 <div className="mt-4 flex flex-wrap items-center gap-4">
                   <Button onClick={() => setReviewOpen(true)}>
                     <Star className="size-4" aria-hidden />
-                    Noter le restaurant
+                    {t("cor.rateRestaurant")}
                   </Button>
                 </div>
 
                 {order.type === "delivery" && (
                   <div className="mt-5 border-t border-border pt-5">
-                    <p className="text-sm font-semibold">Comment s&apos;est passée la livraison ?</p>
+                    <p className="text-sm font-semibold">{t("cor.deliveryQuestion")}</p>
                     <div className="mt-2 flex items-center gap-3">
                       <RatingInput
                         name="delivery-rating"
@@ -170,7 +178,7 @@ export function OrderDetail({ order }: { order: Order }) {
                         size="md"
                       />
                       {deliveryRating > 0 && (
-                        <span className="text-sm text-text-secondary">Merci !</span>
+                        <span className="text-sm text-text-secondary">{t("cor.thanks")}</span>
                       )}
                     </div>
                   </div>
@@ -181,7 +189,7 @@ export function OrderDetail({ order }: { order: Order }) {
 
           <Card>
             <CardBody>
-              <CardTitle>Détail de la commande</CardTitle>
+              <CardTitle>{t("cor.detail")}</CardTitle>
               <div className="mt-4">
                 <OrderReceipt order={order} />
               </div>
@@ -193,7 +201,7 @@ export function OrderDetail({ order }: { order: Order }) {
           {order.type === "delivery" && order.deliveryAddress && (
             <Card>
               <CardBody>
-                <CardTitle>Livraison</CardTitle>
+                <CardTitle>{t("cor.deliveryCard")}</CardTitle>
                 {/*
                   These fields are the SNAPSHOT copied onto the order (§3), not
                   a lookup into customer_addresses. Editing the saved address
@@ -228,7 +236,7 @@ export function OrderDetail({ order }: { order: Order }) {
           {order.tableNumber && (
             <Card>
               <CardBody>
-                <CardTitle>Table</CardTitle>
+                <CardTitle>{t("cor.table")}</CardTitle>
                 <p className="tnum mt-2 font-display text-2xl font-bold">{order.tableNumber}</p>
               </CardBody>
             </Card>
@@ -236,13 +244,13 @@ export function OrderDetail({ order }: { order: Order }) {
 
           <Card>
             <CardBody>
-              <CardTitle>Paiement</CardTitle>
+              <CardTitle>{t("cor.payment")}</CardTitle>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-sm text-text-secondary">
                   {PAYMENT_METHOD_LABEL[order.paymentMethod as PaymentMethod] ?? "Mobile Money"}
                 </span>
                 <Badge tone={order.isPaid ? "success" : "warning"}>
-                  {order.isPaid ? "Réglée" : "À régler"}
+                  {t(order.isPaid ? "cor.paid" : "cor.unpaid")}
                 </Badge>
               </div>
             </CardBody>
@@ -251,7 +259,7 @@ export function OrderDetail({ order }: { order: Order }) {
           {order.notes && (
             <Card>
               <CardBody>
-                <CardTitle>Vos instructions</CardTitle>
+                <CardTitle>{t("cor.yourNotes")}</CardTitle>
                 <p className="mt-2 text-sm text-text-secondary italic">« {order.notes} »</p>
               </CardBody>
             </Card>
@@ -260,7 +268,7 @@ export function OrderDetail({ order }: { order: Order }) {
           {order.cancelledReason && (
             <Card className="border-error/30 bg-error-light">
               <CardBody>
-                <CardTitle className="text-error">Motif de l&apos;annulation</CardTitle>
+                <CardTitle className="text-error">{t("cor.cancelReason")}</CardTitle>
                 <p className="mt-2 text-sm text-text-secondary">{order.cancelledReason}</p>
               </CardBody>
             </Card>
@@ -272,56 +280,56 @@ export function OrderDetail({ order }: { order: Order }) {
         open={cancelOpen}
         onClose={() => setCancelOpen(false)}
         onConfirm={confirmCancel}
-        title="Annuler cette commande ?"
-        message="Le restaurant en sera informé immédiatement. Cette action est définitive."
-        confirmLabel="Annuler la commande"
-        cancelLabel="Garder ma commande"
+        title={t("cor.cancelTitle")}
+        message={t("cor.cancelBody2")}
+        confirmLabel={t("cor.cancelConfirm")}
+        cancelLabel={t("cor.cancelKeepMine")}
         destructive
       />
 
       <Dialog
         open={reviewOpen}
         onClose={() => setReviewOpen(false)}
-        title="Noter le restaurant"
+        title={t("cor.rateRestaurant")}
         description={order.restaurantName}
         footer={
           <>
             <Button variant="outline" onClick={() => setReviewOpen(false)}>
-              Annuler
+              {t("common.cancel")}
             </Button>
             <Button
               disabled={body.trim().length < 10 || busy}
               onClick={publishReview}
             >
-              Publier
+              {t("cor.publish")}
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-4">
           <div>
-            <p className="mb-2 text-sm font-semibold">Votre note</p>
+            <p className="mb-2 text-sm font-semibold">{t("cor.rating")}</p>
             <RatingInput name="review-rating" value={rating} onChange={setRating} />
           </div>
           <div>
             <label htmlFor="review-body" className="mb-2 block text-sm font-semibold">
-              Votre commentaire
+              {t("cor.comment")}
             </label>
             <Textarea
               id="review-body"
               rows={5}
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              placeholder="Qualité, portions, délai de livraison…"
+              placeholder={t("cor.commentPh")}
             />
             <p className="mt-1.5 text-xs text-text-light">
-              Minimum 10 caractères. Votre avis est public sous votre nom.
+              {t("cor.commentHint")}
             </p>
           </div>
 
           <div>
             <label htmlFor="review-photos" className="mb-2 block text-sm font-semibold">
-              Photos (facultatif, 3 max)
+              {t("cor.photos")}
             </label>
             <div className="flex flex-wrap items-center gap-2">
               {photos.map((url) => (
@@ -329,12 +337,12 @@ export function OrderDetail({ order }: { order: Order }) {
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={url}
-                    alt="Photo de l'avis"
+                    alt={t("cor.photoAlt")}
                     className="size-16 rounded-md border border-border object-cover"
                   />
                   <button
                     type="button"
-                    aria-label="Retirer la photo"
+                    aria-label={t("cor.photoRemove")}
                     onClick={() => setPhotos((current) => current.filter((p) => p !== url))}
                     className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full bg-text/70 text-white hover:bg-error"
                   >
@@ -345,7 +353,7 @@ export function OrderDetail({ order }: { order: Order }) {
               {photos.length < 3 && (
                 <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-dashed border-border px-3 py-2 text-xs font-medium text-text-secondary hover:border-primary hover:text-primary">
                   <Star className="size-3.5" aria-hidden />
-                  <span>{uploading ? "Envoi…" : "Ajouter une photo"}</span>
+                  <span>{t(uploading ? "cor.photoUploading" : "cor.photoAdd")}</span>
                   <input
                     id="review-photos"
                     type="file"
@@ -361,7 +369,7 @@ export function OrderDetail({ order }: { order: Order }) {
                 </label>
               )}
             </div>
-            <p className="mt-1.5 text-xs text-text-light">PNG, JPG, GIF ou WebP — vérifiées au contenu.</p>
+            <p className="mt-1.5 text-xs text-text-light">{t("cor.photoHint")}</p>
           </div>
         </div>
       </Dialog>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { AccountShell } from "@/components/layout/account-shell";
 import { ChatInbox } from "@/components/chat/chat-inbox";
 import { requireUser } from "@/lib/auth/session";
+import { getBranding } from "@/lib/branding";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -15,16 +16,15 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function CustomerMessagesPage() {
-  const user = await requireUser();
-  const locale = await getLocale();
+  const [user, locale, brand] = await Promise.all([requireUser(), getLocale(), getBranding()]);
 
   return (
     <AccountShell
       user={user}
       title={DICTIONARIES[locale]["cmsg.title"]}
-      description={DICTIONARIES[locale]["cmsg.subtitle"]}
+      description={DICTIONARIES[locale]["cmsg.subtitle"].replaceAll("{name}", brand.name)}
     >
-      <ChatInbox mode="customer" myId={user.id} />
+      <ChatInbox mode="customer" myId={user.id} platformName={brand.name} />
     </AccountShell>
   );
 }
