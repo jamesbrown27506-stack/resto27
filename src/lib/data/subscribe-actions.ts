@@ -7,6 +7,7 @@ import { writeAudit } from "./platform-actions";
 import { notify } from "@/lib/notify";
 import { getFreeModeWindow } from "./billing";
 import { ensureUnpaidInvoice } from "./subscription-lifecycle";
+import type { ActionResult } from "./admin-actions";
 import {
   checkPaymentAttempt,
   initiatePaymentAttempt,
