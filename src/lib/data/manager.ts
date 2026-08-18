@@ -390,6 +390,9 @@ export interface RestaurantTable {
   number: string;
   capacity: number;
   status: "available" | "occupied" | "reserved" | "out_of_service";
+  /** People sitting right now, from the newest open dine-in order on the
+   *  table. Null when nobody is seated (or the waiter never said). */
+  activePartySize: number | null;
 }
 
 export async function fetchTables(restaurantId: string): Promise<RestaurantTable[]> {
@@ -406,7 +409,31 @@ export async function fetchTables(restaurantId: string): Promise<RestaurantTable
     return [];
   }
 
-  return (data ?? []) as RestaurantTable[];
+  const tables = (data ?? []) as Omit<RestaurantTable, "activePartySize">[];
+
+  // Occupancy comes from the open dine-in orders, not from a join: orders
+  // carry the table NUMBER as a snapshot (the waiter could rename the table
+  // mid-service without rewriting history), so the match happens here, on
+  // the numbers both sides speak. The NEWEST order wins when several are
+  // open on one table — the first of a round is the party that sat down.
+  const { data: openRows } = await supabase
+    .from("orders")
+    .select("table_number, party_size, created_at")
+    .eq("restaurant_id", restaurantId)
+    .eq("type", "dine_in")
+    .not("status", "in", '("cancelled","delivered")')
+    .not("table_number", "is", null);
+
+  const byNumber = new Map<string, { party: number; at: string }>();
+  for (const row of (openRows ?? []) as { table_number: string; party_size: number | null; created_at: string }[]) {
+    if (!row.party_size) continue;
+    const seen = byNumber.get(row.table_number);
+    if (!seen || row.created_at > seen.at) {
+      byNumber.set(row.table_number, { party: row.party_size, at: row.created_at });
+    }
+  }
+
+  return tables.map((t) => ({ ...t, activePartySize: byNumber.get(t.number)?.party ?? null }));
 }
 
 /* ── Promotions ────────────────────────────────────────────────────────── */

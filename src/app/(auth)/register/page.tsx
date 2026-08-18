@@ -13,31 +13,28 @@ import {
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Checkbox, Field, Input } from "@/components/ui/input";
 import { signUpCustomer, type AuthState } from "@/lib/auth/actions";
+import { useLocale } from "@/lib/i18n/use-locale";
 
 const INITIAL: AuthState = { ok: false };
 
 export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [state, formAction, pending] = useActionState(signUpCustomer, INITIAL);
+  const { t } = useLocale();
 
   if (state.done) {
     return (
       <>
-        <AuthHeading title="Vérifiez vos emails" />
-        <AuthNotice tone="success" title="Compte créé">
-          <p>
-            Un lien de confirmation vient de vous être envoyé. Cliquez dessus pour activer votre
-            compte, puis connectez-vous.
-          </p>
+        <AuthHeading title={t("auth.checkEmail")} />
+        <AuthNotice tone="success" title={t("auth.accountCreated")}>
+          <p>{t("auth.checkEmailBody")}</p>
         </AuthNotice>
-        <p className="mt-5 text-sm leading-relaxed text-text-secondary">
-          Rien reçu au bout de quelques minutes ? Regardez dans vos indésirables.
-        </p>
+        <p className="mt-5 text-sm leading-relaxed text-text-secondary">{t("auth.checkSpam")}</p>
         <Link
           href="/login"
           className={buttonClasses({ fullWidth: true, size: "lg", className: "mt-6" })}
         >
-          Aller à la connexion
+          {t("auth.goToLogin")}
         </Link>
       </>
     );
@@ -45,10 +42,7 @@ export default function RegisterPage() {
 
   return (
     <>
-      <AuthHeading
-        title="Créer un compte"
-        subtitle="Commandez, réservez et cumulez des points de fidélité. Votre panier en cours est conservé."
-      />
+      <AuthHeading title={t("auth.createAccount")} subtitle={t("auth.register.subtitle")} />
 
       {state.error && (
         <div className="mb-5">
@@ -57,7 +51,7 @@ export default function RegisterPage() {
       )}
 
       <form action={formAction} className="flex flex-col gap-4">
-        <Field label="Nom complet" htmlFor="name" required error={state.fieldErrors?.name}>
+        <Field label={t("auth.name")} htmlFor="name" required error={state.fieldErrors?.name}>
           <Input
             id="name"
             name="name"
@@ -69,7 +63,7 @@ export default function RegisterPage() {
           />
         </Field>
 
-        <Field label="Adresse email" htmlFor="email" required error={state.fieldErrors?.email}>
+        <Field label={t("auth.email")} htmlFor="email" required error={state.fieldErrors?.email}>
           <Input
             id="email"
             name="email"
@@ -83,10 +77,10 @@ export default function RegisterPage() {
         </Field>
 
         <Field
-          label="Téléphone"
+          label={t("auth.phone")}
           htmlFor="phone"
           required
-          hint="Le restaurant vous joint sur ce numéro pour la livraison."
+          hint={t("auth.phoneHint")}
           error={state.fieldErrors?.phone}
         >
           <Input
@@ -102,7 +96,7 @@ export default function RegisterPage() {
         </Field>
 
         <Field
-          label="Mot de passe"
+          label={t("auth.password")}
           htmlFor="password"
           required
           error={state.fieldErrors?.password}
@@ -125,13 +119,13 @@ export default function RegisterPage() {
           className="mt-1"
           label={
             <>
-              J&apos;accepte les{" "}
+              {t("auth.acceptTerms1")}{" "}
               <Link href="/terms" className="font-semibold text-primary hover:underline">
-                conditions d&apos;utilisation
+                {t("auth.termsLink")}
               </Link>{" "}
-              et la{" "}
+              {t("auth.andPrivacy")}{" "}
               <Link href="/privacy" className="font-semibold text-primary hover:underline">
-                politique de confidentialité
+                {t("auth.privacyLink")}
               </Link>
               .
             </>
@@ -151,14 +145,14 @@ export default function RegisterPage() {
           disabled={!passwordMeetsPolicy(password)}
           className="mt-2"
         >
-          Créer mon compte
+          {t("auth.createAccountBtn")}
         </Button>
       </form>
 
       <p className="mt-7 text-center text-sm text-text-secondary">
-        Déjà inscrit ?{" "}
+        {t("auth.alreadyHave")}{" "}
         <Link href="/login" className="font-semibold text-primary hover:underline">
-          Se connecter
+          {t("auth.signInLink")}
         </Link>
       </p>
     </>

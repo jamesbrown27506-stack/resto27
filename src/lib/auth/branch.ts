@@ -57,7 +57,7 @@ const loadBranches = cache(async (profileId: string): Promise<Branch[]> => {
     .select(
       `role,
        restaurants!inner (
-         id, name, branch_label, slug, is_primary, status, is_accepting_orders
+         id, name, branch_label, slug, is_primary, status, is_accepting_orders, setup_done_at
        )`,
     )
     .eq("profile_id", profileId)
@@ -78,6 +78,7 @@ const loadBranches = cache(async (profileId: string): Promise<Branch[]> => {
       is_primary: boolean;
       status: string;
       is_accepting_orders: boolean;
+      setup_done_at: string | null;
     };
   };
 
@@ -100,6 +101,7 @@ const loadBranches = cache(async (profileId: string): Promise<Branch[]> => {
         status: r.status as Branch["status"],
         isAcceptingOrders: r.is_accepting_orders,
         role: row.role as BranchRole,
+        setupDoneAt: r.setup_done_at,
         subscriptionState: sub.state,
         planTier: sub.tier,
         planName: sub.name,
@@ -225,7 +227,7 @@ export const getBranchContext = cache(async (): Promise<BranchContext | null> =>
     const supabase = createAdminClient();
     const { data } = await supabase
       .from("restaurants")
-      .select("id, name, branch_label, slug, is_primary, status, is_accepting_orders")
+      .select("id, name, branch_label, slug, is_primary, status, is_accepting_orders, setup_done_at")
       .eq("id", impersonation.restaurantId)
       .maybeSingle();
 
@@ -244,6 +246,7 @@ export const getBranchContext = cache(async (): Promise<BranchContext | null> =>
       status: data.status,
       isAcceptingOrders: data.is_accepting_orders,
       role: "owner",
+      setupDoneAt: data.setup_done_at,
       subscriptionState: sub.state,
       planTier: sub.tier,
       planName: sub.name,

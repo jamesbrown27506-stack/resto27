@@ -26,6 +26,8 @@ import { custReservationsDict } from "./dict/cust-reservations";
 import { custReviewsDict } from "./dict/cust-reviews";
 import { custSettingsDict } from "./dict/cust-settings";
 import { customersDict } from "./dict/customers";
+import { legalDict } from "./dict/legal";
+import { marketingDict } from "./dict/marketing";
 import { menuDict } from "./dict/menu";
 import { modifiersDict } from "./dict/modifiers";
 import { notificationsDict } from "./dict/notifications";
@@ -34,6 +36,7 @@ import { promotionsDict } from "./dict/promotions";
 import { reportsDict } from "./dict/reports";
 import { reviewsDict } from "./dict/reviews";
 import { settingsDict } from "./dict/settings";
+import { setupDict } from "./dict/setup";
 import { staffDict } from "./dict/staff";
 
 export const LOCALES = ["fr", "en"] as const;
@@ -308,6 +311,17 @@ const baseFr = {
   "restaurants.sortDelivery": "Plus rapides",
   "restaurants.sortName": "Nom (A–Z)",
   "restaurants.allCuisines": "Toutes cuisines",
+  "restaurants.allQuartiers": "Tout Douala",
+  "restaurants.allRatings": "Toutes notes",
+  "restaurants.rating4": "4 étoiles et +",
+  "restaurants.rating3": "3 étoiles et +",
+  "restaurants.allBudgets": "Tous budgets",
+  "restaurants.budget2000": "Commande min. ≤ 2 000 FCFA",
+  "restaurants.budget5000": "Commande min. ≤ 5 000 FCFA",
+  "restaurants.allDelays": "Tous délais",
+  "restaurants.delay15": "≤ 15 min",
+  "restaurants.delay30": "≤ 30 min",
+  "restaurants.delay45": "≤ 45 min",
   "restaurants.count_one": "restaurant",
   "restaurants.count_other": "restaurants",
   "restaurants.emptyTitle": "Aucun restaurant ne correspond",
@@ -330,6 +344,89 @@ const baseFr = {
   "auth.registerRestaurant": "Inscrire mon établissement",
   "auth.showPassword": "Afficher le mot de passe",
   "auth.hidePassword": "Masquer le mot de passe",
+  "auth.name": "Nom complet",
+  "auth.phone": "Téléphone",
+  "auth.phoneHint": "Le restaurant vous joint sur ce numéro pour la livraison.",
+  "auth.createAccountBtn": "Créer mon compte",
+  "auth.alreadyHave": "Déjà inscrit ?",
+  "auth.signInLink": "Se connecter",
+  "auth.checkEmail": "Vérifiez vos emails",
+  "auth.accountCreated": "Compte créé",
+  "auth.checkEmailBody":
+    "Un lien de confirmation vient de vous être envoyé. Cliquez dessus pour activer votre compte, puis connectez-vous.",
+  "auth.checkSpam": "Rien reçu au bout de quelques minutes ? Regardez dans vos indésirables.",
+  "auth.goToLogin": "Aller à la connexion",
+  "auth.register.subtitle":
+    "Commandez, réservez et cumulez des points de fidélité. Votre panier en cours est conservé.",
+  "auth.acceptTerms1": "J'accepte les",
+  "auth.termsLink": "conditions d'utilisation",
+  "auth.andPrivacy": "et la",
+  "auth.privacyLink": "politique de confidentialité",
+  "auth.forgot.title": "Mot de passe oublié",
+  "auth.forgot.subtitle":
+    "Saisissez votre adresse email. Nous vous envoyons un lien pour en définir un nouveau.",
+  "auth.forgot.requested": "Demande enregistrée",
+  "auth.forgot.requestedBody":
+    "Si un compte existe pour {email}, un lien de réinitialisation vient d'y être envoyé. Il est valable une heure et ne peut servir qu'une fois.",
+  "auth.forgot.thisAddress": "cette adresse",
+  "auth.forgot.spam": "Rien reçu au bout de quelques minutes ? Regardez dans les indésirables.",
+  "auth.forgot.send": "Envoyer le lien",
+  "auth.backToLogin": "Retour à la connexion",
+  "auth.reset.title": "Nouveau mot de passe",
+  "auth.reset.subtitle": "Choisissez un mot de passe que vous n'utilisez nulle part ailleurs.",
+  "auth.reset.newPassword": "Nouveau mot de passe",
+  "auth.reset.confirm": "Confirmer le mot de passe",
+  "auth.reset.mismatch": "Les deux mots de passe ne correspondent pas.",
+  "auth.reset.sessionNote":
+    "La validation déconnectera toutes vos sessions ouvertes, sur tous vos appareils.",
+  "auth.reset.save": "Enregistrer le mot de passe",
+  "auth.reset.expired": "Lien expiré",
+  "auth.reset.expiredTitle": "Ce lien n'est plus valable",
+  "auth.reset.expiredBody":
+    "Les liens de réinitialisation expirent au bout d'une heure et ne peuvent servir qu'une seule fois. Demandez-en un nouveau.",
+  "auth.reset.requestNew": "Demander un nouveau lien",
+  "auth.reset.done": "Mot de passe modifié",
+  "auth.reset.doneTitle": "C'est fait",
+  "auth.reset.doneBody":
+    "Votre mot de passe a été mis à jour. Par sécurité, toutes vos sessions ouvertes ont été déconnectées — y compris sur vos autres appareils.",
+  "auth.reason.invalid.title": "Identifiants incorrects",
+  "auth.reason.invalid.body":
+    "L'adresse email ou le mot de passe ne correspond pas. Vérifiez et réessayez.",
+  "auth.reason.pending.title": "Compte en attente de validation",
+  "auth.reason.pending.body":
+    "Votre compte n'est pas encore activé. Vous recevrez un email dès qu'il le sera.",
+  "auth.reason.pending-manager.title": "Restaurant en cours de validation",
+  "auth.reason.pending-manager.body":
+    "Votre établissement est examiné par notre équipe — généralement sous 48 heures. Nous vous écrivons dès qu'il est validé. Rien à faire de votre côté.",
+  "auth.reason.suspended.title": "Compte suspendu",
+  "auth.reason.suspended.body":
+    "Votre accès a été suspendu. Contactez notre équipe pour en connaître la raison.",
+  "auth.pw.min": "8 caractères minimum",
+  "auth.pw.upper": "Une majuscule",
+  "auth.pw.digit": "Un chiffre",
+  "auth.pw.special": "Un caractère spécial",
+  "auth.pw.sr": "{met} critère(s) sur {total} respecté(s).",
+  "auth.invite.expired": "Invitation expirée",
+  "auth.invite.expiredTitle": "Ce lien n'est plus valable",
+  "auth.invite.expiredBody":
+    "Les invitations expirent au bout de sept jours. Demandez à votre responsable de vous en envoyer une nouvelle.",
+  "auth.invite.welcome": "Bienvenue dans l'équipe",
+  "auth.invite.accepted": "Invitation acceptée",
+  "auth.invite.acceptedBody":
+    "Vous faites maintenant partie de l'équipe de {restaurant} — {branch}, avec le rôle {role}.",
+  "auth.invite.join": "Rejoindre l'équipe",
+  "auth.invite.invitedBy": "Invitation envoyée par {name}",
+  "auth.invite.expires": "Cette invitation expire le {date}.",
+  "auth.invite.existing": "Un compte existe déjà pour cette adresse",
+  "auth.invite.existingBody":
+    "Connectez-vous avec {email} pour accepter cette invitation. Nous ne rattachons jamais un compte existant à un établissement sans votre accord explicite.",
+  "auth.invite.acceptSignIn": "Se connecter pour accepter",
+  "auth.invite.emailHint": "Définie par l'invitation.",
+  "auth.invite.namePh": "Nadège Tchoumi",
+  "auth.invite.password": "Choisissez votre mot de passe",
+  "auth.invite.passwordHint":
+    "Vous seul le connaîtrez — il n'est jamais communiqué au restaurant.",
+  "auth.invite.accept": "Accepter et rejoindre",
   "auth.panel.eyebrow": "Restaurants · Cameroun",
   "auth.panel.title": "Toute votre activité, d'une seule application.",
   "auth.panel.body":
@@ -569,8 +666,20 @@ const baseFr = {
 
   "m.tables.title": "Tables",
   "m.tables.seats": "{count} place(s)",
+  "m.tables.occupied": "{seated} sur {capacity} places",
 
   "m.wallet.title": "Portefeuille",
+
+  "m.noBranch.title": "Aucun établissement associé",
+  "m.noBranch.body":
+    "Bonjour {name}. Votre compte est bien actif, mais il n'est rattaché à aucun restaurant pour le moment.",
+  "m.noBranch.admin":
+    "Vous êtes administrateur : passez par /a/impersonate pour ouvrir le tableau de bord d'un restaurant.",
+  "m.noBranch.pending": "Votre demande d'inscription est peut-être encore en cours de validation.",
+  "m.noBranch.removed": "Ou le propriétaire vous a retiré de l'équipe. Demandez-lui de vous inviter à nouveau.",
+  "m.noBranch.choose": "Choisir un restaurant",
+  "m.noBranch.support": "Contacter le support",
+  "m.noBranch.home": "Retour à l'accueil",
 
   /* -- Statuts de commande ------------------------------------------- */
   "order.status.pending": "En attente",
@@ -579,6 +688,12 @@ const baseFr = {
   "order.status.shipped": "En livraison",
   "order.status.delivered": "Livrée",
   "order.status.cancelled": "Annulée",
+  "order.statusDesc.pending": "Le restaurant n'a pas encore confirmé votre commande.",
+  "order.statusDesc.confirmed": "Le restaurant a accepté votre commande.",
+  "order.statusDesc.preparing": "Votre commande est en cuisine.",
+  "order.statusDesc.shipped": "Votre commande est en route.",
+  "order.statusDesc.delivered": "Commande livrée. Bon appétit !",
+  "order.statusDesc.cancelled": "Cette commande a été annulée.",
   "order.next.confirmed": "Confirmer",
   "order.next.preparing": "Commencer",
   "order.next.shipped": "Envoyer",
@@ -651,6 +766,8 @@ const baseFr = {
   "mt.sent": "Commande {ref} envoyée en cuisine — table {table}.",
   "mt.soldOut": "Épuisé",
   "mt.seatsShort": "{count} pl.",
+  "mt.guests": "Convives",
+  "mt.guestsHint": "Combien de personnes à cette table ?",
 
   "plan.freeForever": "gratuit, pour toujours",
   "plan.trial": "{days} jours d'essai gratuit",
@@ -921,6 +1038,17 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "restaurants.sortDelivery": "Fastest",
   "restaurants.sortName": "Name (A–Z)",
   "restaurants.allCuisines": "All cuisines",
+  "restaurants.allQuartiers": "All of Douala",
+  "restaurants.allRatings": "Any rating",
+  "restaurants.rating4": "4 stars and up",
+  "restaurants.rating3": "3 stars and up",
+  "restaurants.allBudgets": "Any budget",
+  "restaurants.budget2000": "Min. order ≤ 2,000 FCFA",
+  "restaurants.budget5000": "Min. order ≤ 5,000 FCFA",
+  "restaurants.allDelays": "Any time",
+  "restaurants.delay15": "≤ 15 min",
+  "restaurants.delay30": "≤ 30 min",
+  "restaurants.delay45": "≤ 45 min",
   "restaurants.count_one": "restaurant",
   "restaurants.count_other": "restaurants",
   "restaurants.emptyTitle": "No restaurant matches",
@@ -941,6 +1069,88 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "auth.registerRestaurant": "List my restaurant",
   "auth.showPassword": "Show password",
   "auth.hidePassword": "Hide password",
+  "auth.name": "Full name",
+  "auth.phone": "Phone",
+  "auth.phoneHint": "The restaurant calls you on this number for delivery.",
+  "auth.createAccountBtn": "Create my account",
+  "auth.alreadyHave": "Already registered?",
+  "auth.signInLink": "Sign in",
+  "auth.checkEmail": "Check your emails",
+  "auth.accountCreated": "Account created",
+  "auth.checkEmailBody":
+    "A confirmation link was just sent to you. Click it to activate your account, then sign in.",
+  "auth.checkSpam": "Nothing received after a few minutes? Check your spam folder.",
+  "auth.goToLogin": "Go to sign in",
+  "auth.register.subtitle":
+    "Order, book tables and earn loyalty points. Your current basket is kept.",
+  "auth.acceptTerms1": "I accept the",
+  "auth.termsLink": "terms of use",
+  "auth.andPrivacy": "and the",
+  "auth.privacyLink": "privacy policy",
+  "auth.forgot.title": "Forgot your password",
+  "auth.forgot.subtitle":
+    "Enter your email address. We'll send you a link to set a new one.",
+  "auth.forgot.requested": "Request recorded",
+  "auth.forgot.requestedBody":
+    "If an account exists for {email}, a reset link was just sent to it. It is valid for one hour and can only be used once.",
+  "auth.forgot.thisAddress": "this address",
+  "auth.forgot.spam": "Nothing received after a few minutes? Check the spam folder.",
+  "auth.forgot.send": "Send the link",
+  "auth.backToLogin": "Back to sign in",
+  "auth.reset.title": "New password",
+  "auth.reset.subtitle": "Choose a password you use nowhere else.",
+  "auth.reset.newPassword": "New password",
+  "auth.reset.confirm": "Confirm the password",
+  "auth.reset.mismatch": "The two passwords do not match.",
+  "auth.reset.sessionNote":
+    "Saving will sign out all your open sessions, on every device.",
+  "auth.reset.save": "Save password",
+  "auth.reset.expired": "Link expired",
+  "auth.reset.expiredTitle": "This link is no longer valid",
+  "auth.reset.expiredBody":
+    "Reset links expire after one hour and can only be used once. Request a new one.",
+  "auth.reset.requestNew": "Request a new link",
+  "auth.reset.done": "Password changed",
+  "auth.reset.doneTitle": "Done",
+  "auth.reset.doneBody":
+    "Your password has been updated. For security, all your open sessions have been signed out — including on your other devices.",
+  "auth.reason.invalid.title": "Incorrect credentials",
+  "auth.reason.invalid.body": "The email or password does not match. Check and try again.",
+  "auth.reason.pending.title": "Account awaiting validation",
+  "auth.reason.pending.body":
+    "Your account is not activated yet. You will receive an email as soon as it is.",
+  "auth.reason.pending-manager.title": "Restaurant under review",
+  "auth.reason.pending-manager.body":
+    "Our team is reviewing your establishment — usually within 48 hours. We will write to you as soon as it is validated. Nothing to do on your side.",
+  "auth.reason.suspended.title": "Account suspended",
+  "auth.reason.suspended.body":
+    "Your access has been suspended. Contact our team to find out why.",
+  "auth.pw.min": "At least 8 characters",
+  "auth.pw.upper": "An uppercase letter",
+  "auth.pw.digit": "A number",
+  "auth.pw.special": "A special character",
+  "auth.pw.sr": "{met} of {total} criteria met.",
+  "auth.invite.expired": "Invitation expired",
+  "auth.invite.expiredTitle": "This link is no longer valid",
+  "auth.invite.expiredBody":
+    "Invitations expire after seven days. Ask your manager to send you a new one.",
+  "auth.invite.welcome": "Welcome to the team",
+  "auth.invite.accepted": "Invitation accepted",
+  "auth.invite.acceptedBody":
+    "You are now part of the {restaurant} team — {branch}, as {role}.",
+  "auth.invite.join": "Join the team",
+  "auth.invite.invitedBy": "Invitation sent by {name}",
+  "auth.invite.expires": "This invitation expires on {date}.",
+  "auth.invite.existing": "An account already exists for this address",
+  "auth.invite.existingBody":
+    "Sign in with {email} to accept this invitation. We never attach an existing account to an establishment without your explicit consent.",
+  "auth.invite.acceptSignIn": "Sign in to accept",
+  "auth.invite.emailHint": "Set by the invitation.",
+  "auth.invite.namePh": "Nadège Tchoumi",
+  "auth.invite.password": "Choose your password",
+  "auth.invite.passwordHint":
+    "Only you will know it — it is never shared with the restaurant.",
+  "auth.invite.accept": "Accept and join",
   "auth.panel.eyebrow": "Restaurants · Cameroon",
   "auth.panel.title": "Your whole operation, in one app.",
   "auth.panel.body":
@@ -1180,8 +1390,20 @@ const baseEn: Record<keyof typeof baseFr, string> = {
 
   "m.tables.title": "Tables",
   "m.tables.seats": "{count} seat(s)",
+  "m.tables.occupied": "{seated} of {capacity} seats",
 
   "m.wallet.title": "Wallet",
+
+  "m.noBranch.title": "No restaurant linked",
+  "m.noBranch.body":
+    "Hi {name}. Your account is active, but it is not linked to any restaurant right now.",
+  "m.noBranch.admin":
+    "You are an admin: go to /a/impersonate to open a restaurant's dashboard.",
+  "m.noBranch.pending": "Your listing request may still be awaiting validation.",
+  "m.noBranch.removed": "Or the owner removed you from the team. Ask them to invite you again.",
+  "m.noBranch.choose": "Choose a restaurant",
+  "m.noBranch.support": "Contact support",
+  "m.noBranch.home": "Back to home",
 
   /* -- Order statuses ------------------------------------------------- */
   "order.status.pending": "Pending",
@@ -1190,6 +1412,12 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "order.status.shipped": "Out for delivery",
   "order.status.delivered": "Delivered",
   "order.status.cancelled": "Cancelled",
+  "order.statusDesc.pending": "The restaurant has not confirmed your order yet.",
+  "order.statusDesc.confirmed": "The restaurant accepted your order.",
+  "order.statusDesc.preparing": "Your order is being prepared in the kitchen.",
+  "order.statusDesc.shipped": "Your order is on its way.",
+  "order.statusDesc.delivered": "Order delivered. Enjoy!",
+  "order.statusDesc.cancelled": "This order was cancelled.",
   "order.next.confirmed": "Confirm",
   "order.next.preparing": "Start",
   "order.next.shipped": "Send out",
@@ -1262,6 +1490,8 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "mt.sent": "Order {ref} sent to the kitchen — table {table}.",
   "mt.soldOut": "Sold out",
   "mt.seatsShort": "{count} seats",
+  "mt.guests": "Guests",
+  "mt.guestsHint": "How many people are at this table?",
 
   "plan.freeForever": "free, forever",
   "plan.trial": "{days}-day free trial",
@@ -1303,6 +1533,7 @@ const fr = {
   ...profileDict.fr,
   ...promotionsDict.fr,
   ...settingsDict.fr,
+  ...setupDict.fr,
   ...billingDict.fr,
 
   /* ── Customer area ── */
@@ -1317,6 +1548,8 @@ const fr = {
   ...custSettingsDict.fr,
   ...custBrowseDict.fr,
   ...custCartDict.fr,
+  ...marketingDict.fr,
+  ...legalDict.fr,
 } as const;
 
 export type TranslationKey = keyof typeof fr;
@@ -1336,6 +1569,7 @@ const en: Record<TranslationKey, string> = {
   ...profileDict.en,
   ...promotionsDict.en,
   ...settingsDict.en,
+  ...setupDict.en,
   ...billingDict.en,
 
   ...custAccountDict.en,
@@ -1349,6 +1583,8 @@ const en: Record<TranslationKey, string> = {
   ...custSettingsDict.en,
   ...custBrowseDict.en,
   ...custCartDict.en,
+  ...marketingDict.en,
+  ...legalDict.en,
 };
 
 export const DICTIONARIES: Record<Locale, Record<TranslationKey, string>> = { fr, en };

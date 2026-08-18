@@ -7,6 +7,8 @@ import { requireCapability, setActiveBranch } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
 import { trySendMail } from "@/lib/mail";
 import { notify } from "@/lib/notify";
+import { releaseTableIfFree } from "./order-actions";
+import { POPULAR_DISH_BY_ID, type DishTemplate } from "./dish-templates";
 import type { BranchRole } from "@/lib/capabilities";
 import type { ActionResult } from "./admin-actions";
 
@@ -173,6 +175,151 @@ export async function deleteCategory(id: string): Promise<ActionResult> {
   return count && count > 0
     ? { ok: true, note: `Category deleted. ${count} dish${count === 1 ? "" : "es"} are now uncategorised.` }
     : { ok: true };
+}
+
+/**
+ * Seed a brand-new restaurant with a starter set of categories.
+ *
+ * A restaurant whose menu has nowhere to file dishes ends up with an empty
+ * public carte while the manager's dashboard is full — the worst kind of
+ * failure, because nobody is told. Entrées / Plats principaux / Desserts /
+ * Boissons is the shape almost every kitchen's menu takes; the manager can
+ * rename or delete them like any other category.
+ *
+ * Idempotent: only runs when the restaurant has no categories at all, and the
+ * upsert ignores duplicates — so it never fights a manager who deliberately
+ * deleted everything.
+ *
+ * Gated on menu.view (the menu page's own guard) on purpose: even a kitchen
+ * staff member opening the carte first should not leave the public menu
+ * permanently empty for want of categories.
+ */
+export async function ensureDefaultCategories(): Promise<ActionResult> {
+  const { active } = await requireCapability("menu.view");
+  const supabase = createAdminClient();
+
+  const { count } = await supabase
+    .from("menu_categories")
+    .select("*", { count: "exact", head: true })
+    .eq("restaurant_id", active.restaurantId);
+  if (count && count > 0) return { ok: true };
+
+  const defaults = [
+    { name: "Entrées", icon: "Soup" },
+    { name: "Plats principaux", icon: "UtensilsCrossed" },
+    { name: "Desserts", icon: "Dessert" },
+    { name: "Boissons", icon: "CupSoda" },
+  ];
+
+  const { error } = await supabase.from("menu_categories").upsert(
+    defaults.map((c, i) => ({
+      restaurant_id: active.restaurantId,
+      name: c.name,
+      icon: c.icon,
+      sort_order: i,
+    })),
+    { onConflict: "restaurant_id,name", ignoreDuplicates: true },
+  );
+
+  if (error) {
+    console.error("[manager:ensureDefaultCategories]", error.message);
+    return { ok: false, error: "Could not create the default categories." };
+  }
+
+  revalidatePath("/m/categories");
+  revalidatePath("/m/menu");
+  return { ok: true };
+}
+
+/**
+ * Seed the restaurant's menu with the popular Cameroonian dishes it picked
+ * during first-login setup.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE DISHES ARE COPIES, NOT REFERENCES (§12's snapshot rule).
+ *
+ *  The templates live in code (lib/data/dish-templates.ts); each accepted
+ *  dish is written into the restaurant's OWN menu_items row with its own
+ *  price, and from that moment the manager edits it like any other dish —
+ *  renaming, re-pricing or deleting it never touches the template list.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * The ids are validated against the template list — a client can send a
+ * subset, an empty list, or an id it saw in the picker; nothing else is
+ * honoured. The dishes land in "Plats principaux" (ensured first); an
+ * existing dish with the same name is skipped rather than duplicated.
+ *
+ * Gated on `menu.view` like ensureDefaultCategories: every role holds it,
+ * and the wizard is the first screen any of them may see.
+ */
+export async function seedPopularDishes(ids: string[]): Promise<ActionResult> {
+  const { active } = await requireCapability("menu.view");
+
+  const chosen = [...new Set(ids)]
+    .map((id) => POPULAR_DISH_BY_ID.get(id))
+    .filter((d): d is DishTemplate => Boolean(d));
+  if (chosen.length === 0) return { ok: true };
+
+  const supabase = createAdminClient();
+
+  await ensureDefaultCategories();
+
+  const { data: categories } = await supabase
+    .from("menu_categories")
+    .select("id, name")
+    .eq("restaurant_id", active.restaurantId)
+    .order("sort_order");
+  const mainCategory =
+    (categories ?? []).find((c) => c.name === "Plats principaux") ??
+    (categories ?? [])[0] ??
+    null;
+
+  // Never duplicate what the restaurant already typed in itself.
+  const { data: existing } = await supabase
+    .from("menu_items")
+    .select("name")
+    .eq("restaurant_id", active.restaurantId);
+  const taken = new Set((existing ?? []).map((i) => i.name));
+
+  const { data: last } = await supabase
+    .from("menu_items")
+    .select("sort_order")
+    .eq("restaurant_id", active.restaurantId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  let sort = (last?.sort_order ?? 0) + 1;
+  const inserts = chosen
+    .filter((d) => !taken.has(d.name))
+    .map((d) => ({
+      restaurant_id: active.restaurantId,
+      category_id: mainCategory?.id ?? null,
+      name: d.name,
+      description: d.description,
+      price: d.price,
+      is_available: true,
+      is_featured: false,
+      prep_minutes: 0,
+      track_stock: false,
+      stock_quantity: null,
+      low_stock_threshold: null,
+      dietary_tags: "",
+      allergens: "",
+      sort_order: sort++,
+    }));
+
+  if (inserts.length === 0) return { ok: true };
+
+  const { error } = await supabase.from("menu_items").insert(inserts);
+  if (error) {
+    console.error("[manager:seedPopularDishes]", error.message);
+    return { ok: false, error: "Could not add the dishes." };
+  }
+
+  revalidatePath("/m/menu");
+  revalidatePath("/m/categories");
+  return { ok: true };
 }
 
 /* ── Menu: items ───────────────────────────────────────────────────────── */
@@ -846,6 +993,17 @@ export async function setReservationStatus(
   const { active } = await requireCapability("reservations.decide");
   const supabase = createAdminClient();
 
+  // The linked table is read BEFORE the update so the transition can act on
+  // it in the same breath — the reservation and the floor must not drift.
+  const { data: reservation } = await supabase
+    .from("reservations")
+    .select("id, table_id")
+    .eq("id", reservationId)
+    .eq("restaurant_id", active.restaurantId)
+    .maybeSingle();
+
+  if (!reservation) return { ok: false, error: "Could not update the reservation." };
+
   const { error } = await supabase
     .from("reservations")
     .update({ status })
@@ -854,7 +1012,31 @@ export async function setReservationStatus(
 
   if (error) return { ok: false, error: "Could not update the reservation." };
 
+  // SEATING a party marks its table occupied (unless the floor already has
+  // it claimed). COMPLETING the meal — or a NO-SHOW, where the table was
+  // held and then freed — releases it, with the same open-orders guard as
+  // order delivery: a table the kitchen is still cooking for stays taken.
+  if (reservation.table_id) {
+    if (status === "seated") {
+      await supabase
+        .from("restaurant_tables")
+        .update({ status: "occupied" })
+        .eq("id", reservation.table_id)
+        .eq("restaurant_id", active.restaurantId)
+        .in("status", ["available", "reserved"]);
+    } else {
+      const { data: table } = await supabase
+        .from("restaurant_tables")
+        .select("number")
+        .eq("id", reservation.table_id)
+        .eq("restaurant_id", active.restaurantId)
+        .maybeSingle();
+      if (table) await releaseTableIfFree(supabase, active.restaurantId, table.number);
+    }
+  }
+
   revalidatePath("/m/reservations");
+  revalidatePath("/m/tables");
   return { ok: true };
 }
 
@@ -1027,6 +1209,29 @@ export async function setTableStatus(
   if (error) return { ok: false, error: "Could not update the table." };
 
   revalidatePath("/m/tables");
+  return { ok: true };
+}
+
+/**
+ * Mark the first-login setup wizard as finished.
+ *
+ * Gated on `menu.view` on purpose: EVERY branch role holds it, and the
+ * dashboard redirects whoever opens /m first — waiter or owner — so the
+ * action that unlocks the dashboard must not exclude any of them.
+ */
+export async function completeSetup(): Promise<ActionResult> {
+  const { active } = await requireCapability("menu.view");
+  const supabase = createAdminClient();
+
+  const { error } = await supabase
+    .from("restaurants")
+    .update({ setup_done_at: new Date().toISOString() })
+    .eq("id", active.restaurantId);
+
+  if (error) return { ok: false, error: "Could not finish the setup." };
+
+  revalidatePath("/m");
+  revalidatePath("/m/setup");
   return { ok: true };
 }
 

@@ -229,7 +229,10 @@ export function TypedConfirmDialog({
     >
       <p className="text-sm leading-relaxed text-text-secondary">{message}</p>
       <p className="mt-4 text-sm text-text-secondary">
-        Saisissez <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs font-bold text-error">{phrase}</code> pour confirmer.
+        {t("common.typedConfirm", { phrase })}{" "}
+        <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs font-bold text-error">
+          {phrase}
+        </code>
       </p>
       <Input
         value={value}
@@ -237,7 +240,7 @@ export function TypedConfirmDialog({
         placeholder={phrase}
         autoComplete="off"
         className="mt-2"
-        aria-label={`Saisir ${phrase} pour confirmer`}
+        aria-label={t("common.typedConfirmAria", { phrase })}
       />
       {hint && <p className="mt-2 text-xs text-text-light">{hint}</p>}
     </Dialog>

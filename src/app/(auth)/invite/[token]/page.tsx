@@ -13,8 +13,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
-import { BRANCH_ROLE_DESCRIPTION, BRANCH_ROLE_LABEL } from "@/lib/capabilities";
 import { formatDate } from "@/lib/format/datetime";
+import { useLocale } from "@/lib/i18n/use-locale";
 
 /**
  * Staff invitation acceptance (§14.2).
@@ -34,6 +34,7 @@ import { formatDate } from "@/lib/format/datetime";
  */
 export default function AcceptInvitePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
+  const { t } = useLocale();
 
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -64,15 +65,12 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ token: 
   if (expired) {
     return (
       <>
-        <AuthHeading title="Invitation expirée" />
-        <AuthNotice tone="error" title="Ce lien n'est plus valable">
-          <p>
-            Les invitations expirent au bout de sept jours. Demandez à votre responsable de vous en
-            envoyer une nouvelle.
-          </p>
+        <AuthHeading title={t("auth.invite.expired")} />
+        <AuthNotice tone="error" title={t("auth.invite.expiredTitle")}>
+          <p>{t("auth.invite.expiredBody")}</p>
         </AuthNotice>
         <Link href="/login" className={buttonClasses({ fullWidth: true, size: "lg" })}>
-          Aller à la connexion
+          {t("auth.goToLogin")}
         </Link>
       </>
     );
@@ -81,15 +79,18 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ token: 
   if (done) {
     return (
       <>
-        <AuthHeading title="Bienvenue dans l'équipe" />
-        <AuthNotice tone="success" title="Invitation acceptée">
+        <AuthHeading title={t("auth.invite.welcome")} />
+        <AuthNotice tone="success" title={t("auth.invite.accepted")}>
           <p>
-            Vous faites maintenant partie de l&apos;équipe de {invite.restaurantName} —{" "}
-            {invite.branchLabel}, avec le rôle {BRANCH_ROLE_LABEL[invite.role].toLowerCase()}.
+            {t("auth.invite.acceptedBody", {
+              restaurant: invite.restaurantName,
+              branch: invite.branchLabel,
+              role: t(`common.role.${invite.role}`).toLowerCase(),
+            })}
           </p>
         </AuthNotice>
         <Link href="/login" className={buttonClasses({ fullWidth: true, size: "lg" })}>
-          Se connecter
+          {t("auth.signIn")}
         </Link>
       </>
     );
@@ -97,7 +98,7 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ token: 
 
   return (
     <>
-      <AuthHeading title="Rejoindre l'équipe" />
+      <AuthHeading title={t("auth.invite.join")} />
 
       <div className="mb-6 rounded-md border border-border bg-surface-2 p-4">
         <div className="flex items-start gap-3">
@@ -112,52 +113,56 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ token: 
               </span>
             </p>
             <p className="mt-0.5 text-sm text-text-secondary">
-              Invitation envoyée par {invite.invitedBy}
+              {t("auth.invite.invitedBy", { name: invite.invitedBy })}
             </p>
             <div className="mt-2.5">
-              <Badge tone="primary">{BRANCH_ROLE_LABEL[invite.role]}</Badge>
+              <Badge tone="primary">{t(`common.role.${invite.role}`)}</Badge>
             </div>
             <p className="mt-2 text-xs leading-relaxed text-text-light">
-              {BRANCH_ROLE_DESCRIPTION[invite.role]}
+              {t(`common.roleDesc.${invite.role}`)}
             </p>
           </div>
         </div>
         <p className="mt-3 border-t border-border pt-3 text-xs text-text-light">
-          Cette invitation expire le {formatDate(invite.expiresAt)}.
+          {t("auth.invite.expires", { date: formatDate(invite.expiresAt) })}
         </p>
       </div>
 
       {existingAccount ? (
         <>
-          <AuthNotice tone="info" title="Un compte existe déjà pour cette adresse">
+          <AuthNotice tone="info" title={t("auth.invite.existing")}>
             <p>
-              Connectez-vous avec <strong>{invite.email}</strong> pour accepter cette invitation.
-              Nous ne rattachons jamais un compte existant à un établissement sans votre accord
-              explicite.
+              {t("auth.invite.existingBody", { email: invite.email })}
             </p>
           </AuthNotice>
           <Link
             href="/login"
             className={buttonClasses({ fullWidth: true, size: "lg", className: "mt-5" })}
           >
-            Se connecter pour accepter
+            {t("auth.invite.acceptSignIn")}
           </Link>
         </>
       ) : (
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <Field label="Adresse email" htmlFor="email" hint="Définie par l'invitation.">
+          <Field label={t("auth.email")} htmlFor="email" hint={t("auth.invite.emailHint")}>
             <Input id="email" value={invite.email} readOnly disabled />
           </Field>
 
-          <Field label="Nom complet" htmlFor="name" required>
-            <Input id="name" name="name" required autoComplete="name" placeholder="Nadège Tchoumi" />
+          <Field label={t("auth.name")} htmlFor="name" required>
+            <Input
+              id="name"
+              name="name"
+              required
+              autoComplete="name"
+              placeholder={t("auth.invite.namePh")}
+            />
           </Field>
 
           <Field
-            label="Choisissez votre mot de passe"
+            label={t("auth.invite.password")}
             htmlFor="password"
             required
-            hint="Vous seul le connaîtrez — il n'est jamais communiqué au restaurant."
+            hint={t("auth.invite.passwordHint")}
           >
             <PasswordInput
               id="password"
@@ -178,7 +183,7 @@ export default function AcceptInvitePage({ params }: { params: Promise<{ token: 
             disabled={!passwordMeetsPolicy(password)}
             className="mt-2"
           >
-            Accepter et rejoindre
+            {t("auth.invite.accept")}
           </Button>
         </form>
       )}

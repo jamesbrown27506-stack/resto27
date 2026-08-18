@@ -20,6 +20,8 @@ export interface Branch {
   isAcceptingOrders: boolean;
   /** THIS user's role at THIS branch. Not their account role. */
   role: BranchRole;
+  /** Null while the first-login setup wizard has not been finished. */
+  setupDoneAt: string | null;
   subscriptionState: SubscriptionState;
   planTier: string;
   planName: string;

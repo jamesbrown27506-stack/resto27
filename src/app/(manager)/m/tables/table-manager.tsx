@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { Armchair, Lock, Pencil, Plus } from "lucide-react";
+import { Armchair, Lock, Pencil, Plus, Users } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -111,6 +111,18 @@ export function TableManager({
                   <p className="tnum mt-0.5 text-sm text-text-secondary">
                     {t("m.tables.seats", { count: table.capacity })}
                   </p>
+                  {/* Live occupancy, straight from the open dine-in orders —
+                      "3 of 5 seats" beats a status badge when the floor is
+                      being scanned. */}
+                  {table.activePartySize !== null && (
+                    <p className="tnum mt-1 text-xs font-semibold text-primary">
+                      <Users className="mr-1 inline size-3.5" aria-hidden />
+                      {t("m.tables.occupied", {
+                        seated: table.activePartySize,
+                        capacity: table.capacity,
+                      })}
+                    </p>
+                  )}
                 </div>
                 <Armchair className="size-5 shrink-0 text-primary" aria-hidden />
               </div>

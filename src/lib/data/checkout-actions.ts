@@ -67,6 +67,46 @@ export type CheckoutResult =
 
 const MAX_QTY_PER_LINE = 50;
 
+/**
+ * The cart restaurant's order capabilities, for the checkout screen.
+ *
+ * The basket lives in localStorage, so the checkout page's Server Component
+ * cannot know which restaurant it belongs to — the client asks here, once, so
+ * it can disable a mode the kitchen does not offer instead of letting the
+ * customer fill the whole form and only then rejecting it.
+ */
+export async function getRestaurantOrderCapabilities(
+  restaurantId: string,
+): Promise<{
+  acceptsDelivery: boolean;
+  acceptsPickup: boolean;
+  /** Where pickup customers collect the order (neighbourhood). */
+  quartier: string;
+  /** Estimated delivery time in minutes, for the delivery hint. */
+  deliveryEstimateMin: number;
+  /** The minimum order in XAF, for the basket's progress hint. */
+  minimumOrder: number;
+} | null> {
+  const supabase = createAdminClient();
+
+  const { data } = await supabase
+    .from("restaurants")
+    .select(
+      "accepts_delivery, accepts_pickup, status, delivery_estimate_min, minimum_order, quartiers ( name )",
+    )
+    .eq("id", restaurantId)
+    .maybeSingle();
+
+  if (!data || data.status !== "active") return null;
+  return {
+    acceptsDelivery: Boolean(data.accepts_delivery),
+    acceptsPickup: Boolean(data.accepts_pickup),
+    quartier: (data.quartiers as { name: string }[] | null)?.[0]?.name ?? "",
+    deliveryEstimateMin: Number(data.delivery_estimate_min) || 0,
+    minimumOrder: Number(data.minimum_order) || 0,
+  };
+}
+
 export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> {
   const supabase = createAdminClient();
 

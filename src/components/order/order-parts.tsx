@@ -1,16 +1,14 @@
+"use client";
+
 import Link from "next/link";
 import { Check, Clock, Flame, PackageCheck, Truck, X } from "lucide-react";
 import { OrderStatusBadge } from "./order-status-badge";
 import { formatMoney } from "@/lib/format/currency";
 import { formatDateTime, formatRelative, isoAttr } from "@/lib/format/datetime";
-import {
-  ORDER_FLOW,
-  ORDER_STATUS_META,
-  ORDER_TYPE_LABEL,
-  flowIndex,
-  type OrderStatus,
-} from "@/lib/format/order-status";
+import { ORDER_FLOW, ORDER_STATUS_META, flowIndex, type OrderStatus } from "@/lib/format/order-status";
 import type { CustomerOrder as Order } from "@/lib/data/customer";
+import { useLocale } from "@/lib/i18n/use-locale";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
 const ICONS = {
@@ -36,13 +34,14 @@ export function OrderStatusTimeline({
   status: OrderStatus;
   history: { status: string; at: string; byName: string | null }[];
 }) {
+  const { t } = useLocale();
   if (status === "cancelled") {
     const event = history.find((h) => h.status === "cancelled");
     return (
       <div className="flex items-start gap-3 rounded-md border border-error/30 bg-error-light p-4">
         <X className="mt-0.5 size-4 shrink-0 text-error" aria-hidden />
         <div>
-          <p className="font-semibold text-error">Commande annulée</p>
+          <p className="font-semibold text-error">{t("order.status.cancelled")}</p>
           {event && (
             <p className="mt-0.5 text-sm text-text-secondary">
               <time dateTime={isoAttr(event.at)}>{formatDateTime(event.at)}</time> · {event.byName}
@@ -95,7 +94,7 @@ export function OrderStatusTimeline({
                   active ? "text-primary" : done ? "text-text" : "text-text-light",
                 )}
               >
-                {meta.label}
+                {t(`order.status.${step}` as TranslationKey)}
               </p>
 
               {event ? (
@@ -104,7 +103,9 @@ export function OrderStatusTimeline({
                   {event.byName && ` · ${event.byName}`}
                 </p>
               ) : active ? (
-                <p className="mt-0.5 text-sm text-text-secondary">{meta.description}</p>
+                <p className="mt-0.5 text-sm text-text-secondary">
+                  {t(`order.statusDesc.${step}` as TranslationKey)}
+                </p>
               ) : null}
 
               {active && (
@@ -113,7 +114,7 @@ export function OrderStatusTimeline({
                     <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-60" />
                     <span className="relative inline-flex size-2 rounded-full bg-primary" />
                   </span>
-                  En cours
+                  {t("cor.inProgress")}
                 </span>
               )}
             </div>
@@ -127,6 +128,7 @@ export function OrderStatusTimeline({
 /* ── Order card, for lists ─────────────────────────────────────────────── */
 
 export function OrderCard({ order, now }: { order: Order; now?: Date }) {
+  const { t } = useLocale();
   return (
     <article className="relative rounded-lg border border-border bg-surface p-5 transition-shadow hover:shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -139,12 +141,12 @@ export function OrderCard({ order, now }: { order: Order; now?: Date }) {
           <p className="tnum mt-0.5 text-xs text-text-light">
             {/* An order reference is an identifier, not prose — translating
                 "RL-2408-0147" can only damage it. */}
-            <span translate="no">{order.reference}</span> · {ORDER_TYPE_LABEL[order.type]} ·{" "}
+            <span translate="no">{order.reference}</span> · {t(`cor.type.${order.type}` as TranslationKey)} ·{" "}
             <time dateTime={isoAttr(order.createdAt)}>{formatRelative(order.createdAt, now)}</time>
           </p>
           {order.scheduledFor && (
             <p className="mt-0.5 text-xs font-medium text-primary">
-              Prévue pour{" "}
+              {t("cor.scheduledFor")}{" "}
               <time dateTime={isoAttr(order.scheduledFor)}>{formatRelative(order.scheduledFor, now)}</time>
             </p>
           )}
@@ -163,8 +165,10 @@ export function OrderCard({ order, now }: { order: Order; now?: Date }) {
         ))}
         {order.items.length > 3 && (
           <li className="text-xs text-text-light">
-            +{order.items.length - 3} autre{order.items.length - 3 > 1 ? "s" : ""} article
-            {order.items.length - 3 > 1 ? "s" : ""}
+            {t(
+              order.items.length - 3 > 1 ? "cor.moreItems_other" : "cor.moreItems_one",
+              { count: order.items.length - 3 },
+            )}
           </li>
         )}
       </ul>
@@ -172,8 +176,10 @@ export function OrderCard({ order, now }: { order: Order; now?: Date }) {
       <div className="mt-4 flex items-baseline justify-between gap-3 border-t border-border pt-3.5">
         <span className="text-sm text-text-secondary">
           {order.deliveryFeeSetAt === null && order.type === "delivery"
-            ? "Livraison à confirmer"
-            : `${order.items.length} article${order.items.length > 1 ? "s" : ""}`}
+            ? t("cor.deliveryToConfirm")
+            : t(order.items.length > 1 ? "cor.itemsCount_other" : "cor.itemsCount_one", {
+                count: order.items.length,
+              })}
         </span>
         <span className="tnum font-display text-lg font-bold">{formatMoney(order.total)}</span>
       </div>
@@ -189,6 +195,7 @@ export function OrderCard({ order, now }: { order: Order; now?: Date }) {
  * snapshot — never recomputed from the current menu.
  */
 export function OrderReceipt({ order }: { order: Order }) {
+  const { t } = useLocale();
   return (
     <div>
       <ul className="divide-y divide-border">
@@ -214,14 +221,16 @@ export function OrderReceipt({ order }: { order: Order }) {
 
       <dl className="mt-4 flex flex-col gap-2 border-t border-border pt-4 text-sm">
         <div className="flex justify-between gap-3">
-          <dt className="text-text-secondary">Sous-total</dt>
+          <dt className="text-text-secondary">{t("cor.subtotal")}</dt>
           <dd className="tnum font-medium">{formatMoney(order.subtotal)}</dd>
         </div>
 
         {order.discountAmount > 0 && (
           <div className="flex justify-between gap-3">
             <dt className="text-text-secondary">
-              Réduction{order.promoCode ? ` (${order.promoCode})` : ""}
+              {order.promoCode
+                ? t("cct.sum.discountCode", { code: order.promoCode })
+                : t("cor.discount")}
             </dt>
             <dd className="tnum font-medium text-success">
               −{formatMoney(order.discountAmount)}
@@ -231,17 +240,17 @@ export function OrderReceipt({ order }: { order: Order }) {
 
         <div className="flex justify-between gap-3">
           <dt className="text-text-secondary">
-            Frais de service ({order.serviceChargePercent} %)
+            {t("cor.service", { percent: order.serviceChargePercent })}
           </dt>
           <dd className="tnum font-medium">{formatMoney(order.serviceCharge)}</dd>
         </div>
 
         {order.type === "delivery" && (
           <div className="flex justify-between gap-3">
-            <dt className="text-text-secondary">Livraison</dt>
+            <dt className="text-text-secondary">{t("cor.delivery")}</dt>
             <dd className="tnum font-medium">
               {order.deliveryFeeSetAt === null ? (
-                <span className="text-text-light">à confirmer</span>
+                <span className="text-text-light">{t("cor.toConfirm")}</span>
               ) : (
                 formatMoney(order.deliveryFee)
               )}
@@ -251,13 +260,13 @@ export function OrderReceipt({ order }: { order: Order }) {
 
         {order.loyaltyValue > 0 && (
           <div className="flex justify-between gap-3">
-            <dt className="text-text-secondary">Points de fidélité</dt>
+            <dt className="text-text-secondary">{t("cor.loyalty")}</dt>
             <dd className="tnum font-medium text-success">−{formatMoney(order.loyaltyValue)}</dd>
           </div>
         )}
 
         <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border pt-3">
-          <dt className="font-display text-base font-bold">Total</dt>
+          <dt className="font-display text-base font-bold">{t("cor.total")}</dt>
           <dd translate="no" className="tnum font-display text-xl font-bold text-primary">
             {formatMoney(order.total)}
           </dd>

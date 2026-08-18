@@ -30,20 +30,54 @@ export function ReservationsClient({
   user,
   initial,
   restaurants,
+  initialRestaurantSlug = "",
+  initialGuests = "",
+  initialDate = "",
 }: {
   user: SessionUser;
   initial: CustomerReservation[];
   restaurants: PublicRestaurant[];
+  /** Slug or name — resolved below to the closest restaurant. */
+  initialRestaurantSlug?: string;
+  initialGuests?: string;
+  initialDate?: string;
 }) {
   const { toast } = useToast();
   const { locale, t } = useLocale();
   const dateLocale = intlLocale(locale);
 
+  // Resolve the hand-off (slug, or a name typed in the homepage search) to a
+  // selectable restaurant. Unmatched names fall back to the first one, the
+  // same default the form always had — the search result still lands on the
+  // booking screen instead of being dropped.
+  function resolveRestaurant(slugOrName: string): string {
+    if (!slugOrName) return restaurants[0]?.slug ?? "";
+    const bySlug = restaurants.find((r) => r.slug === slugOrName);
+    if (bySlug) return bySlug.slug;
+    const byName = restaurants.find((r) =>
+      r.name.toLowerCase().includes(slugOrName.trim().toLowerCase()),
+    );
+    return byName?.slug ?? restaurants[0]?.slug ?? "";
+  }
+
+  function resolveGuests(raw: string): string {
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 1 && n <= 20 ? String(n) : "2";
+  }
+
+  // Only a well-formed YYYY-MM-DD is allowed through — anything else would
+  // make the submit build an Invalid Date and throw in toISOString.
+  function resolveDate(raw: string): string {
+    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+  }
+
   const [mine, setMine] = useState(initial);
-  const [restaurantSlug, setRestaurantSlug] = useState(restaurants[0]?.slug ?? "");
-  const [date, setDate] = useState("");
+  const [restaurantSlug, setRestaurantSlug] = useState(() =>
+    resolveRestaurant(initialRestaurantSlug),
+  );
+  const [date, setDate] = useState(() => resolveDate(initialDate));
   const [time, setTime] = useState("");
-  const [guests, setGuests] = useState("2");
+  const [guests, setGuests] = useState(() => resolveGuests(initialGuests));
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [cancelId, setCancelId] = useState<string | null>(null);

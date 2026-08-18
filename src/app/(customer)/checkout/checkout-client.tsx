@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   Banknote,
   Bike,
+  Clock,
   Info,
   MapPin,
   Plus,
@@ -19,50 +20,18 @@ import { Button, buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input, Radio, Select, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
-import { placeOrder, type CheckoutInput } from "@/lib/data/checkout-actions";
+import {
+  getRestaurantOrderCapabilities,
+  placeOrder,
+  type CheckoutInput,
+} from "@/lib/data/checkout-actions";
 import type { CustomerAddress } from "@/lib/data/customer";
 import { formatMoney } from "@/lib/format/currency";
-import {
-  ORDER_TYPE_LABEL,
-  PAYMENT_METHOD_LABEL,
-  type OrderType,
-  type PaymentMethod,
-} from "@/lib/format/order-status";
+import type { OrderType, PaymentMethod } from "@/lib/format/order-status";
+import { useLocale } from "@/lib/i18n/use-locale";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SessionUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
-
-const ORDER_REASONS: Record<string, string> = {
-  emptyBasket: "Votre panier est vide.",
-  badType: "Type de commande invalide.",
-  restaurantUnavailable: "Ce restaurant n'est plus disponible.",
-  notAcceptingOrders: "Le restaurant ne prend plus de commandes pour l'instant.",
-  noDelivery: "Ce restaurant ne livre pas.",
-  noPickup: "Ce restaurant ne propose pas le retrait.",
-  itemGone: "Un article du panier n'existe plus.",
-  itemSoldOut: "Un article du panier est épuisé.",
-  badQuantity: "Quantité invalide.",
-  notEnoughStock: "Stock insuffisant pour un article du panier.",
-  optionGone: "Une option choisie n'existe plus.",
-  optionUnavailable: "Une option choisie n'est plus disponible.",
-  optionMismatch: "Une option ne correspond pas à l'article.",
-  badPrice: "Prix invalide.",
-  belowMinimum: "Le montant minimum de commande n'est pas atteint.",
-  promoInvalid: "Ce code promo n'est pas valable pour ce restaurant.",
-  promoExpired: "Ce code promo a expiré.",
-  promoUsedUp: "Ce code promo a atteint sa limite d'utilisation.",
-  promoMinimum: "Montant minimum non atteint pour ce code promo.",
-  notEnoughPoints: "Vous n'avez pas assez de points de fidélité.",
-  belowMinPoints: "Montant minimal de points non atteint.",
-  addressNotFound: "Cette adresse ne vous appartient pas.",
-  nameRequired: "Indiquez le nom du destinataire.",
-  phoneRequired: "Indiquez un numéro de téléphone.",
-  addressRequired: "Indiquez une adresse de livraison.",
-  badSchedule: "La date de programmation est invalide.",
-  scheduleTooSoon: "Choisissez un horaire à plus d'une minute.",
-  scheduleTooFar: "La programmation est limitée à 7 jours.",
-  rateLimited: "Trop de commandes passées récemment. Réessayez dans quelques minutes.",
-  failed: "La commande n'a pas pu être enregistrée. Réessayez.",
-};
 
 export function CheckoutClient({
   user,
@@ -76,6 +45,25 @@ export function CheckoutClient({
   const router = useRouter();
   const { lines, totals, promoCode, loyaltyPointsUsed, clear } = useCart();
   const { toast } = useToast();
+  const { t } = useLocale();
+
+  /** Why placeOrder refused, as a sentence in the current language. */
+  function reasonText(reason: string, detail?: string): string {
+    switch (reason) {
+      case "itemSoldOut":
+        return t("cct.err.itemSoldOut", { dish: detail ?? "" });
+      case "notEnoughStock":
+        return t("cct.err.notEnoughStock", { dish: detail ?? "" });
+      case "optionUnavailable":
+        return t("cct.err.optionUnavailable", { option: detail ?? "" });
+      case "belowMinimum":
+        return t("cct.err.belowMinimum", { amount: formatMoney(Number(detail) || 0) });
+      case "belowMinPoints":
+        return t("cct.err.belowMinPoints", { points: detail ?? "" });
+      default:
+        return t(`cct.err.${reason}` as TranslationKey);
+    }
+  }
 
   const [type, setType] = useState<OrderType>("delivery");
   const [addressId, setAddressId] = useState(addresses.find((a) => a.isDefault)?.id ?? "");
@@ -92,17 +80,61 @@ export function CheckoutClient({
   const [notes, setNotes] = useState("");
   const [placing, setPlacing] = useState(false);
 
+  // The basket lives in localStorage, so the server could not tell us which
+  // restaurant it belongs to — ask here, once, so a mode the kitchen does not
+  // offer is disabled up front instead of rejected after the whole form.
+  const cartRestaurantId = lines[0]?.restaurantId ?? null;
+  const [caps, setCaps] = useState<{
+    acceptsDelivery: boolean;
+    acceptsPickup: boolean;
+    quartier: string;
+    deliveryEstimateMin: number;
+    minimumOrder: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!cartRestaurantId) return;
+    let alive = true;
+    getRestaurantOrderCapabilities(cartRestaurantId).then((c) => {
+      if (alive) setCaps(c);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cartRestaurantId]);
+
+  // Adjusted during render rather than in an effect (same pattern as the
+  // modifier sheet): once we know a mode is unavailable, the dead selection
+  // must not survive — but setState inside an effect is a cascading render.
+  const [knownCaps, setKnownCaps] = useState(caps);
+  if (knownCaps !== caps) {
+    setKnownCaps(caps);
+    if (caps) {
+      if (type === "delivery" && !caps.acceptsDelivery && caps.acceptsPickup) setType("pickup");
+      else if (type === "pickup" && !caps.acceptsPickup && caps.acceptsDelivery) setType("delivery");
+    }
+  }
+
+  // The payment method must match the mode — cash on delivery for delivery,
+  // pay at the restaurant for pickup. Switching mode with a stale method would
+  // offer "cash on delivery" to someone collecting their own order.
+  const [knownType, setKnownType] = useState(type);
+  if (knownType !== type) {
+    setKnownType(type);
+    setPayment(type === "delivery" ? "cash_on_delivery" : "pay_at_restaurant");
+  }
+
   if (lines.length === 0) {
     return (
       <div className="container-page w-full py-16">
         <div className="rounded-lg border border-border bg-surface">
           <EmptyState
             icon={<ShoppingBag />}
-            title="Votre panier est vide"
-            description="Ajoutez des articles avant de passer commande."
+            title={t("cct.empty")}
+            description={t("cct.co.emptyBody")}
             action={
               <Link href="/browse" className={buttonClasses()}>
-                Voir les restaurants
+                {t("cct.browse")}
               </Link>
             }
           />
@@ -115,7 +147,7 @@ export function CheckoutClient({
 
   async function submit() {
     if (schedule === "later" && (!scheduleDate || !scheduleTime)) {
-      toast("Choisissez une date et une heure pour la programmation.", "error");
+      toast(t("cct.co.scheduleRequired"), "error");
       return;
     }
     setPlacing(true);
@@ -151,10 +183,10 @@ export function CheckoutClient({
 
     if (result.ok) {
       clear();
-      toast("Commande envoyée au restaurant.", "success");
+      toast(t("cct.co.sent", { ref: result.reference }), "success");
       router.push(`/orders/${result.orderId}`);
     } else {
-      toast(ORDER_REASONS[result.reason] ?? "La commande a échoué.", "error");
+      toast(reasonText(result.reason, result.detail), "error");
     }
   }
 
@@ -165,49 +197,71 @@ export function CheckoutClient({
         className="inline-flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-primary"
       >
         <ArrowLeft className="size-3.5" aria-hidden />
-        Retour au panier
+        {t("cct.co.back")}
       </Link>
 
-      <h1 className="mt-4 font-display text-3xl font-bold">Finaliser la commande</h1>
+      <h1 className="mt-4 font-display text-3xl font-bold">{t("cct.co.title")}</h1>
 
       <div className="mt-8 grid items-start gap-8 lg:grid-cols-[1fr_22rem]">
         <div className="flex flex-col gap-6">
           {/* ── Order type ─────────────────────────────────────────────── */}
           <section className="rounded-lg border border-border bg-surface p-5">
-            <h2 className="font-display text-lg font-bold">Mode de retrait</h2>
+            <h2 className="font-display text-lg font-bold">{t("cct.co.how")}</h2>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               {(["delivery", "pickup"] as OrderType[]).map((value) => {
                 const Icon = value === "delivery" ? Bike : ShoppingBag;
+                const unavailable =
+                  caps !== null &&
+                  (value === "delivery" ? !caps.acceptsDelivery : !caps.acceptsPickup);
                 return (
                   <button
                     key={value}
                     type="button"
                     aria-pressed={type === value}
+                    disabled={unavailable}
                     onClick={() => setType(value)}
                     className={cn(
                       "flex flex-col items-center gap-2 rounded-md border p-4 transition-colors",
+                      unavailable && "cursor-not-allowed opacity-50",
                       type === value
                         ? "border-primary bg-primary-light text-primary"
                         : "border-border hover:border-border-strong",
                     )}
                   >
                     <Icon className="size-5" aria-hidden />
-                    <span className="text-sm font-semibold">{ORDER_TYPE_LABEL[value]}</span>
+                    <span className="text-sm font-semibold">
+                      {t(value === "delivery" ? "cct.co.typeDelivery" : "cct.co.typePickup")}
+                    </span>
+                    <span className="text-xs text-text-light">
+                      {value === "delivery"
+                        ? caps && caps.deliveryEstimateMin > 0
+                          ? t("cct.co.deliveryEst", { minutes: caps.deliveryEstimateMin })
+                          : t("cct.co.deliveryHint")
+                        : caps && caps.quartier
+                          ? t("cct.co.pickupAt", { quartier: caps.quartier })
+                          : t("cct.co.pickupHint")}
+                    </span>
                   </button>
                 );
               })}
             </div>
+            {caps !== null && (!caps.acceptsDelivery || !caps.acceptsPickup) && (
+              <p className="mt-3 text-xs text-text-light">
+                {!caps.acceptsDelivery && t("cct.co.noDelivery")}{" "}
+                {!caps.acceptsPickup && t("cct.co.noPickup")}
+              </p>
+            )}
           </section>
 
           {/* ── Address ────────────────────────────────────────────────── */}
           {type === "delivery" && (
             <section className="rounded-lg border border-border bg-surface p-5">
               <div className="flex items-center justify-between gap-3">
-                <h2 className="font-display text-lg font-bold">Adresse de livraison</h2>
+                <h2 className="font-display text-lg font-bold">{t("cct.co.address")}</h2>
                 <Button variant="ghost" size="sm" onClick={() => setNewAddress((v) => !v)}>
                   <Plus className="size-3.5" aria-hidden />
-                  Nouvelle adresse
+                  {t("cct.co.useNew")}
                 </Button>
               </div>
 
@@ -215,7 +269,7 @@ export function CheckoutClient({
                 <div className="mt-4 flex flex-col gap-2">
                   {addresses.length === 0 ? (
                     <p className="rounded-md border border-border bg-surface-2 p-3 text-sm text-text-secondary">
-                      Aucune adresse enregistrée — utilisez « Nouvelle adresse » ci-dessus.
+                      {t("cct.co.noAddresses")}
                     </p>
                   ) : (
                     addresses.map((a) => (
@@ -229,7 +283,7 @@ export function CheckoutClient({
                             {a.label}
                             {a.isDefault && (
                               <Badge tone="neutral" className="ml-2">
-                                Par défaut
+                                {t("cct.co.default")}
                               </Badge>
                             )}
                           </>
@@ -241,14 +295,19 @@ export function CheckoutClient({
                 </div>
               ) : (
                 <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                  <Field label="Nom du destinataire" htmlFor="ck-name" required className="sm:col-span-2">
+                  <Field
+                    label={t("cct.co.destinationName")}
+                    htmlFor="ck-name"
+                    required
+                    className="sm:col-span-2"
+                  >
                     <Input
                       id="ck-name"
                       value={deliveryName}
                       onChange={(e) => setDeliveryName(e.target.value)}
                     />
                   </Field>
-                  <Field label="Téléphone" htmlFor="ck-phone" required>
+                  <Field label={t("cct.co.phone")} htmlFor="ck-phone" required>
                     <Input
                       id="ck-phone"
                       type="tel"
@@ -256,14 +315,14 @@ export function CheckoutClient({
                       onChange={(e) => setDeliveryPhone(e.target.value)}
                     />
                   </Field>
-                  <Field label="Quartier" htmlFor="ck-quartier" required>
+                  <Field label={t("cct.co.quartier")} htmlFor="ck-quartier" required>
                     <Select
                       id="ck-quartier"
                       value={deliveryQuartier}
                       onChange={(e) => setDeliveryQuartier(e.target.value)}
                     >
                       <option value="" disabled>
-                        Choisir un quartier
+                        {t("cct.co.chooseQuartier")}
                       </option>
                       {quartiers.map((q) => (
                         <option key={q} value={q}>
@@ -272,26 +331,31 @@ export function CheckoutClient({
                       ))}
                     </Select>
                   </Field>
-                  <Field label="Adresse" htmlFor="ck-address" required className="sm:col-span-2">
+                  <Field
+                    label={t("cct.co.addressLine")}
+                    htmlFor="ck-address"
+                    required
+                    className="sm:col-span-2"
+                  >
                     <Input
                       id="ck-address"
                       icon={<MapPin />}
                       value={deliveryAddress}
                       onChange={(e) => setDeliveryAddress(e.target.value)}
-                      placeholder="Rue, immeuble, étage"
+                      placeholder={t("cct.co.addressPh")}
                     />
                   </Field>
                   <Field
-                    label="Point de repère"
+                    label={t("cct.co.landmark")}
                     htmlFor="ck-landmark"
-                    hint="Ce qui aide vraiment le livreur à vous trouver."
+                    hint={t("cct.co.landmarkHint")}
                     className="sm:col-span-2"
                   >
                     <Input
                       id="ck-landmark"
                       value={deliveryLandmark}
                       onChange={(e) => setDeliveryLandmark(e.target.value)}
-                      placeholder="En face de la pharmacie du Golfe"
+                      placeholder={t("cct.co.landmarkPh")}
                     />
                   </Field>
                 </div>
@@ -304,11 +368,7 @@ export function CheckoutClient({
               */}
               <p className="mt-4 flex items-start gap-2.5 rounded-md border border-info/25 bg-info-light p-3 text-sm text-info">
                 <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
-                <span>
-                  Les frais de livraison sont fixés par le restaurant lorsqu&apos;il confirme votre
-                  commande, en fonction de votre quartier. Ils vous seront communiqués à ce
-                  moment-là.
-                </span>
+                <span>{t("cct.co.feeNote")}</span>
               </p>
             </section>
           )}
@@ -316,19 +376,39 @@ export function CheckoutClient({
           {/* ── Pickup contact ────────────────────────────────────────── */}
           {type === "pickup" && (
             <section className="rounded-lg border border-border bg-surface p-5">
-              <h2 className="font-display text-lg font-bold">Vos coordonnées</h2>
-              <p className="mt-1 text-sm text-text-secondary">
-                Le restaurant les utilise pour vous joindre au moment du retrait.
-              </p>
+              <h2 className="font-display text-lg font-bold">{t("cct.co.contact")}</h2>
+              {caps?.quartier ? (
+                <p className="mt-1 text-sm text-text-secondary">
+                  {t("cct.co.pickupWhere", {
+                    restaurant: restaurant.restaurantName,
+                    quartier: caps.quartier,
+                  })}
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-text-secondary">{t("cct.co.pickupNote")}</p>
+              )}
+
+              {/* The longest prep time across the basket is what a pickup
+                  customer actually waits for. */}
+              {(() => {
+                const prep = Math.max(0, ...lines.map((l) => l.prepMinutes ?? 0));
+                if (prep <= 0) return null;
+                return (
+                  <p className="mt-3 flex items-center gap-2 text-sm text-text-secondary">
+                    <Clock className="size-4 text-primary" aria-hidden />
+                    {t("cct.co.pickupReady", { minutes: prep })}
+                  </p>
+                );
+              })()}
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <Field label="Nom" htmlFor="ck-pu-name" required>
+                <Field label={t("cct.co.name")} htmlFor="ck-pu-name" required>
                   <Input
                     id="ck-pu-name"
                     value={deliveryName}
                     onChange={(e) => setDeliveryName(e.target.value)}
                   />
                 </Field>
-                <Field label="Téléphone" htmlFor="ck-pu-phone" required>
+                <Field label={t("cct.co.phone")} htmlFor="ck-pu-phone" required>
                   <Input
                     id="ck-pu-phone"
                     type="tel"
@@ -342,27 +422,27 @@ export function CheckoutClient({
 
           {/* ── Schedule ───────────────────────────────────────────────── */}
           <section className="rounded-lg border border-border bg-surface p-5">
-            <h2 className="font-display text-lg font-bold">Quand ?</h2>
+            <h2 className="font-display text-lg font-bold">{t("cct.co.when")}</h2>
             <div className="mt-4 flex flex-col gap-2">
               <Radio
                 name="schedule"
                 checked={schedule === "asap"}
                 onChange={() => setSchedule("asap")}
-                label="Dès que possible"
-                description="Le restaurant confirme dès réception de la commande"
+                label={t("cct.co.asap")}
+                description={t("cct.co.asapHint")}
               />
               <Radio
                 name="schedule"
                 checked={schedule === "later"}
                 onChange={() => setSchedule("later")}
-                label="Programmer"
-                description="Choisir une heure de retrait ou de livraison"
+                label={t("cct.co.schedule")}
+                description={t("cct.co.scheduleHint")}
               />
             </div>
 
             {schedule === "later" && (
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <Field label="Date" htmlFor="ck-date">
+                <Field label={t("cct.co.date")} htmlFor="ck-date">
                   <Input
                     id="ck-date"
                     type="date"
@@ -370,7 +450,7 @@ export function CheckoutClient({
                     onChange={(e) => setScheduleDate(e.target.value)}
                   />
                 </Field>
-                <Field label="Heure" htmlFor="ck-time">
+                <Field label={t("cct.co.time")} htmlFor="ck-time">
                   <Input
                     id="ck-time"
                     type="time"
@@ -384,39 +464,47 @@ export function CheckoutClient({
 
           {/* ── Payment ────────────────────────────────────────────────── */}
           <section className="rounded-lg border border-border bg-surface p-5">
-            <h2 className="font-display text-lg font-bold">Paiement</h2>
+            <h2 className="font-display text-lg font-bold">{t("cct.co.payment")}</h2>
             <div className="mt-4 flex flex-col gap-2">
-              {(["cash_on_delivery", "pay_at_restaurant"] as PaymentMethod[]).map((m) => (
-                <Radio
-                  key={m}
-                  name="payment"
-                  checked={payment === m}
-                  onChange={() => setPayment(m)}
-                  label={PAYMENT_METHOD_LABEL[m]}
-                  description={
-                    m === "cash_on_delivery"
-                      ? "Réglez le livreur à la remise de la commande."
-                      : "Réglez sur place au moment du retrait."
-                  }
-                />
-              ))}
+              {/* The method must match the mode: you pay the rider on delivery,
+                  or the counter on pickup. Showing both for one mode is how a
+                  customer ends up promising cash on delivery for a pickup. */}
+              {(
+                [
+                  ["cash_on_delivery", "cct.co.payCashDelivery"],
+                  ["pay_at_restaurant", "cct.co.payCashPickup"],
+                ] as [PaymentMethod, string][]
+              )
+                .filter(([m]) =>
+                  type === "delivery" ? m === "cash_on_delivery" : m === "pay_at_restaurant",
+                )
+                .map(([m, description]) => (
+                  <Radio
+                    key={m}
+                    name="payment"
+                    checked={payment === m}
+                    onChange={() => setPayment(m)}
+                    label={t(m === "cash_on_delivery" ? "cct.co.payCashLabel" : "cct.co.payRestaurantLabel")}
+                    description={t(description as TranslationKey)}
+                  />
+                ))}
             </div>
             <p className="mt-3 flex items-center gap-2 text-xs text-text-light">
               <Banknote className="size-3.5" aria-hidden />
-              Le paiement en ligne des commandes arrive bientôt.
+              {t("cct.co.onlineSoon")}
             </p>
           </section>
 
           {/* ── Notes ─────────────────────────────────────────────────── */}
           <section className="rounded-lg border border-border bg-surface p-5">
-            <h2 className="font-display text-lg font-bold">Instructions</h2>
+            <h2 className="font-display text-lg font-bold">{t("cct.co.notes")}</h2>
             <Textarea
               className="mt-4"
               rows={3}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Sonner à l'interphone, appartement 3B…"
-              aria-label="Instructions pour la commande"
+              placeholder={t("cct.co.notesPh")}
+              aria-label={t("cct.co.notes")}
             />
           </section>
         </div>
@@ -447,6 +535,17 @@ export function CheckoutClient({
             </ul>
           </div>
 
+          {/* Below the minimum, say so BEFORE the customer commits — the
+              basket can't be submitted yet, and a surprise at the last click
+              is how baskets get abandoned. */}
+          {caps && caps.minimumOrder > 0 && totals.subtotal < caps.minimumOrder && (
+            <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning">
+              {t("cct.co.belowMinHint", {
+                amount: formatMoney(caps.minimumOrder - totals.subtotal),
+              })}
+            </p>
+          )}
+
           <CartSummary showDeliveryFee={type === "delivery"}>
             <Button
               size="lg"
@@ -455,12 +554,12 @@ export function CheckoutClient({
               onClick={submit}
               className="rounded-md"
             >
-              Commander · {formatMoney(totals.total)}
+              {t("cct.co.place", { total: formatMoney(totals.total) })}
             </Button>
             <p className="mt-3 text-center text-xs leading-relaxed text-text-light">
-              En commandant, vous acceptez nos{" "}
+              {t("cct.co.terms1")}{" "}
               <Link href="/terms" className="font-medium text-primary hover:underline">
-                conditions d&apos;utilisation
+                {t("cct.co.termsLink")}
               </Link>
               .
             </p>

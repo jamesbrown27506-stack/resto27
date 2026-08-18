@@ -1,6 +1,9 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
+import { UNCATEGORIZED_SECTION_ID } from "@/lib/menu/constants";
 import { fetchCategories, fetchMenu, type MenuItem } from "./manager";
+
+export { UNCATEGORIZED_SECTION_ID };
 
 /**
  * Public reads — restaurants, menus and reviews as anyone on the internet
@@ -33,7 +36,11 @@ export interface PublicRestaurant {
   cuisine: string;
   description: string;
   quartier: string;
+  /** Street address — how a pickup customer actually finds the place. */
+  addressLine: string;
   phone: string | null;
+  logoUrl: string | null;
+  coverUrl: string | null;
   rating: number;
   reviewCount: number;
   deliveryEstimateMin: number;
@@ -66,12 +73,15 @@ interface DbRestaurant {
   is_accepting_orders: boolean;
   deposit_amount: number;
   created_at: string;
+  address_line: string | null;
+  logo_url: string | null;
+  cover_url: string | null;
   cuisines: { name: string }[] | null;
   quartiers: { name: string }[] | null;
 }
 
 const RESTAURANT_COLUMNS =
-  "id, slug, name, branch_label, is_primary, status, is_verified, description, phone, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, deposit_amount, created_at, cuisines ( name ), quartiers ( name )";
+  "id, slug, name, branch_label, is_primary, status, is_verified, description, phone, address_line, logo_url, cover_url, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, deposit_amount, created_at, cuisines ( name ), quartiers ( name )";
 
 async function attachHours(
   rows: DbRestaurant[],
@@ -115,7 +125,10 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
     cuisine: r.cuisines?.[0]?.name ?? "",
     description: r.description,
     quartier: r.quartiers?.[0]?.name ?? "",
+    addressLine: r.address_line ?? "",
     phone: r.phone,
+    logoUrl: r.logo_url,
+    coverUrl: r.cover_url,
     rating: Number(r.rating),
     reviewCount: r.review_count,
     deliveryEstimateMin: r.delivery_estimate_min,
@@ -183,20 +196,69 @@ export interface MenuSection {
   items: MenuItem[];
 }
 
-/** The orderable menu grouped by category, options included. */
+/**
+ * The orderable menu grouped by category, options included.
+ *
+ * Dishes whose category was deleted (or never set) must NOT vanish: the
+ * schema comment on menu_items.category_id says it plainly — "an uncategorised
+ * item is visible and fixable; a silently deleted menu is not." So they are
+ * grouped under a fallback section at the end rather than dropped. Dishes in
+ * a deliberately HIDDEN category stay hidden — that toggle is the manager's
+ * explicit choice.
+ */
 export async function fetchMenuSections(restaurantId: string): Promise<MenuSection[]> {
   const [categories, items] = await Promise.all([
     fetchCategories(restaurantId),
     fetchMenu(restaurantId),
   ]);
 
-  return categories
+  const sections = categories
     .filter((c) => c.isActive)
     .map((c) => ({
       category: { id: c.id, name: c.name, icon: c.icon },
       items: items.filter((i) => i.categoryId === c.id),
     }))
     .filter((s) => s.items.length > 0);
+
+  const uncategorised = items.filter(
+    (i) => !i.categoryId || !categories.some((c) => c.id === i.categoryId),
+  );
+  if (uncategorised.length > 0) {
+    sections.push({
+      category: { id: UNCATEGORIZED_SECTION_ID, name: "Autres plats", icon: "UtensilsCrossed" },
+      items: uncategorised,
+    });
+  }
+
+  return sections;
+}
+
+/**
+ * A lowercase, space-joined index of every active restaurant's dish names,
+ * keyed by restaurant id — the data behind dish-level search in the
+ * directory. Built as one read; a menu is small enough that joining in JS is
+ * cheaper than a GROUP BY, which PostgREST cannot return anyway.
+ */
+export async function fetchDishSearchIndex(): Promise<Record<string, string>> {
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("menu_items")
+    .select("restaurant_id, name, restaurants!inner ( status )")
+    .eq("restaurants.status", "active");
+
+  if (error) {
+    console.error("[public:fetchDishSearchIndex]", error.message);
+    return {};
+  }
+
+  const index: Record<string, string> = {};
+  for (const row of (data ?? []) as { restaurant_id: string; name: string }[]) {
+    const current = index[row.restaurant_id] ?? "";
+    index[row.restaurant_id] = current ? `${current} ${row.name}` : row.name;
+  }
+  for (const key of Object.keys(index)) index[key] = index[key].toLowerCase();
+  return index;
 }
 
 /* ── Homepage ──────────────────────────────────────────────────────────── */
@@ -205,12 +267,21 @@ export interface PopularDish {
   item: MenuItem;
   restaurantSlug: string;
   restaurantName: string;
+  restaurantLogo: string | null;
+  restaurantRating: number;
 }
 
 /**
  * The dishes shown on the homepage. Featured items first, then by rating —
  * the approximation of "what Douala orders tonight" that a small city
  * dataset supports honestly.
+ *
+ * A dish WITHOUT A PHOTO can never lead the homepage. This is a food
+ * ordering site; the strip sells with its eyes, and a dish whose card is a
+ * grey icon is a wasted slot that a photogenic one could have filled. So
+ * dishes with an image are sorted ahead, then featured, then by rating —
+ * the pool is fetched wider than the slot count so the sort has something
+ * to choose from.
  */
 export async function fetchPopularDishes(limit = 6): Promise<PopularDish[]> {
   const supabase = createAdminClient();
@@ -218,20 +289,18 @@ export async function fetchPopularDishes(limit = 6): Promise<PopularDish[]> {
   const { data, error } = await supabase
     .from("menu_items")
     .select(
-      "id, restaurant_id, category_id, name, description, price, image_url, is_available, is_featured, prep_minutes, track_stock, stock_quantity, low_stock_threshold, dietary_tags, allergens, sort_order, restaurants!inner ( slug, name, rating )",
+      "id, restaurant_id, category_id, name, description, price, image_url, is_available, is_featured, prep_minutes, track_stock, stock_quantity, low_stock_threshold, dietary_tags, allergens, sort_order, restaurants!inner ( slug, name, rating, logo_url )",
     )
     .eq("is_available", true)
     .eq("restaurants.status", "active")
     .order("is_featured", { ascending: false })
-    .limit(limit);
+    .limit(Math.min(limit * 4, 48));
 
   if (error) {
     console.error("[public:fetchPopularDishes]", error.message);
     return [];
   }
 
-  // PostgREST cannot order by an embedded column — rating is a JS tiebreak
-  // on top of the is_featured ordering (Array.prototype.sort is stable).
   const rows = ((data ?? []) as unknown as {
     id: string;
     restaurant_id: string;
@@ -249,15 +318,21 @@ export async function fetchPopularDishes(limit = 6): Promise<PopularDish[]> {
     dietary_tags: string;
     allergens: string;
     sort_order: number;
-    restaurants: { slug: string; name: string; rating: number }[];
+    restaurants: { slug: string; name: string; rating: number; logo_url: string | null }[];
   }[])
-    .sort(
-      (a, b) =>
-        (b.restaurants[0]?.rating ?? 0) - (a.restaurants[0]?.rating ?? 0),
-    )
+    .sort((a, b) => {
+      const aPhoto = a.image_url ? 0 : 1;
+      const bPhoto = b.image_url ? 0 : 1;
+      if (aPhoto !== bPhoto) return aPhoto - bPhoto;
+      if (a.is_featured !== b.is_featured) return a.is_featured ? -1 : 1;
+      return (b.restaurants[0]?.rating ?? 0) - (a.restaurants[0]?.rating ?? 0);
+    })
+    .slice(0, limit)
     .map((i) => ({
       restaurantSlug: i.restaurants[0]?.slug ?? "",
       restaurantName: i.restaurants[0]?.name ?? "",
+      restaurantLogo: i.restaurants[0]?.logo_url ?? null,
+      restaurantRating: Number(i.restaurants[0]?.rating ?? 0),
     item: {
       id: i.id,
       restaurantId: i.restaurant_id,

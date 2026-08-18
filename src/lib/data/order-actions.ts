@@ -23,7 +23,7 @@ async function loadOrder(restaurantId: string, orderId: string) {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("orders")
-    .select("id, status, type, total, delivery_fee, delivery_fee_set_at, subtotal, reference, customer_id, restaurant_id")
+    .select("id, status, type, total, delivery_fee, delivery_fee_set_at, subtotal, reference, customer_id, restaurant_id, table_number")
     .eq("restaurant_id", restaurantId)
     .eq("id", orderId)
     .maybeSingle();
@@ -38,6 +38,7 @@ async function loadOrder(restaurantId: string, orderId: string) {
     reference: string;
     customer_id: string | null;
     restaurant_id: string;
+    table_number: string | null;
   } | null;
 }
 
@@ -60,6 +61,43 @@ function refreshOrderScreens() {
   revalidatePath("/m/orders");
   revalidatePath("/m/kitchen");
   revalidatePath("/m");
+  revalidatePath("/m/tables");
+}
+
+/**
+ * Free a dine-in table — but ONLY if nobody else is sitting at it.
+ *
+ * The party's order reaching `delivered` means they ate; the reservation
+ * reaching `completed` or `no_show` means they never will. Either way the
+ * table should go back to the floor — unless ANOTHER open dine-in order is
+ * still running on it (a second round, a split bill), in which case the
+ * table is genuinely still taken and releasing it would seat strangers on
+ * top of a party. The guard is the check; the `status = 'occupied'` filter
+ * on the update is the safety: a table already released stays released.
+ */
+export async function releaseTableIfFree(
+  supabase: ReturnType<typeof createAdminClient>,
+  restaurantId: string,
+  tableNumber: string | null,
+): Promise<void> {
+  if (!tableNumber) return;
+
+  const { count } = await supabase
+    .from("orders")
+    .select("id", { count: "exact", head: true })
+    .eq("restaurant_id", restaurantId)
+    .eq("type", "dine_in")
+    .eq("table_number", tableNumber)
+    .not("status", "in", '("cancelled","delivered")');
+
+  if ((count ?? 0) > 0) return;
+
+  await supabase
+    .from("restaurant_tables")
+    .update({ status: "available" })
+    .eq("restaurant_id", restaurantId)
+    .eq("number", tableNumber)
+    .eq("status", "occupied");
 }
 
 /**
@@ -122,6 +160,12 @@ export async function advanceOrder(
   if (error) {
     console.error("[orders:advanceOrder]", orderId, error.message);
     return { ok: false, error: "Could not update the order." };
+  }
+
+  // The meal is over — the table goes back to the floor, unless another
+  // party is still mid-service on it (releaseTableIfFree re-checks).
+  if (next === "delivered" && order.type === "dine_in") {
+    await releaseTableIfFree(supabase, active.restaurantId, order.table_number);
   }
 
   await recordHistory(orderId, next, { name: profile.name, email: profile.email });
@@ -283,6 +327,9 @@ export async function createTableOrder(input: {
   tableId: string;
   lines: TableOrderLine[];
   notes?: string;
+  /** People sitting at the table — 1..capacity. Optional: a walk-in waiter
+   *  who never asks still gets a valid order. */
+  guests?: number;
 }): Promise<ActionResult & { orderId?: string; reference?: string }> {
   const { active, profile } = await requireCapability("orders.advance");
   const supabase = createAdminClient();
@@ -292,13 +339,18 @@ export async function createTableOrder(input: {
   // The table must be this branch's. Its number is snapshotted onto the order.
   const { data: table } = await supabase
     .from("restaurant_tables")
-    .select("id, number, status")
+    .select("id, number, status, capacity")
     .eq("id", input.tableId)
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
   if (!table) return { ok: false, error: "No such table at this branch." };
   if (table.status === "out_of_service") return { ok: false, error: "That table is out of service." };
+
+  const guests = input.guests ?? null;
+  if (guests !== null && (!Number.isInteger(guests) || guests < 1 || guests > table.capacity)) {
+    return { ok: false, error: `Party size must be between 1 and ${table.capacity}.` };
+  }
 
   // ── Reprice every line from the database ────────────────────────────────
   const itemIds = [...new Set(input.lines.map((l) => l.menuItemId))];
@@ -382,6 +434,7 @@ export async function createTableOrder(input: {
       service_charge: serviceCharge,
       total: subtotal + serviceCharge,
       table_number: table.number,
+      party_size: guests,
       payment_method: "pay_at_restaurant",
       notes: input.notes?.trim() || null,
     })

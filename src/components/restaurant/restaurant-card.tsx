@@ -1,8 +1,11 @@
+"use client";
+
 import Link from "next/link";
-import { BadgeCheck, Bike, Clock, MapPin } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { BadgeCheck, Bike, Clock, MapPin, ShoppingBag } from "lucide-react";
+import { OpenBadge } from "@/components/restaurant/open-badge";
 import { RatingStars } from "@/components/ui/rating-stars";
 import { formatMoney } from "@/lib/format/currency";
+import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { PublicRestaurant as Restaurant } from "@/lib/data/public";
 
@@ -34,26 +37,31 @@ export function RestaurantCard({
   /** Favourite toggle, injected by the customer directory. */
   action?: React.ReactNode;
 }) {
-  const isOpen = restaurant.status === "active";
+  const { t } = useLocale();
   const target = href ?? `/restaurants/${restaurant.slug}`;
 
   return (
     <article className="group relative overflow-hidden rounded-lg border border-border bg-surface transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
       <div className="relative aspect-[4/3] overflow-hidden">
-        <CoverPlaceholder
-          seed={restaurant.slug}
-          className="transition-transform duration-500 group-hover:scale-105"
-        />
+        {restaurant.coverUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={restaurant.coverUrl}
+            alt=""
+            loading="lazy"
+            className="size-full object-cover transition-transform duration-500 group-hover:scale-105"
+          />
+        ) : (
+          <CoverPlaceholder
+            seed={restaurant.slug}
+            className="transition-transform duration-500 group-hover:scale-105"
+          />
+        )}
         <div className="absolute top-3.5 left-3.5">
-          {isOpen ? (
-            <Badge tone="primary" className="bg-primary text-primary-fg border-transparent">
-              Ouvert
-            </Badge>
-          ) : (
-            <Badge tone="neutral" className="bg-text/45 text-white border-transparent">
-              Fermé
-            </Badge>
-          )}
+          <OpenBadge
+            hours={restaurant.hours}
+            acceptingOrders={restaurant.isAcceptingOrders}
+          />
         </div>
         {action && <div className="absolute top-3 right-3">{action}</div>}
       </div>
@@ -68,11 +76,11 @@ export function RestaurantCard({
             </Link>
             {restaurant.isVerified && (
               <span
-                title="Vérifié par RestoLink"
+                title={t("cbr.verifiedTitle")}
                 className="ml-1.5 inline-flex translate-y-0.5 items-center gap-0.5 text-sm font-semibold text-primary"
               >
                 <BadgeCheck className="size-4" aria-hidden />
-                <span className="sr-only">Vérifié</span>
+                <span className="sr-only">{t("cbr.verified")}</span>
               </span>
             )}
             {!restaurant.isPrimary && (
@@ -91,14 +99,24 @@ export function RestaurantCard({
             <MapPin className="size-3 text-primary" aria-hidden />
             {restaurant.quartier}
           </span>
-          <span className="inline-flex items-center gap-1">
-            <Clock className="size-3 text-primary" aria-hidden />
-            {restaurant.deliveryEstimateMin} min
-          </span>
+          {/* The estimate is a DELIVERY time; a pickup-only restaurant must not
+              promise one. The mode badges below carry its real offer. */}
+          {restaurant.acceptsDelivery && (
+            <span className="inline-flex items-center gap-1">
+              <Clock className="size-3 text-primary" aria-hidden />
+              {restaurant.deliveryEstimateMin} min
+            </span>
+          )}
           {restaurant.acceptsDelivery && (
             <span className="inline-flex items-center gap-1">
               <Bike className="size-3 text-primary" aria-hidden />
               min. {formatMoney(restaurant.minimumOrder)}
+            </span>
+          )}
+          {restaurant.acceptsPickup && !restaurant.acceptsDelivery && (
+            <span className="inline-flex items-center gap-1">
+              <ShoppingBag className="size-3 text-primary" aria-hidden />
+              {t("cbr.pickup")}
             </span>
           )}
         </div>

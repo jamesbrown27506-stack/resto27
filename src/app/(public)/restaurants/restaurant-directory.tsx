@@ -7,6 +7,7 @@ import { RestaurantCard, RestaurantGrid } from "@/components/restaurant/restaura
 import { FilterBar } from "@/components/data/filter-bar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
+import { useLocale } from "@/lib/i18n/use-locale";
 import type { PublicRestaurant } from "@/lib/data/public";
 
 /**
@@ -23,6 +24,7 @@ export function RestaurantDirectory({
   quartiers,
   hrefFor,
   action,
+  dishSearch,
 }: {
   restaurants: PublicRestaurant[];
   cuisines: string[];
@@ -31,8 +33,11 @@ export function RestaurantDirectory({
   hrefFor?: (slug: string) => string;
   /** Favourite toggle, injected by the signed-in directory. */
   action?: (restaurantId: string) => React.ReactNode;
+  /** Lowercased dish names per restaurant id — what "plat" in the search matches. */
+  dishSearch?: Record<string, string>;
 }) {
   const params = useSearchParams();
+  const { t } = useLocale();
 
   const [query, setQuery] = useState(params.get("q") ?? "");
   const [quartier, setQuartier] = useState(params.get("quartier") ?? "all");
@@ -58,7 +63,10 @@ export function RestaurantDirectory({
         r.name.toLowerCase().includes(q) ||
         r.description.toLowerCase().includes(q) ||
         r.cuisine.toLowerCase().includes(q) ||
-        r.quartier.toLowerCase().includes(q)
+        r.quartier.toLowerCase().includes(q) ||
+        // "Poulet DG" must find the restaurant that serves it, not just the
+        // one named after it — the placeholder promises dish search.
+        (dishSearch?.[r.id] ?? "").includes(q)
       );
     });
 
@@ -67,7 +75,7 @@ export function RestaurantDirectory({
       if (sort === "name") return a.name.localeCompare(b.name, "fr");
       return b.rating - a.rating;
     });
-  }, [query, quartier, cuisine, rating, price, delivery, sort, restaurants]);
+  }, [query, quartier, cuisine, rating, price, delivery, sort, restaurants, dishSearch]);
 
   function clear() {
     setQuery("");
@@ -84,90 +92,91 @@ export function RestaurantDirectory({
       <FilterBar
         query={query}
         onQueryChange={setQuery}
-        placeholder="Restaurant, plat ou cuisine…"
+        placeholder={t("restaurants.searchPlaceholder")}
         onClear={clear}
         selects={[
           {
             key: "quartier",
-            label: "Quartier",
+            label: t("cbr.quartier"),
             value: quartier,
             onChange: setQuartier,
             options: [
-              { value: "all", label: "Tout Douala" },
+              { value: "all", label: t("restaurants.allQuartiers") },
               ...quartiers.map((q) => ({ value: q, label: q })),
             ],
           },
           {
             key: "cuisine",
-            label: "Cuisine",
+            label: t("cbr.cuisine"),
             value: cuisine,
             onChange: setCuisine,
             options: [
-              { value: "all", label: "Toutes cuisines" },
+              { value: "all", label: t("restaurants.allCuisines") },
               ...cuisines.map((c) => ({ value: c, label: c })),
             ],
           },
           {
             key: "rating",
-            label: "Note",
+            label: t("cbr.rating"),
             value: rating,
             onChange: setRating,
             options: [
-              { value: "all", label: "Toutes notes" },
-              { value: "4", label: "4 étoiles et +" },
-              { value: "3", label: "3 étoiles et +" },
+              { value: "all", label: t("restaurants.allRatings") },
+              { value: "4", label: t("restaurants.rating4") },
+              { value: "3", label: t("restaurants.rating3") },
             ],
           },
           {
             key: "price",
-            label: "Budget",
+            label: t("cbr.budget"),
             value: price,
             onChange: setPrice,
             options: [
-              { value: "all", label: "Tous budgets" },
-              { value: "2000", label: "Commande min. ≤ 2 000 FCFA" },
-              { value: "5000", label: "Commande min. ≤ 5 000 FCFA" },
+              { value: "all", label: t("restaurants.allBudgets") },
+              { value: "2000", label: t("restaurants.budget2000") },
+              { value: "5000", label: t("restaurants.budget5000") },
             ],
           },
           {
             key: "delivery",
-            label: "Livraison",
+            label: t("cbr.delivery"),
             value: delivery,
             onChange: setDelivery,
             options: [
-              { value: "all", label: "Tous délais" },
-              { value: "15", label: "≤ 15 min" },
-              { value: "30", label: "≤ 30 min" },
-              { value: "45", label: "≤ 45 min" },
+              { value: "all", label: t("restaurants.allDelays") },
+              { value: "15", label: t("restaurants.delay15") },
+              { value: "30", label: t("restaurants.delay30") },
+              { value: "45", label: t("restaurants.delay45") },
             ],
           },
           {
             key: "sort",
-            label: "Trier",
+            label: t("restaurants.sort"),
             value: sort,
             onChange: setSort,
             options: [
-              { value: "rating", label: "Mieux notés" },
-              { value: "delivery", label: "Plus rapides" },
-              { value: "name", label: "Nom (A–Z)" },
+              { value: "rating", label: t("restaurants.sortRating") },
+              { value: "delivery", label: t("restaurants.sortDelivery") },
+              { value: "name", label: t("restaurants.sortName") },
             ],
           },
         ]}
       />
 
       <p className="mt-4 text-sm text-text-secondary" aria-live="polite">
-        {results.length} restaurant{results.length > 1 ? "s" : ""}
+        {results.length}{" "}
+        {t(results.length > 1 ? "restaurants.count_other" : "restaurants.count_one")}
       </p>
 
       <div className="mt-6">
         {results.length === 0 ? (
           <EmptyState
             icon={<Search />}
-            title="Aucun restaurant ne correspond"
-            description="Essayez un autre quartier, ou élargissez la recherche à toutes les cuisines."
+            title={t("restaurants.emptyTitle")}
+            description={t("restaurants.emptyBody")}
             action={
               <Button variant="outline" onClick={clear}>
-                Réinitialiser les filtres
+                {t("restaurants.reset")}
               </Button>
             }
           />

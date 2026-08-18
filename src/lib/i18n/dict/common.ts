@@ -113,6 +113,8 @@ export const commonDict = defineDict({
      */
     "common.quoted": "« {text} »",
     "common.accountNav": "Navigation du compte",
+    "common.typedConfirm": "Saisissez {phrase} pour confirmer",
+    "common.typedConfirmAria": "Saisir {phrase} pour confirmer",
 
     /* The notification bell — shared by every shell. */
     "notif.title": "Notifications",
@@ -220,6 +222,8 @@ export const commonDict = defineDict({
 
     "common.quoted": "“{text}”",
     "common.accountNav": "Account navigation",
+    "common.typedConfirm": "Type {phrase} to confirm",
+    "common.typedConfirmAria": "Type {phrase} to confirm",
 
     /* The notification bell — shared by every shell. */
     "notif.title": "Notifications",

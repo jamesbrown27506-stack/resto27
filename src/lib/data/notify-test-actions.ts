@@ -31,6 +31,7 @@ export type NotifyTestKey =
   | "review"
   | "review_reply"
   | "moderation"
+  | "application"
   | "billing"
   | "billing_paid"
   | "billing_refund"
@@ -121,6 +122,12 @@ const TESTS: Record<NotifyTestKey, TestDef> = {
     tone: "warning",
     href: "/a/reviews",
     params: { restaurantName: "Test Restaurant", rating: 2 },
+  },
+  application: {
+    event: "application",
+    tone: "info",
+    href: "/a/restaurants",
+    params: { restaurantName: "Test Restaurant" },
   },
   billing: {
     event: "billing",

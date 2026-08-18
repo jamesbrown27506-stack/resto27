@@ -8,6 +8,8 @@ import { SectionTag } from "@/components/ui/badge";
 import { formatMoney, formatPercent } from "@/lib/format/currency";
 import { formatLimit } from "@/lib/format/subscription";
 import { listPublicPlans, type PublicPlan } from "@/lib/data/plans";
+import { getTranslator } from "@/lib/i18n/locale-server";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
 export const metadata: Metadata = {
   title: "Tarifs et commissions pour les restaurants",
@@ -16,65 +18,60 @@ export const metadata: Metadata = {
   alternates: { canonical: "/pricing" },
 };
 
-const ROWS: { label: string; get: (p: PublicPlan) => React.ReactNode }[] = [
-  { label: "Prix mensuel", get: (p) => (p.monthlyPrice === 0 ? "Gratuit" : formatMoney(p.monthlyPrice)) },
-  {
-    label: "Essai gratuit",
-    get: (p) => (p.trialDays ? `${p.trialDays} jours` : p.monthlyPrice === 0 ? "—" : false),
-  },
-  { label: "Plats au menu", get: (p) => formatLimit(p.menuItemLimit) },
-  { label: "Tables", get: (p) => formatLimit(p.tableLimit) },
-  { label: "Promotions actives", get: (p) => formatLimit(p.promotionLimit) },
-  { label: "Commission par commande", get: (p) => formatPercent(p.commissionRate) },
-  { label: "Gestion du personnel", get: (p) => p.staffManagement },
-  { label: "Rapports et analytique", get: (p) => p.analytics },
-  { label: "Écran de cuisine", get: () => true },
-  { label: "Commande en salle", get: () => true },
-  { label: "Réservations", get: () => true },
-  { label: "Paiement Mobile Money", get: () => true },
-  { label: "Programme de fidélité", get: () => true },
-];
+function planRows(t: (key: TranslationKey, vars?: Record<string, string | number>) => string) {
+  return [
+    {
+      label: t("mk.pricing.row.monthly"),
+      get: (p: PublicPlan) =>
+        p.monthlyPrice === 0 ? t("mk.pricing.row.free") : formatMoney(p.monthlyPrice),
+    },
+    {
+      label: t("mk.pricing.row.trial"),
+      get: (p: PublicPlan) =>
+        p.trialDays
+          ? t("mk.pricing.row.trialDays", { days: p.trialDays })
+          : p.monthlyPrice === 0
+            ? "—"
+            : false,
+    },
+    { label: t("mk.pricing.row.dishes"), get: (p: PublicPlan) => formatLimit(p.menuItemLimit) },
+    { label: t("mk.pricing.row.tables"), get: (p: PublicPlan) => formatLimit(p.tableLimit) },
+    {
+      label: t("mk.pricing.row.promotions"),
+      get: (p: PublicPlan) => formatLimit(p.promotionLimit),
+    },
+    { label: t("mk.pricing.row.commission"), get: (p: PublicPlan) => formatPercent(p.commissionRate) },
+    { label: t("mk.pricing.row.staff"), get: (p: PublicPlan) => p.staffManagement },
+    { label: t("mk.pricing.row.analytics"), get: (p: PublicPlan) => p.analytics },
+    { label: t("mk.pricing.row.kitchen"), get: () => true },
+    { label: t("mk.pricing.row.dineIn"), get: () => true },
+    { label: t("mk.pricing.row.reservations"), get: () => true },
+    { label: t("mk.pricing.row.momo"), get: () => true },
+    { label: t("mk.pricing.row.loyalty"), get: () => true },
+  ];
+}
 
-const FAQ_ITEMS = [
-  {
-    question: "La commission s'ajoute-t-elle à l'abonnement ?",
-    answer:
-      "Oui. L'abonnement mensuel donne accès à la plateforme ; la commission est un pourcentage de la valeur des commandes livrées. Elle ne s'applique jamais aux commandes annulées, ni aux frais de livraison — cet argent est votre coût, pas votre recette.",
-  },
-  {
-    question: "Que se passe-t-il si je paie en retard ?",
-    answer:
-      "Vous disposez de trois jours de grâce après l'échéance, pendant lesquels tout continue de fonctionner normalement avec un simple rappel affiché. Au-delà, le compte passe aux limites de la formule Starter jusqu'au règlement — vos données restent intactes et la page de facturation reste toujours accessible.",
-  },
-  {
-    question: "Puis-je changer de formule en cours de mois ?",
-    answer:
-      "Oui, à tout moment et dans les deux sens. Le changement prend effet dès la confirmation du paiement, et la période déjà réglée est prise en compte.",
-  },
-  {
-    question: "Chaque succursale a-t-elle besoin de son propre abonnement ?",
-    answer:
-      "Oui : le tarif s'entend par établissement, car chaque succursale a son menu, son équipe et ses commandes. La formule Enterprise est conçue pour les groupes à plusieurs adresses.",
-  },
-  {
-    question: "Comment se passe le paiement ?",
-    answer:
-      "Vous saisissez votre numéro MTN MoMo ou Orange Money, puis validez la demande sur votre téléphone. Votre formule est activée dès la confirmation de l'opérateur.",
-  },
-];
+function faqItems(t: (key: TranslationKey, vars?: Record<string, string | number>) => string) {
+  return [1, 2, 3, 4, 5].map((n) => ({
+    question: t(`mk.pricing.faq.q${n}` as TranslationKey),
+    answer: t(`mk.pricing.faq.a${n}` as TranslationKey),
+  }));
+}
 
 export default async function PricingPage() {
+  const t = await getTranslator();
   const plans = await listPublicPlans();
+  const rows = planRows(t);
 
   return (
     <>
       <section className="container-page py-14 text-center lg:py-20">
-        <SectionTag>Tarifs</SectionTag>
+        <SectionTag>{t("mk.pricing.tag")}</SectionTag>
         <h1 className="mx-auto mt-4 max-w-2xl font-display text-4xl font-bold sm:text-5xl">
-          Un tarif clair, par établissement
+          {t("mk.pricing.title")}
         </h1>
         <p className="mx-auto mt-4 max-w-xl text-lg text-text-secondary">
-          Sans engagement, payable par Mobile Money. Changez ou arrêtez à tout moment.
+          {t("mk.pricing.subtitle")}
         </p>
       </section>
 
@@ -88,15 +85,15 @@ export default async function PricingPage() {
 
       <section className="bg-surface-2 py-16">
         <div className="container-page">
-          <SectionHeader title="Comparer les formules" />
+          <SectionHeader title={t("mk.pricing.compare")} />
 
           <div className="overflow-x-auto rounded-lg border border-border bg-surface">
             <table className="w-full text-sm">
-              <caption className="sr-only">Comparaison détaillée des formules</caption>
+              <caption className="sr-only">{t("mk.pricing.compare")}</caption>
               <thead>
                 <tr className="border-b border-border">
                   <th scope="col" className="px-5 py-4 text-left text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
-                    Fonctionnalité
+                    {t("mk.pricing.feature")}
                   </th>
                   {plans.map((p) => (
                     <th
@@ -110,7 +107,7 @@ export default async function PricingPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {ROWS.map((row) => (
+                {rows.map((row) => (
                   <tr key={row.label}>
                     <th scope="row" className="px-5 py-3.5 text-left font-medium">
                       {row.label}
@@ -121,9 +118,15 @@ export default async function PricingPage() {
                         <td key={p.id} className="px-5 py-3.5 text-center">
                           {typeof value === "boolean" ? (
                             value ? (
-                              <Check className="mx-auto size-4 text-primary" aria-label="Inclus" />
+                              <Check
+                                className="mx-auto size-4 text-primary"
+                                aria-label={t("mk.pricing.included")}
+                              />
                             ) : (
-                              <Minus className="mx-auto size-4 text-text-light" aria-label="Non inclus" />
+                              <Minus
+                                className="mx-auto size-4 text-text-light"
+                                aria-label={t("mk.pricing.notIncluded")}
+                              />
                             )
                           ) : (
                             <span className="tnum font-semibold">{value}</span>
@@ -138,24 +141,24 @@ export default async function PricingPage() {
           </div>
 
           <p className="mt-5 text-center text-sm text-text-secondary">
-            Besoin d&apos;autre chose ?{" "}
+            {t("mk.pricing.need")}{" "}
             <Link href="/contact" className="font-semibold text-primary underline underline-offset-4">
-              Parlons-en
+              {t("mk.pricing.talk")}
             </Link>
           </p>
         </div>
       </section>
 
       <section className="container-page py-16">
-        <SectionHeader title="Questions sur la facturation" />
-        <Faq items={FAQ_ITEMS} />
+        <SectionHeader title={t("mk.pricing.faqTitle")} />
+        <Faq items={faqItems(t)} />
       </section>
 
       <CtaBanner
-        title="Prêt à inscrire votre restaurant ?"
-        description="La validation prend en général moins de 48 heures."
-        primary={{ href: "/register/restaurant", label: "Créer mon compte restaurant" }}
-        secondary={{ href: "/contact", label: "Poser une question" }}
+        title={t("mk.pricing.cta.title")}
+        description={t("mk.pricing.cta.body")}
+        primary={{ href: "/register/restaurant", label: t("mk.pricing.cta.primary") }}
+        secondary={{ href: "/contact", label: t("mk.pricing.cta.secondary") }}
       />
     </>
   );

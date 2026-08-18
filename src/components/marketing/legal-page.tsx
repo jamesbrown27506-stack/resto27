@@ -1,4 +1,7 @@
+"use client";
+
 import { formatDate } from "@/lib/format/datetime";
+import { useLocale } from "@/lib/i18n/use-locale";
 
 export interface LegalSection {
   id: string;
@@ -25,20 +28,21 @@ export function LegalPage({
   updatedAt: string;
   sections: LegalSection[];
 }) {
+  const { t } = useLocale();
   return (
     <div className="container-page py-14 lg:py-20">
       <header className="max-w-2xl">
         <h1 className="font-display text-4xl font-bold sm:text-5xl">{title}</h1>
         <p className="mt-4 text-lg text-text-secondary">{intro}</p>
         <p className="mt-3 text-sm text-text-light">
-          Dernière mise à jour&nbsp;: <time dateTime={updatedAt}>{formatDate(updatedAt)}</time>
+          {t("leg.shell.updated")} <time dateTime={updatedAt}>{formatDate(updatedAt)}</time>
         </p>
       </header>
 
       <div className="mt-12 grid gap-12 lg:grid-cols-[16rem_1fr]">
-        <nav aria-label="Sommaire" className="lg:sticky lg:top-24 lg:self-start">
+        <nav aria-label={t("leg.shell.tocAria")} className="lg:sticky lg:top-24 lg:self-start">
           <h2 className="text-[11px] font-bold tracking-[0.12em] text-text-light uppercase">
-            Sommaire
+            {t("leg.shell.toc")}
           </h2>
           <ol className="mt-3 flex flex-col gap-1.5">
             {sections.map((s, i) => (

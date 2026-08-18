@@ -2,7 +2,13 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { SkeletonCard } from "@/components/ui/skeleton";
 import { RestaurantDirectory } from "./restaurant-directory";
-import { fetchActiveRestaurants, fetchCuisineNames, fetchQuartierNames } from "@/lib/data/public";
+import {
+  fetchActiveRestaurants,
+  fetchCuisineNames,
+  fetchDishSearchIndex,
+  fetchQuartierNames,
+} from "@/lib/data/public";
+import { getTranslator } from "@/lib/i18n/locale-server";
 
 export const metadata: Metadata = {
   title: "Restaurants à Douala — livraison et à emporter",
@@ -12,19 +18,19 @@ export const metadata: Metadata = {
 };
 
 export default async function RestaurantsPage() {
-  const [restaurants, cuisines, quartiers] = await Promise.all([
+  const t = await getTranslator();
+  const [restaurants, cuisines, quartiers, dishSearch] = await Promise.all([
     fetchActiveRestaurants(),
     fetchCuisineNames(),
     fetchQuartierNames(),
+    fetchDishSearchIndex(),
   ]);
 
   return (
     <div className="container-page py-10 lg:py-14">
       <header className="mb-8">
-        <h1 className="font-display text-4xl font-bold">Restaurants</h1>
-        <p className="mt-2 text-text-secondary">
-          Tous les établissements actifs sur RestoLink, à Douala et environs.
-        </p>
+        <h1 className="font-display text-4xl font-bold">{t("restaurants.title")}</h1>
+        <p className="mt-2 text-text-secondary">{t("restaurants.subtitle")}</p>
       </header>
 
       {/* useSearchParams needs a Suspense boundary to keep the page static. */}
@@ -41,6 +47,7 @@ export default async function RestaurantsPage() {
           restaurants={restaurants}
           cuisines={cuisines}
           quartiers={quartiers}
+          dishSearch={dishSearch}
         />
       </Suspense>
     </div>

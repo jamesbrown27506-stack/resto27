@@ -145,11 +145,17 @@ export function Hero({
     const params = new URLSearchParams();
     if (query.trim()) params.set("q", query.trim());
     if (city) params.set("quartier", city);
+
     if (slide.mode === "book") {
-      params.set("booking", "1");
+      // Booking is its own flow: sending guests/date to the restaurant
+      // directory, which ignored them, just made the search feel broken.
+      // The reservation form reads them back and pre-fills its fields.
       if (guests) params.set("guests", guests);
       if (date) params.set("date", date);
+      router.push(`/reservations?${params.toString()}`);
+      return;
     }
+
     if (slide.mode === "explore") params.set("sort", "rating");
     router.push(`/restaurants?${params.toString()}`);
   }

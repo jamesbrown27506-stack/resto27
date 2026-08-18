@@ -14,12 +14,15 @@ import { lineUnitPrice } from "@/lib/orders/totals";
 // one the provider did not fill throws "useCart must be used inside
 // <CartProvider>" on a tree that is, in fact, inside one.
 import { useCart, type CartLine } from "@/components/cart/cart-provider";
+import { useLocale } from "@/lib/i18n/use-locale";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
 /* ── One basket line ───────────────────────────────────────────────────── */
 
 export function CartLineRow({ line }: { line: CartLine }) {
   const { setQuantity, removeLine } = useCart();
+  const { t } = useLocale();
   const unitPrice = lineUnitPrice(line.basePrice, line.options.map((o) => o.priceDelta));
 
   return (
@@ -46,7 +49,9 @@ export function CartLineRow({ line }: { line: CartLine }) {
             onRemove={() => removeLine(line.id)}
             size="sm"
           />
-          <span className="text-xs text-text-light">{formatMoney(unitPrice)} / unité</span>
+          <span className="text-xs text-text-light">
+            {t("cct.perUnit", { price: formatMoney(unitPrice) })}
+          </span>
         </div>
       </div>
 
@@ -59,6 +64,7 @@ export function CartLineRow({ line }: { line: CartLine }) {
 
 export function PromoInput() {
   const { promoCode, promoError, applyPromo, removePromo } = useCart();
+  const { t } = useLocale();
   const [value, setValue] = useState("");
 
   if (promoCode) {
@@ -66,12 +72,12 @@ export function PromoInput() {
       <div className="flex items-center justify-between gap-3 rounded-md border border-success/30 bg-success-light p-3">
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-success">
           <Tag className="size-3.5" aria-hidden />
-          {promoCode} appliqué
+          {t("cct.promo.applied", { code: promoCode ?? "" })}
         </span>
         <button
           type="button"
           onClick={removePromo}
-          aria-label="Retirer le code promo"
+          aria-label={t("cct.promo.remove")}
           className="rounded p-1 text-success/70 transition-colors hover:text-success"
         >
           <X className="size-3.5" aria-hidden />
@@ -91,18 +97,18 @@ export function PromoInput() {
         <Input
           value={value}
           onChange={(e) => setValue(e.target.value.toUpperCase())}
-          placeholder="Code promo"
-          aria-label="Code promo"
+          placeholder={t("cct.promo.placeholder")}
+          aria-label={t("cct.promo.label")}
           invalid={Boolean(promoError)}
           className="flex-1"
         />
         <Button type="submit" variant="outline" disabled={!value.trim()}>
-          Appliquer
+          {t("cct.promo.apply")}
         </Button>
       </div>
       {promoError && (
         <p role="alert" className="mt-1.5 text-xs font-medium text-error">
-          {promoError}
+          {t(`cct.promoErr.${promoError}` as TranslationKey)}
         </p>
       )}
     </form>
@@ -113,6 +119,7 @@ export function PromoInput() {
 
 export function LoyaltyRedeem({ balance }: { balance: number }) {
   const { loyaltyPointsUsed, setLoyaltyPointsUsed, totals, config } = useCart();
+  const { t } = useLocale();
 
   if (!config.loyaltyEnabled || balance <= 0) return null;
 
@@ -124,10 +131,10 @@ export function LoyaltyRedeem({ balance }: { balance: number }) {
     <div className="rounded-md border border-border bg-surface-2 p-3">
       <div className="flex items-baseline justify-between gap-3">
         <label htmlFor="loyalty" className="text-sm font-semibold">
-          Utiliser mes points
+          {t("cct.loy.title")}
         </label>
         <span className="tnum text-xs text-text-light">
-          {balance.toLocaleString("fr-CM")} disponibles
+          {t("cct.loy.available", { count: balance })}
         </span>
       </div>
 
@@ -164,42 +171,49 @@ export function CartSummary({
   children?: React.ReactNode;
 }) {
   const { totals, promoCode } = useCart();
+  const { t } = useLocale();
 
   return (
     <div className="rounded-lg border border-border bg-surface p-5">
-      <h2 className="font-display text-lg font-bold">Récapitulatif</h2>
+      <h2 className="font-display text-lg font-bold">{t("cct.sum.title")}</h2>
 
       <dl className="mt-4 flex flex-col gap-2.5 text-sm">
-        <Row label="Sous-total" value={formatMoney(totals.subtotal)} />
+        <Row label={t("cct.sum.subtotal")} value={formatMoney(totals.subtotal)} />
 
         {totals.discount > 0 && (
           <Row
-            label={`Réduction${promoCode ? ` (${promoCode})` : ""}`}
+            label={
+              promoCode
+                ? t("cct.sum.discountCode", { code: promoCode })
+                : t("cct.sum.discount")
+            }
             value={`−${formatMoney(totals.discount)}`}
             tone="success"
           />
         )}
 
         <Row
-          label={`Frais de service (${totals.serviceChargePercent} %)`}
+          label={t("cct.sum.service", { percent: totals.serviceChargePercent })}
           value={formatMoney(totals.serviceCharge)}
         />
 
         {showDeliveryFee && (
           <div className="flex items-start justify-between gap-3">
-            <dt className="text-text-secondary">Livraison</dt>
+            <dt className="text-text-secondary">{t("cct.sum.delivery")}</dt>
             {/*
               §14.3 — NEVER render "0 FCFA" here. The restaurant quotes the fee
               when it confirms, based on the quartier. Showing zero is a promise
               we are about to break; showing "à confirmer" is the truth.
             */}
-            <dd className="text-right font-medium text-text-light">à confirmer</dd>
+            <dd className="text-right font-medium text-text-light">
+              {t("cct.sum.toConfirm")}
+            </dd>
           </div>
         )}
 
         {totals.loyaltyValue > 0 && (
           <Row
-            label="Points de fidélité"
+            label={t("cct.sum.loyalty")}
             value={`−${formatMoney(totals.loyaltyValue)}`}
             tone="success"
           />
@@ -207,7 +221,7 @@ export function CartSummary({
       </dl>
 
       <div className="mt-4 flex items-baseline justify-between gap-3 border-t border-border pt-4">
-        <span className="font-display text-lg font-bold">Total</span>
+        <span className="font-display text-lg font-bold">{t("cct.sum.total")}</span>
         <span translate="no" className="tnum font-display text-2xl font-bold text-primary">
           {formatMoney(totals.total)}
         </span>
@@ -216,8 +230,7 @@ export function CartSummary({
       {showDeliveryFee && (
         <p className="mt-3 flex items-start gap-2 rounded-md bg-surface-2 p-2.5 text-xs leading-relaxed text-text-secondary">
           <Info className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
-          Les frais de livraison sont fixés par le restaurant à la confirmation, selon votre
-          quartier. Ils s&apos;ajouteront à ce total.
+          {t("cct.sum.feeNote")}
         </p>
       )}
 

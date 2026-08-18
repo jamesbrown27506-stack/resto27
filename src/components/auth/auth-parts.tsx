@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Check, Clock, Eye, EyeOff, Info, X } from "lucide-react";
 import { Input, type InputProps } from "@/components/ui/input";
+import { useLocale } from "@/lib/i18n/use-locale";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
 /* ── Page heading ──────────────────────────────────────────────────────── */
@@ -30,38 +32,26 @@ export function AuthHeading({ title, subtitle }: { title: string; subtitle?: str
  */
 export type LoginReason = "invalid" | "pending" | "pending-manager" | "suspended";
 
-const REASONS: Record<
-  LoginReason,
-  { tone: "error" | "warning" | "info"; title: string; body: string; Icon: typeof AlertTriangle }
-> = {
-  invalid: {
-    tone: "error",
-    title: "Identifiants incorrects",
-    body: "L'adresse email ou le mot de passe ne correspond pas. Vérifiez et réessayez.",
-    Icon: X,
-  },
-  pending: {
-    tone: "info",
-    title: "Compte en attente de validation",
-    body: "Votre compte n'est pas encore activé. Vous recevrez un email dès qu'il le sera.",
-    Icon: Clock,
-  },
-  "pending-manager": {
-    tone: "info",
-    title: "Restaurant en cours de validation",
-    body: "Votre établissement est examiné par notre équipe — généralement sous 48 heures. Nous vous écrivons dès qu'il est validé. Rien à faire de votre côté.",
-    Icon: Clock,
-  },
-  suspended: {
-    tone: "error",
-    title: "Compte suspendu",
-    body: "Votre accès a été suspendu. Contactez notre équipe pour en connaître la raison.",
-    Icon: AlertTriangle,
-  },
+const REASON_TONES: Record<LoginReason, "error" | "warning" | "info"> = {
+  invalid: "error",
+  pending: "info",
+  "pending-manager": "info",
+  suspended: "error",
+};
+
+const REASON_ICONS: Record<LoginReason, typeof AlertTriangle> = {
+  invalid: X,
+  pending: Clock,
+  "pending-manager": Clock,
+  suspended: AlertTriangle,
 };
 
 export function LoginReasonAlert({ reason }: { reason: LoginReason }) {
-  const { tone, title, body, Icon } = REASONS[reason];
+  const { t } = useLocale();
+  const tone = REASON_TONES[reason];
+  const Icon = REASON_ICONS[reason];
+  const title = t(`auth.reason.${reason}.title` as TranslationKey);
+  const body = t(`auth.reason.${reason}.body` as TranslationKey);
 
   return (
     <div
@@ -116,6 +106,7 @@ export function AuthNotice({
 /* ── Password input with reveal ────────────────────────────────────────── */
 
 export function PasswordInput({ id, ...props }: InputProps) {
+  const { t } = useLocale();
   const [visible, setVisible] = useState(false);
 
   return (
@@ -124,7 +115,7 @@ export function PasswordInput({ id, ...props }: InputProps) {
       <button
         type="button"
         onClick={() => setVisible((v) => !v)}
-        aria-label={visible ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+        aria-label={visible ? t("auth.hidePassword") : t("auth.showPassword")}
         aria-pressed={visible}
         className="absolute top-1/2 right-3 -translate-y-1/2 rounded p-1 text-text-light transition-colors hover:text-text"
       >
@@ -136,11 +127,11 @@ export function PasswordInput({ id, ...props }: InputProps) {
 
 /* ── Password strength ─────────────────────────────────────────────────── */
 
-const RULES: { label: string; test: (v: string) => boolean }[] = [
-  { label: "8 caractères minimum", test: (v) => v.length >= 8 },
-  { label: "Une majuscule", test: (v) => /[A-ZÀ-Þ]/.test(v) },
-  { label: "Un chiffre", test: (v) => /\d/.test(v) },
-  { label: "Un caractère spécial", test: (v) => /[^\w\s]/.test(v) },
+const RULE_KEYS: { key: TranslationKey; test: (v: string) => boolean }[] = [
+  { key: "auth.pw.min", test: (v) => v.length >= 8 },
+  { key: "auth.pw.upper", test: (v) => /[A-ZÀ-Þ]/.test(v) },
+  { key: "auth.pw.digit", test: (v) => /\d/.test(v) },
+  { key: "auth.pw.special", test: (v) => /[^\w\s]/.test(v) },
 ];
 
 /**
@@ -150,13 +141,17 @@ const RULES: { label: string; test: (v: string) => boolean }[] = [
  * add. The checklist is also what the server enforces, so the two cannot drift.
  */
 export function PasswordStrength({ value }: { value: string }) {
-  const results = useMemo(() => RULES.map((r) => ({ ...r, ok: r.test(value) })), [value]);
+  const { t } = useLocale();
+  const results = useMemo(
+    () => RULE_KEYS.map((r) => ({ ...r, label: t(r.key), ok: r.test(value) })),
+    [value, t],
+  );
   const met = results.filter((r) => r.ok).length;
 
   return (
     <div className="mt-2">
       <div className="flex gap-1" aria-hidden>
-        {RULES.map((_, i) => (
+        {RULE_KEYS.map((_, i) => (
           <span
             key={i}
             className={cn(
@@ -216,12 +211,12 @@ export function PasswordStrength({ value }: { value: string }) {
       {/* Built as one string, not interpolated fragments — several adjacent
           text nodes in a live region is the same hazard in miniature. */}
       <p className="sr-only" aria-live="polite">
-        {`${met} critère${met > 1 ? "s" : ""} sur ${RULES.length} respecté${met > 1 ? "s" : ""}.`}
+        {t("auth.pw.sr", { met, total: RULE_KEYS.length })}
       </p>
     </div>
   );
 }
 
 export function passwordMeetsPolicy(value: string): boolean {
-  return RULES.every((r) => r.test(value));
+  return RULE_KEYS.every((r) => r.test(value));
 }

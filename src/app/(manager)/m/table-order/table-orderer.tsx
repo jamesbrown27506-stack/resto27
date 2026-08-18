@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Armchair, Minus, Plus, Search, Send, Trash2 } from "lucide-react";
+import { Armchair, Minus, Plus, Search, Send, Trash2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input, Textarea } from "@/components/ui/input";
@@ -61,6 +61,7 @@ export function TableOrderer({
   const [query, setQuery] = useState("");
   const [lines, setLines] = useState<TicketLine[]>([]);
   const [notes, setNotes] = useState("");
+  const [guests, setGuests] = useState<number | null>(null);
 
   const table = tables.find((x) => x.id === tableId);
 
@@ -144,6 +145,7 @@ export function TableOrderer({
           optionIds: l.optionIds,
         })),
         notes: notes || undefined,
+        guests: guests ?? undefined,
       });
 
       if (!result.ok) return toast(result.error, "error");
@@ -151,6 +153,7 @@ export function TableOrderer({
       toast(t("mt.sent", { ref: result.reference ?? "", table: target.number }), "success");
       setLines([]);
       setNotes("");
+      setGuests(null);
       setTableId(null);
       router.refresh();
     });
@@ -184,7 +187,12 @@ export function TableOrderer({
                       type="button"
                       disabled={unavailable}
                       aria-pressed={selected}
-                      onClick={() => setTableId(x.id)}
+                      onClick={() => {
+                        setTableId(x.id);
+                        // A new party takes over the table — the old
+                        // party's guest count must not follow.
+                        setGuests(null);
+                      }}
                       className={cn(
                         "flex w-full flex-col items-center gap-1 rounded-md border px-2 py-3 transition-colors",
                         selected
@@ -282,6 +290,42 @@ export function TableOrderer({
             </Button>
           )}
         </div>
+
+        {/* How many people are sitting. The table stays a single unit — a
+            party of 3 at a 5-seat table IS the table — but the count is
+            genuinely useful to the kitchen and the floor overview. */}
+        {table && (
+          <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+            <span className="flex items-center gap-2 text-sm text-text-secondary">
+              <Users className="size-4" aria-hidden />
+              {t("mt.guests")}
+              <span className="text-xs text-text-light">
+                {t("mt.seatsShort", { count: table.capacity })}
+              </span>
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label="-1"
+                onClick={() => setGuests((g) => (g === null ? null : Math.max(1, g - 1)))}
+                className="grid size-7 place-items-center rounded-full border border-border hover:border-primary"
+              >
+                <Minus className="size-3" aria-hidden />
+              </button>
+              <span className="tnum w-6 text-center text-sm font-bold">
+                {guests ?? "—"}
+              </span>
+              <button
+                type="button"
+                aria-label="+1"
+                onClick={() => setGuests((g) => Math.min(table.capacity, (g ?? 0) + 1))}
+                className="grid size-7 place-items-center rounded-full border border-border hover:border-primary"
+              >
+                <Plus className="size-3" aria-hidden />
+              </button>
+            </div>
+          </div>
+        )}
 
         {lines.length === 0 ? (
           <EmptyState

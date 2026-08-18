@@ -6,11 +6,17 @@ import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { RatingStars } from "@/components/ui/rating-stars";
+import { OpenBadge } from "@/components/restaurant/open-badge";
 import { HoursTable, ReviewList } from "@/components/restaurant/restaurant-detail-parts";
 import { splitTags, ALLERGEN_LABEL, DIETARY_TAG_LABEL } from "@/lib/format/tags";
-import { fetchMenuSections, fetchPublicRestaurantBySlug } from "@/lib/data/public";
+import {
+  fetchMenuSections,
+  fetchPublicRestaurantBySlug,
+  UNCATEGORIZED_SECTION_ID,
+} from "@/lib/data/public";
 import { fetchReviews } from "@/lib/data/reviews";
 import { formatMoney } from "@/lib/format/currency";
+import { getTranslator } from "@/lib/i18n/locale-server";
 
 export async function generateMetadata({
   params,
@@ -36,6 +42,7 @@ export default async function RestaurantDetailPage({
   const { slug } = await params;
   const restaurant = await fetchPublicRestaurantBySlug(slug);
   if (!restaurant) notFound();
+  const t = await getTranslator();
 
   const [menu, reviews] = await Promise.all([
     fetchMenuSections(restaurant.id),
@@ -79,31 +86,49 @@ export default async function RestaurantDetailPage({
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
       />
 
-      <div
-        aria-hidden
-        className="h-48 w-full sm:h-64"
-        style={{
-          background:
-            "linear-gradient(120deg, var(--primary-light), var(--surface-2) 55%, color-mix(in oklab, var(--accent) 25%, var(--surface)))",
-        }}
-      />
+      {restaurant.coverUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={restaurant.coverUrl}
+          alt=""
+          className="h-48 w-full object-cover sm:h-64"
+        />
+      ) : (
+        <div
+          aria-hidden
+          className="h-48 w-full sm:h-64"
+          style={{
+            background:
+              "linear-gradient(120deg, var(--primary-light), var(--surface-2) 55%, color-mix(in oklab, var(--accent) 25%, var(--surface)))",
+          }}
+        />
+      )}
 
       <div className="container-page pb-16">
         <header className="-mt-12 flex flex-wrap items-end justify-between gap-6">
           <div>
-            <span className="grid size-24 place-items-center rounded-lg border-4 border-bg bg-surface shadow-md">
-              <Store className="size-9 text-primary" aria-hidden />
-            </span>
+            {restaurant.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={restaurant.logoUrl}
+                alt=""
+                className="size-24 rounded-lg border-4 border-bg bg-surface object-cover shadow-md"
+              />
+            ) : (
+              <span className="grid size-24 place-items-center rounded-lg border-4 border-bg bg-surface shadow-md">
+                <Store className="size-9 text-primary" aria-hidden />
+              </span>
+            )}
 
             <h1 className="mt-4 font-display text-3xl font-bold sm:text-4xl">
               {restaurant.name}
               {restaurant.isVerified && (
                 <span
-                  title="Vérifié par RestoLink"
+                  title={t("cbr.verifiedTitle")}
                   className="ml-2 inline-flex translate-y-1 items-center gap-1 text-xl font-semibold text-primary"
                 >
                   <BadgeCheck className="size-6" aria-hidden />
-                  <span className="sr-only">Vérifié</span>
+                  <span className="sr-only">{t("cbr.verified")}</span>
                 </span>
               )}
               {!restaurant.isPrimary && (
@@ -118,11 +143,16 @@ export default async function RestaurantDetailPage({
               <span className="inline-flex items-center gap-1.5">
                 <MapPin className="size-3.5 text-primary" aria-hidden />
                 {restaurant.quartier}, Douala
+                {restaurant.addressLine && ` — ${restaurant.addressLine}`}
               </span>
-              <span className="inline-flex items-center gap-1.5">
-                <Clock className="size-3.5 text-primary" aria-hidden />
-                environ {restaurant.deliveryEstimateMin} min
-              </span>
+              {/* The estimate is a DELIVERY time; pickup-only restaurants
+                  don't promise one. */}
+              {restaurant.acceptsDelivery && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Clock className="size-3.5 text-primary" aria-hidden />
+                  {t("cbr.about", { minutes: restaurant.deliveryEstimateMin })}
+                </span>
+              )}
               {restaurant.phone && (
                 <a
                   href={`tel:${restaurant.phone.replace(/\s/g, "")}`}
@@ -139,24 +169,24 @@ export default async function RestaurantDetailPage({
               {restaurant.acceptsDelivery && (
                 <Badge tone="neutral">
                   <Bike className="size-3" aria-hidden />
-                  Livraison dès {formatMoney(restaurant.minimumOrder)}
+                  {t("cbr.deliveryFrom", { amount: formatMoney(restaurant.minimumOrder) })}
                 </Badge>
               )}
-              {restaurant.acceptsPickup && <Badge tone="neutral">À emporter</Badge>}
+              {restaurant.acceptsPickup && <Badge tone="neutral">{t("cbr.pickup")}</Badge>}
             </div>
           </div>
 
           <div className="flex flex-wrap gap-3">
             <Link href={`/browse/${restaurant.slug}`} className={buttonClasses({ size: "lg" })}>
               <ShoppingBag className="size-4" aria-hidden />
-              Commander
+              {t("cbr.order")}
             </Link>
             <Link
               href={`/reservations?restaurant=${restaurant.slug}`}
               className={buttonClasses({ variant: "outline", size: "lg" })}
             >
               <CalendarCheck className="size-4" aria-hidden />
-              Réserver une table
+              {t("cbr.bookTable")}
             </Link>
           </div>
         </header>
@@ -167,11 +197,13 @@ export default async function RestaurantDetailPage({
 
         <div className="mt-12 grid gap-10 lg:grid-cols-[1fr_20rem]">
           <div className="min-w-0">
-            <h2 className="font-display text-2xl font-bold">Menu</h2>
+            <h2 className="font-display text-2xl font-bold">{t("cbr.menu")}</h2>
 
             {menu.map(({ category, items }) => (
               <section key={category.id} className="mt-8">
-                <h3 className="font-display text-lg font-bold text-primary">{category.name}</h3>
+                <h3 className="font-display text-lg font-bold text-primary">
+                  {category.id === UNCATEGORIZED_SECTION_ID ? t("cbr.others") : category.name}
+                </h3>
 
                 <ul className="mt-3 divide-y divide-border rounded-lg border border-border bg-surface">
                   {items.map((item) => {
@@ -182,11 +214,22 @@ export default async function RestaurantDetailPage({
 
                     return (
                       <li key={item.id} className="flex items-start justify-between gap-5 p-5">
+                        {item.imageUrl && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={item.imageUrl}
+                            alt=""
+                            loading="lazy"
+                            className="size-16 shrink-0 rounded-md border border-border object-cover sm:size-20"
+                          />
+                        )}
                         <div className="min-w-0">
                           <p className="font-semibold">
                             {item.name}
                             {soldOut && (
-                              <span className="ml-2 text-xs font-normal text-error">Épuisé</span>
+                              <span className="ml-2 text-xs font-normal text-error">
+                                {t("cbr.soldOut")}
+                              </span>
                             )}
                           </p>
                           <p className="mt-1 text-sm leading-relaxed text-text-secondary">
@@ -210,7 +253,9 @@ export default async function RestaurantDetailPage({
 
                           {item.optionGroups.length > 0 && (
                             <p className="mt-2 text-xs text-text-light">
-                              {item.optionGroups.map((g) => g.name).join(" · ")}
+                              {t("cbr.optionGroups", {
+                                groups: item.optionGroups.map((g) => g.name).join(" · "),
+                              })}
                             </p>
                           )}
                         </div>
@@ -227,7 +272,8 @@ export default async function RestaurantDetailPage({
 
             <section className="mt-12">
               <h2 className="font-display text-2xl font-bold">
-                Avis <span className="text-text-light">({restaurant.reviewCount})</span>
+                {t("cbr.reviews")}{" "}
+                <span className="text-text-light">{t("cbr.reviewCount", { count: restaurant.reviewCount })}</span>
               </h2>
               <div className="mt-5">
                 <ReviewList reviews={reviews} />
@@ -238,38 +284,45 @@ export default async function RestaurantDetailPage({
           <aside className="flex flex-col gap-5 lg:sticky lg:top-24 lg:self-start">
             <Card>
               <CardBody>
-                <CardTitle>Horaires</CardTitle>
+                <CardTitle>{t("cbr.hours")}</CardTitle>
                 <div className="mt-3">
-                  <HoursTable hours={restaurant.hours} />
+                  <OpenBadge
+                    hours={restaurant.hours}
+                    acceptingOrders={restaurant.isAcceptingOrders}
+                  />
+                </div>
+                <div className="mt-3">
+                  <HoursTable hours={restaurant.hours} today={new Date().getDay()} />
                 </div>
               </CardBody>
             </Card>
 
             <Card>
               <CardBody>
-                <CardTitle>Livraison</CardTitle>
+                <CardTitle>{t("cbr.delivery")}</CardTitle>
                 <dl className="mt-3 flex flex-col gap-2.5 text-sm">
                   <div className="flex justify-between gap-3">
-                    <dt className="text-text-secondary">Commande minimum</dt>
+                    <dt className="text-text-secondary">{t("cbr.minOrder")}</dt>
                     <dd className="tnum font-semibold">{formatMoney(restaurant.minimumOrder)}</dd>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <dt className="text-text-secondary">Délai estimé</dt>
-                    <dd className="tnum font-semibold">{restaurant.deliveryEstimateMin} min</dd>
+                    <dt className="text-text-secondary">{t("cbr.estTime")}</dt>
+                    <dd className="tnum font-semibold">
+                      {t("cbr.about", { minutes: restaurant.deliveryEstimateMin })}
+                    </dd>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <dt className="text-text-secondary">Frais de livraison</dt>
+                    <dt className="text-text-secondary">{t("cbr.fee")}</dt>
                     {/*
                       Never render "0 FCFA" here (§14.3). The fee is QUOTED by
                       the restaurant on confirmation, based on the quartier —
                       showing zero is a promise we are about to break.
                     */}
-                    <dd className="font-semibold text-text-light">à confirmer</dd>
+                    <dd className="font-semibold text-text-light">{t("cbr.feeToConfirm")}</dd>
                   </div>
                 </dl>
                 <p className="mt-3 border-t border-border pt-3 text-xs leading-relaxed text-text-light">
-                  Les frais de livraison sont fixés par le restaurant lorsqu&apos;il confirme votre
-                  commande, selon votre quartier.
+                  {t("cbr.feeNote")}
                 </p>
               </CardBody>
             </Card>

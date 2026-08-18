@@ -69,6 +69,8 @@ export const custCartDict = defineDict({
     "cct.sum.service": "Frais de service ({percent} %)",
     "cct.sum.delivery": "Livraison",
     "cct.sum.loyalty": "Points de fidélité",
+    "cct.sum.total": "Total",
+    "cct.sum.toConfirm": "à confirmer",
     "cct.sum.feeNote":
       "Les frais de livraison sont fixés par le restaurant à la confirmation, selon votre quartier. Ils s'ajouteront à ce total.",
 
@@ -78,8 +80,15 @@ export const custCartDict = defineDict({
     "cct.co.emptyBody": "Ajoutez des articles avant de passer commande.",
 
     "cct.co.how": "Mode de retrait",
+    "cct.co.typeDelivery": "Livraison",
+    "cct.co.typePickup": "À emporter",
     "cct.co.deliveryHint": "Livré à l'adresse que vous indiquez.",
     "cct.co.pickupHint": "Vous récupérez la commande au restaurant.",
+    "cct.co.deliveryEst": "≈ {minutes} min",
+    "cct.co.pickupAt": "Retrait à {quartier}",
+    "cct.co.pickupWhere": "À récupérer chez {restaurant} — {quartier}.",
+    "cct.co.pickupReady": "Prêt dans environ {minutes} min",
+    "cct.co.belowMinHint": "Encore {amount} pour atteindre le minimum de commande.",
 
     "cct.co.contact": "Vos coordonnées",
     "cct.co.name": "Nom",
@@ -95,6 +104,10 @@ export const custCartDict = defineDict({
     "cct.co.useNew": "Nouvelle adresse",
     "cct.co.useSaved": "Utiliser une adresse enregistrée",
     "cct.co.default": "Par défaut",
+    "cct.co.destinationName": "Nom du destinataire",
+    "cct.co.noAddresses":
+      "Aucune adresse enregistrée — utilisez « Nouvelle adresse » ci-dessus.",
+    "cct.co.chooseQuartier": "Choisir un quartier",
     "cct.co.addressLine": "Adresse",
     "cct.co.addressPh": "Rue, immeuble, étage",
     "cct.co.quartier": "Quartier",
@@ -106,8 +119,22 @@ export const custCartDict = defineDict({
     "cct.co.feeNote":
       "Les frais de livraison sont fixés par le restaurant lorsqu'il confirme votre commande, en fonction de votre quartier. Ils vous seront communiqués à ce moment-là.",
     "cct.co.addressesUnavailable": "Vos adresses enregistrées ne sont pas accessibles pour le moment.",
+    "cct.co.pickupNote": "Le restaurant les utilise pour vous joindre au moment du retrait.",
+    "cct.co.when": "Quand ?",
+    "cct.co.asap": "Dès que possible",
+    "cct.co.asapHint": "Le restaurant confirme dès réception de la commande",
+    "cct.co.schedule": "Programmer",
+    "cct.co.scheduleHint": "Choisir une heure de retrait ou de livraison",
+    "cct.co.date": "Date",
+    "cct.co.time": "Heure",
+    "cct.co.scheduleRequired": "Choisissez une date et une heure pour la programmation.",
+    "cct.co.onlineSoon": "Le paiement en ligne des commandes arrive bientôt.",
+    "cct.co.noDelivery": "Ce restaurant ne propose pas la livraison.",
+    "cct.co.noPickup": "Ce restaurant ne propose pas le retrait.",
 
     "cct.co.payment": "Paiement",
+    "cct.co.payCashLabel": "Espèces à la livraison",
+    "cct.co.payRestaurantLabel": "Paiement au restaurant",
     "cct.co.payCashDelivery": "Vous réglez le livreur à la remise de la commande.",
     "cct.co.payCashPickup": "Vous réglez au restaurant au moment du retrait.",
     "cct.co.payMomoDelivery": "Vous envoyez le paiement au livreur à la remise, depuis votre téléphone.",
@@ -151,7 +178,13 @@ export const custCartDict = defineDict({
     "cct.err.nameRequired": "Indiquez le nom de la personne à contacter.",
     "cct.err.phoneRequired": "Indiquez un numéro de téléphone.",
     "cct.err.addressRequired": "Indiquez l'adresse de livraison.",
+    "cct.err.badSchedule": "La date de programmation est invalide.",
+    "cct.err.scheduleTooSoon": "Choisissez un horaire à plus d'une minute.",
+    "cct.err.scheduleTooFar": "La programmation est limitée à 7 jours.",
+    "cct.err.rateLimited":
+      "Trop de commandes passées récemment. Réessayez dans quelques minutes.",
     "cct.err.failed": "La commande n'a pas pu être enregistrée. Réessayez.",
+    "cct.err.failedFallback": "La commande a échoué.",
   },
   en: {
     /* ── Basket ─────────────────────────────────────────────────────── */
@@ -202,6 +235,8 @@ export const custCartDict = defineDict({
     "cct.sum.service": "Service charge ({percent}%)",
     "cct.sum.delivery": "Delivery",
     "cct.sum.loyalty": "Loyalty points",
+    "cct.sum.total": "Total",
+    "cct.sum.toConfirm": "to be confirmed",
     "cct.sum.feeNote":
       "The delivery fee is set by the restaurant when it confirms, based on your neighbourhood. It is added on top of this total.",
 
@@ -211,8 +246,15 @@ export const custCartDict = defineDict({
     "cct.co.emptyBody": "Add something to your basket before checking out.",
 
     "cct.co.how": "How would you like it?",
+    "cct.co.typeDelivery": "Delivery",
+    "cct.co.typePickup": "Pickup",
     "cct.co.deliveryHint": "Brought to the address you give us.",
     "cct.co.pickupHint": "You collect the order at the restaurant.",
+    "cct.co.deliveryEst": "≈ {minutes} min",
+    "cct.co.pickupAt": "Pickup in {quartier}",
+    "cct.co.pickupWhere": "Collect at {restaurant} — {quartier}.",
+    "cct.co.pickupReady": "Ready in about {minutes} min",
+    "cct.co.belowMinHint": "{amount} more to reach the minimum order.",
 
     "cct.co.contact": "Your details",
     "cct.co.name": "Name",
@@ -228,6 +270,10 @@ export const custCartDict = defineDict({
     "cct.co.useNew": "New address",
     "cct.co.useSaved": "Use a saved address",
     "cct.co.default": "Default",
+    "cct.co.destinationName": "Recipient name",
+    "cct.co.noAddresses":
+      "No saved address — use “New address” above.",
+    "cct.co.chooseQuartier": "Choose a neighbourhood",
     "cct.co.addressLine": "Address",
     "cct.co.addressPh": "Street, building, floor",
     "cct.co.quartier": "Neighbourhood",
@@ -239,8 +285,22 @@ export const custCartDict = defineDict({
     "cct.co.feeNote":
       "The delivery fee is set by the restaurant when it confirms your order, based on your neighbourhood. You will be told the amount then.",
     "cct.co.addressesUnavailable": "Your saved addresses cannot be reached right now.",
+    "cct.co.pickupNote": "The restaurant uses these to reach you at pickup time.",
+    "cct.co.when": "When?",
+    "cct.co.asap": "As soon as possible",
+    "cct.co.asapHint": "The restaurant confirms as soon as it receives the order",
+    "cct.co.schedule": "Schedule it",
+    "cct.co.scheduleHint": "Pick a pickup or delivery time",
+    "cct.co.date": "Date",
+    "cct.co.time": "Time",
+    "cct.co.scheduleRequired": "Pick a date and time for the scheduled order.",
+    "cct.co.onlineSoon": "Online payment for orders is coming soon.",
+    "cct.co.noDelivery": "This restaurant does not offer delivery.",
+    "cct.co.noPickup": "This restaurant does not offer pickup.",
 
     "cct.co.payment": "Payment",
+    "cct.co.payCashLabel": "Cash on delivery",
+    "cct.co.payRestaurantLabel": "Pay at the restaurant",
     "cct.co.payCashDelivery": "You pay the rider when the order is handed over.",
     "cct.co.payCashPickup": "You pay at the restaurant when you collect.",
     "cct.co.payMomoDelivery": "You send the payment to the rider from your phone at handover.",
@@ -284,6 +344,11 @@ export const custCartDict = defineDict({
     "cct.err.nameRequired": "Give the name of the person to contact.",
     "cct.err.phoneRequired": "Give a phone number.",
     "cct.err.addressRequired": "Give the delivery address.",
+    "cct.err.badSchedule": "The scheduled date is not valid.",
+    "cct.err.scheduleTooSoon": "Pick a time more than a minute from now.",
+    "cct.err.scheduleTooFar": "Scheduling is limited to 7 days ahead.",
+    "cct.err.rateLimited": "Too many orders placed recently. Try again in a few minutes.",
     "cct.err.failed": "The order could not be saved. Try again.",
+    "cct.err.failedFallback": "The order failed.",
   },
 });

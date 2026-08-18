@@ -6,6 +6,7 @@ import type { z } from "zod";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { siteUrl } from "@/lib/site-url";
 import { rateLimit } from "@/lib/rate-limit";
+import { notify } from "@/lib/notify";
 import {
   forgotPasswordSchema,
   resetPasswordSchema,
@@ -436,6 +437,17 @@ export async function signUpRestaurant(
   if (restaurantError) {
     return rollback("restaurant insert", restaurantError.message);
   }
+
+  // The application is written; the admin's bell is how it is ever seen. A
+  // failed notification must not fail the signup (the row is already there),
+  // and notify() never throws — but the news still has to be sent.
+  await notify({
+    event: "application",
+    tone: "info",
+    admins: true,
+    href: "/a/restaurants",
+    params: { restaurantName: input.restaurantName },
+  });
 
   return { ok: true, done: true };
 }

@@ -13,6 +13,7 @@ import {
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Field } from "@/components/ui/input";
 import { updatePassword, type AuthState } from "@/lib/auth/actions";
+import { useLocale } from "@/lib/i18n/use-locale";
 
 const INITIAL: AuthState = { ok: false };
 
@@ -28,24 +29,22 @@ export default function ResetPasswordPage() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [state, formAction, pending] = useActionState(updatePassword, INITIAL);
+  const { t } = useLocale();
 
   const mismatch = confirm.length > 0 && confirm !== password;
 
   if (state.error === "expired") {
     return (
       <>
-        <AuthHeading title="Lien expiré" />
-        <AuthNotice tone="error" title="Ce lien n'est plus valable">
-          <p>
-            Les liens de réinitialisation expirent au bout d&apos;une heure et ne peuvent servir
-            qu&apos;une seule fois. Demandez-en un nouveau.
-          </p>
+        <AuthHeading title={t("auth.reset.expired")} />
+        <AuthNotice tone="error" title={t("auth.reset.expiredTitle")}>
+          <p>{t("auth.reset.expiredBody")}</p>
         </AuthNotice>
         <Link
           href="/forgot-password"
           className={buttonClasses({ fullWidth: true, size: "lg", className: "mt-6" })}
         >
-          Demander un nouveau lien
+          {t("auth.reset.requestNew")}
         </Link>
       </>
     );
@@ -54,18 +53,15 @@ export default function ResetPasswordPage() {
   if (state.done) {
     return (
       <>
-        <AuthHeading title="Mot de passe modifié" />
-        <AuthNotice tone="success" title="C'est fait">
-          <p>
-            Votre mot de passe a été mis à jour. Par sécurité, toutes vos sessions ouvertes ont été
-            déconnectées — y compris sur vos autres appareils.
-          </p>
+        <AuthHeading title={t("auth.reset.done")} />
+        <AuthNotice tone="success" title={t("auth.reset.doneTitle")}>
+          <p>{t("auth.reset.doneBody")}</p>
         </AuthNotice>
         <Link
           href="/login"
           className={buttonClasses({ fullWidth: true, size: "lg", className: "mt-6" })}
         >
-          Se connecter
+          {t("auth.signIn")}
         </Link>
       </>
     );
@@ -73,10 +69,7 @@ export default function ResetPasswordPage() {
 
   return (
     <>
-      <AuthHeading
-        title="Nouveau mot de passe"
-        subtitle="Choisissez un mot de passe que vous n'utilisez nulle part ailleurs."
-      />
+      <AuthHeading title={t("auth.reset.title")} subtitle={t("auth.reset.subtitle")} />
 
       {state.error && state.error !== "expired" && (
         <div className="mb-5">
@@ -86,7 +79,7 @@ export default function ResetPasswordPage() {
 
       <form action={formAction} className="flex flex-col gap-4">
         <Field
-          label="Nouveau mot de passe"
+          label={t("auth.reset.newPassword")}
           htmlFor="password"
           required
           error={state.fieldErrors?.password}
@@ -104,10 +97,10 @@ export default function ResetPasswordPage() {
         </Field>
 
         <Field
-          label="Confirmer le mot de passe"
+          label={t("auth.reset.confirm")}
           htmlFor="confirm"
           required
-          error={mismatch ? "Les deux mots de passe ne correspondent pas." : state.fieldErrors?.confirm}
+          error={mismatch ? t("auth.reset.mismatch") : state.fieldErrors?.confirm}
         >
           <PasswordInput
             id="confirm"
@@ -122,7 +115,7 @@ export default function ResetPasswordPage() {
 
         <div className="mt-1 flex items-start gap-2.5 rounded-md border border-border bg-surface-2 p-3 text-xs text-text-secondary">
           <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
-          <p>La validation déconnectera toutes vos sessions ouvertes, sur tous vos appareils.</p>
+          <p>{t("auth.reset.sessionNote")}</p>
         </div>
 
         <Button
@@ -133,7 +126,7 @@ export default function ResetPasswordPage() {
           disabled={!passwordMeetsPolicy(password) || password !== confirm}
           className="mt-1"
         >
-          Enregistrer le mot de passe
+          {t("auth.reset.save")}
         </Button>
       </form>
 
@@ -142,7 +135,7 @@ export default function ResetPasswordPage() {
         className="mt-7 inline-flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-primary"
       >
         <ArrowLeft className="size-3.5" aria-hidden />
-        Retour à la connexion
+        {t("auth.backToLogin")}
       </Link>
     </>
   );

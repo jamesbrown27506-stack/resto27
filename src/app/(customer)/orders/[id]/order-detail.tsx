@@ -13,14 +13,10 @@ import { Textarea } from "@/components/ui/input";
 import { RatingInput } from "@/components/ui/rating-stars";
 import { useToast } from "@/components/ui/toast";
 import { formatDateTime, isoAttr } from "@/lib/format/datetime";
-import {
-  ORDER_TYPE_LABEL,
-  PAYMENT_METHOD_LABEL,
-  canCustomerCancel,
-  type PaymentMethod,
-} from "@/lib/format/order-status";
+import { canCustomerCancel } from "@/lib/format/order-status";
 import { cancelOwnOrder, rateOwnDelivery, submitOwnReview, uploadReviewPhoto } from "@/lib/data/customer-actions";
 import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { CustomerOrder as Order } from "@/lib/data/customer";
 
 /**
@@ -109,7 +105,8 @@ export function OrderDetail({ order }: { order: Order }) {
             <OrderStatusBadge status={order.status} />
           </div>
           <p className="tnum mt-1 text-sm text-text-secondary">
-            {order.reference} · {ORDER_TYPE_LABEL[order.type]} ·{" "}
+            <span translate="no">{order.reference}</span> ·{" "}
+            {t(`cor.type.${order.type}` as TranslationKey)} ·{" "}
             <time dateTime={isoAttr(order.createdAt)}>
               {formatDateTime(order.createdAt, dates)}
             </time>
@@ -247,7 +244,7 @@ export function OrderDetail({ order }: { order: Order }) {
               <CardTitle>{t("cor.payment")}</CardTitle>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <span className="text-sm text-text-secondary">
-                  {PAYMENT_METHOD_LABEL[order.paymentMethod as PaymentMethod] ?? "Mobile Money"}
+                  {t(`cor.pay.${order.paymentMethod}` as TranslationKey)}
                 </span>
                 <Badge tone={order.isPaid ? "success" : "warning"}>
                   {t(order.isPaid ? "cor.paid" : "cor.unpaid")}

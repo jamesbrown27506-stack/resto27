@@ -93,6 +93,8 @@ export const menuDict = defineDict({
     "mm.priceHint": "En francs entiers — le FCFA n'a pas de centimes.",
     "mm.prep": "Préparation (min)",
     "mm.category": "Catégorie",
+    "mm.uncategorisedHint":
+      "Sans catégorie, ce plat apparaît dans « Autres plats » sur votre carte publique. Choisissez une catégorie pour le ranger.",
     "mm.availableToOrder": "Disponible à la commande",
     "mm.featured": "Mettre en avant",
     "mm.trackStock": "Suivre le stock",
@@ -199,6 +201,8 @@ export const menuDict = defineDict({
     "mm.priceHint": "Whole francs — the FCFA has no centimes.",
     "mm.prep": "Prep time (min)",
     "mm.category": "Category",
+    "mm.uncategorisedHint":
+      "Without a category, this dish appears under \"Other dishes\" on your public menu. Pick a category to file it.",
     "mm.availableToOrder": "Available to order",
     "mm.featured": "Feature on the menu",
     "mm.trackStock": "Track stock",

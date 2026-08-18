@@ -615,7 +615,11 @@ export function MenuManager({
               </Field>
             </div>
 
-            <Field label={t("mm.category")} htmlFor="item-category">
+            <Field
+              label={t("mm.category")}
+              htmlFor="item-category"
+              hint={!editing.draft.categoryId ? t("mm.uncategorisedHint") : undefined}
+            >
               <Select
                 id="item-category"
                 value={editing.draft.categoryId ?? ""}

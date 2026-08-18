@@ -47,6 +47,7 @@ export type NotifyEvent =
   | "review" //              → manager : a customer wrote a review
   | "review_reply" //        → customer: the restaurant replied
   | "moderation" //          → admin   : a review was reported
+  | "application" //         → admin   : a restaurant applied for approval
   | "billing" //             → manager : plan change, extension, statement
   | "billing_paid" //        → manager : an invoice was paid
   | "billing_refund" //      → manager : a refund was issued
@@ -268,6 +269,14 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
         body: p.rating
           ? `${p.restaurantName ?? "A restaurant"} reported a ${p.rating}-star review.`
           : `${p.restaurantName ?? "A restaurant"} reported a review.`,
+      };
+
+    case "application":
+      // The admin bell is the approval queue's doorbell: a pending
+      // application waits for the verdict, and silence is how it is missed.
+      return {
+        title: "New application",
+        body: `${p.restaurantName ?? "A restaurant"} applied to join the platform.`,
       };
 
     case "billing":

@@ -85,26 +85,6 @@ export function HomeContent({
         ]}
       />
 
-      {/* ── Featured restaurants ───────────────────────────────────────── */}
-      <section className="container-page py-20">
-        <SectionHeader
-          align="left"
-          tag={t("home.featured.tag")}
-          title={t("home.featured.title")}
-          subtitle={t("home.featured.subtitle")}
-          action={
-            <Link href="/restaurants" className={buttonClasses({ variant: "outline" })}>
-              {t("home.featured.all")}
-            </Link>
-          }
-        />
-        <RestaurantGrid>
-          {featured.map((r) => (
-            <RestaurantCard key={r.id} restaurant={r} />
-          ))}
-        </RestaurantGrid>
-      </section>
-
       {/* ── Popular dishes ─────────────────────────────────────────────── */}
       <section className="bg-primary-light py-20">
         <div className="container-page">
@@ -133,6 +113,26 @@ export function HomeContent({
             ))}
           </div>
         </div>
+      </section>
+
+      {/* ── Featured restaurants ───────────────────────────────────────── */}
+      <section className="container-page py-20">
+        <SectionHeader
+          align="left"
+          tag={t("home.featured.tag")}
+          title={t("home.featured.title")}
+          subtitle={t("home.featured.subtitle")}
+          action={
+            <Link href="/restaurants" className={buttonClasses({ variant: "outline" })}>
+              {t("home.featured.all")}
+            </Link>
+          }
+        />
+        <RestaurantGrid>
+          {featured.map((r) => (
+            <RestaurantCard key={r.id} restaurant={r} />
+          ))}
+        </RestaurantGrid>
       </section>
 
       {/* ── How it works ───────────────────────────────────────────────── */}

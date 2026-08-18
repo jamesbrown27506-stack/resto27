@@ -5,6 +5,7 @@ import { Heart } from "lucide-react";
 import { RestaurantDirectory } from "@/app/(public)/restaurants/restaurant-directory";
 import { useToast } from "@/components/ui/toast";
 import { toggleFavorite } from "@/lib/data/customer-actions";
+import { useLocale } from "@/lib/i18n/use-locale";
 import type { PublicRestaurant } from "@/lib/data/public";
 import { cn } from "@/lib/utils";
 
@@ -20,12 +21,13 @@ function FavoriteToggle({
   active: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useLocale();
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-pressed={active}
-      aria-label={active ? "Retirer des favoris" : "Ajouter aux favoris"}
+      aria-label={active ? t("cbr.removeFavorite") : t("cbr.addFavorite")}
       // relative + z-10 so it sits above the card's stretched link.
       className={cn(
         "relative z-10 grid size-9 place-items-center rounded-full backdrop-blur-sm transition-colors",
@@ -42,11 +44,13 @@ export function BrowseClient({
   restaurants,
   cuisines,
   quartiers,
+  dishSearch,
 }: {
   initialFavorites: string[];
   restaurants: PublicRestaurant[];
   cuisines: string[];
   quartiers: string[];
+  dishSearch: Record<string, string>;
 }) {
   const { toast } = useToast();
   const [favorites, setFavorites] = useState<string[]>(initialFavorites);
@@ -69,6 +73,7 @@ export function BrowseClient({
       restaurants={restaurants}
       cuisines={cuisines}
       quartiers={quartiers}
+      dishSearch={dishSearch}
       hrefFor={(slug) => `/browse/${slug}`}
       action={(id) => (
         <FavoriteToggle active={favorites.includes(id)} onToggle={() => toggle(id)} />

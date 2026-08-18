@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import { Inter, Playfair_Display } from "next/font/google";
 import { cookies } from "next/headers";
 import { THEME_COOKIE, themeScript } from "@/components/theme/theme-provider";
@@ -104,22 +105,6 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const stored = cookieStore.get(THEME_COOKIE)?.value;
   const theme = stored === "dark" ? "dark" : "light";
 
-  /**
-   * The pre-paint script is rendered ONLY when there is no theme cookie.
-   *
-   * Its own comment always said it was for the first visit, but it shipped on
-   * every request anyway — where it re-read a cookie the server had already
-   * read and re-applied an attribute the server had already rendered. React 19
-   * warns about a <script> inside a component ("scripts inside React
-   * components are never executed when rendering on the client"), and that
-   * warning was firing on every page load for a script that had nothing left
-   * to do.
-   *
-   * Now it appears once, on the visit that actually needs it, and disappears
-   * the moment it has written the cookie.
-   */
-  const needsThemeProbe = stored !== "light" && stored !== "dark";
-
   return (
     <html
       lang={locale}
@@ -129,19 +114,30 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     >
       <head>
         {/*
-          The ONLY remaining pre-paint script, and only for the first visit —
-          see `needsThemeProbe` above for why it is now conditional.
+          The ONLY remaining pre-paint script, and it ships on every page via
+          next/script's `beforeInteractive` strategy: injected into the
+          initial HTML <head> and executed synchronously during parsing —
+          before paint, before hydration, and never as part of the React tree
+          (which is what avoids React 19's "scripts inside React components
+          are never executed" warning, the reason a plain <script> element
+          cannot do this job).
 
-          `lang` and `data-theme` are rendered from cookies, so a returning
-          visitor needs no JavaScript at all. On a first visit there is no
-          theme cookie, and this reads the OS preference, applies it before
-          paint (no white flash) and writes the cookie — after which the server
-          takes over and this stops being rendered.
+          On a first visit there is no theme cookie, so it reads the OS
+          preference, applies it before the first paint (no white flash) and
+          writes the cookie — after which the server renders `data-theme`
+          itself. On later visits it re-reads that cookie and re-applies the
+          attribute the server already rendered; a no-op, but idempotent, and
+          the script keeps the first paint safe even if the cookie ever fails
+          to reach the server.
 
           The locale needs no equivalent: Accept-Language arrives with the
           request, so the server already knows the answer.
         */}
-        {needsThemeProbe && <script dangerouslySetInnerHTML={{ __html: themeScript }} />}
+        <Script
+          id="theme-probe"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{ __html: themeScript }}
+        />
         {/*
           PWA plumbing — the manifest is what makes the site installable, and
           iOS Safari's Web Push (16.4+) only delivers to sites installed to

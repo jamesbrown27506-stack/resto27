@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { DashboardView } from "./dashboard-view";
 import { SUBSCRIPTION_STATE_META } from "@/lib/format/subscription";
 import { requireBranch } from "@/lib/auth/branch";
@@ -22,6 +23,12 @@ export async function generateMetadata(): Promise<Metadata> {
  */
 export default async function ManagerDashboard() {
   const { active, profile } = await requireBranch();
+
+  // First login for a brand-new restaurant: the setup wizard is the first
+  // thing they do, before the dashboard pretends their empty floor is a
+  // going concern. The migration backfilled `setup_done_at` for every
+  // established tenant, so this only ever catches genuinely new ones.
+  if (!active.setupDoneAt) redirect("/m/setup");
 
   const [overview, upcoming, limits] = await Promise.all([
     fetchBranchOverview(active.restaurantId),

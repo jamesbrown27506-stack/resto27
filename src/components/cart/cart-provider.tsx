@@ -55,6 +55,8 @@ export interface CartLine {
   restaurantId: string;
   restaurantName: string;
   restaurantSlug: string;
+  /** The dish's prep time in minutes — what a pickup customer waits for. */
+  prepMinutes: number;
 }
 
 /**
@@ -140,7 +142,11 @@ function parseLines(raw: string | null): CartLine[] {
         typeof line.quantity === "number" &&
         line.quantity > 0 &&
         Array.isArray(line.options) &&
-        typeof line.restaurantId === "string"
+        typeof line.restaurantId === "string" &&
+        // prepMinutes was added after launch; a basket saved before it is
+        // still valid, so a missing value is tolerated, not rejected.
+        (typeof (line as { prepMinutes?: unknown }).prepMinutes === "number" ||
+          (line as { prepMinutes?: unknown }).prepMinutes === undefined)
       );
     });
   } catch {

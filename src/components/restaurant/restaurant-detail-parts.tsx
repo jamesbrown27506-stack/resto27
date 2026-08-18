@@ -1,29 +1,35 @@
+"use client";
+
 import { MessageSquare } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { EmptyState } from "@/components/ui/empty-state";
 import { RatingStars } from "@/components/ui/rating-stars";
 import { formatDate } from "@/lib/format/datetime";
+import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { RestaurantHours } from "@/lib/data/public";
 import type { RestaurantReview as Review } from "@/lib/data/reviews";
 
-const WEEKDAYS = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+const WEEKDAYS_FR = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+const WEEKDAYS_EN = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 export function HoursTable({ hours, today }: { hours: RestaurantHours[]; today?: number }) {
+  const { t, locale } = useLocale();
+  const weekdays = locale === "en" ? WEEKDAYS_EN : WEEKDAYS_FR;
   return (
     <table className="w-full text-sm">
-      <caption className="sr-only">Horaires d&apos;ouverture</caption>
+      <caption className="sr-only">{t("cbr.hoursCaption")}</caption>
       <tbody className="divide-y divide-border">
         {hours.map((h) => {
           const isToday = today === h.weekday;
           return (
             <tr key={h.weekday} className={cn(isToday && "font-semibold text-primary")}>
               <th scope="row" className="py-2 text-left font-normal">
-                {WEEKDAYS[h.weekday]}
-                {isToday && <span className="ml-2 text-xs">· aujourd&apos;hui</span>}
+                {weekdays[h.weekday]}
+                {isToday && <span className="ml-2 text-xs">{t("cbr.today")}</span>}
               </th>
               <td className="tnum py-2 text-right">
-                {h.opensAt && h.closesAt ? `${h.opensAt} – ${h.closesAt}` : "Fermé"}
+                {h.opensAt && h.closesAt ? `${h.opensAt} – ${h.closesAt}` : t("cbr.closedBadge")}
               </td>
             </tr>
           );
@@ -34,12 +40,13 @@ export function HoursTable({ hours, today }: { hours: RestaurantHours[]; today?:
 }
 
 export function ReviewList({ reviews }: { reviews: Review[] }) {
+  const { t } = useLocale();
   if (reviews.length === 0) {
     return (
       <EmptyState
         icon={<MessageSquare />}
-        title="Pas encore d'avis"
-        description="Soyez le premier à donner votre avis après votre commande."
+        title={t("cbr.noReviews")}
+        description={t("cbr.noReviewsBody")}
       />
     );
   }
@@ -70,7 +77,7 @@ export function ReviewList({ reviews }: { reviews: Review[] }) {
                     <img
                       key={url}
                       src={url}
-                      alt="Photo jointe à l'avis"
+                      alt={t("cbr.photoAttached")}
                       className="size-20 rounded-md border border-border object-cover"
                       loading="lazy"
                     />
@@ -81,7 +88,7 @@ export function ReviewList({ reviews }: { reviews: Review[] }) {
               {review.reply && (
                 <div className="mt-4 rounded-md border-l-2 border-primary bg-primary-light p-3.5">
                   <p className="text-xs font-bold tracking-wide text-primary uppercase">
-                    Réponse du restaurant
+                    {t("cbr.reply")}
                   </p>
                   <p className="mt-1.5 text-sm text-text-secondary">{review.reply}</p>
                 </div>

@@ -7,12 +7,14 @@ import { AuthHeading, AuthNotice } from "@/components/auth/auth-parts";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { requestPasswordReset, type AuthState } from "@/lib/auth/actions";
+import { useLocale } from "@/lib/i18n/use-locale";
 
 const INITIAL: AuthState = { ok: false };
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [state, formAction, pending] = useActionState(requestPasswordReset, INITIAL);
+  const { t } = useLocale();
 
   /**
    * ALWAYS reports success (§14.2), whether or not the address exists.
@@ -25,26 +27,22 @@ export default function ForgotPasswordPage() {
   if (state.done) {
     return (
       <>
-        <AuthHeading title="Vérifiez vos emails" />
+        <AuthHeading title={t("auth.checkEmail")} />
 
-        <AuthNotice tone="success" title="Demande enregistrée">
+        <AuthNotice tone="success" title={t("auth.forgot.requested")}>
           <p>
-            Si un compte existe pour <strong>{email || "cette adresse"}</strong>, un lien de
-            réinitialisation vient d&apos;y être envoyé. Il est valable une heure et ne peut servir
-            qu&apos;une fois.
+            {t("auth.forgot.requestedBody", { email: email || t("auth.forgot.thisAddress") })}
           </p>
         </AuthNotice>
 
-        <p className="mt-5 text-sm leading-relaxed text-text-secondary">
-          Rien reçu au bout de quelques minutes ? Regardez dans les indésirables.
-        </p>
+        <p className="mt-5 text-sm leading-relaxed text-text-secondary">{t("auth.forgot.spam")}</p>
 
         <Link
           href="/login"
           className="mt-7 inline-flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-primary"
         >
           <ArrowLeft className="size-3.5" aria-hidden />
-          Retour à la connexion
+          {t("auth.backToLogin")}
         </Link>
       </>
     );
@@ -52,13 +50,10 @@ export default function ForgotPasswordPage() {
 
   return (
     <>
-      <AuthHeading
-        title="Mot de passe oublié"
-        subtitle="Saisissez votre adresse email. Nous vous envoyons un lien pour en définir un nouveau."
-      />
+      <AuthHeading title={t("auth.forgot.title")} subtitle={t("auth.forgot.subtitle")} />
 
       <form action={formAction} className="flex flex-col gap-4">
-        <Field label="Adresse email" htmlFor="email" required error={state.fieldErrors?.email}>
+        <Field label={t("auth.email")} htmlFor="email" required error={state.fieldErrors?.email}>
           <Input
             id="email"
             name="email"
@@ -74,7 +69,7 @@ export default function ForgotPasswordPage() {
         </Field>
 
         <Button type="submit" size="lg" fullWidth loading={pending} className="mt-2">
-          Envoyer le lien
+          {t("auth.forgot.send")}
         </Button>
       </form>
 
@@ -83,7 +78,7 @@ export default function ForgotPasswordPage() {
         className="mt-7 inline-flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-primary"
       >
         <ArrowLeft className="size-3.5" aria-hidden />
-        Retour à la connexion
+        {t("auth.backToLogin")}
       </Link>
     </>
   );
