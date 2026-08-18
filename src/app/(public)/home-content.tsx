@@ -19,6 +19,8 @@ import { RestaurantCard, RestaurantGrid } from "@/components/restaurant/restaura
 import { DishCard } from "@/components/menu/dish-card";
 import { buttonClasses } from "@/components/ui/button";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { useDates } from "@/lib/format/use-dates";
+import { planCtaHref } from "@/lib/nav";
 import type { PopularDish, PublicRestaurant, PublicStats, FeaturedReview } from "@/lib/data/public";
 import type { Appearance } from "@/lib/appearance";
 
@@ -42,6 +44,8 @@ export function HomeContent({
   stats,
   testimonials,
   appearance,
+  userArea = null,
+  freeModeInfo = { active: false, days: 0, endsAt: null },
 }: {
   plans: PublicPlan[];
   restaurants: PublicRestaurant[];
@@ -51,13 +55,41 @@ export function HomeContent({
   stats: PublicStats;
   testimonials: FeaturedReview[];
   appearance: Appearance;
+  /** The signed-in user's area — pricing CTAs route to it (planCtaHref). */
+  userArea?: "admin" | "manager" | "customer" | null;
+  /**
+   * Free mode — the announcement lives on the home page and nowhere else:
+   * "the platform is free for restaurants for {days} day(s)". Gated on the
+   * flag, so a configured countdown without the flag announces nothing.
+   */
+  freeModeInfo?: { active: boolean; days: number; endsAt: string | null };
 }) {
   const { t } = useLocale();
+  const dates = useDates();
   const featured = restaurants.slice(0, 6);
   const numberFormat = new Intl.NumberFormat("fr-FR");
 
   return (
     <>
+      {freeModeInfo.active && (
+        <div className="border-b border-primary/20 bg-primary/5 px-4 py-2.5 text-center text-sm">
+          <span className="font-semibold text-primary">{t("home.freeBanner.title")}</span>{" "}
+          <span className="opacity-70">
+            {t(
+              freeModeInfo.endsAt
+                ? "home.freeBanner.bodyDate"
+                : freeModeInfo.days > 0
+                  ? "home.freeBanner.bodyDays"
+                  : "home.freeBanner.body",
+              freeModeInfo.endsAt
+                ? { days: freeModeInfo.days, date: dates.date(freeModeInfo.endsAt) }
+                : freeModeInfo.days > 0
+                  ? { days: freeModeInfo.days }
+                  : undefined,
+            )}
+          </span>
+        </div>
+      )}
       <Hero cuisines={cuisines} quartiers={quartiers} stats={stats} appearance={appearance} />
 
       <StatStrip
@@ -179,7 +211,7 @@ export function HomeContent({
               title={t("home.kitchen.title")}
               description={t("home.kitchen.body")}
               bullets={[t("home.kitchen.b1"), t("home.kitchen.b2"), t("home.kitchen.b3")]}
-              cta={{ href: "/register/restaurant", label: t("home.kitchen.cta") }}
+              cta={{ href: planCtaHref(userArea), label: t("home.kitchen.cta") }}
               visual={
                 <div className="relative size-full">
                   <Image
@@ -258,7 +290,7 @@ export function HomeContent({
             title={t("home.pricing.title")}
             subtitle={t("home.pricing.subtitle")}
           />
-          <PricingGrid plans={plans} compact />
+          <PricingGrid plans={plans} compact userArea={userArea} />
           <p className="mt-8 text-center text-sm text-text-secondary">
             {t("home.pricing.question")}{" "}
             <Link
@@ -290,7 +322,7 @@ export function HomeContent({
         title={t("home.cta.title")}
         description={t("home.cta.body")}
         primary={{ href: "/restaurants", label: t("hero.cta.browse") }}
-        secondary={{ href: "/register/restaurant", label: t("hero.cta.register") }}
+        secondary={{ href: planCtaHref(userArea), label: t("hero.cta.register") }}
       />
     </>
   );

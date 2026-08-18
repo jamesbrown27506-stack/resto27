@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { CalendarCheck, Check, Users } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CalendarCheck, Check, LoaderCircle, Smartphone, Users } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,11 @@ import { ConfirmDialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
-import { cancelOwnReservation, createOwnReservation } from "@/lib/data/customer-actions";
+import {
+  cancelOwnReservation,
+  checkReservationPayment,
+  createOwnReservation,
+} from "@/lib/data/customer-actions";
 import { reservationStatusLabel, RESERVATION_STATUS_TONE } from "@/lib/format/reservation-status";
 import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { CustomerReservation } from "@/lib/data/customer";
@@ -20,6 +24,9 @@ import { formatMoney } from "@/lib/format/currency";
 import type { SessionUser } from "@/lib/session";
 
 const SLOTS = ["12:00", "12:30", "13:00", "13:30", "19:00", "19:30", "20:00", "20:30", "21:00"];
+
+const POLL_INTERVAL_MS = 4_000;
+const POLL_TRIES = 30;
 
 /**
  * Low season, fixed windows: the restaurants practically share one kitchen
@@ -79,8 +86,17 @@ export function ReservationsClient({
   const [time, setTime] = useState("");
   const [guests, setGuests] = useState(() => resolveGuests(initialGuests));
   const [notes, setNotes] = useState("");
+  const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
+  const [paying, setPaying] = useState(false);
   const [cancelId, setCancelId] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
   const upcoming = mine.filter((r) => r.status === "pending" || r.status === "confirmed");
   const past = mine.filter((r) => !["pending", "confirmed"].includes(r.status));
@@ -100,17 +116,46 @@ export function ReservationsClient({
       reservedFor,
       partySize: Number(guests),
       notes,
+      phone,
     });
     setBusy(false);
 
-    if (result.ok) {
-      toast(t("crs.sent"), "success");
-      setDate("");
-      setTime("");
-      setNotes("");
-    } else {
+    if (!result.ok) {
       toast(result.error, "error");
+      return;
     }
+
+    // A fixed deposit in live mode stays 'pending' until the customer
+    // approves on their handset — poll until the provider (or its webhook)
+    // settles it.
+    if (result.status === "pending" && result.attemptId) {
+      setPaying(true);
+      let tries = 0;
+      pollRef.current = setInterval(async () => {
+        tries += 1;
+        const check = await checkReservationPayment(result.attemptId!);
+        if (check.status === "succeeded") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setPaying(false);
+          toast(t("crs.sent"), "success");
+          setDate("");
+          setTime("");
+          setNotes("");
+          setPhone("");
+        } else if (check.status === "failed" || tries >= POLL_TRIES) {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setPaying(false);
+          toast(t("crs.payFailed"), "error");
+        }
+      }, POLL_INTERVAL_MS);
+      return;
+    }
+
+    toast(t("crs.sent"), "success");
+    setDate("");
+    setTime("");
+    setNotes("");
+    setPhone("");
   }
 
   async function confirmCancel() {
@@ -283,23 +328,84 @@ export function ReservationsClient({
 
             {(() => {
               const selected = restaurants.find((r) => r.slug === restaurantSlug);
-              return selected && selected.depositAmount > 0 ? (
-                <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning">
-                  <strong>{t("crs.deposit", { amount: formatMoney(selected.depositAmount) })}</strong>{" "}
-                  {t("crs.depositBody")}
-                </p>
-              ) : null;
+
+              if (!selected) return null;
+
+              /* A fixed fee is paid online at booking (0031): the customer
+                  types their Mobile Money number and the deposit is charged
+                  now — deducted from their final bill once they arrive. */
+              if (selected.depositType === "fixed" && selected.depositAmount > 0) {
+                return (
+                  <div className="flex flex-col gap-3 rounded-md border border-warning/30 bg-warning-light p-3">
+                    <p className="text-xs leading-relaxed text-warning">
+                      <strong>{t("crs.deposit", { amount: formatMoney(selected.depositAmount) })}</strong>{" "}
+                      {t("crs.depositBody")}
+                    </p>
+                    <Field
+                      label={t("crs.phone")}
+                      htmlFor="res-phone"
+                      hint={t("crs.phoneHint")}
+                    >
+                      <Input
+                        id="res-phone"
+                        icon={<Smartphone className="size-4" aria-hidden />}
+                        inputMode="tel"
+                        autoComplete="tel"
+                        placeholder={t("crs.phonePh")}
+                        value={phone}
+                        disabled={paying}
+                        onChange={(e) => setPhone(e.target.value)}
+                      />
+                    </Field>
+                  </div>
+                );
+              }
+
+              /* A percentage fee is never charged online — the bill is
+                  unknown at booking — and is collected at the restaurant. */
+              if (selected.depositType === "percent" && selected.depositAmount > 0) {
+                return (
+                  <p className="rounded-md border border-info/30 bg-info-light p-3 text-xs leading-relaxed text-info">
+                    <strong>{t("crs.depositPercent", { pct: selected.depositAmount })}</strong>{" "}
+                    {t("crs.depositPercentBody")}
+                  </p>
+                );
+              }
+
+              return null;
             })()}
 
             <Button
               fullWidth
               size="lg"
-              disabled={!date || !time || busy}
+              disabled={!date || !time || busy || paying}
               onClick={submit}
             >
-              <Check className="size-4" aria-hidden />
-              {t("crs.submit")}
+              {paying ? (
+                <>
+                  <LoaderCircle className="size-4 animate-spin" aria-hidden />
+                  <span>{t("crs.payPendingTitle")}</span>
+                </>
+              ) : (
+                <>
+                  <Check className="size-4" aria-hidden />
+                  {(() => {
+                    const selected = restaurants.find((r) => r.slug === restaurantSlug);
+                    const hasFee =
+                      selected && selected.depositType === "fixed" && selected.depositAmount > 0;
+                    return hasFee
+                      ? t("crs.payDeposit", { amount: formatMoney(selected!.depositAmount) })
+                      : t("crs.submit");
+                  })()}
+                </>
+              )}
             </Button>
+
+            {paying && (
+              <p className="text-center text-xs leading-relaxed text-text-light">
+                {t("crs.payPendingBody")}
+              </p>
+            )}
 
             <p className="text-xs leading-relaxed text-text-light">{t("crs.formHint")}</p>
           </div>

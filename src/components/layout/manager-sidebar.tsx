@@ -42,11 +42,14 @@ export function ManagerSidebar({
   branches,
   activeBranch,
   brand,
+  freeMode,
   onSwitchBranch,
 }: {
   branches: Branch[];
   activeBranch: Branch;
   brand: { name: string; logoUrl: string | null };
+  /** Free mode (platform completely free for now) suppresses the plan locks. */
+  freeMode: boolean;
   onSwitchBranch?: (id: string) => void;
 }) {
   const { t } = useLocale();
@@ -92,7 +95,9 @@ export function ManagerSidebar({
                 {visible.map((item) => {
                   const active = isActive(item, pathname);
                   const blocked = locked && !item.allowLocked;
-                  const gated = item.planGated && !planIsPaid;
+                  // Free mode means the platform is free for everyone: the
+                  // plan locks disappear with the gates that would have shown.
+                  const gated = item.planGated && !planIsPaid && !freeMode;
 
                   const badgeKind = BADGED_LINKS[item.href];
                   const badgeCount = badgeKind ? navCounts[badgeKind] : 0;

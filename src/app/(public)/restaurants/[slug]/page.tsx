@@ -86,7 +86,14 @@ export default async function RestaurantDetailPage({
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
       />
 
-      {restaurant.coverUrl ? (
+      {restaurant.logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={restaurant.logoUrl}
+          alt=""
+          className="h-48 w-full object-cover sm:h-64"
+        />
+      ) : restaurant.coverUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={restaurant.coverUrl}

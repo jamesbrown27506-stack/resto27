@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { ManagerPage } from "@/components/layout/manager-shell";
-import { ReportsUpsell, ReportsView } from "./reports-view";
+import { ReportsView } from "./reports-view";
 import { requireCapability } from "@/lib/auth/branch";
 import { fetchReports, isReportRange } from "@/lib/data/reports";
 import { fetchPlanLimits } from "@/lib/data/billing";
+import { PlanGateUpsell } from "@/components/billing/plan-gate";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -68,7 +69,7 @@ export default async function ReportsPage({
     // page that will not show it is six aggregates of wasted database time.
     return (
       <ManagerPage titleKey="mrp.title" descriptionKey="mrp.subtitle">
-        <ReportsUpsell />
+        <PlanGateUpsell feature="mgate.feature.reports" plan="mgate.plan.professional" />
       </ManagerPage>
     );
   }

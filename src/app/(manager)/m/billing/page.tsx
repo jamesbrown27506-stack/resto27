@@ -3,12 +3,8 @@ import { ManagerPage } from "@/components/layout/manager-shell";
 import { BillingView } from "./billing-view";
 import { requireCapability } from "@/lib/auth/branch";
 import { fetchBranchOverview, fetchPromotions, fetchTables } from "@/lib/data/manager";
-import {
-  fetchInvoices,
-  fetchPaymentsEnabled,
-  fetchPlans,
-  fetchTrialState,
-} from "@/lib/data/invoices";
+import { fetchInvoices, fetchPlans, fetchTrialState } from "@/lib/data/invoices";
+import { freeModeEndsAt, isFreeMode } from "@/lib/data/billing";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -39,14 +35,15 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function BillingPage() {
   const { active } = await requireCapability("billing.manage");
 
-  const [plans, invoices, trial, paymentsEnabled, overview, tables, promotions] = await Promise.all([
+  const [plans, invoices, trial, overview, tables, promotions, freeMode, freeEnds] = await Promise.all([
     fetchPlans(),
     fetchInvoices(active.restaurantId),
     fetchTrialState(active.restaurantId),
-    fetchPaymentsEnabled(),
     fetchBranchOverview(active.restaurantId),
     fetchTables(active.restaurantId),
     fetchPromotions(active.restaurantId),
+    isFreeMode(),
+    freeModeEndsAt(),
   ]);
 
   return (
@@ -67,10 +64,12 @@ export default async function BillingPage() {
           tables: tables.length,
           promotions: promotions.filter((p) => p.isActive).length,
         }}
-        // When a real provider is live the simulator refuses to run, so the
-        // button is hidden rather than left there to fail.
-        canSimulate={!paymentsEnabled}
         trial={trial}
+        // While free mode is on every plan is free and switching applies
+        // instantly — the view hides the payment path so it cannot offer
+        // something the server will not do.
+        freeMode={freeMode}
+        freeModeEndsAt={freeEnds}
         // The clock is stamped HERE and passed down as an ISO string. Reading
         // it during a client render is impure and the React Compiler rejects
         // it outright — and one instant for the whole page means the overdue

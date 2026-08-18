@@ -253,24 +253,3 @@ export async function fetchTrialState(restaurantId: string): Promise<TrialState>
     daysLeft: (data.trial_days_remaining as number | null) ?? null,
   };
 }
-
-/* ── Payment provider ──────────────────────────────────────────────────── */
-
-/**
- * Is a REAL payment provider live?
- *
- * The simulator in subscribe-actions.ts refuses to run once this is true, so
- * the screen must not offer a button that is guaranteed to fail. Read here so
- * the page and the action agree on one setting rather than two.
- */
-export async function fetchPaymentsEnabled(): Promise<boolean> {
-  const supabase = createAdminClient();
-
-  const { data } = await supabase
-    .from("settings")
-    .select("value")
-    .eq("key", "payments_enabled")
-    .maybeSingle();
-
-  return data?.value === "true";
-}

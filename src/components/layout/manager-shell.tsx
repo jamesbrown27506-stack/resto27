@@ -43,6 +43,8 @@ export function ManagerShell({
   brand,
   user,
   impersonating,
+  freeMode,
+  freeModeEndsAt,
   children,
 }: {
   branches: Branch[];
@@ -50,6 +52,10 @@ export function ManagerShell({
   brand: { name: string; logoUrl: string | null };
   user: { name: string; email: string; avatarUrl: string | null };
   impersonating: { adminName: string; targetName: string } | null;
+  /** Free mode (platform completely free for now) suppresses the plan locks. */
+  freeMode: boolean;
+  /** When free mode ends — shown by the subscription banner while it runs. */
+  freeModeEndsAt?: string | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -120,6 +126,7 @@ export function ManagerShell({
       branches={branches}
       activeBranch={active}
       brand={brand}
+      freeMode={freeMode}
       onSwitchBranch={onSwitchBranch}
     />
   );
@@ -163,7 +170,7 @@ export function ManagerShell({
           />
         )}
 
-        <SubscriptionBanner state={active.subscriptionState} endDate={active.expiresAt} />
+        <SubscriptionBanner state={active.subscriptionState} endDate={active.expiresAt} freeModeEndsAt={freeModeEndsAt} />
 
         {/* The restaurant's own pause, not the platform's. Shown here rather
             than only on settings, because a kitchen that forgets it is paused

@@ -59,12 +59,6 @@ export const reportsDict = defineDict({
     "mrp.empty.body":
       "Les rapports se construisent à partir de vos commandes. Dès la première commande encaissée, les ventes, les heures de pointe et les plats vedettes apparaissent ici.",
     "mrp.empty.hint": "Essayez une période plus longue si vous avez déjà vendu.",
-
-    /* ── Fonctionnalité payante (§14.4) ──────────────────────────────── */
-    "mrp.locked.title": "Les rapports font partie des formules payantes",
-    "mrp.locked.body":
-      "Ventes dans le temps, plats les plus commandés, répartition des commandes et heures de pointe — pour comprendre ce qui marche vraiment chez vous.",
-    "mrp.locked.cta": "Voir les formules",
   },
   en: {
     "mrp.title": "Reports",
@@ -115,11 +109,5 @@ export const reportsDict = defineDict({
     "mrp.empty.body":
       "Reports are built from your orders. As soon as the first one is taken, sales, peak hours and best sellers appear here.",
     "mrp.empty.hint": "Try a longer period if you have already been selling.",
-
-    /* ── Paid feature (§14.4) ────────────────────────────────────────── */
-    "mrp.locked.title": "Reports come with the paid plans",
-    "mrp.locked.body":
-      "Sales over time, best-selling dishes, order mix and peak hours — so you can see what actually works in your restaurant.",
-    "mrp.locked.cta": "See the plans",
   },
 });

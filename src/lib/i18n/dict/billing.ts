@@ -36,6 +36,11 @@ export const billingDict = defineDict({
     "mbl.current.noExpiry": "N'expire pas",
     "mbl.current.unknown": "Formule inconnue",
 
+    /* ── Mode gratuit (plateforme gratuite pour tous) ────────────────── */
+    "mbl.freeMode.title": "Mode gratuit actif",
+    "mbl.freeMode.bodyDate": "Toutes les formules sont offertes gratuitement jusqu'au {date}.",
+    "mbl.freeMode.body": "Toutes les formules sont actuellement offertes gratuitement.",
+
     /* ── Essai gratuit ────────────────────────────────────────────────── */
     "mbl.trial.left": "Essai gratuit — {days} jour(s) restant(s).",
     "mbl.trial.body":
@@ -114,29 +119,45 @@ export const billingDict = defineDict({
     "mbl.pay.later": "Plus tard",
     "mbl.pay.open": "Ouvrir la page de paiement",
 
-    /* ── Ce que le paiement fait vraiment ─────────────────────────────── */
-    "mbl.sim.title": "Paiement simulé",
-    "mbl.sim.body":
-      "Aucune demande n'est envoyée sur votre téléphone et aucun argent ne change de main. Le paiement mobile n'est pas encore branché : ce bouton enregistre un paiement de test et active votre abonnement par le chemin définitif, celui qu'empruntera le paiement réel.",
-    "mbl.sim.off.title": "Les paiements réels sont activés",
-    "mbl.sim.off.body":
-      "La simulation est donc désactivée, et aucun fournisseur de paiement mobile n'est encore branché ici. Contactez l'assistance pour régler cette facture.",
+    /* ── Paiement par Mobile Money ────────────────────────────────────── */
+    "mbl.handled.title": "Paiement par Mobile Money",
+    "mbl.handled.body":
+      "Vous serez guidé sur la page de paiement : saisissez votre numéro MTN MoMo ou Orange Money, puis validez la demande sur votre téléphone. Votre formule est activée dès la confirmation de l'opérateur.",
+    "mbl.handled.cta": "Ouvrir la page de paiement",
 
     /* ── Page de paiement ─────────────────────────────────────────────── */
     "mbl.payPage.title": "Régler la facture",
-    "mbl.payPage.subtitle": "Paiement simulé — le paiement mobile n'est pas encore branché.",
+    "mbl.payPage.subtitle": "Payez par MTN Mobile Money ou Orange Money.",
     "mbl.payPage.amountDue": "Montant à régler",
     "mbl.payPage.invoiceLabel": "Facture",
     "mbl.payPage.planLabel": "Formule",
     "mbl.payPage.periodLabel": "Période",
-    "mbl.payPage.cta": "Valider le paiement simulé",
-    "mbl.payPage.done.title": "Facture réglée",
-    "mbl.payPage.done.body": "Votre formule est active pour 30 jours.",
     "mbl.payPage.already.title": "Cette facture est déjà réglée",
     "mbl.payPage.already.body": "Il n'y a rien à payer. Aucun second prélèvement n'est possible.",
     "mbl.payPage.void.title": "Cette facture a été annulée",
     "mbl.payPage.void.body":
       "Elle ne peut plus être réglée. Choisissez une formule depuis la page d'abonnement pour en émettre une nouvelle.",
+
+    /* ── Règlement Mobile Money ───────────────────────────────────────── */
+    "mbl.checkout.phoneLabel": "Numéro Mobile Money",
+    "mbl.checkout.phoneHint": "MTN MoMo ou Orange Money — 9 chiffres, ex. 6XXXXXXXX.",
+    "mbl.checkout.phonePlaceholder": "6XXXXXXXX",
+    "mbl.checkout.phoneRequired": "Saisissez votre numéro Mobile Money.",
+    "mbl.checkout.pay": "Payer {amount}",
+    "mbl.checkout.sandboxNote": "Mode de démonstration — aucun argent n'est débité.",
+    "mbl.checkout.failedGeneric": "Le paiement a échoué. Réessayez.",
+    "mbl.checkout.pending.title": "Confirmez sur votre téléphone",
+    "mbl.checkout.pending.body":
+      "Une demande de {amount} a été envoyée au numéro {phone}. Ouvrez votre appli Mobile Money et validez.",
+    "mbl.checkout.pending.hint":
+      "La page suit automatiquement la confirmation. Vous pouvez la fermer : le paiement sera pris en compte de toute façon.",
+    "mbl.checkout.done.title": "Paiement confirmé",
+    "mbl.checkout.done.body":
+      "Votre règlement de {amount} a été appliqué. Votre formule est active pour 30 jours.",
+    "mbl.checkout.failed.title": "Paiement non confirmé",
+    "mbl.checkout.failed.body":
+      "La demande n'a pas été confirmée par l'opérateur. Si vous avez validé le paiement sur votre téléphone, il sera pris en compte automatiquement.",
+    "mbl.checkout.retry": "Réessayer",
 
     /* ── Le document ──────────────────────────────────────────────────── */
     "mbl.doc.heading": "Facture",
@@ -155,7 +176,6 @@ export const billingDict = defineDict({
       "Les commissions sur les commandes livrées font l'objet d'un relevé distinct. Les frais de livraison en sont exclus.",
 
     /* ── Retours d'action ─────────────────────────────────────────────── */
-    "mbl.toast.paid": "Facture réglée. Votre abonnement est actif pour 30 jours.",
     "mbl.toast.planChanged": "Formule mise à jour.",
     "mbl.toast.invoiceReady": "Facture créée. Il ne reste qu'à la régler.",
   },
@@ -172,6 +192,11 @@ export const billingDict = defineDict({
     "mbl.current.due": "Due: {date}",
     "mbl.current.noExpiry": "Never expires",
     "mbl.current.unknown": "Unknown plan",
+
+    /* ── Free mode (platform free for everyone) ───────────────────────── */
+    "mbl.freeMode.title": "Free mode is on",
+    "mbl.freeMode.bodyDate": "Every plan is free until {date}.",
+    "mbl.freeMode.body": "Every plan is currently free.",
 
     /* ── Free trial ───────────────────────────────────────────────────── */
     "mbl.trial.left": "Free trial — {days} day(s) left.",
@@ -243,29 +268,45 @@ export const billingDict = defineDict({
     "mbl.pay.later": "Later",
     "mbl.pay.open": "Open the payment page",
 
-    /* ── What paying actually does ────────────────────────────────────── */
-    "mbl.sim.title": "Simulated payment",
-    "mbl.sim.body":
-      "No request is sent to your phone and no money changes hands. Mobile payment is not connected yet: this button records a test payment and activates your subscription through the final code path — the one the real payment will use.",
-    "mbl.sim.off.title": "Real payments are switched on",
-    "mbl.sim.off.body":
-      "Simulation is therefore disabled, and no mobile payment provider is connected here yet. Contact support to settle this invoice.",
+    /* ── Payment by Mobile Money ───────────────────────────────────────── */
+    "mbl.handled.title": "Payment by Mobile Money",
+    "mbl.handled.body":
+      "You will be guided on the payment page: enter your MTN MoMo or Orange Money number, then approve the request on your phone. Your plan is activated the moment the operator confirms.",
+    "mbl.handled.cta": "Open the payment page",
 
     /* ── Payment page ─────────────────────────────────────────────────── */
     "mbl.payPage.title": "Settle the invoice",
-    "mbl.payPage.subtitle": "Simulated payment — mobile payment is not connected yet.",
+    "mbl.payPage.subtitle": "Pay by MTN Mobile Money or Orange Money.",
     "mbl.payPage.amountDue": "Amount due",
     "mbl.payPage.invoiceLabel": "Invoice",
     "mbl.payPage.planLabel": "Plan",
     "mbl.payPage.periodLabel": "Period",
-    "mbl.payPage.cta": "Confirm the simulated payment",
-    "mbl.payPage.done.title": "Invoice settled",
-    "mbl.payPage.done.body": "Your plan is active for 30 days.",
     "mbl.payPage.already.title": "This invoice is already settled",
     "mbl.payPage.already.body": "There is nothing to pay. A second charge is not possible.",
     "mbl.payPage.void.title": "This invoice was cancelled",
     "mbl.payPage.void.body":
       "It can no longer be settled. Choose a plan from the subscription page to raise a new one.",
+
+    /* ── Mobile Money settlement ──────────────────────────────────────── */
+    "mbl.checkout.phoneLabel": "Mobile Money number",
+    "mbl.checkout.phoneHint": "MTN MoMo or Orange Money — 9 digits, e.g. 6XXXXXXXX.",
+    "mbl.checkout.phonePlaceholder": "6XXXXXXXX",
+    "mbl.checkout.phoneRequired": "Enter your Mobile Money number.",
+    "mbl.checkout.pay": "Pay {amount}",
+    "mbl.checkout.sandboxNote": "Demonstration mode — no money is charged.",
+    "mbl.checkout.failedGeneric": "The payment failed. Please try again.",
+    "mbl.checkout.pending.title": "Confirm on your phone",
+    "mbl.checkout.pending.body":
+      "A request for {amount} was sent to {phone}. Open your Mobile Money app and approve it.",
+    "mbl.checkout.pending.hint":
+      "This page follows the confirmation automatically. You may close it — the payment is picked up either way.",
+    "mbl.checkout.done.title": "Payment confirmed",
+    "mbl.checkout.done.body":
+      "Your payment of {amount} has been applied. Your plan is active for 30 days.",
+    "mbl.checkout.failed.title": "Payment not confirmed",
+    "mbl.checkout.failed.body":
+      "The request was not confirmed by the operator. If you approved the payment on your phone, it will be applied automatically.",
+    "mbl.checkout.retry": "Try again",
 
     /* ── The document ─────────────────────────────────────────────────── */
     "mbl.doc.heading": "Invoice",
@@ -284,7 +325,6 @@ export const billingDict = defineDict({
       "Commission on delivered orders is billed on a separate statement. Delivery fees are excluded from it.",
 
     /* ── Action feedback ──────────────────────────────────────────────── */
-    "mbl.toast.paid": "Invoice settled. Your subscription is active for 30 days.",
     "mbl.toast.planChanged": "Plan updated.",
     "mbl.toast.invoiceReady": "Invoice created. All that is left is to settle it.",
   },

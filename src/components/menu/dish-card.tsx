@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { useState } from "react";
 import { Plus, UtensilsCrossed } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -24,12 +25,19 @@ function DishImage({ className }: { className?: string }) {
 }
 
 function DishPhoto({ src, className }: { src: string; className?: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return <DishImage className={className} />;
+  }
+
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
       alt=""
       loading="lazy"
+      onError={() => setFailed(true)}
       className={cn("size-full object-cover", className)}
     />
   );

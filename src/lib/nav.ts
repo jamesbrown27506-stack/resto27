@@ -57,6 +57,10 @@ export const MANAGER_NAV: NavGroup[] = [
         labelKey: "nav.m.reservations",
         icon: "CalendarCheck",
         capability: "reservations.view",
+        // Table reservations are a Professional feature on the pricing page;
+        // Starter keeps "basic reservations". The page itself renders the
+        // upgrade prompt — this only shows the lock.
+        planGated: true,
       },
       { href: "/m/tables", labelKey: "nav.m.tables", icon: "Armchair", capability: "tables.view" },
       // No capability gate: every active staff member may answer customers.
@@ -100,7 +104,7 @@ export const MANAGER_NAV: NavGroup[] = [
   {
     labelKey: "nav.g.business",
     items: [
-      { href: "/m/staff", labelKey: "nav.m.staff", icon: "UserCog", capability: "staff.manage" },
+      { href: "/m/staff", labelKey: "nav.m.staff", icon: "UserCog", capability: "staff.manage", planGated: true },
       {
         href: "/m/billing",
         labelKey: "nav.m.billing",
@@ -245,4 +249,30 @@ export const FOOTER_NAV: { heading: string; links: { href: string; label: string
 export function isActive(item: Pick<NavItem, "href" | "matchPrefix">, pathname: string): boolean {
   if (item.matchPrefix) return pathname === item.href || pathname.startsWith(`${item.href}/`);
   return pathname === item.href;
+}
+
+/**
+ * Where a pricing "Get started" button should take this user.
+ *
+ * Signed-in users used to be sent to /register/restaurant like everyone else —
+ * which is a customer-signup screen that refuses an existing account, and a
+ * manager landing there after clicking a plan walked into a wall (§14.4.6).
+ * Each area gets the screen that actually serves it:
+ *
+ *   manager  → /m/billing  (their subscriptions live here)
+ *   admin    → /a/subscriptions (the global billing console)
+ *   customer → /account    (they are not a tenant; "my area" is their account)
+ *   nobody   → /register/restaurant (the signup funnel)
+ */
+export function planCtaHref(area: "admin" | "manager" | "customer" | null): string {
+  switch (area) {
+    case "manager":
+      return "/m/billing";
+    case "admin":
+      return "/a/subscriptions";
+    case "customer":
+      return "/account";
+    default:
+      return "/register/restaurant";
+  }
 }

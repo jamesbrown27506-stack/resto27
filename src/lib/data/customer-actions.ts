@@ -8,6 +8,11 @@ import { requireUser } from "@/lib/auth/session";
 import { canCustomerCancel } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
 import { saveUpload, type UploadKind } from "@/lib/uploads";
+import {
+  checkPaymentAttempt,
+  initiatePaymentAttempt,
+  settlePayment,
+} from "@/lib/payments/collect";
 import type { ActionResult } from "./admin-actions";
 import type { CustomerPreferences } from "./customer";
 import type { UploadActionResult } from "./profile-actions";
@@ -260,6 +265,9 @@ const ReservationSchema = z.object({
   reservedFor: z.string().datetime(),
   partySize: z.coerce.number().int().min(1).max(20),
   notes: z.string().max(500).optional().default(""),
+  /** Mobile Money number — required only when the restaurant charges a fixed
+   *  reservation fee, which the customer pays online at booking. */
+  phone: z.string().optional().default(""),
 });
 
 /**
@@ -270,13 +278,15 @@ const ReservationSchema = z.object({
  * last table for that hour is taken. A restaurant with no tables configured
  * never blocks — a walk-in place has no capacity ceiling to enforce.
  */
-export async function createOwnReservation(input: z.infer<typeof ReservationSchema>): Promise<ActionResult> {
+export async function createOwnReservation(
+  input: z.infer<typeof ReservationSchema>,
+): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string }> {
   const user = await requireUser();
 
   const parsed = ReservationSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Vérifiez les informations de la réservation." };
 
-  const { restaurantId, reservedFor, partySize, notes } = parsed.data;
+  const { restaurantId, reservedFor, partySize, notes, phone } = parsed.data;
   const when = new Date(reservedFor);
   if (when.getTime() <= Date.now()) return { ok: false, error: "Choisissez une date à venir." };
 
@@ -284,13 +294,16 @@ export async function createOwnReservation(input: z.infer<typeof ReservationSche
 
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
-    .select("id, status, deposit_amount")
+    .select("id, status, deposit_amount, deposit_type")
     .eq("id", restaurantId)
     .eq("status", "active")
     .maybeSingle();
 
   if (restaurantError || !restaurant) return { ok: false, error: "Restaurant introuvable." };
-  const depositAmount = Number((restaurant as { deposit_amount?: number }).deposit_amount ?? 0);
+  const restaurantRow = restaurant as { deposit_amount?: number; deposit_type?: string };
+  const depositAmount = Number(restaurantRow.deposit_amount ?? 0);
+  const depositType = restaurantRow.deposit_type === "percent" ? "percent" : "fixed";
+  const depositPercent = depositType === "percent" ? depositAmount : 0;
 
   const slotStart = new Date(when.getTime() - 30 * 60_000).toISOString();
   const slotEnd = new Date(when.getTime() + 90 * 60_000).toISOString();
@@ -317,22 +330,76 @@ export async function createOwnReservation(input: z.infer<typeof ReservationSche
   }
 
   const reference = `RES-${randomUUID().slice(0, 4).toUpperCase()}`;
-  const { error: insertError } = await supabase.from("reservations").insert({
-    reference,
-    restaurant_id: restaurantId,
-    customer_id: user.id,
-    guest_name: user.name,
-    guest_phone: user.phone ?? "",
-    party_size: partySize,
-    reserved_for: reservedFor,
-    status: "pending",
-    // Snapshotted from the restaurant's price at booking time (0025) — a
-    // price change after the customer booked must not rewrite their booking.
-    deposit_amount: depositAmount,
-    notes: notes.trim() || null,
-  });
+  const { data: inserted, error: insertError } = await supabase
+    .from("reservations")
+    .insert({
+      reference,
+      restaurant_id: restaurantId,
+      customer_id: user.id,
+      guest_name: user.name,
+      guest_phone: phone.trim() || user.phone || "",
+      party_size: partySize,
+      reserved_for: reservedFor,
+      status: "pending",
+      // Snapshotted from the restaurant's price at booking time (0025) — a
+      // price change after the customer booked must not rewrite their booking.
+      // The percentage is snapshotted too (0031) so the board still reads the
+      // value the customer booked under.
+      deposit_amount: depositType === "fixed" ? depositAmount : 0,
+      deposit_percent: depositPercent,
+      notes: notes.trim() || null,
+    })
+    .select("id")
+    .single();
 
-  if (insertError) return { ok: false, error: "La demande n'a pas pu être envoyée." };
+  if (insertError || !inserted) return { ok: false, error: "La demande n'a pas pu être envoyée." };
+  const reservationId = inserted.id as string;
+
+  // A fixed reservation fee is paid ONLINE at booking (0031): the customer's
+  // Mobile Money is charged through the platform's payment path, the money is
+  // credited to the restaurant's wallet, and the booking is marked paid. The
+  // fee is DEDUCTED from the customer's final bill. A percentage fee is never
+  // charged here — the bill is unknown at booking — and is collected at the
+  // restaurant against the real bill.
+  const fixedFee = depositType === "fixed" && depositAmount > 0;
+
+  if (fixedFee) {
+    if (!phone.trim()) {
+      // The booking exists but was never paid for — remove it so the request
+      // fails cleanly and the customer can book again with a phone number.
+      await supabase.from("reservations").delete().eq("id", reservationId);
+      return { ok: false, error: "Numéro Mobile Money requis pour régler l'acompte." };
+    }
+
+    const initiated = await initiatePaymentAttempt({
+      kind: "reservation",
+      restaurantId,
+      reservationId,
+      reference,
+      phone,
+      amount: depositAmount,
+    });
+
+    if (!initiated.ok || !initiated.attemptId) {
+      await supabase.from("reservations").delete().eq("id", reservationId);
+      return { ok: false, error: initiated.error ?? "Le paiement de l'acompte a échoué." };
+    }
+
+    if (initiated.status === "pending") {
+      // Live mode: the customer must approve on their handset. The booking is
+      // real but unpaid; the client polls checkReservationPayment, and the
+      // CamerPay webhook settles it even if the page is closed.
+      return { ok: true, status: "pending", attemptId: initiated.attemptId };
+    }
+
+    // Sandbox: the attempt is already 'succeeded' — settle now (credits the
+    // restaurant's wallet and marks the booking deposit paid).
+    const settled = await settlePayment(initiated.attemptId);
+    if (!settled.ok) {
+      console.error("[customer:createOwnReservation] settle", settled.error);
+      return { ok: false, error: settled.error ?? "L'acompte n'a pas pu être appliqué." };
+    }
+  }
 
   // A booking request is only real once someone at the restaurant has seen it.
   await notify({
@@ -345,7 +412,47 @@ export async function createOwnReservation(input: z.infer<typeof ReservationSche
 
   revalidatePath("/reservations");
   revalidatePath("/account");
-  return { ok: true };
+  return { ok: true, status: "succeeded" };
+}
+
+/**
+ * Poll a pending reservation-deposit payment.
+ *
+ * Verifies the attempt belongs to one of the customer's OWN reservations
+ * before touching it — an attempt id alone must not let a customer watch
+ * somebody else's money move.
+ */
+export async function checkReservationPayment(
+  attemptId: string,
+): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed" }> {
+  const user = await requireUser();
+  const supabase = createAdminClient();
+
+  const { data: attempt } = await supabase
+    .from("payment_attempts")
+    .select("reservation_id")
+    .eq("id", attemptId)
+    .maybeSingle();
+
+  if (!attempt?.reservation_id) return { ok: false, error: "Paiement introuvable." };
+
+  const { data: reservation } = await supabase
+    .from("reservations")
+    .select("id")
+    .eq("id", attempt.reservation_id)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+
+  if (!reservation) return { ok: false, error: "Paiement introuvable." };
+
+  const result = await checkPaymentAttempt(attemptId);
+  if (!result.ok) return { ok: false, error: result.error ?? "Paiement introuvable." };
+
+  if (result.status === "succeeded") {
+    revalidatePath("/reservations");
+    revalidatePath("/account");
+  }
+  return { ok: true, status: result.status };
 }
 
 /** Cancel one of your own pending/confirmed reservations. */

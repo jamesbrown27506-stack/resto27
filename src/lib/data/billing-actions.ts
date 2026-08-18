@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth/session";
 import { writeAudit } from "./platform-actions";
 import { notify } from "@/lib/notify";
+import { activateFromInvoice } from "./invoice-activation";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -360,18 +361,22 @@ export async function confirmPaymentAttempt(attemptId: string): Promise<ActionRe
     confirmed_by: admin.email,
   });
 
-  await supabase
-    .from("invoices")
-    .update({ status: "paid", paid_at: now })
-    .eq("id", invoice.id)
-    .eq("status", "unpaid");
-
   await writeAudit(admin, {
     action: "payment.confirm_manual",
     entityType: "payment_attempt",
     entityId: attemptId,
     summary: `Confirmed ${attempt.amount} XAF against invoice ${invoice.id}`,
   });
+
+  /**
+   * §6 — THE ONLY ACTIVATION PATH. Marking the invoice paid and moving the
+   * subscription's end date happens HERE, in `activateFromInvoice` — the same
+   * function the CamerPay webhook will call. Updating the invoice directly in
+   * this function would be a second activation path; the two would disagree
+   * (this one credits no month), and the disagreement is money.
+   */
+  const activation = await activateFromInvoice(invoice.id);
+  if (!activation.ok) return activation;
 
   // A settled invoice is the one billing alert a tenant genuinely cares about.
   await notify({

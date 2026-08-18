@@ -8,7 +8,9 @@ import { SectionTag } from "@/components/ui/badge";
 import { formatMoney, formatPercent } from "@/lib/format/currency";
 import { formatLimit } from "@/lib/format/subscription";
 import { listPublicPlans, type PublicPlan } from "@/lib/data/plans";
+import { getHeaderUser } from "@/lib/auth/header-user";
 import { getTranslator } from "@/lib/i18n/locale-server";
+import { planCtaHref } from "@/lib/nav";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
 export const metadata: Metadata = {
@@ -60,8 +62,9 @@ function faqItems(t: (key: TranslationKey, vars?: Record<string, string | number
 
 export default async function PricingPage() {
   const t = await getTranslator();
-  const plans = await listPublicPlans();
+  const [plans, user] = await Promise.all([listPublicPlans(), getHeaderUser()]);
   const rows = planRows(t);
+  const area = user?.area ?? null;
 
   return (
     <>
@@ -80,7 +83,7 @@ export default async function PricingPage() {
           Rendered from the plan rows, never hardcoded (§14.1). The limits
           advertised here are the same values the app enforces.
         */}
-        <PricingGrid plans={plans} />
+        <PricingGrid plans={plans} userArea={area} />
       </section>
 
       <section className="bg-surface-2 py-16">
@@ -157,7 +160,7 @@ export default async function PricingPage() {
       <CtaBanner
         title={t("mk.pricing.cta.title")}
         description={t("mk.pricing.cta.body")}
-        primary={{ href: "/register/restaurant", label: t("mk.pricing.cta.primary") }}
+        primary={{ href: planCtaHref(area), label: t("mk.pricing.cta.primary") }}
         secondary={{ href: "/contact", label: t("mk.pricing.cta.secondary") }}
       />
     </>

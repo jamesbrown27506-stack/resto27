@@ -4,6 +4,8 @@ import { Clock, Mail, MapPin, MessageSquare, Phone } from "lucide-react";
 import { Card, CardBody } from "@/components/ui/card";
 import { SectionTag } from "@/components/ui/badge";
 import { getTranslator } from "@/lib/i18n/locale-server";
+import { getHeaderUser } from "@/lib/auth/header-user";
+import { planCtaHref } from "@/lib/nav";
 import { ContactForm } from "./contact-form";
 
 export const metadata: Metadata = {
@@ -15,6 +17,7 @@ export const metadata: Metadata = {
 
 export default async function ContactPage() {
   const t = await getTranslator();
+  const user = await getHeaderUser();
 
   return (
     <div className="container-page py-14 lg:py-20">
@@ -86,7 +89,7 @@ export default async function ContactPage() {
               <h2 className="mt-3 font-display text-lg font-bold">{t("mk.contact.ownerTitle")}</h2>
               <p className="mt-1.5 text-sm text-text-secondary">{t("mk.contact.ownerBody")}</p>
               <Link
-                href="/register/restaurant"
+                href={planCtaHref(user?.area ?? null)}
                 className="mt-3 inline-block text-sm font-semibold text-primary underline underline-offset-4"
               >
                 {t("mk.contact.ownerCta")}

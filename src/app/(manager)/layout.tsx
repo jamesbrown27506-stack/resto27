@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/auth/session";
 import { getBranchContext } from "@/lib/auth/branch";
 import { NoBranch } from "@/components/layout/no-branch";
 import { getBranding } from "@/lib/branding";
+import { freeModeEndsAt, isFreeMode } from "@/lib/data/billing";
 
 /**
  * Manager area guard — BOTH permission levels (§2).
@@ -19,7 +20,12 @@ import { getBranding } from "@/lib/branding";
  */
 export default async function ManagerLayout({ children }: { children: React.ReactNode }) {
   const profile = await requireRole("manager", "admin");
-  const [context, brand] = await Promise.all([getBranchContext(), getBranding()]);
+  const [context, brand, freeMode, freeEnds] = await Promise.all([
+    getBranchContext(),
+    getBranding(),
+    isFreeMode(),
+    freeModeEndsAt(),
+  ]);
 
   /**
    * A signed-in manager with no branch is a real state, not a bug.
@@ -54,6 +60,8 @@ export default async function ManagerLayout({ children }: { children: React.Reac
             }
           : null
       }
+      freeMode={freeMode}
+      freeModeEndsAt={freeEnds}
     >
       {children}
     </ManagerShell>

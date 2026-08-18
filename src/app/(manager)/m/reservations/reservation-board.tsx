@@ -33,6 +33,7 @@ export function ReservationBoard({
   tables,
   canDecide,
   depositAmount,
+  depositType,
   canCollectDeposit,
 }: {
   reservations: Reservation[];
@@ -40,6 +41,8 @@ export function ReservationBoard({
   canDecide: boolean;
   /** The restaurant's current acompte (migration 0025). */
   depositAmount: number;
+  /** How the acompte works (migration 0031): fixed FCFA or % of the bill. */
+  depositType: "fixed" | "percent";
   canCollectDeposit: boolean;
 }) {
   const { t } = useLocale();
@@ -52,6 +55,8 @@ export function ReservationBoard({
   const [declining, setDeclining] = useState<Reservation | null>(null);
   const [reason, setReason] = useState("");
   const [depositDraft, setDepositDraft] = useState(String(depositAmount));
+  const [collecting, setCollecting] = useState<Reservation | null>(null);
+  const [billDraft, setBillDraft] = useState("");
 
   // Pending first, whatever the time. A decision waiting is more urgent than a
   // booking already settled, even one that is sooner.
@@ -122,33 +127,61 @@ export function ReservationBoard({
             </p>
           )}
 
-          {reservation.depositAmount > 0 && (
+          {reservation.depositAmount > 0 || reservation.depositPercent > 0 ? (
             <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
-              <Badge
-                tone={reservation.depositPaid ? "success" : "warning"}
-                className={reservation.depositPaid ? undefined : "border-transparent"}
-              >
-                <Banknote className="size-3" aria-hidden />
-                {t("res.deposit", { amount: reservation.depositAmount.toLocaleString("fr-CM") })}
-              </Badge>
+              {reservation.depositPercent > 0 ? (
+                <Badge
+                  tone={reservation.depositPaid ? "success" : "warning"}
+                  className={reservation.depositPaid ? undefined : "border-transparent"}
+                >
+                  <Banknote className="size-3" aria-hidden />
+                  {t("res.depositPercent", { pct: reservation.depositPercent })}
+                </Badge>
+              ) : (
+                <Badge
+                  tone={reservation.depositPaid ? "success" : "warning"}
+                  className={reservation.depositPaid ? undefined : "border-transparent"}
+                >
+                  <Banknote className="size-3" aria-hidden />
+                  {t("res.deposit", { amount: reservation.depositAmount.toLocaleString("fr-CM") })}
+                </Badge>
+              )}
               {reservation.depositPaid && (
                 <span className="text-success">{t("res.depositPaid")}</span>
               )}
               {!reservation.depositPaid && canCollectDeposit && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={pending}
-                  onClick={() =>
-                    run(() => collectReservationDeposit(reservation.id), t("res.depositCollected"))
-                  }
-                >
-                  <Banknote className="size-3.5" aria-hidden />
-                  {t("res.collectDeposit")}
-                </Button>
+                <>
+                  {reservation.depositPercent > 0 ? (
+                    /* A percentage deposit needs the real bill — ask for it. */
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() => {
+                        setCollecting(reservation);
+                        setBillDraft("");
+                      }}
+                    >
+                      <Banknote className="size-3.5" aria-hidden />
+                      {t("res.collectDeposit")}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={pending}
+                      onClick={() =>
+                        run(() => collectReservationDeposit(reservation.id), t("res.depositCollected"))
+                      }
+                    >
+                      <Banknote className="size-3.5" aria-hidden />
+                      {t("res.collectDeposit")}
+                    </Button>
+                  )}
+                </>
               )}
             </p>
-          )}
+          ) : null}
         </div>
 
         {canDecide && (
@@ -231,24 +264,34 @@ export function ReservationBoard({
         <section className="mb-6 rounded-lg border border-border bg-surface p-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">{t("res.depositTitle")}</p>
-              <p className="text-xs text-text-light">{t("res.depositBody")}</p>
+              <p className="text-sm font-semibold">
+                {depositType === "percent" ? t("res.percentTitle") : t("res.depositTitle")}
+              </p>
+              <p className="text-xs text-text-light">
+                {depositType === "percent" ? t("res.percentBody") : t("res.depositBody")}
+              </p>
             </div>
-            <Input
-              type="number"
-              min={0}
-              step={100}
-              value={depositDraft}
-              onChange={(e) => setDepositDraft(e.target.value)}
-              className="w-36"
-              aria-label={t("res.depositTitle")}
-            />
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min={0}
+                step={depositType === "percent" ? 1 : 100}
+                value={depositDraft}
+                onChange={(e) => setDepositDraft(e.target.value)}
+                className="w-36"
+                aria-label={depositType === "percent" ? t("res.percentTitle") : t("res.depositTitle")}
+              />
+              <span className="text-sm text-text-light">{depositType === "percent" ? "%" : "FCFA"}</span>
+            </div>
             <Button
               variant="outline"
               size="sm"
               disabled={pending}
               onClick={() =>
-                run(() => setRestaurantDeposit(Number(depositDraft) || 0), t("res.depositSaved"))
+                run(
+                  () => setRestaurantDeposit(Number(depositDraft) || 0, { type: depositType }),
+                  t("res.depositSaved"),
+                )
               }
             >
               <Banknote className="size-3.5" aria-hidden />
@@ -395,6 +438,70 @@ export function ReservationBoard({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder={t("res.reasonPh")}
+              />
+            </Field>
+          </div>
+        )}
+      </Sheet>
+
+      {/* ── Collect a percentage deposit ───────────────────────────────── */}
+      <Sheet
+        open={collecting !== null}
+        onClose={() => setCollecting(null)}
+        title={t("res.percentTitle")}
+        footer={
+          collecting && (
+            <SheetActions>
+              <Button variant="outline" onClick={() => setCollecting(null)}>
+                <span>{t("common.cancel")}</span>
+              </Button>
+              <Button
+                loading={pending}
+                disabled={!billDraft.trim()}
+                onClick={() => {
+                  run(
+                    () => collectReservationDeposit(collecting.id, Number(billDraft) || 0),
+                    t("res.collectPercent", {
+                      amount: Math.round(
+                        ((Number(billDraft) || 0) * collecting.depositPercent) / 100,
+                      ).toLocaleString("fr-CM"),
+                    }),
+                  );
+                  setCollecting(null);
+                }}
+              >
+                <Banknote className="size-4" aria-hidden />
+                <span>
+                  {t("res.collectPercent", {
+                    amount: Math.round(
+                      ((Number(billDraft) || 0) * collecting.depositPercent) / 100,
+                    ).toLocaleString("fr-CM"),
+                  })}
+                </span>
+              </Button>
+            </SheetActions>
+          )
+        }
+      >
+        {collecting && (
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-text-secondary">
+              <span>{collecting.guestName}</span>
+              <span> · </span>
+              <span>{t("res.depositPercent", { pct: collecting.depositPercent })}</span>
+            </p>
+
+            <Field
+              label={t("res.billTotal")}
+              htmlFor="collect-bill"
+              hint={t("res.billTotalHint")}
+            >
+              <Input
+                id="collect-bill"
+                value={billDraft}
+                onChange={(e) => setBillDraft(e.target.value)}
+                placeholder={t("res.billTotalPh")}
+                inputMode="numeric"
               />
             </Field>
           </div>

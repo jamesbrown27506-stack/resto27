@@ -43,10 +43,10 @@ export function RestaurantCard({
   return (
     <article className="group relative overflow-hidden rounded-lg border border-border bg-surface transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
       <div className="relative aspect-[4/3] overflow-hidden">
-        {restaurant.coverUrl ? (
+        {restaurant.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={restaurant.coverUrl}
+            src={restaurant.logoUrl}
             alt=""
             loading="lazy"
             className="size-full object-cover transition-transform duration-500 group-hover:scale-105"

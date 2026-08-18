@@ -298,6 +298,7 @@ export async function seedPopularDishes(ids: string[]): Promise<ActionResult> {
       name: d.name,
       description: d.description,
       price: d.price,
+      image_url: d.image,
       is_available: true,
       is_featured: false,
       prep_minutes: 0,
@@ -1235,23 +1236,120 @@ export async function completeSetup(): Promise<ActionResult> {
   return { ok: true };
 }
 
+/* ── Delivery mode (migration 0032) ───────────────────────────────────── */
+
+/**
+ * Set whether this restaurant has its own delivery riders (migration 0032).
+ *
+ * When `hasOwnDelivery` is false, the platform manages delivery and the
+ * admin sets the fee via the admin settings console. When true, the
+ * restaurant quotes the fee on each order confirmation (the existing flow).
+ */
+export async function setDeliveryMode(hasOwnDelivery: boolean): Promise<ActionResult> {
+  const { active, profile } = await requireCapability("profile.edit");
+  const supabase = createAdminClient();
+
+  const { error } = await supabase
+    .from("restaurants")
+    .update({ has_own_delivery: hasOwnDelivery })
+    .eq("id", active.restaurantId);
+
+  if (error) return { ok: false, error: "Could not save the delivery mode." };
+
+  await writeAudit(profile, {
+    action: "restaurant.delivery_mode",
+    entityType: "restaurant",
+    entityId: active.restaurantId,
+    summary: hasOwnDelivery
+      ? `${active.restaurantName}: own delivery riders`
+      : `${active.restaurantName}: platform delivery`,
+  });
+
+  revalidatePath("/m/profile");
+  revalidatePath("/m/setup");
+  return { ok: true };
+}
+
+/* ── Default opening hours (onboarding) ──────────────────────────────── */
+
+/**
+ * Set the default opening hours for a brand-new restaurant: Mon–Sat
+ * 10:00–22:00, Sunday closed. Called during the setup wizard so the
+ * restaurant's public page shows realistic hours from the start.
+ *
+ * Uses the same saveOpeningHours-style upsert, but with a simpler
+ * interface since this is a fixed default.
+ */
+export async function setDefaultOpeningHours(): Promise<ActionResult> {
+  const { active } = await requireCapability("menu.view");
+  const supabase = createAdminClient();
+
+  // Mon(1)–Sat(6): 10:00–22:00, Sun(0): closed
+  const hours = [
+    { weekday: 0, opens_at: null as string | null, closes_at: null as string | null },
+    { weekday: 1, opens_at: "10:00", closes_at: "22:00" },
+    { weekday: 2, opens_at: "10:00", closes_at: "22:00" },
+    { weekday: 3, opens_at: "10:00", closes_at: "22:00" },
+    { weekday: 4, opens_at: "10:00", closes_at: "22:00" },
+    { weekday: 5, opens_at: "10:00", closes_at: "22:00" },
+    { weekday: 6, opens_at: "10:00", closes_at: "22:00" },
+  ];
+
+  const { error } = await supabase.from("restaurant_hours").upsert(
+    hours.map((h) => ({
+      restaurant_id: active.restaurantId,
+      weekday: h.weekday,
+      opens_at: h.opens_at,
+      closes_at: h.closes_at,
+    })),
+    { onConflict: "restaurant_id,weekday" },
+  );
+
+  if (error) {
+    console.error("[manager:setDefaultOpeningHours]", error.message);
+    return { ok: false, error: "Could not save the opening hours." };
+  }
+
+  revalidatePath("/m/profile");
+  revalidatePath("/m/setup");
+  return { ok: true };
+}
+
 /* ── Reservation deposits (migration 0025) ────────────────────────────── */
 
 /**
- * Set the acompte this restaurant asks for to hold a table. 0 = none.
+ * Set the reservation fee this restaurant asks to hold a table (migration
+ * 0031). Two kinds:
+ *
+ *   fixed   — a fixed FCFA amount (`deposit_amount`). The customer pays it
+ *             ONLINE at booking (Mobile Money); it is deducted from their
+ *             final bill.
+ *   percent — a percentage of the customer's final bill (the number in
+ *             `deposit_amount` is then a %). NOT charged online — the bill
+ *             is unknown at booking — so the booking shows "X% of your
+ *             bill" and the board collects it against the real bill.
+ *
+ * Amount 0 + type fixed = no fee.
  */
-export async function setRestaurantDeposit(amount: number): Promise<ActionResult> {
+export async function setRestaurantDeposit(
+  amount: number,
+  options: { type?: "fixed" | "percent" } = {},
+): Promise<ActionResult> {
   const { active, profile } = await requireCapability("finance.manage");
 
+  const type = options.type ?? "fixed";
   const value = Math.round(amount);
   if (!Number.isInteger(value) || value < 0) {
     return { ok: false, error: "Amount must be zero or a positive number of francs." };
+  }
+  if (type === "percent" && (value < 1 || value > 100)) {
+    return { ok: false, error: "A percentage fee must be between 1 and 100." };
   }
 
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("restaurants")
-    .update({ deposit_amount: value })
+    .update({ deposit_amount: value, deposit_type: type })
     .eq("id", active.restaurantId);
 
   if (error) return { ok: false, error: "Could not save the deposit." };
@@ -1260,7 +1358,10 @@ export async function setRestaurantDeposit(amount: number): Promise<ActionResult
     action: "restaurant.deposit_set",
     entityType: "restaurant",
     entityId: active.restaurantId,
-    summary: `Set ${active.restaurantName} reservation deposit to ${value.toLocaleString("fr-CM")} FCFA`,
+    summary:
+      type === "percent"
+        ? `Set ${active.restaurantName} reservation deposit to ${value}% of the bill`
+        : `Set ${active.restaurantName} reservation deposit to ${value.toLocaleString("fr-CM")} FCFA`,
   });
 
   revalidatePath("/m/reservations");
@@ -1274,14 +1375,25 @@ export async function setRestaurantDeposit(amount: number): Promise<ActionResult
  *
  * The manager is not an admin, so the credit happens through the same RPC the
  * admin action uses, scoped to their own branch by the reservation lookup.
+ *
+ * Two kinds of deposit (migration 0031):
+ *   · fixed — the amount is the booking's snapshotted `deposit_amount`; the
+ *     customer paid it ONLINE at booking, so a manager usually never collects
+ *     it twice (the row is already `deposit_paid`).
+ *   · percent — the customer pays nothing online; the deposit is a percentage
+ *     of their actual bill, which is only known once they are eating. The
+ *     manager enters the bill total and `amount = bill × pct / 100`.
  */
-export async function collectReservationDeposit(reservationId: string): Promise<ActionResult> {
+export async function collectReservationDeposit(
+  reservationId: string,
+  billTotal?: number,
+): Promise<ActionResult> {
   const { active, profile } = await requireCapability("finance.manage");
   const supabase = createAdminClient();
 
   const { data: reservation } = await supabase
     .from("reservations")
-    .select("id, reference, deposit_amount, deposit_paid, status")
+    .select("id, reference, deposit_amount, deposit_percent, deposit_paid, status")
     .eq("id", reservationId)
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
@@ -1290,17 +1402,30 @@ export async function collectReservationDeposit(reservationId: string): Promise<
     id: string;
     reference: string;
     deposit_amount: number;
+    deposit_percent: number;
     deposit_paid: boolean;
     status: string;
   } | null;
 
   if (!row) return { ok: false, error: "Reservation not found." };
-  if (row.deposit_amount <= 0) return { ok: false, error: "This booking has no deposit." };
   if (row.deposit_paid) return { ok: false, error: "Deposit already collected." };
+
+  // Percent bookings carry no fixed amount — the percentage of the bill the
+  // manager is entering is what must be collected.
+  let amount = row.deposit_amount;
+  if (row.deposit_percent > 0) {
+    if (billTotal === undefined) return { ok: false, error: "Enter the bill total to collect a percentage deposit." };
+    const bill = Math.round(billTotal);
+    if (!Number.isInteger(bill) || bill <= 0) return { ok: false, error: "The bill total must be a positive number." };
+    amount = Math.round((bill * row.deposit_percent) / 100);
+    if (amount <= 0) return { ok: false, error: "The deposit would be zero at this bill total." };
+  }
+
+  if (amount <= 0) return { ok: false, error: "This booking has no deposit." };
 
   const { error: creditError } = await supabase.rpc("wallet_credit", {
     p_restaurant_id: active.restaurantId,
-    p_amount: row.deposit_amount,
+    p_amount: amount,
     p_kind: "deposit",
     p_note: `Acompte ${row.reference}`,
     p_reference: row.reference,
@@ -1323,7 +1448,7 @@ export async function collectReservationDeposit(reservationId: string): Promise<
     action: "reservation.deposit_collected",
     entityType: "reservation",
     entityId: reservationId,
-    summary: `Collected ${row.deposit_amount.toLocaleString("fr-CM")} FCFA deposit for ${row.reference}`,
+    summary: `Collected ${amount.toLocaleString("fr-CM")} FCFA deposit for ${row.reference}`,
   });
 
   revalidatePath("/m/reservations");

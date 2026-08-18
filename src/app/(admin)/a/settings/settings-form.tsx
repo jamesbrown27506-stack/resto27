@@ -1,12 +1,13 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Banknote, Bell, CreditCard, Palette, ReceiptText, Save, Settings as Cog } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardBody, Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ImageUpload } from "@/components/ui/image-upload";
-import { Field, Input, Switch } from "@/components/ui/input";
+import { Field, Input, Select, Switch } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { updateSettings } from "@/lib/data/platform-actions";
 import { clearBrandingAsset, uploadBrandingAsset } from "@/lib/data/profile-actions";
@@ -59,6 +60,7 @@ const ASSET_KEYS: ReadonlySet<string> = new Set(ASSET_KEY_LIST);
 
 export function SettingsForm({ settings }: { settings: SettingRow[] }) {
   const { toast } = useToast();
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   /** The text and boolean settings — everything Save is responsible for. */
@@ -172,6 +174,11 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
 
       clearPendingAssets();
       toast(`${dirtyCount} setting(s) saved.`, "success");
+
+      // Re-read the settings: the free-mode countdown hint computes its end
+      // date from the row's updated_at, which this save just bumped — a stale
+      // hint would promise yesterday's deadline.
+      router.refresh();
     });
   }
 
@@ -302,6 +309,94 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
                         value={value}
                         onChange={(next) =>
                           setDraft((prev) => ({ ...prev, [setting.key]: next }))
+                        }
+                      />
+                      <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
+                    </Field>
+                  );
+                }
+
+                if (setting.key === "payment_mode") {
+                  return (
+                    <Field
+                      key={setting.key}
+                      label={setting.label ?? setting.key}
+                      htmlFor={`set-${setting.key}`}
+                      hint={setting.description ?? undefined}
+                    >
+                      <Select
+                        id={`set-${setting.key}`}
+                        value={value}
+                        onChange={(e) =>
+                          setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
+                        }
+                      >
+                        <option value="sandbox">sandbox — simulated, no money moves</option>
+                        <option value="live">live — real charges through CamerPay</option>
+                      </Select>
+                      <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
+                    </Field>
+                  );
+                }
+
+                if (setting.key === "platform_delivery_fee") {
+                  return (
+                    <Field
+                      key={setting.key}
+                      label={setting.label ?? setting.key}
+                      htmlFor={`set-${setting.key}`}
+                      hint={setting.description ?? undefined}
+                    >
+                      <Input
+                        id={`set-${setting.key}`}
+                        value={value}
+                        inputMode="numeric"
+                        suffix="XAF"
+                        onChange={(e) =>
+                          setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
+                        }
+                      />
+                      <p className="mt-1 text-xs text-text-light">
+                        Applied to restaurants without their own delivery riders.
+                      </p>
+                      <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
+                    </Field>
+                  );
+                }
+
+                if (setting.key === "platform_free_mode_days") {
+                  // The countdown ends updated_at + days (migration 0031). The
+                  // date is computed here so the admin sees the consequence of
+                  // the number they are about to save, not a promise of one.
+                  const days = Math.max(0, Number(value) || 0);
+                  const endsAt = setting.updatedAt
+                    ? new Date(new Date(setting.updatedAt).getTime() + days * 86_400_000)
+                    : null;
+                  const endLabel = endsAt
+                    ? endsAt.toLocaleDateString("en-CM", {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      })
+                    : null;
+
+                  return (
+                    <Field
+                      key={setting.key}
+                      label={setting.label ?? setting.key}
+                      htmlFor={`set-${setting.key}`}
+                      hint={
+                        days > 0 && endLabel
+                          ? `Free mode ends on ${endLabel} (the last save plus ${days} day(s)).`
+                          : setting.description ?? undefined
+                      }
+                    >
+                      <Input
+                        id={`set-${setting.key}`}
+                        value={value}
+                        inputMode="numeric"
+                        onChange={(e) =>
+                          setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
                         }
                       />
                       <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>

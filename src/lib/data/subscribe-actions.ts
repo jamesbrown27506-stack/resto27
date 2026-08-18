@@ -1,107 +1,45 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
 import { notify } from "@/lib/notify";
-import type { ActionResult } from "./admin-actions";
+import { getFreeModeWindow } from "./billing";
+import { ensureUnpaidInvoice } from "./subscription-lifecycle";
+import {
+  checkPaymentAttempt,
+  initiatePaymentAttempt,
+  settlePayment,
+} from "@/lib/payments/collect";
 
 /**
  * Subscribing and paying, from the restaurant's side.
  *
- * ─────────────────────────────────────────────────────────────────────────
- *  §6 — ONE IDEMPOTENT ACTIVATION PATH.
+ * The entitlement change — marking an invoice paid and moving the
+ * subscription's end date — lives in `activateFromInvoice` (lib/data/
+ * invoice-activation.ts), THE single idempotent activation path (§6).
+ * Payments are settled through the platform: the manager pays by Mobile
+ * Money on the pay page (`payInvoice` / `checkInvoicePayment`), and when
+ * CamerPay lands, its webhook calls the same settlement and nothing else
+ * changes. In sandbox mode no money moves and the attempt is already
+ * succeeded the moment it is created.
  *
- *  `activateFromInvoice()` below is the ONLY function that marks an invoice
- *  paid and moves a subscription's end date. The simulator calls it. When
- *  CamerPay lands, its webhook will call the same function and nothing else
- *  changes.
- *
- *  This is not tidiness. The moment there are two activation paths they
- *  disagree, and the disagreement is money: one path credits a month the
- *  other does not, and the tenant either gets free service or pays twice.
- *
- *  Idempotence lives in the guard at the top of it — an invoice that is
- *  already `paid` returns success WITHOUT extending anything. A provider that
- *  retries its webhook must not buy a second month.
- * ─────────────────────────────────────────────────────────────────────────
+ * Every failure carries a `reason` — a stable machine code a later lane maps
+ * to a dictionary key — alongside the French fallback string, the same
+ * convention as checkout-actions.ts and payments/collect.ts.
  */
 
-/** Invoice numbers people can read down a phone line. */
-function invoiceNumber(): string {
-  const now = new Date();
-  const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-  return `INV-${stamp}-${randomUUID().slice(0, 6).toUpperCase()}`;
-}
+/** ActionResult plus the stable failure code. */
+export type SubscribeResult =
+  | { ok: true; note?: string }
+  | { ok: false; error: string; reason?: string };
 
-/**
- * Mark an invoice paid and extend the subscription. THE ONLY PATH.
- *
- * Not exported as a Server Action — it is called by the ones below and, later,
- * by the payment webhook. Exporting it would make it a POST endpoint that
- * grants paid service to anyone who can guess an invoice id.
- */
-async function activateFromInvoice(invoiceId: string): Promise<ActionResult> {
-  const supabase = createAdminClient();
-
-  const { data: invoice } = await supabase
-    .from("invoices")
-    .select("id, restaurant_id, plan_id, amount, status, period_end")
-    .eq("id", invoiceId)
-    .maybeSingle();
-
-  if (!invoice) return { ok: false, error: "Facture introuvable." };
-
-  // THE IDEMPOTENCE GUARD. A replayed webhook lands here and stops.
-  if (invoice.status === "paid") return { ok: true, note: "Cette facture était déjà réglée." };
-  if (invoice.status === "void") return { ok: false, error: "Cette facture a été annulée." };
-
-  const { data: subscription } = await supabase
-    .from("subscriptions")
-    .select("id, end_date")
-    .eq("restaurant_id", invoice.restaurant_id)
-    .maybeSingle();
-
-  if (!subscription) return { ok: false, error: "Aucun abonnement pour cet établissement." };
-
-  /**
-   * Extend from the LATER of now and the current end date.
-   *
-   * Paying early must add a month to what is left, not reset it — otherwise a
-   * tenant who renews three days ahead loses three days for being organised.
-   * Paying late starts from today, so the lapsed days are not silently
-   * credited either.
-   */
-  const from = Math.max(Date.now(), subscription.end_date ? new Date(subscription.end_date).getTime() : 0);
-  const endDate = new Date(from + 30 * 86_400_000).toISOString();
-
-  const { error: subError } = await supabase
-    .from("subscriptions")
-    .update({ plan_id: invoice.plan_id, end_date: endDate, cancelled_at: null })
-    .eq("id", subscription.id);
-
-  if (subError) {
-    console.error("[subscribe:activate] subscription", subError.message);
-    return { ok: false, error: "Le paiement a abouti mais l'abonnement n'a pas été prolongé." };
-  }
-
-  const { error: invError } = await supabase
-    .from("invoices")
-    .update({ status: "paid", paid_at: new Date().toISOString() })
-    .eq("id", invoiceId)
-    // Written as a conditional update, not a blind one: two webhooks arriving
-    // at the same instant both read `unpaid`, and only one of them wins here.
-    .eq("status", "unpaid");
-
-  if (invError) {
-    console.error("[subscribe:activate] invoice", invError.message);
-  }
-
-  revalidatePath("/m", "layout");
-  revalidatePath("/a/subscriptions");
-  return { ok: true };
+/** The later of two end dates — null means "no date", not "the epoch". */
+function laterDate(a: string | null, b: string | null): string | null {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(a) >= Date.parse(b) ? a : b;
 }
 
 /**
@@ -113,7 +51,7 @@ async function activateFromInvoice(invoiceId: string): Promise<ActionResult> {
  */
 export async function choosePlan(
   planId: string,
-): Promise<ActionResult & { invoiceId?: string; amount?: number }> {
+): Promise<SubscribeResult & { invoiceId?: string; amount?: number }> {
   const { active, profile } = await requireCapability("billing.manage");
   const supabase = createAdminClient();
 
@@ -123,26 +61,67 @@ export async function choosePlan(
     .eq("id", planId)
     .maybeSingle();
 
-  if (!plan || !plan.is_active) return { ok: false, error: "Ce forfait n'est pas disponible." };
+  if (!plan || !plan.is_active) {
+    return { ok: false, reason: "planUnavailable", error: "Ce forfait n'est pas disponible." };
+  }
 
   const { data: subscription } = await supabase
     .from("subscriptions")
-    .select("id, plan_id")
+    .select("id, plan_id, end_date")
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
-  if (!subscription) return { ok: false, error: "Aucun abonnement pour cet établissement." };
+  if (!subscription) {
+    return {
+      ok: false,
+      reason: "noSubscription",
+      error: "Aucun abonnement pour cet établissement.",
+    };
+  }
 
-  /* ── Free: nothing to pay, apply now ──────────────────────────────────── */
-  if (plan.monthly_price === 0) {
+  /*
+   * FREE MODE (migration 0030): the platform is free for everyone, so a paid
+   * plan must not raise an invoice — the restaurant switches to it RIGHT NOW,
+   * exactly as if it cost 0 FCFA. The invoice is what separates "chosen" from
+   * "granted"; while free mode is on the two are the same by definition, and
+   * "restaurants can switch plans as they want" is the whole point of the
+   * flag.
+   */
+  const freeMode = await getFreeModeWindow();
+
+  /* ── Free (or everything is free): nothing to pay, apply now ──────────── */
+  if (freeMode.effective || plan.monthly_price === 0) {
+    /**
+     * FREE MODE IS NOT "FREE FOREVER", AND THIS LINE IS WHERE THAT IS DECIDED.
+     *
+     * A null end_date means NEVER EXPIRES everywhere else in the system (§5
+     * rule 1) — right for a plan that costs 0, catastrophic for a paid tier
+     * handed out during a giveaway: the tenant would keep Professional for
+     * nothing long after the platform stopped being free, and no other code
+     * path would ever ask them to pay.
+     *
+     * So a paid plan chosen during free mode expires WHEN FREE MODE DOES, and
+     * never earlier than a month the tenant has already bought. When free mode
+     * has no countdown at all there is no honest date to write; the date is
+     * stamped instead by `runSubscriptionExpiry` the moment free mode lifts,
+     * which is the only point at which it becomes knowable.
+     */
+    const endDate =
+      plan.monthly_price === 0 ? null : laterDate(subscription.end_date, freeMode.endsAt);
+
     const { error } = await supabase
       .from("subscriptions")
-      // end_date null — a free plan with a deadline would lock someone out of
-      // something they are not paying for (§5 rule 1).
-      .update({ plan_id: plan.id, end_date: null, cancelled_at: null })
+      .update({ plan_id: plan.id, end_date: endDate, cancelled_at: null })
       .eq("id", subscription.id);
 
-    if (error) return { ok: false, error: "Le changement de forfait a échoué." };
+    if (error) {
+      console.error("[subscribe:choosePlan] plan change", error.message);
+      return {
+        ok: false,
+        reason: "planChangeFailed",
+        error: "Le changement de forfait a échoué.",
+      };
+    }
 
     await supabase.from("plan_changes").insert({
       restaurant_id: active.restaurantId,
@@ -152,10 +131,12 @@ export async function choosePlan(
     });
 
     await writeAudit(profile, {
-      action: "subscription.downgrade",
+      action: "subscription.plan_change",
       entityType: "subscription",
       entityId: subscription.id,
-      summary: `${active.restaurantName} moved to ${plan.name} (free)`,
+      summary: freeMode.effective
+        ? `${active.restaurantName} moved to ${plan.name} (free mode, until ${freeMode.endsAt ?? "free mode ends"})`
+        : `${active.restaurantName} moved to ${plan.name} (free)`,
     });
 
     await notify({
@@ -178,39 +159,27 @@ export async function choosePlan(
 
   /* ── Paid: raise an invoice, grant nothing yet ────────────────────────── */
 
-  // Reuse an unpaid invoice for the same plan rather than stacking a new one
-  // every time somebody clicks. Otherwise a hesitant tenant accumulates six
-  // invoices for one month of service.
-  const { data: pending } = await supabase
-    .from("invoices")
-    .select("id, amount")
-    .eq("restaurant_id", active.restaurantId)
-    .eq("plan_id", plan.id)
-    .eq("status", "unpaid")
-    .maybeSingle();
+  /**
+   * One unpaid invoice per tenant per plan — the renewal sweep and this button
+   * share the same helper, so a tenant whose renewal invoice was already raised
+   * overnight is sent to THAT one rather than to a second copy of it.
+   */
+  const invoice = await ensureUnpaidInvoice({
+    restaurantId: active.restaurantId,
+    planId: plan.id,
+    amount: plan.monthly_price,
+    // A renewal is billed from where the current month ends; a new plan from now.
+    from:
+      subscription.end_date && Date.parse(subscription.end_date) > Date.now()
+        ? new Date(subscription.end_date)
+        : undefined,
+  });
 
-  if (pending) return { ok: true, invoiceId: pending.id, amount: pending.amount };
-
-  const periodStart = new Date();
-  const periodEnd = new Date(periodStart.getTime() + 30 * 86_400_000);
-
-  const { data: invoice, error } = await supabase
-    .from("invoices")
-    .insert({
-      number: invoiceNumber(),
-      restaurant_id: active.restaurantId,
-      plan_id: plan.id,
-      amount: plan.monthly_price,
-      period_start: periodStart.toISOString(),
-      period_end: periodEnd.toISOString(),
-    })
-    .select("id, amount")
-    .single();
-
-  if (error || !invoice) {
-    console.error("[subscribe:choosePlan] invoice", error?.message);
-    return { ok: false, error: "Impossible de créer la facture." };
+  if (!invoice) {
+    return { ok: false, reason: "invoiceFailed", error: "Impossible de créer la facture." };
   }
+
+  if (!invoice.created) return { ok: true, invoiceId: invoice.id, amount: invoice.amount };
 
   // The tenant is told the invoice is waiting — the single most missed step
   // in paid onboarding is "you have to go pay now".
@@ -241,7 +210,7 @@ export async function choosePlan(
  *  people resent, and here there is nothing stored that could.
  * ─────────────────────────────────────────────────────────────────────────
  */
-export async function startTrial(planId: string): Promise<ActionResult> {
+export async function startTrial(planId: string): Promise<SubscribeResult> {
   const { active, profile } = await requireCapability("billing.manage");
   const supabase = createAdminClient();
 
@@ -251,8 +220,12 @@ export async function startTrial(planId: string): Promise<ActionResult> {
     .eq("id", planId)
     .maybeSingle();
 
-  if (!plan || !plan.is_active) return { ok: false, error: "Ce forfait n'est pas disponible." };
-  if (!plan.trial_days) return { ok: false, error: "Ce forfait n'a pas d'essai gratuit." };
+  if (!plan || !plan.is_active) {
+    return { ok: false, reason: "planUnavailable", error: "Ce forfait n'est pas disponible." };
+  }
+  if (!plan.trial_days) {
+    return { ok: false, reason: "noTrialOnPlan", error: "Ce forfait n'a pas d'essai gratuit." };
+  }
 
   const { data: subscription } = await supabase
     .from("subscriptions")
@@ -260,12 +233,18 @@ export async function startTrial(planId: string): Promise<ActionResult> {
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
-  if (!subscription) return { ok: false, error: "Aucun abonnement pour cet établissement." };
+  if (!subscription) {
+    return {
+      ok: false,
+      reason: "noSubscription",
+      error: "Aucun abonnement pour cet établissement.",
+    };
+  }
 
   // One per restaurant, ever. Checked on the server because the button being
   // hidden is not the rule — this is.
   if (subscription.trial_used) {
-    return { ok: false, error: "Votre essai gratuit a déjà été utilisé." };
+    return { ok: false, reason: "trialUsed", error: "Votre essai gratuit a déjà été utilisé." };
   }
 
   const endsAt = new Date(Date.now() + plan.trial_days * 86_400_000).toISOString();
@@ -286,7 +265,7 @@ export async function startTrial(planId: string): Promise<ActionResult> {
 
   if (error) {
     console.error("[subscribe:startTrial]", error.message);
-    return { ok: false, error: "Impossible de démarrer l'essai." };
+    return { ok: false, reason: "trialStartFailed", error: "Impossible de démarrer l'essai." };
   }
 
   await supabase.from("plan_changes").insert({
@@ -327,71 +306,103 @@ export async function startTrial(planId: string): Promise<ActionResult> {
 }
 
 /**
- * SIMULATED PAYMENT — stands in for CamerPay until it is live.
+ * Pay an invoice by Mobile Money.
  *
- * ─────────────────────────────────────────────────────────────────────────
- *  It records a real payment_attempt with provider = 'simulated', then calls
- *  the SAME activation function the webhook will call. So the code path being
- *  exercised now is the code path that will run in production; only the thing
- *  that triggers it changes.
- *
- *  REFUSES TO RUN WHEN PAYMENTS ARE ENABLED. The `payments_enabled` setting
- *  is what says "a real provider is live", and a simulator that still works
- *  after that is a button which grants free subscriptions to anyone who can
- *  reach it. Going live disables this by itself — nobody has to remember.
- * ─────────────────────────────────────────────────────────────────────────
+ * In sandbox mode the attempt succeeds instantly and the subscription is
+ * activated right here. In live mode CamerPay pushes a request to the
+ * manager's handset, the attempt comes back `pending`, and the caller polls
+ * `checkInvoicePayment` until the provider (or its webhook) confirms.
  */
-export async function simulatePayment(invoiceId: string): Promise<ActionResult> {
+export async function payInvoice(input: {
+  invoiceId: string;
+  phone: string;
+}): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed"; attemptId?: string }> {
   const { active, profile } = await requireCapability("billing.manage");
   const supabase = createAdminClient();
 
-  const { data: enabled } = await supabase
-    .from("settings")
-    .select("value")
-    .eq("key", "payments_enabled")
-    .maybeSingle();
-
-  if (enabled?.value === "true") {
-    return {
-      ok: false,
-      error: "Les paiements réels sont activés. La simulation est désactivée.",
-    };
-  }
-
   const { data: invoice } = await supabase
     .from("invoices")
-    .select("id, restaurant_id, amount, status")
-    .eq("id", invoiceId)
-    // The tenant guard: an invoice id from a URL must belong to THIS branch.
+    .select("id, number, amount, status")
+    .eq("id", input.invoiceId)
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
   if (!invoice) return { ok: false, error: "Facture introuvable." };
-  if (invoice.status === "paid") return { ok: true, note: "Cette facture était déjà réglée." };
+  if (invoice.status !== "unpaid") return { ok: false, error: "Cette facture n'est pas en attente." };
 
-  await supabase.from("payment_attempts").insert({
-    reference: `SIM-${randomUUID().slice(0, 8).toUpperCase()}`,
-    invoice_id: invoice.id,
-    restaurant_id: active.restaurantId,
-    provider: "simulated",
-    transaction_id: `sim_${randomUUID()}`,
-    method: "simulation",
+  const initiated = await initiatePaymentAttempt({
+    kind: "subscription",
+    restaurantId: active.restaurantId,
+    invoiceId: invoice.id,
+    reference: invoice.number,
+    phone: input.phone,
     amount: invoice.amount,
-    status: "succeeded",
-    settled_at: new Date().toISOString(),
-    raw_response: { simulated: true, by: profile.email },
   });
 
-  const result = await activateFromInvoice(invoice.id);
+  if (!initiated.ok || !initiated.attemptId) {
+    return { ok: false, error: initiated.error ?? "Le paiement a échoué." };
+  }
+
+  if (initiated.status === "pending") {
+    return { ok: true, status: "pending", attemptId: initiated.attemptId };
+  }
+
+  // Sandbox: the attempt is already 'succeeded' — settle it and tell everyone.
+  const settled = await settlePayment(initiated.attemptId);
+  if (!settled.ok) {
+    console.error("[subscribe:payInvoice] settle", settled.error);
+    return { ok: false, error: settled.error ?? "Le paiement n'a pas pu être appliqué." };
+  }
 
   await writeAudit(profile, {
-    action: "payment.simulated",
+    action: "invoice.paid",
     entityType: "invoice",
     entityId: invoice.id,
-    summary: `Simulated payment of ${invoice.amount} XAF for ${active.restaurantName}`,
+    summary: `${active.restaurantName} paid invoice ${invoice.number} (${invoice.amount.toLocaleString("fr-CM")} FCFA)`,
   });
 
-  return result.ok
-    ? { ok: true, note: "Paiement simulé. Abonnement actif pour 30 jours." }
-    : result;
+  await notify({
+    event: "billing_paid",
+    tone: "success",
+    restaurantId: active.restaurantId,
+    href: "/m/billing",
+    params: { invoiceNumber: invoice.number, amount: invoice.amount },
+  });
+  await notify({
+    event: "billing",
+    tone: "success",
+    admins: true,
+    href: "/a/subscriptions",
+    params: { restaurantName: active.restaurantName, detail: `Facture ${invoice.number} réglée.` },
+  });
+
+  revalidatePath("/m", "layout");
+  revalidatePath("/a/subscriptions");
+  return { ok: true, status: "succeeded" };
 }
+
+/**
+ * Poll a pending invoice payment.
+ *
+ * Re-checks with the provider (or reads the outcome its webhook already
+ * settled) and returns where the payment stands. Scoped to the manager's own
+ * restaurant — an attempt id alone must not let a tenant watch somebody
+ * else's money move.
+ */
+export async function checkInvoicePayment(
+  attemptId: string,
+): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed" }> {
+  const { active } = await requireCapability("billing.manage");
+  const result = await checkPaymentAttempt(attemptId, active.restaurantId);
+
+  if (!result.ok) return { ok: false, error: result.error ?? "Paiement introuvable." };
+
+  if (result.status === "succeeded") {
+    revalidatePath("/m", "layout");
+    revalidatePath("/a/subscriptions");
+  }
+
+  return { ok: true, status: result.status };
+}
+
+

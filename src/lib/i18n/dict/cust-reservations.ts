@@ -45,7 +45,18 @@ export const custReservationsDict = defineDict({
     "crs.notesPh": "Anniversaire, près de la fenêtre…",
     "crs.deposit": "Acompte requis : {amount}.",
     "crs.depositBody":
-      "Ce restaurant demande un acompte pour réserver la table — il vous sera demandé pour confirmer.",
+      "Payé en ligne maintenant par Mobile Money — déduit de votre addition finale une fois sur place.",
+    "crs.phone": "Numéro Mobile Money",
+    "crs.phoneHint": "MTN MoMo ou Orange Money.",
+    "crs.phonePh": "6XXXXXXXX",
+    "crs.payDeposit": "Payer l'acompte {amount} et réserver",
+    "crs.payPendingTitle": "Confirmation du paiement en cours…",
+    "crs.payPendingBody":
+      "Validez la demande sur votre téléphone. La page se met à jour automatiquement.",
+    "crs.payFailed": "Le paiement de l'acompte n'a pas abouti. Réessayez.",
+    "crs.depositPercent": "Acompte : {pct}% de votre addition finale.",
+    "crs.depositPercentBody":
+      "Aucun paiement en ligne — le pourcentage est réglé au restaurant et déduit de votre addition.",
     "crs.submit": "Demander la réservation",
     "crs.formHint":
       "Votre demande est envoyée au restaurant, qui la confirme ou propose un autre créneau.",
@@ -88,7 +99,18 @@ export const custReservationsDict = defineDict({
     "crs.notesPh": "Birthday, near the window…",
     "crs.deposit": "Deposit required: {amount}.",
     "crs.depositBody":
-      "This restaurant asks for a deposit to hold the table — you will be asked for it to confirm.",
+      "Paid online now by Mobile Money — deducted from your final bill once you arrive.",
+    "crs.phone": "Mobile Money number",
+    "crs.phoneHint": "MTN MoMo or Orange Money.",
+    "crs.phonePh": "6XXXXXXXX",
+    "crs.payDeposit": "Pay the {amount} deposit and book",
+    "crs.payPendingTitle": "Waiting for payment confirmation…",
+    "crs.payPendingBody":
+      "Approve the request on your phone. This page updates automatically.",
+    "crs.payFailed": "The deposit payment did not go through. Please try again.",
+    "crs.depositPercent": "Deposit: {pct}% of your final bill.",
+    "crs.depositPercentBody":
+      "No online charge — the percentage is settled at the restaurant and deducted from your bill.",
     "crs.submit": "Request the booking",
     "crs.formHint":
       "Your request goes to the restaurant, which confirms it or offers another time.",

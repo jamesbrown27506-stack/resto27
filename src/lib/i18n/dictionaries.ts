@@ -29,6 +29,7 @@ import { customersDict } from "./dict/customers";
 import { legalDict } from "./dict/legal";
 import { marketingDict } from "./dict/marketing";
 import { menuDict } from "./dict/menu";
+import { mgateDict } from "./dict/mgate";
 import { modifiersDict } from "./dict/modifiers";
 import { notificationsDict } from "./dict/notifications";
 import { profileDict } from "./dict/profile";
@@ -283,6 +284,14 @@ const baseFr = {
   "home.cta.title": "Prêt à commander ?",
   "home.cta.body":
     "Parcourez les restaurants de votre quartier. Aucun compte nécessaire pour commencer.",
+
+  /* ── Free-mode banner (home) — the ONLY announcement of the platform
+        being free; gated on the flag, with the admin-chosen countdown. ── */
+  "home.freeBanner.title": "La plateforme est gratuite pour les restaurants",
+  "home.freeBanner.bodyDate":
+    "Pendant {days} jour(s) — aucun abonnement requis jusqu'au {date}.",
+  "home.freeBanner.bodyDays": "Pendant {days} jour(s) — aucun abonnement requis.",
+  "home.freeBanner.body": "Aucun abonnement requis pendant cette période.",
 
   /* ── Shared UI ─────────────────────────────────────────────────────── */
   "ui.search": "Rechercher…",
@@ -541,12 +550,20 @@ const baseFr = {
   "res.noTableYet": "Pas encore attribuée",
   "res.reason": "Motif",
   "res.deposit": "Acompte {amount} FCFA",
+  "res.depositPercent": "Acompte {pct}% de l'addition",
   "res.depositPaid": "Acompte encaissé",
   "res.collectDeposit": "Encaisser l'acompte",
   "res.depositCollected": "Acompte crédité au portefeuille.",
   "res.depositTitle": "Acompte de réservation",
   "res.depositBody": "Montant demandé pour réserver une table (0 = aucun). L'encaissement crédite le portefeuille.",
   "res.depositSaved": "Acompte enregistré.",
+  "res.percentTitle": "Acompte en pourcentage",
+  "res.percentBody": "Pourcentage de l'addition finale encaissé au restaurant (0 = aucun). Le client ne paie rien en ligne.",
+  "res.billTotal": "Montant de l'addition",
+  "res.billTotalHint": "L'acompte sera calculé à partir de ce montant.",
+  "res.billTotalPh": "Ex. 15 000",
+  "res.collectPercent": "Encaisser {amount}",
+  "res.percentCollected": "Acompte {pct}% crédité au portefeuille.",
   "res.reasonHint": "Le client le lit. Une phrase suffit — un refus sans explication est ce dont les clients se plaignent.",
   "res.reasonPh": "Complet à cette heure. Nous avons de la place à 20h30 si cela vous convient.",
 
@@ -1011,6 +1028,14 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "home.cta.title": "Ready to order?",
   "home.cta.body": "Browse the restaurants in your neighbourhood. No account needed to start.",
 
+  /* ── Free-mode banner (home) — the ONLY announcement of the platform
+        being free; gated on the flag, with the admin-chosen countdown. ── */
+  "home.freeBanner.title": "The platform is free for restaurants",
+  "home.freeBanner.bodyDate":
+    "For {days} day(s) — no subscription required until {date}.",
+  "home.freeBanner.bodyDays": "For {days} day(s) — no subscription required.",
+  "home.freeBanner.body": "No subscription is required during this period.",
+
   /* ── Shared UI ─────────────────────────────────────────────────────── */
   "ui.search": "Search…",
   "ui.clear": "Clear",
@@ -1265,12 +1290,20 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "res.noTableYet": "Not assigned yet",
   "res.reason": "Reason",
   "res.deposit": "Deposit {amount} FCFA",
+  "res.depositPercent": "Deposit {pct}% of the bill",
   "res.depositPaid": "Deposit collected",
   "res.collectDeposit": "Collect deposit",
   "res.depositCollected": "Deposit credited to the wallet.",
   "res.depositTitle": "Reservation deposit",
   "res.depositBody": "Amount required to hold a table (0 = none). Collecting it credits the wallet.",
   "res.depositSaved": "Deposit saved.",
+  "res.percentTitle": "Percentage deposit",
+  "res.percentBody": "Percentage of the final bill collected at the restaurant (0 = none). The customer pays nothing online.",
+  "res.billTotal": "Bill total",
+  "res.billTotalHint": "The deposit is computed from this amount.",
+  "res.billTotalPh": "e.g. 15,000",
+  "res.collectPercent": "Collect {amount}",
+  "res.percentCollected": "{pct}% deposit credited to the wallet.",
   "res.reasonHint": "The guest reads this. One sentence is enough — a refusal with no explanation is what people complain about.",
   "res.reasonPh": "Fully booked at that time. We have space at 8.30pm if that suits you.",
 
@@ -1526,6 +1559,7 @@ const fr = {
   ...notificationsDict.fr,
   ...menuDict.fr,
   ...modifiersDict.fr,
+  ...mgateDict.fr,
   ...customersDict.fr,
   ...reviewsDict.fr,
   ...reportsDict.fr,
@@ -1562,6 +1596,7 @@ const en: Record<TranslationKey, string> = {
   ...notificationsDict.en,
   ...menuDict.en,
   ...modifiersDict.en,
+  ...mgateDict.en,
   ...customersDict.en,
   ...reviewsDict.en,
   ...reportsDict.en,

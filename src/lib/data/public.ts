@@ -50,6 +50,11 @@ export interface PublicRestaurant {
   isAcceptingOrders: boolean;
   /** The acompte a booking requires (migration 0025). 0 = none. */
   depositAmount: number;
+  /**
+   * How the acompte works (migration 0031): `fixed` FCFA charged online at
+   * booking, or `percent` of the customer's final bill collected on site.
+   */
+  depositType: "fixed" | "percent";
   hours: RestaurantHours[];
   createdAt: string;
 }
@@ -72,6 +77,7 @@ interface DbRestaurant {
   accepts_pickup: boolean;
   is_accepting_orders: boolean;
   deposit_amount: number;
+  deposit_type: string | null;
   created_at: string;
   address_line: string | null;
   logo_url: string | null;
@@ -137,6 +143,7 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
     acceptsPickup: r.accepts_pickup,
     isAcceptingOrders: r.is_accepting_orders,
     depositAmount: Number(r.deposit_amount),
+    depositType: r.deposit_type === "percent" ? "percent" : "fixed",
     hours,
     createdAt: r.created_at,
   };

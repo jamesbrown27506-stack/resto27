@@ -3,6 +3,8 @@ import { ManagerPage } from "@/components/layout/manager-shell";
 import { StaffManager } from "./staff-manager";
 import { requireCapability } from "@/lib/auth/branch";
 import { fetchStaff } from "@/lib/data/manager";
+import { fetchPlanLimits } from "@/lib/data/billing";
+import { PlanGateUpsell } from "@/components/billing/plan-gate";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -26,6 +28,33 @@ export async function generateMetadata(): Promise<Metadata> {
  */
 export default async function StaffPage() {
   const { active, profile } = await requireCapability("staff.manage");
+
+  /**
+   * STAFF ACCOUNTS ARE AN ENTERPRISE FEATURE (§14.4), AND THE FLAG COMES FROM
+   * THE DATABASE.
+   *
+   * Same rule as reports: the entitlement is read, never hardcoded — which
+   * tier includes staff management is an administrator's decision, and free
+   * mode (platform free for now) is applied inside `fetchPlanLimits`, so a
+   * free platform lets every tenant through. A locked tenant drops to Starter
+   * (§5) and meets the gate like anyone else.
+   */
+  const tier = active.subscriptionState === "locked" ? "starter" : active.planTier;
+  const plans = await fetchPlanLimits();
+  const plan = plans.get(tier);
+
+  // Empty map = billing table unreadable, not tenant unentitled: a billing
+  // outage must not strip a restaurant of its own staff screen.
+  const includesStaff = plan ? plan.staffManagement : plans.size === 0;
+
+  if (!includesStaff) {
+    return (
+      <ManagerPage titleKey="mst.title" descriptionKey="mst.subtitle">
+        <PlanGateUpsell feature="mgate.feature.staff" plan="mgate.plan.enterprise" />
+      </ManagerPage>
+    );
+  }
+
   const staff = await fetchStaff(active.restaurantId);
 
   return (

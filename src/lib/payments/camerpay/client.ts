@@ -658,6 +658,17 @@ export interface TransactionHint {
   /** ISO instant the request was accepted. */
   startedAt?: string;
   /**
+   * Report rows another attempt has already consumed.
+   *
+   * Two attempts from one number for one amount (a retry after the customer
+   * let the prompt lapse) look IDENTICAL to the matcher, so both would settle
+   * against the single row the customer actually approved. Rows listed here
+   * are skipped, and the caller records the row it consumed so the database
+   * refuses the second claim outright — this list only steers the match
+   * towards the right row, it is not the guard.
+   */
+  excludeRowIds?: string[];
+  /**
    * The highest report `id` that existed BEFORE the request was sent.
    *
    * This is the reliable half of the match. CamerPay's `date` carries no
@@ -687,8 +698,41 @@ export async function listNotifications(
   });
 }
 
-/** How long a not-yet-confirmed row is still worth waiting on. */
-const PENDING_GRACE_MS = 5 * 60_000;
+/**
+ * Africa/Douala is UTC+1 all year — no DST, ever (0011 §2) — so a fixed offset
+ * is exact, which is why this needs no library.
+ */
+const DOUALA_OFFSET_MS = 60 * 60_000;
+
+/**
+ * A report timestamp as an instant.
+ *
+ * CamerPay sends "2026-08-12T15:12:45.000": no zone, and the clock behind it is
+ * Douala's. `new Date(...)` reads a naive string in the SERVER's zone, so on a
+ * UTC host every row parses an hour older than it really is — old enough, on a
+ * five-minute rule, to condemn a payment on its very first poll. Anything that
+ * does carry a zone is believed as sent.
+ */
+function parseProviderDate(value: string | null | undefined): number | null {
+  const text = value == null ? "" : String(value).trim();
+  if (!text) return null;
+
+  const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text);
+  const ms = Date.parse(zoned ? text : `${text.replace(" ", "T")}Z`);
+  if (Number.isNaN(ms)) return null;
+  return zoned ? ms : ms - DOUALA_OFFSET_MS;
+}
+
+/**
+ * Response text that means the collection is DEAD, not merely unfinished.
+ *
+ * Age is not evidence: mobile-money PIN entry regularly runs past any grace
+ * period worth setting, and a row that is simply "not confirmed yet" must stay
+ * pending so the reconciler keeps sweeping it. Only an operator saying so
+ * counts. Deliberately excludes "annul"/"cancel" — the acknowledgement text
+ * itself says "ne pas annuler", and matching that would fail live payments.
+ */
+const CONCLUSIVE_FAILURE = /(echec|échec|failed|failure|refus|rejet|insuffis|expir)/i;
 
 /** Which way a report row's action moves money, when it can be told. */
 function directionFor(action: string | undefined): "collect" | "payout" | undefined {
@@ -716,6 +760,21 @@ function rowAmount(row: TransactionReportEntry): number | undefined {
 }
 
 /**
+ * The identity of a report row, as something storable.
+ *
+ * `id` is CamerPay's own counter and is what a row is claimed under; `ref` (the
+ * operator's reference) is the fallback for a report shape that omits it. A row
+ * with neither cannot be claimed, and a claim is what stops two attempts
+ * settling from one payment — so the caller must treat `undefined` as "not
+ * safely identifiable", not as "no constraint needed".
+ */
+export function reportRowId(row: TransactionReportEntry): string | undefined {
+  if (row.id !== undefined && row.id !== null) return String(row.id);
+  if (row.ref) return String(row.ref);
+  return undefined;
+}
+
+/**
  * Confirm a single transaction against CamerPay's own record.
  *
  * ─────────────────────────────────────────────────────────────────────────
@@ -734,7 +793,8 @@ function rowAmount(row: TransactionReportEntry): number | undefined {
  *
  *  Then `used` decides:
  *      used === true   the customer entered their PIN. Settled.
- *      used === false  no PIN yet. Recent → still pending. Old → abandoned.
+ *      used === false  no PIN yet — PENDING however old the row looks; only
+ *                      the provider saying so makes it failed.
  *
  *  `ref` corroborates — it is null until confirmation — but `used` is the
  *  field to trust, and a disagreement is resolved as NOT settled.
@@ -933,6 +993,8 @@ export async function confirmTransaction(
 ): Promise<{
   status: "success" | "failed" | "pending";
   amount?: number;
+  /** The report row this verdict came from, for the caller to claim. */
+  rowId?: string;
   raw?: unknown;
   searched?: unknown;
 }> {
@@ -944,10 +1006,17 @@ export async function confirmTransaction(
 
   const rows = report.data;
   const needle = replyTo.trim();
+  const consumed = new Set(hint.excludeRowIds ?? []);
+  const available = (row: TransactionReportEntry) => {
+    const id = reportRowId(row);
+    return !id || !consumed.has(id);
+  };
 
   // Defensive: if a future version ever does echo the id back, believe it.
   const direct = rows.find(
-    (row) => row.ref === needle || row.replyTo === needle || String(row.id ?? "") === needle,
+    (row) =>
+      available(row) &&
+      (row.ref === needle || row.replyTo === needle || String(row.id ?? "") === needle),
   );
 
   /**
@@ -985,6 +1054,7 @@ export async function confirmTransaction(
     ? [direct]
     : rows
         .filter((row) => {
+          if (!available(row)) return false;
           if (phone) {
             // The report's customer-number key has appeared as "customer
             // number", number, numero AND numeroClient across accounts and
@@ -1008,7 +1078,8 @@ export async function confirmTransaction(
            */
           if (effective.afterId === undefined && startedAt && row.date) {
             const TOLERANCE_MS = 6 * 60 * 60_000;
-            if (new Date(row.date).getTime() < startedAt - TOLERANCE_MS) return false;
+            const rowAt = parseProviderDate(row.date);
+            if (rowAt !== null && rowAt < startedAt - TOLERANCE_MS) return false;
           }
           return true;
         })
@@ -1023,6 +1094,20 @@ export async function confirmTransaction(
 
   const match = candidates[0];
   const amount = rowAmount(match);
+  const rowId = reportRowId(match);
+
+  /**
+   * A VERDICT OF `failed` NEEDS EVIDENCE, NOT A STOPWATCH.
+   *
+   * `used: false` means only "the customer has not confirmed YET". This used to
+   * turn into `failed` five minutes on, which is inside the time real people
+   * take to find their phone and enter a PIN — and, because the row's naive
+   * timestamp was read in the server's zone, a UTC host could reach that age on
+   * the first poll of a payment made seconds earlier. Both halves of that are
+   * fixed here: unresolved is PENDING, and the reconciler's abandonment horizon
+   * (hours, not minutes) is the only thing that gives up on it.
+   */
+  const responseText = String(match.Response ?? match.reponse ?? match.message ?? "");
 
   let status: "success" | "failed" | "pending";
   if (match.used === true) {
@@ -1031,11 +1116,8 @@ export async function confirmTransaction(
   } else if (match.etat === false) {
     // An explicit failure from the synchronous shape still wins if present.
     status = "failed";
-  } else if (match.used === false) {
-    const age = match.date ? Date.now() - new Date(match.date).getTime() : 0;
-    status = age > PENDING_GRACE_MS ? "failed" : "pending";
-    // The PIN prompt is long gone on the failed branch. Row 110 in the live
-    // account looks exactly like this: requested, never confirmed, ref null.
+  } else if (CONCLUSIVE_FAILURE.test(responseText)) {
+    status = "failed";
   } else {
     status = "pending";
   }
@@ -1054,5 +1136,5 @@ export async function confirmTransaction(
     });
   }
 
-  return { status, amount, raw: match };
+  return { status, amount, rowId, raw: match };
 }

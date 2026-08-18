@@ -20,6 +20,15 @@ export interface DishTemplate {
   name: string;
   description: string;
   price: number;
+  /**
+   * Same-origin photo shipped with the app (public/default). A dish photo
+   * is what sells a menu; a restaurant that accepts the template gets a
+   * real-looking carte immediately and replaces the photo whenever it has
+   * its own. The URL is COPIED onto the menu_items row at seed time, so
+   * the file can be swapped or the template removed without touching any
+   * restaurant's menu.
+   */
+  image: string;
 }
 
 export const POPULAR_DISHES: DishTemplate[] = [
@@ -29,6 +38,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Un délicieux ragoût de feuilles de ndolé et d'arachides, préparé avec des crevettes, du poisson ou de la viande, et généralement accompagné de plantain, miondo ou bobolo.",
     price: 2500,
+    image: "/default/ndole.jpg",
   },
   {
     id: "poulet-dg",
@@ -36,6 +46,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Un savoureux mélange de poulet frit et de bananes plantains, accompagné de carottes, haricots verts, poivrons et oignons, le tout relevé d'épices.",
     price: 2500,
+    image: "/default/poulet-dg.jpg",
   },
   {
     id: "poisson-braise",
@@ -43,6 +54,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Un poisson frais grillé au feu de bois ou au charbon, mariné avec des épices, des oignons et des piments, généralement servi avec des plantains, des frites ou une sauce pimentée.",
     price: 2500,
+    image: "/default/poisson-braise.jpg",
   },
   {
     id: "eru-water-fufu",
@@ -50,6 +62,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Un plat traditionnel riche en saveurs, préparé avec des feuilles d'eru, du waterleaf, de l'huile de palme, des crevettes, de la viande ou du poisson, accompagné de water fufu.",
     price: 2500,
+    image: "/default/eru-water-fufu.jpg",
   },
   {
     id: "achu-soupe-jaune",
@@ -57,6 +70,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Du taro pilé et bien tendre accompagné d'une soupe jaune à base d'huile de palme et d'épices, généralement servie avec de la viande, du poisson ou de la peau de bœuf.",
     price: 2500,
+    image: "/default/achu.jpg",
   },
   {
     id: "grillades",
@@ -64,6 +78,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Un assortiment de viandes ou de poulet grillés au charbon et délicatement assaisonnés, servis avec des plantains, des frites, une salade ou une sauce pimentée.",
     price: 2500,
+    image: "/default/grillades.jpg",
   },
   {
     id: "koki",
@@ -71,6 +86,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Une préparation traditionnelle à base de haricots cornilles écrasés et d'huile de palme, cuite à la vapeur dans des feuilles de bananier, avec parfois des crevettes ou du poisson.",
     price: 2500,
+    image: "/default/koki.jpg",
   },
   {
     id: "ekwang",
@@ -78,6 +94,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Du taro râpé enveloppé dans des feuilles de taro, puis mijoté avec de l'huile de palme, des crevettes, du poisson et de la viande pour obtenir un plat riche et parfumé.",
     price: 2500,
+    image: "/default/ekwang.jpg",
   },
   {
     id: "mbongo-tchobi",
@@ -85,6 +102,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Du poisson mijoté dans une sauce sombre et très parfumée préparée avec des épices grillées, offrant une saveur fumée, épicée et particulièrement intense.",
     price: 2500,
+    image: "/default/mbongo-tchobi.jpg",
   },
   {
     id: "kondre",
@@ -92,6 +110,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Un plat généreux à base de bananes plantains mijotées avec de la viande, de l'huile de palme et des épices locales jusqu'à obtenir une sauce riche et savoureuse.",
     price: 2500,
+    image: "/default/kondre.jpg",
   },
   {
     id: "fufu-kati-kati",
@@ -99,6 +118,7 @@ export const POPULAR_DISHES: DishTemplate[] = [
     description:
       "Un fufu de maïs doux et consistant accompagné de poulet Kati-Kati mijoté dans une sauce riche en tomates, oignons, épices et huile, une spécialité traditionnelle du Nord-Ouest camerounais.",
     price: 2500,
+    image: "/default/kati-kati.jpg",
   },
 ];
 

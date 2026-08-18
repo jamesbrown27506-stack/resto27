@@ -374,6 +374,8 @@ export interface SettingRow {
   category: string;
   label: string | null;
   description: string | null;
+  /** When the row was last saved — the free-mode countdown is computed from it. */
+  updatedAt: string | null;
 }
 
 export async function listSettings(): Promise<SettingRow[]> {
@@ -389,6 +391,7 @@ export async function listSettings(): Promise<SettingRow[]> {
     category: s.category,
     label: s.label,
     description: s.description,
+    updatedAt: s.updated_at,
   }));
 }
 

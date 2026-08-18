@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { AlertTriangle, Check, FileText, Sparkles, Wallet } from "lucide-react";
+import { AlertTriangle, Check, FileText, Handshake, Sparkles, Wallet } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
@@ -73,8 +73,9 @@ export function BillingView({
   plans,
   invoices,
   usage,
-  canSimulate,
   trial,
+  freeMode,
+  freeModeEndsAt,
   now,
 }: {
   branch: {
@@ -86,8 +87,11 @@ export function BillingView({
   plans: BillingPlan[];
   invoices: Invoice[];
   usage: { menuItems: number; tables: number; promotions: number };
-  canSimulate: boolean;
   trial: TrialState;
+  /** Free mode (platform free for now): every plan applies instantly, no payment. */
+  freeMode: boolean;
+  /** When free mode ends — shown by the banner while it runs. */
+  freeModeEndsAt?: string | null;
   /** Server-stamped ISO instant. Never read the clock during a render. */
   now: string;
 }) {
@@ -237,6 +241,31 @@ export function BillingView({
 
   return (
     <div className="flex flex-col gap-6">
+      {/*
+        ── Free mode ────────────────────────────────────────────────────
+        The platform is free for everyone right now: every plan card below
+        applies instantly and nothing on this screen costs anything. The
+        payment path is hidden because the server would not raise an invoice
+        for a plan switched during free mode.
+      */}
+      {freeMode && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-3 rounded-lg border border-info/30 bg-info-light p-4 text-info"
+        >
+          <Sparkles className="size-4 shrink-0" aria-hidden />
+          <p className="min-w-0 flex-1 text-sm">
+            <span className="font-semibold">{t("mbl.freeMode.title")}.</span>{" "}
+            <span className="opacity-85">
+              {t(
+                freeModeEndsAt ? "mbl.freeMode.bodyDate" : "mbl.freeMode.body",
+                freeModeEndsAt ? { date: dates.date(freeModeEndsAt) } : undefined,
+              )}
+            </span>
+          </p>
+        </div>
+      )}
+
       {/* ── Current state ──────────────────────────────────────────────── */}
       <Card>
         <CardBody className="flex flex-wrap items-start justify-between gap-4">
@@ -288,7 +317,9 @@ export function BillingView({
         that ends it is a plain lapse into Starter limits, not a charge, so
         there is nothing to hide.
       */}
-      {trial.active && trial.endsAt && (
+      {/* A trial is meaningless while everything is free — the countdown and
+          the "pay now" would only contradict the free-mode banner above. */}
+      {trial.active && trial.endsAt && !freeMode && (
         <div
           role="status"
           className="flex flex-wrap items-center gap-3 rounded-lg border border-info/30 bg-info-light p-4 text-info"
@@ -377,8 +408,10 @@ export function BillingView({
               // One trial per restaurant, ever — a plan whose trial has been
               // spent must not offer another. The server refuses it anyway
               // (subscriptions.trial_used); this only stops the offer being
-              // made twice.
-              const offersTrial = plan.trialDays !== null && plan.monthlyPrice > 0 && !trial.used;
+              // made twice. Hidden entirely while free mode is on — there is
+              // nothing to trial.
+              const offersTrial =
+                plan.trialDays !== null && plan.monthlyPrice > 0 && !trial.used && !freeMode;
 
               const features: { key: string; label: string }[] = [
                 {
@@ -492,7 +525,7 @@ export function BillingView({
                           <span>{t("mbl.plan.payDirect")}</span>
                         </Button>
                       </>
-                    ) : isCurrent && trial.active && plan.monthlyPrice > 0 ? (
+                    ) : isCurrent && trial.active && plan.monthlyPrice > 0 && !freeMode ? (
                       // Mid-trial, on the trialed plan: the useful action is
                       // settling it, not being told which plan you are on.
                       <Button fullWidth disabled={pending} onClick={() => pick(plan)}>
@@ -509,9 +542,11 @@ export function BillingView({
                           <span>
                             {isCurrent
                               ? t("mbl.plan.isCurrent")
-                              : plan.monthlyPrice === 0
-                                ? t("mbl.plan.chooseFree")
-                                : t("mbl.plan.choose")}
+                              : freeMode
+                                ? t("mbl.plan.choose")
+                                : plan.monthlyPrice === 0
+                                  ? t("mbl.plan.chooseFree")
+                                  : t("mbl.plan.choose")}
                           </span>
                         </Button>
                         {!isCurrent &&
@@ -577,26 +612,18 @@ export function BillingView({
           </p>
 
           {/*
-            Said plainly rather than dressed up as a real checkout. A simulator
-            that looks like a payment page is one somebody eventually mistakes
-            for one.
+            The payment is handled by the platform — no gateway, and no
+            simulator dressed up as a checkout. The pay page says the same
+            thing; the dialog just says it one step earlier.
           */}
-          {canSimulate ? (
-            <p className="flex items-start gap-2 rounded-md border border-info/30 bg-info-light p-3 text-xs leading-relaxed text-info">
-              <Sparkles className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-              <span>
-                <span className="font-bold">{t("mbl.sim.title")}</span>
-                {" — "}
-                <span>{t("mbl.sim.body")}</span>
-              </span>
-            </p>
-          ) : (
-            <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning">
-              <span className="font-bold">{t("mbl.sim.off.title")}</span>
+          <p className="flex items-start gap-2 rounded-md border border-primary/20 bg-primary-light p-3 text-xs leading-relaxed text-primary">
+            <Handshake className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span>
+              <span className="font-bold">{t("mbl.handled.title")}</span>
               {" — "}
-              <span>{t("mbl.sim.off.body")}</span>
-            </p>
-          )}
+              <span>{t("mbl.handled.body")}</span>
+            </span>
+          </p>
         </div>
       </Dialog>
     </div>

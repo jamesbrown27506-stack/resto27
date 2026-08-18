@@ -6,7 +6,8 @@ import { ManagerPage } from "@/components/layout/manager-shell";
 import { PaymentFlow } from "./payment-flow";
 import { buttonClasses } from "@/components/ui/button";
 import { requireCapability } from "@/lib/auth/branch";
-import { fetchInvoice, fetchPaymentsEnabled } from "@/lib/data/invoices";
+import { fetchInvoice } from "@/lib/data/invoices";
+import { paymentMode } from "@/lib/data/billing";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -24,6 +25,10 @@ import { getLocale } from "@/lib/i18n/locale-server";
  *  fixture, so every real invoice 404'd: the money path did not work at all.
  *  An invoice is per-tenant, changes the moment it is settled, and cannot be
  *  enumerated at build time.
+ *
+ *  THE PAYMENT IS REAL MOBILE MONEY: the tenant types a phone number and the
+ *  money is charged through CamerPay when the platform is in live mode, or
+ *  simulated instantly in sandbox mode (the admin console toggles the mode).
  * ─────────────────────────────────────────────────────────────────────────
  */
 export const dynamic = "force-dynamic";
@@ -37,12 +42,12 @@ export default async function PayInvoicePage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const { active } = await requireCapability("billing.manage");
   const locale = await getLocale();
-
-  // Scoped by branch inside fetchInvoice: an id copied from another tenant's
-  // URL returns null here, which renders as 404 rather than as their invoice.
-  const [invoice, paymentsEnabled] = await Promise.all([
+  const [invoice, mode] = await Promise.all([
+    // Scoped by branch inside fetchInvoice: an id copied from another
+    // tenant's URL returns null here, which renders as 404 rather than as
+    // their invoice.
     fetchInvoice(active.restaurantId, id),
-    fetchPaymentsEnabled(),
+    paymentMode(),
   ]);
 
   if (!invoice) notFound();
@@ -60,7 +65,7 @@ export default async function PayInvoicePage({ params }: { params: Promise<{ id:
         </Link>
       }
     >
-      <PaymentFlow invoice={invoice} canSimulate={!paymentsEnabled} />
+      <PaymentFlow invoice={invoice} mode={mode} />
     </ManagerPage>
   );
 }

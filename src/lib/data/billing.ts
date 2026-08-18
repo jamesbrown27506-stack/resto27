@@ -11,6 +11,9 @@ import { createAdminClient } from "@/lib/supabase/server";
  *
  * Every list returns [] rather than throwing when its table is missing, so a
  * half-migrated database shows honest empty pages instead of a stack trace.
+ *
+ * The free-mode section at the bottom is the one exception to "reads": those
+ * four settings rows are a state machine and it maintains its own.
  */
 
 function softFail(what: string, error: { message: string; code?: string }): [] {
@@ -383,6 +386,279 @@ export interface PlanEntitlements {
   staffManagement: boolean;
 }
 
+/* ── Free mode ─────────────────────────────────────────────────────────── */
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ *  FREE MODE IS A WINDOW, NOT A BOOLEAN — AND THIS SECTION OWNS ITS ROWS.
+ *
+ *  `platform_free_mode` (0005, flipped on by 0030) grants every tenant the
+ *  paid-tier ceilings; `platform_free_mode_days` (0031) is the countdown the
+ *  home page, the manager banner and the billing screen all advertise. The
+ *  flag alone used to decide everything, so the advertised end date passed and
+ *  the platform stayed free — the countdown was decoration.
+ *
+ *  The countdown's anchor is its own row rather than the days row's
+ *  `updated_at`: `set_updated_at` fires on ANY save of that row, so an admin
+ *  re-typing the same 30 restarted the clock without meaning to, and a
+ *  settings screen that saves every field on submit restarted it on every
+ *  save. An explicit anchor cannot be moved by accident.
+ *
+ *  `platform_free_mode_ended_at` is kept AFTER the lift on purpose: commission
+ *  generation has to know which of last month's orders fell inside the
+ *  giveaway, and a window whose end is deleted the moment it closes cannot
+ *  answer that. Switching free mode back on starts a new window and clears it.
+ *
+ *  This is the one part of this module that WRITES. The four rows are a state
+ *  machine, and a state machine split across two files drifts: the anchor is
+ *  adopted, the manual switch-off is stamped, and the durable lift is
+ *  performed here, all against the same read.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+
+const FREE_MODE_FLAG_KEY = "platform_free_mode";
+const FREE_MODE_DAYS_KEY = "platform_free_mode_days";
+const FREE_MODE_STARTED_KEY = "platform_free_mode_started_at";
+const FREE_MODE_ENDED_KEY = "platform_free_mode_ended_at";
+
+const DAY_MS = 86_400_000;
+
+export interface FreeModeWindow {
+  /** The flag as stored — what an admin last chose in /a/settings → Billing. */
+  flagOn: boolean;
+  /** The flag AND the countdown. THIS is what the platform must behave as. */
+  effective: boolean;
+  /** Countdown length in days. 0 = free until further notice. */
+  days: number;
+  /** When the current — or, once lifted, the most recent — window opened. */
+  startedAt: string | null;
+  /** Its end: the countdown's end while it runs, the recorded end once closed. */
+  endsAt: string | null;
+  /** Flag still on, countdown spent. `runSubscriptionExpiry` owes the lift. */
+  elapsed: boolean;
+}
+
+const FREE_MODE_OFF: FreeModeWindow = {
+  flagOn: false,
+  effective: false,
+  days: 0,
+  startedAt: null,
+  endsAt: null,
+  elapsed: false,
+};
+
+/** An ISO timestamp, or null when the row is empty or unparseable. */
+function isoOrNull(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? new Date(at).toISOString() : null;
+}
+
+function countdownEnd(startedAt: string, days: number): string | null {
+  return days > 0 ? new Date(Date.parse(startedAt) + days * DAY_MS).toISOString() : null;
+}
+
+/** Update-then-insert, because the row may predate the migration that seeds it. */
+async function rememberSetting(key: string, value: string, label: string): Promise<void> {
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("settings")
+    .update({ value })
+    .eq("key", key)
+    .select("key")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[billing:rememberSetting]", key, error.message);
+    return;
+  }
+  if (data) return;
+
+  const { error: insertError } = await supabase.from("settings").insert({
+    key,
+    value,
+    value_type: "string",
+    category: "billing",
+    label,
+    description: "Maintained by the platform — the free-mode window. Not typed by hand.",
+  });
+
+  // 23505 is another request having created the same row a moment earlier,
+  // which is the outcome we wanted anyway.
+  if (insertError && insertError.code !== "23505") {
+    console.error("[billing:rememberSetting] insert", key, insertError.message);
+  }
+}
+
+/**
+ * The whole free-mode state, resolved in one read.
+ *
+ * Everything else in the app goes through `isFreeMode()`, `freeModeEndsAt()`
+ * or `getFreeModeInfo()`, which are all thin views of this — so the entitlement
+ * map, the banner, the pricing page and the commission run cannot disagree
+ * about whether today is free.
+ */
+export async function getFreeModeWindow(): Promise<FreeModeWindow> {
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("settings")
+    .select("key, value, updated_at")
+    .in("key", [FREE_MODE_FLAG_KEY, FREE_MODE_DAYS_KEY, FREE_MODE_STARTED_KEY, FREE_MODE_ENDED_KEY]);
+
+  if (error) {
+    // A giveaway must not be the failure mode of an unreadable settings table.
+    console.error("[billing:getFreeModeWindow]", error.message);
+    return FREE_MODE_OFF;
+  }
+
+  const rows = new Map(
+    ((data ?? []) as { key: string; value: string | null; updated_at: string | null }[]).map(
+      (row) => [row.key, row] as const,
+    ),
+  );
+
+  const flagOn = rows.get(FREE_MODE_FLAG_KEY)?.value === "true";
+  const rawDays = Number(rows.get(FREE_MODE_DAYS_KEY)?.value ?? 0);
+  const days = Number.isFinite(rawDays) ? Math.max(0, Math.round(rawDays)) : 0;
+
+  const startedAt = isoOrNull(rows.get(FREE_MODE_STARTED_KEY)?.value);
+  const endedAt = isoOrNull(rows.get(FREE_MODE_ENDED_KEY)?.value);
+  const now = Date.now();
+
+  if (!flagOn) {
+    if (startedAt && !endedAt) {
+      // Switched off by hand, with nothing recording when the giveaway stopped.
+      const countdown = countdownEnd(startedAt, days);
+      const stopped = new Date(
+        countdown ? Math.min(now, Date.parse(countdown)) : now,
+      ).toISOString();
+      await rememberSetting(FREE_MODE_ENDED_KEY, stopped, "Free mode ended");
+      return { flagOn, effective: false, days, startedAt, endsAt: stopped, elapsed: false };
+    }
+    return { flagOn, effective: false, days, startedAt, endsAt: endedAt, elapsed: false };
+  }
+
+  let anchor = startedAt;
+
+  if (!anchor || endedAt) {
+    /**
+     * Either nothing was ever anchored — the flag predates this row, so the
+     * days row's own timestamp is adopted and the countdown people have been
+     * reading stays exactly where it was — or the previous window is closed and
+     * the admin has switched free mode on again, which starts a new one.
+     */
+    anchor = endedAt
+      ? new Date(now).toISOString()
+      : (isoOrNull(rows.get(FREE_MODE_DAYS_KEY)?.updated_at) ?? new Date(now).toISOString());
+
+    await rememberSetting(FREE_MODE_STARTED_KEY, anchor, "Free mode started");
+    if (endedAt) await rememberSetting(FREE_MODE_ENDED_KEY, "", "Free mode ended");
+  }
+
+  const endsAt = countdownEnd(anchor, days);
+  const elapsed = endsAt !== null && now >= Date.parse(endsAt);
+
+  return { flagOn: true, effective: !elapsed, days, startedAt: anchor, endsAt, elapsed };
+}
+
+/**
+ * Persist the lift: the countdown ran out, so the FLAG goes false.
+ *
+ * Called by the daily lifecycle job. `getFreeModeWindow()` already reports the
+ * platform as paid the instant the countdown passes, so this is not what stops
+ * the giveaway — it is what makes the stop visible in /a/settings, and what
+ * closes the window for commission generation.
+ *
+ * Compare-and-swap on the flag: whichever run flips `true → false` gets the
+ * row back and is the one that reports the lift. Two runs on the same day
+ * cannot both claim it.
+ */
+export async function endFreeMode(endedAt: string): Promise<boolean> {
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("settings")
+    .update({ value: "false" })
+    .eq("key", FREE_MODE_FLAG_KEY)
+    .eq("value", "true")
+    .select("key")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[billing:endFreeMode]", error.message);
+    return false;
+  }
+  if (!data) return false;
+
+  await rememberSetting(FREE_MODE_ENDED_KEY, endedAt, "Free mode ended");
+  return true;
+}
+
+/**
+ * Is the platform free RIGHT NOW?
+ *
+ * Every tenant, whatever their tier, gets the paid-tier ceilings while this is
+ * true. The plan-gate screens and the sidebar locks consult it too, so a free
+ * platform shows no "upgrade" nudges at all.
+ */
+export async function isFreeMode(): Promise<boolean> {
+  return (await getFreeModeWindow()).effective;
+}
+
+/** When free mode ends, as an ISO date — null when it is not running, or never ends. */
+export async function freeModeEndsAt(): Promise<string | null> {
+  const window = await getFreeModeWindow();
+  return window.effective ? window.endsAt : null;
+}
+
+/**
+ * The home-page announcement: is free mode on, and for how long.
+ *
+ * `active` is the EFFECTIVE state, so the banner stops advertising a free
+ * platform the moment the countdown it advertises runs out — with or without
+ * the daily job having flipped the flag yet. 0 days means free until further
+ * notice, so the UI can say either "for {days} days" or "until {date}".
+ */
+export interface FreeModeInfo {
+  active: boolean;
+  days: number;
+  endsAt: string | null;
+}
+
+export async function getFreeModeInfo(): Promise<FreeModeInfo> {
+  const window = await getFreeModeWindow();
+  return {
+    active: window.effective,
+    days: window.days,
+    endsAt: window.effective ? window.endsAt : null,
+  };
+}
+
+/**
+ * Which payment mode the platform is in: `sandbox` (simulated, no money
+ * moves) or `live` (real charges through CamerPay). Seeded to sandbox by
+ * migration 0031 — a fresh deployment must never take real money until an
+ * admin switches the mode in /a/settings → Payments.
+ */
+export async function paymentMode(): Promise<"sandbox" | "live"> {
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "payment_mode")
+    .maybeSingle();
+
+  return data?.value === "live" ? "live" : "sandbox";
+}
+
+/** The more permissive of two ceilings — `null` means unlimited. */
+function mostPermissive(a: number | null, b: number | null): number | null {
+  if (a === null || b === null) return null;
+  return Math.max(a, b);
+}
+
 /**
  * ─────────────────────────────────────────────────────────────────────────
  *  THIS READ HAS NO `is_active` FILTER, AND THAT IS THE POINT.
@@ -395,13 +671,22 @@ export interface PlanEntitlements {
  *  `listPublicPlans()` DOES filter on it, correctly, because it feeds the
  *  marketing page. Reading an entitlement through the marketing query is how
  *  a paying Professional tenant gets told to buy Professional.
+ *
+ *  FREE MODE IS APPLIED HERE, not in the callers. When it is on, every tier
+ *  maps to the most generous non-Starter entitlements — one place decides it,
+ *  so the menu ceiling, the table ceiling, the reports gate and the staff
+ *  gate cannot drift apart about what "free" means.
  * ─────────────────────────────────────────────────────────────────────────
  */
 export async function fetchPlanLimits(): Promise<Map<string, PlanEntitlements>> {
   const supabase = createAdminClient();
-  const { data, error } = await supabase
-    .from("subscription_plans")
-    .select("tier, menu_item_limit, table_limit, promotion_limit, analytics, staff_management");
+  const [result, freeMode] = await Promise.all([
+    supabase
+      .from("subscription_plans")
+      .select("tier, menu_item_limit, table_limit, promotion_limit, analytics, staff_management"),
+    isFreeMode(),
+  ]);
+  const { data, error } = result;
 
   const map = new Map<string, PlanEntitlements>();
 
@@ -428,6 +713,28 @@ export async function fetchPlanLimits(): Promise<Map<string, PlanEntitlements>> 
       analytics: p.analytics ?? false,
       staffManagement: p.staff_management ?? false,
     });
+  }
+
+  if (freeMode) {
+    // The richest non-Starter tier becomes what EVERY tier gets. If the paid
+    // tiers table is empty there is nothing to grant and the map stays as-is.
+    let granted: PlanEntitlements | null = null;
+    for (const [tier, entitlements] of map) {
+      if (tier === "starter") continue;
+      granted = granted
+        ? {
+            menuItemLimit: mostPermissive(granted.menuItemLimit, entitlements.menuItemLimit),
+            tableLimit: mostPermissive(granted.tableLimit, entitlements.tableLimit),
+            promotionLimit: mostPermissive(granted.promotionLimit, entitlements.promotionLimit),
+            analytics: granted.analytics || entitlements.analytics,
+            staffManagement: granted.staffManagement || entitlements.staffManagement,
+          }
+        : { ...entitlements };
+    }
+
+    if (granted) {
+      for (const tier of map.keys()) map.set(tier, granted);
+    }
   }
 
   return map;

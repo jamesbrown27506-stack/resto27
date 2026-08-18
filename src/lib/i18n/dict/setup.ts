@@ -33,6 +33,27 @@ export const setupDict = defineDict({
     "stp.tables.continue": "Continuer",
     "stp.skip": "Passer pour l'instant",
 
+    /* ── Delivery capability (step 2) ──────────────────────────────── */
+    "stp.delivery.title": "Livraison",
+    "stp.delivery.body":
+      "Avez-vous vos propres livreurs ? Si oui, vous gérez la livraison et les frais. Si non, la plateforme prend en charge la livraison pour vous.",
+    "stp.delivery.own": "J'ai mes propres livreurs",
+    "stp.delivery.ownDesc":
+      "Vous avez votre propre équipe de livraison. Les frais de livraison sont fixés par vos soins lors de la confirmation de chaque commande.",
+    "stp.delivery.platform": "La plateforme gère la livraison",
+    "stp.delivery.platformDesc":
+      "Pas de livreurs ? Pas de souci. La plateforme assigne un livreur et les frais sont fixés par l'administrateur.",
+    "stp.delivery.continue": "Continuer",
+
+    /* ── Opening hours (step 3) ────────────────────────────────────── */
+    "stp.hours.title": "Horaires d'ouverture",
+    "stp.hours.body":
+      "Nous avons prérempli vos horaires du lundi au samedi, de 10h à 22h. Vous pouvez les ajuster maintenant ou plus tard depuis votre profil.",
+    "stp.hours.default": "Lundi – Samedi : 10h00 – 22h00",
+    "stp.hours.closed": "Dimanche : Fermé",
+    "stp.hours.note": "Ces horaires sont affichés sur votre page publique.",
+    "stp.hours.continue": "Continuer",
+
     "stp.categories.title": "Votre carte",
     "stp.categories.body":
       "Nous avons créé quatre catégories par défaut — les entrées (avant le plat principal), les plats principaux, les desserts (après) et les boissons. Vous pourrez les renommer ou les supprimer à tout moment.",
@@ -47,6 +68,19 @@ export const setupDict = defineDict({
     "stp.dishes.added": "Plats ajoutés à votre carte.",
     "stp.dishes.none":
       "Aucun plat ajouté — votre carte démarre vide, ajoutez vos plats quand vous voulez.",
+    "stp.dishes.continue": "Continuer",
+
+    "stp.fee.title": "Frais de réservation",
+    "stp.fee.body":
+      "Un acompte garantit qu'une table réservée est prise au sérieux. Le client est toujours informé que ce montant est déduit de son addition finale.",
+    "stp.fee.none": "Aucun frais",
+    "stp.fee.fixed": "Montant fixe (FCFA)",
+    "stp.fee.fixedLabel": "Montant de l'acompte",
+    "stp.fee.fixedHint":
+      "Le client paie cet acompte en ligne au moment de réserver (Mobile Money). Il est déduit de son addition une fois sur place.",
+    "stp.fee.valueRequired": "Entrez un montant.",
+    "stp.fee.invalid": "Entrez un montant en francs, entier et positif (0 = aucun frais).",
+    "stp.fee.finish": "Terminer",
 
     "stp.categories.done": "Terminer",
     "stp.done": "Configuration terminée. Bienvenue !",
@@ -76,6 +110,27 @@ export const setupDict = defineDict({
     "stp.tables.continue": "Continue",
     "stp.skip": "Skip for now",
 
+    /* ── Delivery capability (step 2) ──────────────────────────────── */
+    "stp.delivery.title": "Delivery",
+    "stp.delivery.body":
+      "Do you have your own delivery riders? If yes, you handle delivery and set fees. If no, the platform manages delivery for you.",
+    "stp.delivery.own": "I have my own riders",
+    "stp.delivery.ownDesc":
+      "You have your own delivery team. Delivery fees are set by you when confirming each order.",
+    "stp.delivery.platform": "Platform handles delivery",
+    "stp.delivery.platformDesc":
+      "No riders? No problem. The platform assigns a rider and the admin sets the delivery fee.",
+    "stp.delivery.continue": "Continue",
+
+    /* ── Opening hours (step 3) ────────────────────────────────────── */
+    "stp.hours.title": "Opening hours",
+    "stp.hours.body":
+      "We pre-filled your hours from Monday to Saturday, 10 AM to 10 PM. You can adjust now or later from your profile.",
+    "stp.hours.default": "Monday – Saturday: 10:00 AM – 10:00 PM",
+    "stp.hours.closed": "Sunday: Closed",
+    "stp.hours.note": "These hours are displayed on your public page.",
+    "stp.hours.continue": "Continue",
+
     "stp.categories.title": "Your menu",
     "stp.categories.body":
       "We created four default categories — starters (before the main meal), main dishes, desserts (after) and drinks. You can rename or delete them any time.",
@@ -89,6 +144,19 @@ export const setupDict = defineDict({
     "stp.dishes.add": "Add {count} dish(es) and finish",
     "stp.dishes.added": "Dishes added to your menu.",
     "stp.dishes.none": "No dishes added — your menu starts empty; add dishes whenever you want.",
+    "stp.dishes.continue": "Continue",
+
+    "stp.fee.title": "Reservation fee",
+    "stp.fee.body":
+      "A deposit keeps a booked table serious. The customer is always told this amount is deducted from their final bill.",
+    "stp.fee.none": "No fee",
+    "stp.fee.fixed": "Fixed amount (FCFA)",
+    "stp.fee.fixedLabel": "Deposit amount",
+    "stp.fee.fixedHint":
+      "The customer pays this deposit online when booking (Mobile Money). It is deducted from their bill once they arrive.",
+    "stp.fee.valueRequired": "Enter an amount.",
+    "stp.fee.invalid": "Enter a whole number of francs, 0 or more (0 = no fee).",
+    "stp.fee.finish": "Finish",
 
     "stp.categories.done": "Finish",
     "stp.done": "Setup complete. Welcome!",

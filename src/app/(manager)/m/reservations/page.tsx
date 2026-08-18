@@ -5,6 +5,8 @@ import { requireCapability } from "@/lib/auth/branch";
 import { can } from "@/lib/capabilities";
 import { createAdminClient } from "@/lib/supabase/server";
 import { fetchReservations, fetchTables } from "@/lib/data/manager";
+import { isFreeMode } from "@/lib/data/billing";
+import { PlanGateUpsell } from "@/components/billing/plan-gate";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -16,6 +18,27 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function ReservationsPage() {
   const { active } = await requireCapability("reservations.view");
+
+  /**
+   * TABLE RESERVATIONS ARE A PROFESSIONAL FEATURE (§14.4).
+   *
+   * Same tier rule as reports: a locked tenant drops to Starter (§5), so the
+   * gate holds for them too. Free mode (platform free for now) suppresses the
+   * gate entirely — that is the point of the flag.
+   *
+   * The gate returns BEFORE the queries run, so a Starter tenant browsing the
+   * board costs nothing but the page render.
+   */
+  const tier = active.subscriptionState === "locked" ? "starter" : active.planTier;
+  const freeMode = await isFreeMode();
+
+  if (!freeMode && tier === "starter") {
+    return (
+      <ManagerPage titleKey="m.reservations.title" descriptionKey="m.reservations.subtitle">
+        <PlanGateUpsell feature="mgate.feature.reservations" plan="mgate.plan.professional" />
+      </ManagerPage>
+    );
+  }
 
   /**
    * Today onwards, midnight-anchored.
@@ -34,10 +57,17 @@ export default async function ReservationsPage() {
       const supabase = createAdminClient();
       const { data } = await supabase
         .from("restaurants")
-        .select("deposit_amount")
+        .select("deposit_amount, deposit_type")
         .eq("id", active.restaurantId)
         .maybeSingle();
-      return Number((data as { deposit_amount?: number } | null)?.deposit_amount ?? 0);
+      return {
+        amount: Number((data as { deposit_amount?: number } | null)?.deposit_amount ?? 0),
+        type: (
+          (data as { deposit_type?: string } | null)?.deposit_type === "percent"
+            ? "percent"
+            : "fixed"
+        ) as "fixed" | "percent",
+      };
     })(),
   ]);
 
@@ -50,7 +80,8 @@ export default async function ReservationsPage() {
         reservations={reservations}
         tables={tables}
         canDecide={can(active.role, "reservations.decide")}
-        depositAmount={depositRow}
+        depositAmount={depositRow.amount}
+        depositType={depositRow.type}
         canCollectDeposit={can(active.role, "finance.manage")}
       />
     </ManagerPage>

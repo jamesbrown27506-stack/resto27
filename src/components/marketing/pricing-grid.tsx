@@ -6,6 +6,7 @@ import { buttonClasses } from "@/components/ui/button";
 import { formatMoney, formatPercent } from "@/lib/format/currency";
 import { formatLimit } from "@/lib/format/subscription";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { planCtaHref } from "@/lib/nav";
 import type { PublicPlan } from "@/lib/data/plans";
 import { cn } from "@/lib/utils";
 
@@ -20,9 +21,12 @@ import { cn } from "@/lib/utils";
 export function PricingGrid({
   plans,
   compact = false,
+  userArea = null,
 }: {
   plans: PublicPlan[];
   compact?: boolean;
+  /** The signed-in user's area — the plan CTA routes to it (planCtaHref). */
+  userArea?: "admin" | "manager" | "customer" | null;
 }) {
   const { t } = useLocale();
 
@@ -126,7 +130,7 @@ export function PricingGrid({
             </ul>
 
             <Link
-              href="/register/restaurant"
+              href={planCtaHref(userArea)}
               className={cn(
                 buttonClasses({ fullWidth: true }),
                 "mt-7",

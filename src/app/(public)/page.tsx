@@ -4,6 +4,8 @@ import { getBranding } from "@/lib/branding";
 import { getAppearance } from "@/lib/appearance";
 import { fetchPopularDishes, fetchActiveRestaurants, fetchCuisineNames, fetchQuartierNames, fetchPublicStats, fetchFeaturedReviews } from "@/lib/data/public";
 import { listPublicPlans } from "@/lib/data/plans";
+import { getHeaderUser } from "@/lib/auth/header-user";
+import { getFreeModeInfo } from "@/lib/data/billing";
 
 /**
  * The homepage — server shell.
@@ -66,7 +68,7 @@ function jsonLd(brand: { name: string; logoUrl: string | null }) {
 }
 
 export default async function HomePage() {
-  const [brand, plans, restaurants, dishes, cuisines, quartiers, stats, testimonials, appearance] =
+  const [brand, plans, restaurants, dishes, cuisines, quartiers, stats, testimonials, appearance, user, freeMode] =
     await Promise.all([
       getBranding(),
       listPublicPlans(),
@@ -77,6 +79,8 @@ export default async function HomePage() {
       fetchPublicStats(),
       fetchFeaturedReviews(),
       getAppearance(),
+      getHeaderUser(),
+      getFreeModeInfo(),
     ]);
   const JSON_LD = jsonLd(brand);
 
@@ -98,6 +102,8 @@ export default async function HomePage() {
         stats={stats}
         testimonials={testimonials}
         appearance={appearance}
+        userArea={user?.area ?? null}
+        freeModeInfo={freeMode}
       />
     </>
   );

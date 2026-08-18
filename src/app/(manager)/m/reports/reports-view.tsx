@@ -2,9 +2,8 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
-import { Banknote, ChartColumn, Lock, ReceiptText, TrendingUp } from "lucide-react";
+import { Banknote, ChartColumn, ReceiptText, TrendingUp } from "lucide-react";
 import { MixPieChart, SalesLineChart, VolumeBarChart } from "@/components/charts/charts";
-import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatTile } from "@/components/ui/stat-tile";
@@ -356,35 +355,4 @@ function orderTypeLabel(type: string, t: (key: TranslationKey) => string): strin
     return t(`order.type.${type}` as TranslationKey);
   }
   return type;
-}
-
-/**
- * The plan gate's other half (§14.4).
- *
- * A Client Component because the page that decides this is a Server Component
- * and cannot translate its own copy. Locked tenants land here too: locking
- * drops a restaurant to Starter limits, and Starter has no analytics.
- */
-export function ReportsUpsell() {
-  const { t } = useLocale();
-
-  return (
-    <Card className="mx-auto max-w-lg">
-      <CardBody className="py-12 text-center">
-        <span className="mx-auto grid size-14 place-items-center rounded-full bg-warning-light text-warning">
-          <Lock className="size-6" aria-hidden />
-        </span>
-        <h2 className="mt-4 font-display text-xl font-bold">{t("mrp.locked.title")}</h2>
-        <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-text-secondary">
-          {t("mrp.locked.body")}
-        </p>
-        <Link
-          href="/m/billing"
-          className={buttonClasses({ size: "lg", className: "mt-6 w-full sm:w-auto" })}
-        >
-          {t("mrp.locked.cta")}
-        </Link>
-      </CardBody>
-    </Card>
-  );
 }
