@@ -11,7 +11,7 @@ import { getBranding } from "@/lib/branding";
 import { fetchInvoice } from "@/lib/data/invoices";
 import { formatMoney, formatPercent } from "@/lib/format/currency";
 import { formatDate } from "@/lib/format/datetime";
-import { DICTIONARIES, type Locale, type TranslationKey } from "@/lib/i18n/dictionaries";
+import { DICTIONARIES, intlLocale, type Locale, type TranslationKey } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
 /**
@@ -89,14 +89,15 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
   const t = translator(locale);
 
   /**
-   * The Intl tag, inline rather than imported from lib/i18n/use-locale.
+   * Dates on an English invoice must not read "3 août 2026", so the tag is
+   * passed to every formatDate below rather than left to default to French.
    *
-   * That module is "use client": importing `intlLocale` here would hand this
-   * Server Component a client reference and throw when it was called. Dates on
-   * an English invoice must not read "3 août 2026", so the tag is passed to
-   * every formatDate below rather than left to default to French.
+   * This used to be inlined here to dodge lib/i18n/use-locale, which is "use
+   * client" and would have handed this Server Component a client reference.
+   * `intlLocale` now lives in lib/i18n/dictionaries, which carries no
+   * directive and is callable from either side — so the duplicate is gone.
    */
-  const tag = locale === "en" ? "en-CM" : "fr-CM";
+  const tag = intlLocale(locale);
   const day = (value: string) => formatDate(value, tag);
 
   const billedTo =

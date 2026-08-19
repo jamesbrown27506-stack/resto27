@@ -71,7 +71,7 @@ export function CartView({ balance }: { balance: number }) {
                 <p className="text-sm text-text-light">{t("cct.items", { count: itemCount })}</p>
               </div>
               <Link
-                href={`/browse/${restaurant.restaurantSlug}`}
+                href={`/restaurants/${restaurant.restaurantSlug}`}
                 className="ml-auto shrink-0 text-sm font-semibold text-primary hover:underline"
               >
                 {t("cct.addMore")}

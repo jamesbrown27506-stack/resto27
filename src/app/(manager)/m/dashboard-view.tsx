@@ -5,12 +5,14 @@ import {
   AlertTriangle,
   ArrowRight,
   Banknote,
+  BellRing,
   CalendarCheck,
   ChefHat,
   Package,
   Star,
   UtensilsCrossed,
 } from "lucide-react";
+import { SetupPanel, WelcomeNudge } from "./setup-panel";
 import { ManagerPage } from "@/components/layout/manager-shell";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
@@ -21,7 +23,9 @@ import { UsageMeter } from "@/components/ui/meter";
 import { formatMoney } from "@/lib/format/currency";
 import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { cn } from "@/lib/utils";
 import { can, type BranchRole } from "@/lib/capabilities";
+import type { SetupChecklist } from "@/lib/data/manager";
 
 /**
  * The restaurant dashboard.
@@ -39,6 +43,7 @@ export function DashboardView({
   overview,
   upcoming,
   menuItemLimit,
+  checklist,
 }: {
   firstName: string;
   branch: {
@@ -52,6 +57,7 @@ export function DashboardView({
   overview: {
     ordersToday: number;
     revenueToday: number;
+    awaitingConfirmation: number;
     pendingOrders: number;
     pendingReservations: number;
     lowStockItems: number;
@@ -64,6 +70,8 @@ export function DashboardView({
   };
   upcoming: { id: string; guestName: string; partySize: number; reservedFor: string }[];
   menuItemLimit: number | null;
+  /** Drives the "finish your setup" panel at the bottom of the page. */
+  checklist: SetupChecklist;
 }) {
   const { t } = useLocale();
   const dates = useDates();
@@ -76,6 +84,8 @@ export function DashboardView({
       }`}
       action={<Badge tone={planTone}>{planLabel}</Badge>}
     >
+      <WelcomeNudge />
+
       {/* A restaurant still awaiting approval can set everything up but is not
           yet listed. Saying so beats letting them wonder why nobody orders. */}
       {branch.status === "pending" && (
@@ -91,23 +101,78 @@ export function DashboardView({
         </div>
       )}
 
-      {/* ── Requires your attention ────────────────────────────────── */}
-      {overview.pendingOrders + overview.pendingReservations + overview.lowStockItems +
-        overview.unrepliedReviews > 0 && (
-        <Panel title={t("m.attention.title")} className="mb-6">
-          <ul className="flex flex-col gap-2 p-4 sm:flex-row sm:flex-wrap sm:gap-3">
+      {/*
+        ────────────────────────────────────────────────────────────────────
+         "REQUIRES YOUR ATTENTION" HAD TO STOP BEING POLITE.
+
+         It used to be an ordinary Panel: same border, same surface, same
+         type as the four panels beneath it — a heading and a row of grey
+         chips. A customer's order sitting unanswered looked exactly like a
+         review nobody had replied to, and both looked exactly like the menu
+         summary. It was scrolled past, which for an unconfirmed order means
+         a person waiting on food that is not being cooked.
+
+         Two tiers now, because "attention" covers two different things:
+
+           URGENT — an unanswered order or booking. Someone is waiting right
+             now. Error colours, a live pulse on the count, and it is the
+             first thing on the page. Nothing else on this dashboard is
+             allowed to look like this, which is what makes it work.
+
+           WORTH DOING — low stock, unanswered reviews. Real, not urgent.
+             Warning colours, underneath, no pulse.
+
+         `role="alert"` on the urgent tier so a screen reader is told, rather
+         than left to find red boxes.
+        ────────────────────────────────────────────────────────────────────
+      */}
+      {overview.pendingOrders + overview.pendingReservations > 0 && (
+        <div
+          role="alert"
+          className="mb-4 overflow-hidden rounded-lg border-2 border-error bg-error-light"
+        >
+          <div className="flex flex-wrap items-center gap-3 border-b border-error/25 px-4 py-3">
+            <span className="relative grid size-9 shrink-0 place-items-center rounded-full bg-error text-white">
+              {/* The pulse is the part you catch out of the corner of your
+                  eye from across the counter. Disabled under
+                  prefers-reduced-motion by the global rule in globals.css. */}
+              <span
+                aria-hidden
+                className="absolute inset-0 animate-ping rounded-full bg-error opacity-40"
+              />
+              <BellRing className="relative size-4" aria-hidden />
+            </span>
+            <p className="min-w-0 flex-1 font-display text-base font-bold text-error sm:text-lg">
+              {t("m.attention.urgentTitle")}
+            </p>
+          </div>
+
+          <ul className="flex flex-col gap-2 p-3 sm:flex-row sm:flex-wrap sm:gap-3">
             {overview.pendingOrders > 0 && (
               <AttentionLink
+                urgent
                 href="/m/orders"
                 label={t("m.attention.orders", { count: overview.pendingOrders })}
               />
             )}
             {overview.pendingReservations > 0 && (
               <AttentionLink
+                urgent
                 href="/m/reservations"
                 label={t("m.attention.reservations", { count: overview.pendingReservations })}
               />
             )}
+          </ul>
+        </div>
+      )}
+
+      {overview.lowStockItems + overview.unrepliedReviews > 0 && (
+        <div className="mb-6 overflow-hidden rounded-lg border border-warning/40 bg-warning-light/60">
+          <p className="flex items-center gap-2 border-b border-warning/25 px-4 py-2.5 text-sm font-semibold text-warning">
+            <AlertTriangle className="size-4 shrink-0" aria-hidden />
+            <span>{t("m.attention.title")}</span>
+          </p>
+          <ul className="flex flex-col gap-2 p-3 sm:flex-row sm:flex-wrap sm:gap-3">
             {overview.lowStockItems > 0 && (
               <AttentionLink
                 href="/m/menu"
@@ -121,7 +186,7 @@ export function DashboardView({
               />
             )}
           </ul>
-        </Panel>
+        </div>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -130,11 +195,17 @@ export function DashboardView({
           value={String(overview.ordersToday)}
           icon={<Package />}
         />
+        {/* The hint explains the gap between "orders today" and this number.
+            Without it, a morning of unanswered orders looks like a bug. */}
         <StatTile
           label={t("m.stat.revenueToday")}
           value={formatMoney(overview.revenueToday)}
           icon={<Banknote />}
-          hint={t("m.stat.revenueHint")}
+          hint={
+            overview.awaitingConfirmation > 0
+              ? t("m.stat.revenuePending", { count: overview.awaitingConfirmation })
+              : t("m.stat.revenueHint")
+          }
         />
         <StatTile
           label={t("m.stat.inProgress")}
@@ -260,17 +331,33 @@ export function DashboardView({
           </CardBody>
         </Card>
       )}
+
+      <SetupPanel checklist={checklist} canEditProfile={can(branch.role, "profile.edit")} />
     </ManagerPage>
   );
 }
 
 /** One tappable "you need to look at this" row. */
-function AttentionLink({ href, label }: { href: string; label: string }) {
+function AttentionLink({
+  href,
+  label,
+  urgent = false,
+}: {
+  href: string;
+  label: string;
+  /** Solid error fill — reserved for the tier where someone is waiting. */
+  urgent?: boolean;
+}) {
   return (
     <li className="min-w-0">
       <Link
         href={href}
-        className="flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-primary-light hover:text-primary"
+        className={cn(
+          "flex items-center gap-2 rounded-md border px-3 py-2.5 text-sm font-semibold transition-colors",
+          urgent
+            ? "border-transparent bg-error text-white hover:brightness-110"
+            : "border-warning/30 bg-surface px-3 py-2 font-medium text-warning hover:border-warning",
+        )}
       >
         <ArrowRight className="size-3.5 shrink-0" aria-hidden />
         <span className="truncate">{label}</span>

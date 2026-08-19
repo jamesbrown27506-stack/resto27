@@ -196,7 +196,7 @@ export default async function AccountPage() {
         ) : (
           <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
             {favorites.map((r) => (
-              <RestaurantCard key={r.id} restaurant={r} href={`/browse/${r.slug}`} />
+              <RestaurantCard key={r.id} restaurant={r} href={`/restaurants/${r.slug}`} />
             ))}
           </div>
         )}

@@ -495,6 +495,8 @@ export async function fetchPromotions(restaurantId: string): Promise<Promotion[]
 export interface BranchOverview {
   ordersToday: number;
   revenueToday: number;
+  /** Today's orders still waiting on a yes/no — excluded from revenueToday. */
+  awaitingConfirmation: number;
   pendingOrders: number;
   pendingReservations: number;
   menuItems: number;
@@ -542,11 +544,40 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
 
   const todayRows = (today.data ?? []) as { total: number; status: string }[];
 
-  // Cancelled orders are excluded from revenue. Counting them would make a bad
-  // day look like a good one, which is the one thing this number must not do.
+  /*
+    ────────────────────────────────────────────────────────────────────────
+     REVENUE COUNTS ORDERS THE RESTAURANT HAS ACCEPTED. NOTHING ELSE.
+
+     This used to be "everything except cancelled", which quietly included
+     `pending` — an order the restaurant has not even looked at yet. The
+     number therefore jumped the instant a customer pressed Place order, and
+     kept the money in the total for as long as it sat unanswered. A
+     restaurant watching its dashboard saw revenue it had not earned and, for
+     every order it went on to decline, revenue it never would.
+
+     It also made the figure non-monotonic in the worst way: it went DOWN
+     when an order was refused, so a bad morning read as a mysterious loss
+     rather than as orders that were never taken.
+
+     `confirmed` is the line. It is the first state that means a human at the
+     restaurant said yes, and it is the same line the customer sees ("the
+     restaurant has accepted your order"). Everything past it — preparing,
+     shipped, delivered — is accepted too.
+
+     NOT `delivered` only. That would be the accountant's answer and the
+     wrong one for a dashboard read at 3pm: the food is cooked and the money
+     is committed long before the rider comes back.
+    ────────────────────────────────────────────────────────────────────────
+  */
+  const EARNED: string[] = ["confirmed", "preparing", "shipped", "delivered"];
+
   const revenueToday = todayRows
-    .filter((o) => o.status !== "cancelled")
+    .filter((o) => EARNED.includes(o.status))
     .reduce((sum, o) => sum + o.total, 0);
+
+  // Shown beside the revenue so the gap between "orders today" and the money
+  // is explained rather than left to look like a bug.
+  const awaitingConfirmation = todayRows.filter((o) => o.status === "pending").length;
 
   // Low stock needs the two columns compared against each other, which
   // PostgREST cannot express as a filter — so it is read and counted here.
@@ -563,6 +594,7 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
   return {
     ordersToday: todayRows.length,
     revenueToday,
+    awaitingConfirmation,
     pendingOrders: pending.count ?? 0,
     pendingReservations: reservations.count ?? 0,
     menuItems: items.count ?? 0,
@@ -572,5 +604,132 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
     staffCount: staff.count ?? 0,
     averageRating: restaurant.data?.rating ?? 0,
     reviewCount: restaurant.data?.review_count ?? 0,
+  };
+}
+
+/* ── Delivery fee band (migration 0035) ───────────────────────────────── */
+
+/**
+ * What this restaurant advertises as its delivery fee range.
+ *
+ * Read on the orders queue so the confirmation dialog can pre-fill the
+ * minimum and refuse anything above the maximum — the customer saw both
+ * numbers before they ordered, and a promise the confirmation screen ignores
+ * is worse than one never made.
+ *
+ * Falls back to a zeroed band on any failure, which every caller reads as
+ * "nothing declared". A missing column (migration 0035 not yet run) must
+ * degrade to the old unconstrained behaviour, never to a blocked queue.
+ */
+export async function fetchDeliveryFeeBand(
+  restaurantId: string,
+): Promise<{ min: number; max: number }> {
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("restaurants")
+    .select("min_delivery_fee, max_delivery_fee")
+    .eq("id", restaurantId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[manager:fetchDeliveryFeeBand]", error.message);
+    return { min: 0, max: 0 };
+  }
+
+  return {
+    min: Number(data?.min_delivery_fee) || 0,
+    max: Number(data?.max_delivery_fee) || 0,
+  };
+}
+
+/* ── The "finish your setup" checklist ─────────────────────────────────── */
+
+export interface SetupChecklist {
+  /** A logo is the single biggest difference between a card people tap and one they scroll past. */
+  hasLogo: boolean;
+  /** The cover photo behind the restaurant page header. */
+  hasCover: boolean;
+  /** A real description, not the empty string the application may have left. */
+  hasDescription: boolean;
+  /** A cuisine, so the restaurant appears under the filters people actually use. */
+  hasCuisine: boolean;
+  /** At least one dish. A listed restaurant with an empty card takes no orders. */
+  hasMenu: boolean;
+  /** At least one table, so bookings and dine-in orders have somewhere to go. */
+  hasTables: boolean;
+  /** Opening hours on at least one day — otherwise the page reads "closed" forever. */
+  hasHours: boolean;
+  /** Does the restaurant deliver at all? Drives the dashboard toggle. */
+  acceptsDelivery: boolean;
+  /** Own riders vs platform-managed. Only meaningful when acceptsDelivery. */
+  hasOwnDelivery: boolean;
+}
+
+/**
+ * Everything the dashboard's setup panel needs, in one read.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE WIZARD DELIBERATELY DOES NOT ASK FOR ANY OF THIS.
+ *
+ *  Onboarding is five short steps because a long one is where restaurants
+ *  abandon signup — so the logo, the cover photo, the description and the
+ *  cuisine are all skipped. Which is right, and which means a brand-new
+ *  restaurant goes live looking anonymous: a grey placeholder card in a
+ *  directory of photographs.
+ *
+ *  This is the other half of that trade. The wizard stays short; the
+ *  dashboard carries the rest as a checklist the restaurant can finish
+ *  whenever it likes, and the arrival from onboarding scrolls straight to it.
+ *  Nothing here is blocking — every item is "your page would be better with
+ *  this", never "you cannot trade without it".
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function fetchSetupChecklist(restaurantId: string): Promise<SetupChecklist> {
+  const supabase = createAdminClient();
+
+  const [restaurant, menu, tables, hours] = await Promise.all([
+    supabase
+      .from("restaurants")
+      .select("logo_url, cover_url, description, cuisine_id, accepts_delivery, has_own_delivery")
+      .eq("id", restaurantId)
+      .maybeSingle(),
+    supabase
+      .from("menu_items")
+      .select("*", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId),
+    supabase
+      .from("restaurant_tables")
+      .select("*", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId),
+    // "Has hours" means at least one day that actually opens. A row per day
+    // exists whether or not the restaurant trades that day, so counting rows
+    // would report success for a week of closures.
+    supabase
+      .from("restaurant_hours")
+      .select("*", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId)
+      .not("opens_at", "is", null),
+  ]);
+
+  const row = restaurant.data as {
+    logo_url: string | null;
+    cover_url: string | null;
+    description: string | null;
+    cuisine_id: string | null;
+    accepts_delivery: boolean | null;
+    has_own_delivery: boolean | null;
+  } | null;
+
+  return {
+    hasLogo: Boolean(row?.logo_url),
+    hasCover: Boolean(row?.cover_url),
+    hasDescription: Boolean(row?.description?.trim()),
+    hasCuisine: Boolean(row?.cuisine_id),
+    hasMenu: (menu.count ?? 0) > 0,
+    hasTables: (tables.count ?? 0) > 0,
+    hasHours: (hours.count ?? 0) > 0,
+    acceptsDelivery: row?.accepts_delivery !== false,
+    hasOwnDelivery: row?.has_own_delivery !== false,
   };
 }

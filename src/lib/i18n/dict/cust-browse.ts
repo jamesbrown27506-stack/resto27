@@ -22,6 +22,8 @@ export const custBrowseDict = defineDict({
     /* ── Restaurant page / dish menu ─────────────────────────────────── */
     "cbr.order": "Commander",
     "cbr.bookTable": "Réserver une table",
+    "cbr.bookHere": "Réserver une table ici",
+    "cbr.orderBelow": "Pour commander, choisissez vos plats dans la carte ci-dessous.",
     "cbr.verifiedTitle": "Vérifié par RestoLink",
     "cbr.verified": "Vérifié",
     "cbr.deliveryFrom": "Livraison dès {amount}",
@@ -41,6 +43,7 @@ export const custBrowseDict = defineDict({
     "cbr.estTime": "Délai estimé",
     "cbr.fee": "Frais de livraison",
     "cbr.feeToConfirm": "à confirmer",
+    "cbr.feeFrom": "à partir de {amount}",
     "cbr.feeNote":
       "Les frais de livraison sont fixés par le restaurant lorsqu&apos;il confirme votre commande, selon votre quartier.",
     "cbr.openBadge": "Ouvert",
@@ -110,6 +113,8 @@ export const custBrowseDict = defineDict({
     /* ── Restaurant page / dish menu ─────────────────────────────────── */
     "cbr.order": "Order",
     "cbr.bookTable": "Book a table",
+    "cbr.bookHere": "Book a table here",
+    "cbr.orderBelow": "To order, pick your dishes from the menu below.",
     "cbr.verifiedTitle": "Verified by RestoLink",
     "cbr.verified": "Verified",
     "cbr.deliveryFrom": "Delivery from {amount}",
@@ -129,6 +134,7 @@ export const custBrowseDict = defineDict({
     "cbr.estTime": "Estimated time",
     "cbr.fee": "Delivery fee",
     "cbr.feeToConfirm": "to be confirmed",
+    "cbr.feeFrom": "from {amount}",
     "cbr.feeNote":
       "The delivery fee is set by the restaurant when it confirms your order, based on your neighbourhood.",
     "cbr.openBadge": "Open",

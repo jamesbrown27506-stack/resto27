@@ -9,6 +9,7 @@ import { discountFor } from "@/lib/orders/promotions";
 import { computeTotals } from "@/lib/orders/totals";
 import { notify } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
+import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
 
 
 /**
@@ -86,13 +87,23 @@ export async function getRestaurantOrderCapabilities(
   deliveryEstimateMin: number;
   /** The minimum order in XAF, for the basket's progress hint. */
   minimumOrder: number;
+  /**
+   * The delivery fee band the restaurant advertises (migration 0035).
+   *
+   * Both 0 means "not declared", and checkout falls back to the old
+   * "the restaurant will tell you when it confirms" note. When they are set,
+   * the customer is given real numbers to budget against BEFORE committing —
+   * which is the whole point of asking a restaurant to declare them.
+   */
+  minDeliveryFee: number;
+  maxDeliveryFee: number;
 } | null> {
   const supabase = createAdminClient();
 
   const { data } = await supabase
     .from("restaurants")
     .select(
-      "accepts_delivery, accepts_pickup, status, delivery_estimate_min, minimum_order, quartiers ( name )",
+      "accepts_delivery, accepts_pickup, status, delivery_estimate_min, minimum_order, min_delivery_fee, max_delivery_fee, quartiers ( name )",
     )
     .eq("id", restaurantId)
     .maybeSingle();
@@ -104,6 +115,8 @@ export async function getRestaurantOrderCapabilities(
     quartier: (data.quartiers as { name: string }[] | null)?.[0]?.name ?? "",
     deliveryEstimateMin: Number(data.delivery_estimate_min) || 0,
     minimumOrder: Number(data.minimum_order) || 0,
+    minDeliveryFee: Number(data.min_delivery_fee) || 0,
+    maxDeliveryFee: Number(data.max_delivery_fee) || 0,
   };
 }
 
@@ -422,6 +435,27 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   if (!deliveryName) return { ok: false, reason: "nameRequired" };
   if (!deliveryPhone) return { ok: false, reason: "phoneRequired" };
   if (input.type === "delivery" && !addressLine) return { ok: false, reason: "addressRequired" };
+
+  /*
+    REGISTER A NEIGHBOURHOOD NOBODY HAS TYPED BEFORE.
+
+    `orders.delivery_quartier` is plain text — the order snapshots the name
+    the customer gave, and nothing here depends on a foreign key. But the
+    checkout box is a datalist, and a datalist is only as useful as the list
+    behind it: a quartier typed by one customer should be a suggestion for
+    the next, exactly as it is on the restaurant application.
+
+    Deliberately fire-and-forget. This is a convenience for future orders,
+    not part of THIS order being valid — a failure here must never cost
+    someone their basket, so it is awaited only to keep the request alive and
+    its result is ignored.
+  */
+  if (input.type === "delivery" && quartier && !input.addressId) {
+    const areaId = await defaultServiceAreaId();
+    if (areaId) {
+      await resolveOrCreateQuartier(quartier, areaId).catch(() => null);
+    }
+  }
 
   // ── Scheduling ──────────────────────────────────────────────────────────
   let scheduledFor: string | null = null;

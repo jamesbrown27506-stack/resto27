@@ -54,6 +54,15 @@ export interface RestaurantProfile {
   minimumOrder: number;
   acceptsDelivery: boolean;
   acceptsPickup: boolean;
+  /**
+   * The delivery fee band advertised to customers (migration 0035).
+   *
+   * The fee itself is still quoted per order — these two are the promise
+   * around it, shown on the restaurant page and at checkout, and the maximum
+   * is enforced when the restaurant quotes.
+   */
+  minDeliveryFee: number;
+  maxDeliveryFee: number;
   /** Always seven entries, index === weekday, so the form never has holes. */
   hours: OpeningHour[];
 }
@@ -75,6 +84,7 @@ function toHourMinute(value: string | null | undefined): string | null {
 const RESTAURANT_COLUMNS = `id, slug, name, branch_label, description, phone, address_line,
    logo_url, cover_url, cuisine_id, quartier_id, service_area_id,
    delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup,
+   min_delivery_fee, max_delivery_fee,
    cuisines ( name ), quartiers ( name )`;
 
 interface DbRestaurant {
@@ -94,6 +104,8 @@ interface DbRestaurant {
   minimum_order: number;
   accepts_delivery: boolean;
   accepts_pickup: boolean;
+  min_delivery_fee: number | null;
+  max_delivery_fee: number | null;
   cuisines: { name: string } | null;
   quartiers: { name: string } | null;
 }
@@ -145,6 +157,8 @@ export async function fetchRestaurantProfile(restaurantId: string): Promise<Rest
     minimumOrder: r.minimum_order,
     acceptsDelivery: r.accepts_delivery,
     acceptsPickup: r.accepts_pickup,
+    minDeliveryFee: Number(r.min_delivery_fee) || 0,
+    maxDeliveryFee: Number(r.max_delivery_fee) || 0,
     hours: Array.from({ length: 7 }, (_, weekday) => {
       const row = byWeekday.get(weekday);
       return {

@@ -45,12 +45,15 @@ export function BrowseClient({
   cuisines,
   quartiers,
   dishSearch,
+  homeQuartier,
 }: {
   initialFavorites: string[];
   restaurants: PublicRestaurant[];
   cuisines: string[];
   quartiers: string[];
   dishSearch: Record<string, string>;
+  /** From the customer's default address — drives the "near me" sort. */
+  homeQuartier?: string;
 }) {
   const { toast } = useToast();
   const [favorites, setFavorites] = useState<string[]>(initialFavorites);
@@ -74,7 +77,10 @@ export function BrowseClient({
       cuisines={cuisines}
       quartiers={quartiers}
       dishSearch={dishSearch}
-      hrefFor={(slug) => `/browse/${slug}`}
+      homeQuartier={homeQuartier}
+      // One page per restaurant now — /browse/[slug] is a permanent redirect
+      // to it, so linking straight there saves every customer a round trip.
+      hrefFor={(slug) => `/restaurants/${slug}`}
       action={(id) => (
         <FavoriteToggle active={favorites.includes(id)} onToggle={() => toggle(id)} />
       )}

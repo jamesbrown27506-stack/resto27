@@ -61,31 +61,41 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
 
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
-        <div className="flex items-center gap-4">
+      {/*
+        THE HEADER IS BUILT FOR THE WALL TABLET AND HAS TO SURVIVE THE PHONE.
+
+        Three big things — title, ticket count, clock — at wall-legible sizes
+        add up to more than a 360px screen has, and the row used to push the
+        whole board sideways. Every size now steps down below `sm`, the title
+        truncates, and the counters are allowed to shrink. Nothing is hidden:
+        a chef checking the queue from their own phone needs the same numbers
+        as the one standing at the tablet.
+      */}
+      <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-3 sm:gap-4 sm:px-5 sm:py-4">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
           <Link
             href="/m"
             aria-label={t("mk.back")}
-            className="grid size-10 place-items-center rounded-full text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
+            className="grid size-9 shrink-0 place-items-center rounded-full text-text-secondary transition-colors hover:bg-surface-2 hover:text-text sm:size-10"
           >
             <ArrowLeft className="size-5" aria-hidden />
           </Link>
-          <h1 className="flex items-center gap-2.5 font-display text-2xl font-bold">
-            <ChefHat className="size-6 text-primary" aria-hidden />
-            <span>{t("m.kitchen.title")}</span>
+          <h1 className="flex min-w-0 items-center gap-2 font-display text-lg font-bold sm:gap-2.5 sm:text-2xl">
+            <ChefHat className="size-5 shrink-0 text-primary sm:size-6" aria-hidden />
+            <span className="truncate">{t("m.kitchen.title")}</span>
           </h1>
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex shrink-0 items-center gap-3 sm:gap-6">
           <p className="tnum text-right">
-            <span className="block font-display text-3xl leading-none font-bold">
+            <span className="block font-display text-2xl leading-none font-bold sm:text-3xl">
               {orders.length}
             </span>
-            <span className="text-xs tracking-wide text-text-light uppercase">
+            <span className="text-[10px] tracking-wide text-text-light uppercase sm:text-xs">
               {t("mk.tickets")}
             </span>
           </p>
-          <p className="tnum font-display text-3xl font-bold text-text-secondary">
+          <p className="tnum font-display text-2xl font-bold text-text-secondary sm:text-3xl">
             {formatTime(clock)}
           </p>
         </div>
@@ -93,12 +103,12 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
 
       {orders.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-          <Check className="size-16 text-success" aria-hidden />
-          <p className="font-display text-3xl font-bold">{t("mk.allServed")}</p>
-          <p className="text-lg text-text-secondary">{t("mk.allServedBody")}</p>
+          <Check className="size-12 text-success sm:size-16" aria-hidden />
+          <p className="font-display text-2xl font-bold sm:text-3xl">{t("mk.allServed")}</p>
+          <p className="text-base text-text-secondary sm:text-lg">{t("mk.allServedBody")}</p>
         </div>
       ) : (
-        <ul className="grid flex-1 auto-rows-min gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <ul className="grid flex-1 auto-rows-min gap-3 p-3 sm:grid-cols-2 sm:gap-4 sm:p-4 xl:grid-cols-3 2xl:grid-cols-4">
           {orders.map((order) => {
             const minutes = minutesSince(order.createdAt, clock);
             const late = minutes >= RED_AFTER_MIN;
@@ -133,8 +143,8 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-sm font-semibold text-text-secondary">
-                  <Icon className="size-4 text-primary" aria-hidden />
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-border px-4 py-2 text-sm font-semibold text-text-secondary">
+                  <Icon className="size-4 shrink-0 text-primary" aria-hidden />
                   <span>{t(`order.type.${order.type}` as TranslationKey)}</span>
                   {order.tableNumber && (
                     <span>
@@ -143,7 +153,7 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
                   )}
                   <span
                     className={cn(
-                      "ml-auto rounded-full px-2 py-0.5 text-xs",
+                      "ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs",
                       order.status === "preparing"
                         ? "bg-warning/20 text-warning"
                         : "bg-info/20 text-info",

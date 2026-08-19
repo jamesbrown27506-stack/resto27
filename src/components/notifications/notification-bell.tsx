@@ -51,6 +51,47 @@ export function NotificationBell() {
   const [pending, startTransition] = useTransition();
   const rootRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Where the top of the panel sits on a phone, in CSS pixels.
+   *
+   * ───────────────────────────────────────────────────────────────────────
+   *  IT IS MEASURED, NOT A CONSTANT.
+   *
+   *  The panel used to be pinned to the BOTTOM of the screen and grow
+   *  upwards, which put it a whole viewport away from the bell that opened
+   *  it — you tapped at the top and something appeared at your thumb, with
+   *  no visual line between the two. Worse, it shares the surface colour
+   *  with the page, so it read as part of the page rather than as a panel.
+   *
+   *  It now hangs from the bell. The offset cannot be hardcoded because the
+   *  bar above it is not a fixed height: the manager shell stacks an
+   *  impersonation banner, a subscription banner and a "you are paused"
+   *  strip above its 56px header, and the customer header is taller again.
+   *  Reading the bell's own rect is the only thing that is right in all of
+   *  them.
+   * ───────────────────────────────────────────────────────────────────────
+   */
+  const [anchorTop, setAnchorTop] = useState(0);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function measure() {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (rect) setAnchorTop(rect.bottom + 8);
+    }
+
+    measure();
+    // The header is sticky, so scrolling usually leaves the bell where it is —
+    // but a banner collapsing above it does move, and rotation changes both.
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure, true);
+    };
+  }, [open]);
+
   // Close on outside click — a dropdown that follows focus is otherwise
   // impossible to dismiss on a touch screen.
   useEffect(() => {
@@ -116,24 +157,27 @@ export function NotificationBell() {
 
       {open && (
         <div
-          // The bottom offset clears the mobile tab bar (min-h-16 plus the
-          // phone's gesture inset) instead of overlaying it — the tab bar is
-          // how you leave this screen, and covering it while a panel is open
-          // is the one moment you most want it.
-          style={{ bottom: "calc(4.5rem + env(safe-area-inset-bottom, 0px))" }}
+          style={{
+            top: anchorTop,
+            // Never taller than the space between the bell and the tab bar
+            // (min-h-16 plus the phone's gesture inset). The list scrolls
+            // inside; the tab bar is how you leave this screen and must stay
+            // reachable while the panel is open.
+            maxHeight: `calc(100dvh - ${anchorTop}px - 5rem - env(safe-area-inset-bottom, 0px))`,
+          }}
           className={cn(
-            "fixed inset-x-2 z-50 overflow-hidden rounded-lg border border-border bg-surface shadow-xl",
-            // Desktop: the anchored dropdown under the bell, as before. Mobile:
-            // a full-width bottom sheet — a narrow right-aligned dropdown on a
-            // phone is exactly what gets clipped and unreadable, so it becomes
-            // a sheet that is never off-screen, clear of the tab bar.
+            "fixed inset-x-2 z-50 flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-xl",
+            // Desktop: the anchored dropdown under the bell. Mobile: full
+            // width — a narrow right-aligned dropdown on a phone is exactly
+            // what gets clipped — but hanging from the bell either way, so the
+            // panel is visibly connected to the control that opened it.
             //
-            // `lg:bottom-auto!` beats the inline style above, which no class
-            // could otherwise override.
-            "lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:bottom-auto! lg:mt-2 lg:w-88 lg:max-w-[calc(100vw-2rem)]",
+            // The `!` variants beat the inline style above, which no ordinary
+            // class could override.
+            "lg:absolute lg:inset-x-auto lg:right-0 lg:top-full! lg:mt-2 lg:max-h-none! lg:w-88 lg:max-w-[calc(100vw-2rem)]",
           )}
         >
-          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
             <p className="text-sm font-semibold">
               <span>{t("notif.title")}</span>
               {unread > 0 && (
@@ -161,7 +205,7 @@ export function NotificationBell() {
               description={t("notif.emptyBody")}
             />
           ) : (
-            <ul className="max-h-[60dvh] overflow-y-auto divide-y divide-border lg:max-h-[22rem]">
+            <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto overscroll-contain lg:max-h-[22rem]">
               {items.map((n) => {
                 const Icon = ICONS[n.tone];
                 return (

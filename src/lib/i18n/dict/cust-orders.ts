@@ -65,6 +65,11 @@ export const custOrdersDict = defineDict({
     "cor.contact": "Écrire au restaurant",
     "cor.scheduledFor": "Prévue pour",
     "cor.reorder2": "Recommander",
+    "cor.receivedTitle": "Votre commande est en route",
+    "cor.receivedBody":
+      "Dès que vous l'avez reçue, dites-le nous : vos points de fidélité sont crédités et vous pourrez laisser un avis.",
+    "cor.receivedAction": "J'ai bien reçu ma commande",
+    "cor.receivedDone": "Merci ! Votre commande est marquée comme reçue.",
     "cor.cancelShort": "Annuler",
     "cor.review": "Votre avis",
     "cor.reviewBody": "Aidez les autres clients — et le restaurant — avec un retour honnête.",
@@ -150,6 +155,11 @@ export const custOrdersDict = defineDict({
     "cor.contact": "Write to the restaurant",
     "cor.scheduledFor": "Scheduled for",
     "cor.reorder2": "Order again",
+    "cor.receivedTitle": "Your order is on its way",
+    "cor.receivedBody":
+      "Once it reaches you, tell us: your loyalty points are credited and you can leave a review.",
+    "cor.receivedAction": "I received my order",
+    "cor.receivedDone": "Thank you! Your order is marked as received.",
     "cor.cancelShort": "Cancel",
     "cor.review": "Your review",
     "cor.reviewBody": "Help other customers — and the restaurant — with honest feedback.",

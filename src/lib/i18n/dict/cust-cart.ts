@@ -110,14 +110,22 @@ export const custCartDict = defineDict({
     "cct.co.chooseQuartier": "Choisir un quartier",
     "cct.co.addressLine": "Adresse",
     "cct.co.addressPh": "Rue, immeuble, étage",
+    "cct.co.addressHint":
+      "Où vous habitez : la rue, l'immeuble, l'étage. C'est l'adresse elle-même.",
     "cct.co.quartier": "Quartier",
     "cct.co.quartierPh": "Akwa, Bonapriso…",
+    "cct.co.quartierHint":
+      "Choisissez dans la liste ou tapez le vôtre s'il n'y figure pas.",
     "cct.co.landmark": "Point de repère",
     "cct.co.landmarkPh": "En face de la pharmacie du Golfe",
     "cct.co.landmarkHint":
       "C'est ce qui permet vraiment de vous trouver : « en face de la pharmacie », « derrière le carrefour Ndokoti ».",
     "cct.co.feeNote":
       "Les frais de livraison sont fixés par le restaurant lorsqu'il confirme votre commande, en fonction de votre quartier. Ils vous seront communiqués à ce moment-là.",
+    "cct.co.feeRange":
+      "Les frais de livraison de ce restaurant se situent entre {min} et {max}. Le montant exact est fixé à la confirmation, selon votre quartier — il ne dépassera pas {max}.",
+    "cct.co.feeFrom":
+      "Les frais de livraison de ce restaurant démarrent à {min}. Le montant exact est fixé à la confirmation, selon votre quartier.",
     "cct.co.addressesUnavailable": "Vos adresses enregistrées ne sont pas accessibles pour le moment.",
     "cct.co.pickupNote": "Le restaurant les utilise pour vous joindre au moment du retrait.",
     "cct.co.when": "Quand ?",
@@ -276,14 +284,21 @@ export const custCartDict = defineDict({
     "cct.co.chooseQuartier": "Choose a neighbourhood",
     "cct.co.addressLine": "Address",
     "cct.co.addressPh": "Street, building, floor",
+    "cct.co.addressHint":
+      "Where you live: the street, the building, the floor. This is the address itself.",
     "cct.co.quartier": "Neighbourhood",
     "cct.co.quartierPh": "Akwa, Bonapriso…",
+    "cct.co.quartierHint": "Pick one from the list, or type yours if it is not there.",
     "cct.co.landmark": "Landmark",
     "cct.co.landmarkPh": "Opposite the Golfe pharmacy",
     "cct.co.landmarkHint":
       "This is what actually gets you found: “opposite the pharmacy”, “behind the Ndokoti junction”.",
     "cct.co.feeNote":
       "The delivery fee is set by the restaurant when it confirms your order, based on your neighbourhood. You will be told the amount then.",
+    "cct.co.feeRange":
+      "This restaurant's delivery fee is between {min} and {max}. The exact amount is set at confirmation based on your neighbourhood — it will not go above {max}.",
+    "cct.co.feeFrom":
+      "This restaurant's delivery fee starts at {min}. The exact amount is set at confirmation based on your neighbourhood.",
     "cct.co.addressesUnavailable": "Your saved addresses cannot be reached right now.",
     "cct.co.pickupNote": "The restaurant uses these to reach you at pickup time.",
     "cct.co.when": "When?",

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { DashboardView } from "./dashboard-view";
 import { SUBSCRIPTION_STATE_META } from "@/lib/format/subscription";
 import { requireBranch } from "@/lib/auth/branch";
-import { fetchBranchOverview, fetchReservations } from "@/lib/data/manager";
+import { fetchBranchOverview, fetchReservations, fetchSetupChecklist } from "@/lib/data/manager";
 import { fetchPlanLimits } from "@/lib/data/billing";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
@@ -30,10 +30,11 @@ export default async function ManagerDashboard() {
   // established tenant, so this only ever catches genuinely new ones.
   if (!active.setupDoneAt) redirect("/m/setup");
 
-  const [overview, upcoming, limits] = await Promise.all([
+  const [overview, upcoming, limits, checklist] = await Promise.all([
     fetchBranchOverview(active.restaurantId),
     fetchReservations(active.restaurantId, { from: new Date(), status: "pending" }),
     fetchPlanLimits(),
+    fetchSetupChecklist(active.restaurantId),
   ]);
 
   const stateMeta = SUBSCRIPTION_STATE_META[active.subscriptionState];
@@ -63,6 +64,7 @@ export default async function ManagerDashboard() {
         reservedFor: r.reservedFor,
       }))}
       menuItemLimit={limit?.menuItemLimit ?? null}
+      checklist={checklist}
     />
   );
 }

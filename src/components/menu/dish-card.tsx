@@ -1,11 +1,22 @@
+/*
+  DIETARY TAGS AND ALLERGENS ARE NO LONGER SHOWN, ANYWHERE.
+
+  They were a straight import of a European menu convention. In Cameroon
+  they are not what anyone reads a menu for — the labels went untouched by
+  restaurants and unread by customers, while taking the most valuable strip
+  of every dish row and every picker: the line directly under the name.
+
+  The COLUMNS stay (`menu_items.dietary_tags`, `menu_items.allergens`), and
+  so does lib/menu/tags. Nothing is dropped and nothing is migrated, so any
+  restaurant that filled them in keeps its data and this is reversible by
+  putting the markup back. What is gone is the UI.
+*/
 import Link from "next/link";
 import { useState } from "react";
-import { Plus, UtensilsCrossed } from "lucide-react";
+import { MapPin, Plus, UtensilsCrossed } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { RatingStars } from "@/components/ui/rating-stars";
 import { formatMoney } from "@/lib/format/currency";
-import { splitTags, DIETARY_TAG_LABEL } from "@/lib/format/tags";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { MenuItem } from "@/lib/data/manager";
 import { cn } from "@/lib/utils";
@@ -61,15 +72,17 @@ export function DishCard({
   restaurantName,
   restaurantLogo,
   restaurantRating,
+  restaurantQuartier,
 }: {
   item: MenuItem;
   restaurantSlug: string;
   restaurantName?: string;
   restaurantLogo?: string | null;
   restaurantRating?: number;
+  /** The restaurant's neighbourhood — where this dish actually is. */
+  restaurantQuartier?: string;
 }) {
   const { t } = useLocale();
-  const tags = splitTags(item.dietaryTags);
   const soldOut = !item.isAvailable || (item.trackStock && item.stockQuantity === 0);
 
   return (
@@ -95,16 +108,6 @@ export function DishCard({
             <span className="rounded-full bg-surface px-3 py-1 text-xs font-bold text-text">
               {t("cbr.soldOut")}
             </span>
-          </div>
-        )}
-
-        {tags.length > 0 && (
-          <div className="absolute top-3 left-3 flex flex-wrap gap-1">
-            {tags.slice(0, 2).map((tag) => (
-              <Badge key={tag} tone="success" className="bg-surface/90">
-                {DIETARY_TAG_LABEL[tag] ?? tag}
-              </Badge>
-            ))}
           </div>
         )}
 
@@ -135,11 +138,28 @@ export function DishCard({
           <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{item.description}</p>
         )}
 
+        {/*
+          THE IDENTITY FOOTER NOW CARRIES THE PLACE, NOT JUST THE NAME.
+
+          "Where is this?" is half the decision on a dish card and was the one
+          thing the card never answered — the logo, the name and the rating
+          were all there, and the neighbourhood was two navigations away. It
+          sits on its own line under the name so a long restaurant name and a
+          long quartier cannot fight for the same row on a phone.
+        */}
         {restaurantName && (
           <div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
             <Avatar name={restaurantName} src={restaurantLogo} size="xs" />
-            <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-secondary">
-              {restaurantName}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-xs font-medium text-text-secondary">
+                {restaurantName}
+              </span>
+              {restaurantQuartier && (
+                <span className="mt-0.5 flex items-center gap-1 text-[11px] text-text-light">
+                  <MapPin className="size-3 shrink-0 text-primary" aria-hidden />
+                  <span className="truncate">{restaurantQuartier}</span>
+                </span>
+              )}
             </span>
             {restaurantRating !== undefined && restaurantRating > 0 && (
               <RatingStars value={restaurantRating} size="sm" showValue />

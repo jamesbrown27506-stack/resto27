@@ -61,7 +61,7 @@ export function FavoritesClient({
             <RestaurantCard
               key={r.id}
               restaurant={r}
-              href={`/browse/${r.slug}`}
+              href={`/restaurants/${r.slug}`}
               action={
                 <button
                   type="button"

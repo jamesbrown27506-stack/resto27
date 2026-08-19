@@ -135,14 +135,19 @@ export function HomeContent({
             />
           </div>
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {dishes.map(({ item, restaurantSlug, restaurantName }) => (
-              <DishCard
-                key={item.id}
-                item={item}
-                restaurantSlug={restaurantSlug}
-                restaurantName={restaurantName}
-              />
-            ))}
+            {dishes.map(
+              ({ item, restaurantSlug, restaurantName, restaurantLogo, restaurantRating, restaurantQuartier }) => (
+                <DishCard
+                  key={item.id}
+                  item={item}
+                  restaurantSlug={restaurantSlug}
+                  restaurantName={restaurantName}
+                  restaurantLogo={restaurantLogo}
+                  restaurantRating={restaurantRating}
+                  restaurantQuartier={restaurantQuartier}
+                />
+              ),
+            )}
           </div>
         </div>
       </section>

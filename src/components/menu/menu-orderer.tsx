@@ -1,5 +1,18 @@
 "use client";
 
+/*
+  DIETARY TAGS AND ALLERGENS ARE NO LONGER SHOWN, ANYWHERE.
+
+  They were a straight import of a European menu convention. In Cameroon
+  they are not what anyone reads a menu for — the labels went untouched by
+  restaurants and unread by customers, while taking the most valuable strip
+  of every dish row and every picker: the line directly under the name.
+
+  The COLUMNS stay (`menu_items.dietary_tags`, `menu_items.allergens`), and
+  so does lib/menu/tags. Nothing is dropped and nothing is migrated, so any
+  restaurant that filled them in keeps its data and this is reversible by
+  putting the markup back. What is gone is the UI.
+*/
 import Link from "next/link";
 import { useState } from "react";
 import { AlertTriangle, ArrowRight, Check, Plus, ShoppingBag } from "lucide-react";
@@ -9,7 +22,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { formatMoney } from "@/lib/format/currency";
-import { splitTags, ALLERGEN_LABEL, DIETARY_TAG_LABEL } from "@/lib/format/tags";
 import { UNCATEGORIZED_SECTION_ID } from "@/lib/menu/constants";
 import type { MenuItem } from "@/lib/data/manager";
 import { useLocale } from "@/lib/i18n/use-locale";
@@ -87,9 +99,6 @@ export function MenuOrderer({
                   item.lowStockThreshold !== null &&
                   item.stockQuantity > 0 &&
                   item.stockQuantity <= item.lowStockThreshold;
-                const tags = splitTags(item.dietaryTags);
-                const allergens = splitTags(item.allergens);
-
                 const notOrderable = soldOut || !acceptingOrders;
 
                 return (
@@ -127,23 +136,16 @@ export function MenuOrderer({
                           {item.description}
                         </p>
 
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          {tags.map((t) => (
-                            <Badge key={t} tone="success">
-                              {DIETARY_TAG_LABEL[t] ?? t}
-                            </Badge>
-                          ))}
-                          {allergens.map((a) => (
-                            <Badge key={a} tone="warning">
-                              {ALLERGEN_LABEL[a] ?? a}
-                            </Badge>
-                          ))}
-                          {lowStock && (
+                        {/* Diet and allergen badges used to live here — see
+                            the note at the top of this file. Low stock stays:
+                            it changes whether you can order the dish. */}
+                        {lowStock && (
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
                             <Badge tone="warning">
                               {t("cbr.lowStock", { count: item.stockQuantity ?? 0 })}
                             </Badge>
-                          )}
-                        </div>
+                          </div>
+                        )}
 
                         <p className="tnum mt-2.5 font-display text-lg font-bold text-primary">
                           {formatMoney(item.price)}

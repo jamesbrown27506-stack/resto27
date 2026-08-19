@@ -8,6 +8,8 @@ import { requireUser } from "@/lib/auth/session";
 import { canCustomerCancel } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
 import { saveUpload, type UploadKind } from "@/lib/uploads";
+import { awardDeliveryPoints } from "@/lib/orders/award-points";
+import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
 import {
   checkPaymentAttempt,
   initiatePaymentAttempt,
@@ -80,6 +82,104 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
 }
 
 type CustomerStatus = "pending" | "confirmed" | "preparing" | "shipped" | "delivered" | "cancelled";
+
+/**
+ * "I HAVE MY FOOD." — the customer closing their own order.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE PERSON WHO KNOWS IS THE PERSON HOLDING THE BAG.
+ *
+ *  `delivered` could previously only be set by the restaurant, from four
+ *  staff-side screens. But the restaurant does not know when the food
+ *  arrived — the rider does, and the rider is not in this system. So the
+ *  final state was a guess made by whoever remembered to press the button:
+ *  some orders closed the moment the bike left, others sat in `shipped`
+ *  overnight and tripped the stuck-delivery sweep.
+ *
+ *  It matters beyond tidiness. `delivered` is what awards loyalty points,
+ *  what unlocks the review, and what the delivery monitor measures against.
+ *  A customer who has eaten and cannot say so is a customer whose points and
+ *  review are held hostage by someone else's admin.
+ *
+ *  ONLY FROM `shipped`, and only forwards. Confirming receipt of food that
+ *  has not left the kitchen is not a thing to support — and the guard is a
+ *  status equality in the UPDATE, so two people pressing at once cannot both
+ *  win and double-award the points.
+ *
+ *  The restaurant KEEPS its own button. This is an additional hand on the
+ *  same lever, not a transfer of it: a customer who never opens the app
+ *  still gets their order closed.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function confirmOwnDelivery(orderId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  const supabase = createAdminClient();
+
+  const { data: order, error } = await supabase
+    .from("orders")
+    .select("id, customer_id, restaurant_id, reference, status, type, subtotal")
+    .eq("id", orderId)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+
+  if (error || !order) return { ok: false, error: "Commande introuvable." };
+
+  if (order.status !== "shipped") {
+    return {
+      ok: false,
+      error:
+        order.status === "delivered"
+          ? "Cette commande est déjà marquée comme reçue."
+          : "Vous pourrez confirmer la réception dès que la commande sera en route.",
+    };
+  }
+
+  const now = new Date().toISOString();
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update({ status: "delivered", delivered_at: now })
+    .eq("id", orderId)
+    // Optimistic concurrency: if the restaurant closed it a second earlier,
+    // this matches nothing rather than stamping a second delivered_at.
+    .eq("status", "shipped");
+
+  if (updateError) {
+    console.error("[customer:confirmOwnDelivery]", orderId, updateError.message);
+    return { ok: false, error: "La confirmation a échoué. Réessayez." };
+  }
+
+  await supabase.from("order_status_history").insert({
+    order_id: orderId,
+    status: "delivered",
+    by_name: user.name,
+    note: "Confirmed received by customer",
+  });
+
+  // The SAME award the restaurant's own "delivered" runs. Closing your own
+  // order must not cost you the points closing it any other way would earn.
+  await awardDeliveryPoints({
+    id: order.id,
+    subtotal: Number(order.subtotal) || 0,
+    reference: order.reference,
+    customer_id: order.customer_id,
+    restaurant_id: order.restaurant_id,
+  });
+
+  // The restaurant's queue should stop showing this as out for delivery.
+  await notify({
+    event: "order_status",
+    tone: "success",
+    restaurantId: order.restaurant_id,
+    href: `/m/orders/${orderId}`,
+    params: { reference: order.reference, status: "delivered", customerName: user.name },
+  });
+
+  revalidatePath("/orders");
+  revalidatePath(`/orders/${orderId}`);
+  revalidatePath("/account");
+  revalidatePath("/loyalty");
+  return { ok: true };
+}
 
 /** 1–5 stars on a delivered order's delivery experience. */
 export async function rateOwnDelivery(orderId: string, rating: number): Promise<ActionResult> {
@@ -531,18 +631,28 @@ const AddressSchema = z.object({
 
 /**
  * Resolved quartiers are stored by id, so a renamed quartier keeps its
- * history coherent. The form sends the NAME for display; it is resolved here,
- * scoped to the active service area.
+ * history coherent. The form sends the NAME for display; it is resolved here.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  AN UNRECOGNISED NAME IS NOW CREATED, NOT REFUSED.
+ *
+ *  This used to be an exact, case-sensitive, active-only lookup that returned
+ *  null for anything else — and the caller turned that null into "Quartier
+ *  inconnu.". A customer who lives somewhere we had not seeded could
+ *  therefore not save their own address at all, which is a dead end on the
+ *  one screen that has to work before they can order anything.
+ *
+ *  The exact-match was also wrong on its own terms: "Akwa" saved fine and
+ *  "akwa" did not.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 async function resolveQuartierId(name: string): Promise<string | null> {
-  const supabase = createAdminClient();
-  const { data } = await supabase
-    .from("quartiers")
-    .select("id")
-    .eq("name", name)
-    .eq("is_active", true)
-    .maybeSingle();
-  return data?.id ?? null;
+  const areaId = await defaultServiceAreaId();
+  if (!areaId) {
+    console.error("[customer:resolveQuartierId] no service area configured");
+    return null;
+  }
+  return resolveOrCreateQuartier(name, areaId);
 }
 
 async function clearOtherDefaults(profileId: string, keepId?: string) {
@@ -564,7 +674,7 @@ export async function saveOwnAddress(input: z.infer<typeof AddressSchema>): Prom
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Vérifiez le formulaire." };
 
   const quartierId = await resolveQuartierId(parsed.data.quartierName);
-  if (!quartierId) return { ok: false, error: "Quartier inconnu." };
+  if (!quartierId) return { ok: false, error: "Impossible d'enregistrer ce quartier. Réessayez." };
 
   const supabase = createAdminClient();
   if (parsed.data.isDefault) await clearOtherDefaults(user.id);
@@ -598,7 +708,7 @@ export async function updateOwnAddress(
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Vérifiez le formulaire." };
 
   const quartierId = await resolveQuartierId(parsed.data.quartierName);
-  if (!quartierId) return { ok: false, error: "Quartier inconnu." };
+  if (!quartierId) return { ok: false, error: "Impossible d'enregistrer ce quartier. Réessayez." };
 
   const supabase = createAdminClient();
   if (parsed.data.isDefault) await clearOtherDefaults(user.id, addressId);

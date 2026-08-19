@@ -38,7 +38,16 @@ const POLL_MS = 30_000;
  * transition the state machine will refuse — and the server re-derives the
  * transition anyway, so two taps racing on one ticket cannot double-skip.
  */
-export function OrdersQueue({ orders, now }: { orders: ManagerOrder[]; now: string }) {
+export function OrdersQueue({
+  orders,
+  now,
+  feeBand,
+}: {
+  orders: ManagerOrder[];
+  now: string;
+  /** The restaurant's advertised delivery band (migration 0035). */
+  feeBand: { min: number; max: number };
+}) {
   const { t } = useLocale();
   const { toast } = useToast();
   const router = useRouter();
@@ -265,6 +274,7 @@ export function OrdersQueue({ orders, now }: { orders: ManagerOrder[]; now: stri
         order={feeFor}
         open={feeFor !== null}
         pending={pending}
+        band={feeBand}
         onClose={() => setFeeFor(null)}
         onConfirm={(fee) => {
           if (feeFor) advance(feeFor, fee);

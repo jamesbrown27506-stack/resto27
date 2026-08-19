@@ -179,10 +179,18 @@ export function RestaurantSignupForm({ areas }: { areas: SignupArea[] }) {
         </div>
       )}
 
-      {/* Progress */}
+      {/*
+        Progress.
+
+        `min-w-0` on each column is what keeps this inside the viewport. A
+        flex item defaults to `min-width: auto`, so a long step name —
+        "Établissement" at 320px — refuses to shrink below its own text and
+        pushes the whole row wider than the screen. The label truncates
+        instead; the bar above it is the real progress indicator.
+      */}
       <ol className="mb-7 flex items-center gap-1.5">
         {STEPS.map((label, i) => (
-          <li key={label} className="flex flex-1 flex-col gap-1.5">
+          <li key={label} className="flex min-w-0 flex-1 flex-col gap-1.5">
             <span
               className={cn(
                 "h-1 rounded-full transition-colors",
@@ -191,7 +199,7 @@ export function RestaurantSignupForm({ areas }: { areas: SignupArea[] }) {
             />
             <span
               className={cn(
-                "text-[10px] font-bold tracking-wide uppercase transition-colors",
+                "truncate text-[10px] font-bold tracking-wide uppercase transition-colors",
                 i <= step ? "text-primary" : "text-text-light",
               )}
             >
@@ -457,11 +465,16 @@ export function RestaurantSignupForm({ areas }: { areas: SignupArea[] }) {
           )}
         </div>
 
-        <div className="mt-7 flex items-center gap-3">
+      {/*
+          `min-w-0` again, for the same reason as the progress row: the
+          Continue button is `w-full`, and without it the pair asks for more
+          than the container has.
+      */}
+        <div className="mt-7 flex min-w-0 items-center gap-3">
           {step > 0 && (
             <Button variant="outline" onClick={() => setStep((s) => s - 1)} disabled={pending}>
               <ArrowLeft className="size-4" aria-hidden />
-              {t("reg.back")}
+              <span className="max-[380px]:sr-only">{t("reg.back")}</span>
             </Button>
           )}
 

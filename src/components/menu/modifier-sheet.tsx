@@ -9,10 +9,8 @@ import { Sheet } from "@/components/ui/sheet";
 import { formatMoney } from "@/lib/format/currency";
 import { lineUnitPrice } from "@/lib/orders/totals";
 import { useCart, type CartOptionChoice } from "@/components/cart/cart-provider";
-import { splitTags, ALLERGEN_LABEL } from "@/lib/format/tags";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { MenuItem } from "@/lib/data/manager";
-import { Badge } from "@/components/ui/badge";
 
 /**
  * The option picker (§3).
@@ -101,7 +99,6 @@ export function ModifierSheet({
   if (!item) return null;
 
   const unitPrice = lineUnitPrice(item.price, choices.map((c) => c.priceDelta));
-  const allergens = splitTags(item.allergens);
 
   /** Every required group must have at least `minSelect` choices. */
   const unmet = item.optionGroups.filter(
@@ -159,23 +156,50 @@ export function ModifierSheet({
       description={item.description}
       side="bottom"
       footer={
-        <div className="flex items-center gap-4">
+        /*
+          `min-w-0` and a shrinkable button, for the reason documented in
+          button.tsx: `fullWidth` asks for 100% of the row, and the stepper
+          beside it then pushes the pair past the edge of a phone. The label
+          also carries a formatted price, which is the longest string in the
+          sheet — at 320px it was clipping.
+        */
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
           <QtyStepper value={quantity} onChange={setQuantity} />
-          <Button size="lg" fullWidth disabled={!canAdd} onClick={add} className="rounded-md">
-            {t("cbr.add", { price: formatMoney(unitPrice * quantity) })}
+          <Button
+            size="lg"
+            fullWidth
+            disabled={!canAdd}
+            onClick={add}
+            className="min-w-0 rounded-md px-4 sm:px-8"
+          >
+            <span className="truncate">
+              {t("cbr.add", { price: formatMoney(unitPrice * quantity) })}
+            </span>
           </Button>
         </div>
       }
     >
-      {allergens.length > 0 && (
-        <div className="mb-5 flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-text-secondary">{t("cbr.allergens")}</span>
-          {allergens.map((a) => (
-            <Badge key={a} tone="warning">
-              {ALLERGEN_LABEL[a] ?? a}
-            </Badge>
-          ))}
-        </div>
+      {/*
+        THE DISH'S OWN PHOTO, AT THE TOP OF ITS OWN SHEET.
+
+        The picker showed a name, a description and a list of radio buttons —
+        no image at all. Which meant the moment of deciding "yes, this one,
+        with these options, for this much" happened with nothing to look at,
+        having been reached by tapping a photograph. People tapped back out to
+        check they had opened the right dish.
+
+        Full-bleed: `-m-5` cancels the Sheet body's own padding so the photo
+        runs edge to edge, the way it does on the card that was tapped, then
+        `mb-5` restores the gap below it. Rendered only when there IS a photo —
+        a grey placeholder here would cost the same space and say nothing.
+      */}
+      {item.imageUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={item.imageUrl}
+          alt=""
+          className="-mx-5 -mt-5 mb-5 h-40 w-[calc(100%+2.5rem)] max-w-none object-cover sm:h-52"
+        />
       )}
 
       <div className="flex flex-col gap-6">

@@ -10,7 +10,10 @@ import { fetchLoyaltyLedger } from "@/lib/data/customer";
 import { formatMoney } from "@/lib/format/currency";
 import { formatDate, isoAttr } from "@/lib/format/datetime";
 import { getLocale, getTranslator } from "@/lib/i18n/locale-server";
-import { intlLocale } from "@/lib/i18n/use-locale";
+// From ./dictionaries, NOT from ./use-locale. The latter is "use client",
+// and a Server Component importing from it receives a client reference that
+// throws the moment it is called — which is exactly what this page did.
+import { intlLocale } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
 /**

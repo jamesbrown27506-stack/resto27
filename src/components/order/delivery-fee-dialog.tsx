@@ -42,23 +42,56 @@ export function DeliveryFeeDialog({
   order,
   open,
   pending = false,
+  band,
   onClose,
   onConfirm,
 }: {
   order: FeeTarget | null;
   open: boolean;
   pending?: boolean;
+  /**
+   * What this restaurant advertises (migration 0035). 0 = not declared.
+   *
+   * The customer read these numbers on the restaurant page and at checkout
+   * BEFORE they ordered. The dialog therefore pre-fills the minimum and
+   * refuses anything above the maximum — the server refuses it too, but a
+   * manager should be stopped by the form rather than by an error after
+   * they have already pressed confirm.
+   */
+  band?: { min: number; max: number };
   onClose: () => void;
   onConfirm: (fee: number) => void;
 }) {
   const { t } = useLocale();
   const [value, setValue] = useState("");
 
+  const min = band?.min ?? 0;
+  const max = band?.max ?? 0;
+
+  /*
+    Pre-fill the advertised minimum when a new order opens the dialog.
+
+    Adjusted during render rather than in an effect — the same pattern the
+    modifier sheet and the typed-confirm dialog use — so the field never
+    paints empty for a frame and never carries the previous order's number
+    into the next one.
+  */
+  const sessionKey = open && order ? order.reference : null;
+  const [lastKey, setLastKey] = useState(sessionKey);
+  if (lastKey !== sessionKey) {
+    setLastKey(sessionKey);
+    setValue(min > 0 ? String(min) : "");
+  }
+
   if (!order) return null;
 
   const fee = parseMoney(value) ?? 0;
   const newTotal = order.total + fee;
-  const invalid = value !== "" && parseMoney(value) === null;
+  const malformed = value !== "" && parseMoney(value) === null;
+  // Above what the customer was promised. Its own flag, so the message can
+  // say WHICH rule was broken rather than just colouring the box red.
+  const overCeiling = !malformed && max > 0 && fee > max;
+  const invalid = malformed || overCeiling;
 
   return (
     <Dialog
@@ -101,8 +134,25 @@ export function DeliveryFeeDialog({
           </p>
         </div>
 
+        {/* The band, said plainly, above the number being chosen. */}
+        {(min > 0 || max > 0) && (
+          <p className="flex items-start gap-2 rounded-md border border-info/25 bg-info-light p-3 text-xs leading-relaxed text-info">
+            <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span>
+              {max > 0
+                ? t("fee.band", {
+                    min: formatMoney(min),
+                    max: formatMoney(max),
+                  })
+                : t("fee.bandFrom", { min: formatMoney(min) })}
+            </span>
+          </p>
+        )}
+
         <div className="flex flex-wrap gap-2">
-          {PRESETS.map((preset) => (
+          {/* A preset the restaurant has promised never to charge is not a
+              choice — offering it only invites the refusal below. */}
+          {PRESETS.filter((preset) => max === 0 || preset <= max).map((preset) => (
             <button
               key={preset}
               type="button"
@@ -118,7 +168,12 @@ export function DeliveryFeeDialog({
           ))}
         </div>
 
-        <Field label={t("fee.amount")} htmlFor="fee" required>
+        <Field
+          label={t("fee.amount")}
+          htmlFor="fee"
+          required
+          error={overCeiling ? t("fee.overMax", { max: formatMoney(max) }) : undefined}
+        >
           <Input
             id="fee"
             inputMode="numeric"

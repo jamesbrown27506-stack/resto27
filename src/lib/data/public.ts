@@ -48,6 +48,15 @@ export interface PublicRestaurant {
   acceptsDelivery: boolean;
   acceptsPickup: boolean;
   isAcceptingOrders: boolean;
+  /**
+   * The delivery fee band this restaurant advertises (migration 0035).
+   *
+   * Both 0 means "not declared", and the UI falls back to "to be confirmed".
+   * When they are set, the customer gets real numbers to budget against on
+   * the page they decide from — the fee itself is still quoted per order.
+   */
+  minDeliveryFee: number;
+  maxDeliveryFee: number;
   /** The acompte a booking requires (migration 0025). 0 = none. */
   depositAmount: number;
   /**
@@ -76,6 +85,8 @@ interface DbRestaurant {
   accepts_delivery: boolean;
   accepts_pickup: boolean;
   is_accepting_orders: boolean;
+  min_delivery_fee: number | null;
+  max_delivery_fee: number | null;
   deposit_amount: number;
   deposit_type: string | null;
   created_at: string;
@@ -87,7 +98,7 @@ interface DbRestaurant {
 }
 
 const RESTAURANT_COLUMNS =
-  "id, slug, name, branch_label, is_primary, status, is_verified, description, phone, address_line, logo_url, cover_url, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, deposit_amount, created_at, cuisines ( name ), quartiers ( name )";
+  "id, slug, name, branch_label, is_primary, status, is_verified, description, phone, address_line, logo_url, cover_url, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, min_delivery_fee, max_delivery_fee, deposit_amount, created_at, cuisines ( name ), quartiers ( name )";
 
 async function attachHours(
   rows: DbRestaurant[],
@@ -142,6 +153,8 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
     acceptsDelivery: r.accepts_delivery,
     acceptsPickup: r.accepts_pickup,
     isAcceptingOrders: r.is_accepting_orders,
+    minDeliveryFee: Number(r.min_delivery_fee) || 0,
+    maxDeliveryFee: Number(r.max_delivery_fee) || 0,
     depositAmount: Number(r.deposit_amount),
     depositType: r.deposit_type === "percent" ? "percent" : "fixed",
     hours,
@@ -276,6 +289,15 @@ export interface PopularDish {
   restaurantName: string;
   restaurantLogo: string | null;
   restaurantRating: number;
+  /**
+   * Where the restaurant is.
+   *
+   * A dish card is a decision about WHERE TO EAT as much as what to eat, and
+   * it was the one card in the app that never said. Someone in Bonapriso
+   * tapping a plate of Ndolé had no way to know they were being sent to
+   * Bonabéri until two pages later.
+   */
+  restaurantQuartier: string;
 }
 
 /**
@@ -296,7 +318,7 @@ export async function fetchPopularDishes(limit = 6): Promise<PopularDish[]> {
   const { data, error } = await supabase
     .from("menu_items")
     .select(
-      "id, restaurant_id, category_id, name, description, price, image_url, is_available, is_featured, prep_minutes, track_stock, stock_quantity, low_stock_threshold, dietary_tags, allergens, sort_order, restaurants!inner ( slug, name, rating, logo_url )",
+      "id, restaurant_id, category_id, name, description, price, image_url, is_available, is_featured, prep_minutes, track_stock, stock_quantity, low_stock_threshold, dietary_tags, allergens, sort_order, restaurants!inner ( slug, name, rating, logo_url, quartiers ( name ) )",
     )
     .eq("is_available", true)
     .eq("restaurants.status", "active")
@@ -325,7 +347,13 @@ export async function fetchPopularDishes(limit = 6): Promise<PopularDish[]> {
     dietary_tags: string;
     allergens: string;
     sort_order: number;
-    restaurants: { slug: string; name: string; rating: number; logo_url: string | null }[];
+    restaurants: {
+      slug: string;
+      name: string;
+      rating: number;
+      logo_url: string | null;
+      quartiers: { name: string }[] | null;
+    }[];
   }[])
     .sort((a, b) => {
       const aPhoto = a.image_url ? 0 : 1;
@@ -340,6 +368,7 @@ export async function fetchPopularDishes(limit = 6): Promise<PopularDish[]> {
       restaurantName: i.restaurants[0]?.name ?? "",
       restaurantLogo: i.restaurants[0]?.logo_url ?? null,
       restaurantRating: Number(i.restaurants[0]?.rating ?? 0),
+      restaurantQuartier: i.restaurants[0]?.quartiers?.[0]?.name ?? "",
     item: {
       id: i.id,
       restaurantId: i.restaurant_id,

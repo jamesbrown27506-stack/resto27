@@ -676,6 +676,33 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
     // every role, defaults for anyone who has never opened the screen.
     const masterChannels = await fetchNotificationChannelsFor(recipients.map((r) => r.profileId));
 
+    /*
+      One query for every recipient's language.
+
+      Inside the same batch as the preference reads above, not per recipient:
+      a broadcast to every customer on the platform must not become one round
+      trip per person. A profile whose row is missing or whose column is not
+      there yet (migration 0036 unrun) simply falls back to the role default,
+      which is the previous behaviour.
+    */
+    const localeByProfile = new Map<string, Locale>();
+    {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, locale")
+        .in("id", recipients.map((r) => r.profileId));
+
+      if (error) {
+        console.error("[notify] locale lookup", error.message);
+      } else {
+        for (const row of (data ?? []) as { id: string; locale: string | null }[]) {
+          if (row.locale === "fr" || row.locale === "en") {
+            localeByProfile.set(row.id, row.locale);
+          }
+        }
+      }
+    }
+
     const tone = input.tone ?? "info";
     const params = input.params ?? {};
     const href = input.href ?? null;
@@ -686,7 +713,24 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
     const pushes: { profileId: string; title: string; body: string; href: string | null }[] = [];
 
     for (const recipient of recipients) {
-      const locale: Locale = recipient.kind === "admin" ? "en" : "fr";
+      /*
+        THE RECIPIENT'S OWN LANGUAGE, NOT THEIR ROLE'S.
+
+        This used to read `recipient.kind === "admin" ? "en" : "fr"`, so the
+        language was decided by which part of the app you worked in. Every
+        manager and every customer got French — bell, email and push — no
+        matter which way they had set the FR/EN toggle, because a toggle
+        writes a cookie and there is no cookie anywhere near this code.
+
+        `profiles.locale` (migration 0036) is written by the toggle for
+        exactly this. Admins keep English as their default: the admin area is
+        English by design, and an admin who has explicitly chosen French
+        still gets it, because their stored preference wins over the default
+        below.
+      */
+      const stored = localeByProfile.get(recipient.profileId);
+      const locale: Locale =
+        stored ?? (recipient.kind === "admin" ? "en" : "fr");
       const text = copy(input.event, params, locale);
       const prefs = channelsFor(
         recipient,

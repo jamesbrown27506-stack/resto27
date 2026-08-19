@@ -319,6 +319,8 @@ const baseFr = {
   "restaurants.sortRating": "Mieux notés",
   "restaurants.sortDelivery": "Plus rapides",
   "restaurants.sortName": "Nom (A–Z)",
+  "restaurants.sortNearMe": "Près de moi",
+  "restaurants.nearMeNote": "{quartier} en premier",
   "restaurants.allCuisines": "Toutes cuisines",
   "restaurants.allQuartiers": "Tout Douala",
   "restaurants.allRatings": "Toutes notes",
@@ -604,7 +606,8 @@ const baseFr = {
 
   "m.stat.ordersToday": "Commandes aujourd'hui",
   "m.stat.revenueToday": "Recettes aujourd'hui",
-  "m.stat.revenueHint": "Commandes annulées exclues.",
+  "m.stat.revenueHint": "Commandes confirmées uniquement.",
+  "m.stat.revenuePending": "{count} commande(s) en attente de votre confirmation, non comptée(s).",
   "m.stat.inProgress": "En cours",
   "m.stat.inProgressHint": "À confirmer, en préparation ou en route.",
   "m.stat.rating": "Note moyenne",
@@ -631,7 +634,42 @@ const baseFr = {
   "m.team.body": "Chacun n'accède qu'à ce que son rôle autorise, succursale par succursale.",
   "m.team.manage": "Gérer l'équipe",
 
-  "m.attention.title": "Requiert votre attention",
+  "m.attention.title": "Autres points à traiter",
+  "m.attention.urgentTitle": "Des clients attendent votre réponse",
+
+  /* -- Terminer la configuration ---------------------------------------- */
+  "m.welcome.title": "Bienvenue !",
+  "m.welcome.body":
+    "Votre restaurant est configuré. Il reste quelques éléments pour que votre page donne vraiment envie — nous vous y emmenons.",
+  "m.welcome.dismiss": "Plus tard",
+  "m.setup.title": "Terminez la configuration de votre page",
+  "m.setup.body":
+    "Rien d'obligatoire ici : votre restaurant fonctionne déjà. Mais chaque élément ajouté rend votre page plus attirante pour les clients.",
+  "m.setup.doneTitle": "Votre page est complète",
+  "m.setup.doneBody": "Tout y est. Vous pouvez modifier ces éléments à tout moment depuis votre profil.",
+  "m.setup.logo": "Ajouter votre logo",
+  "m.setup.logoBody": "C'est l'image qui vous représente dans les listes. Sans elle, votre carte reste grise.",
+  "m.setup.cover": "Ajouter une photo de couverture",
+  "m.setup.coverBody": "La grande image en haut de votre page. Une photo de votre salle ou de vos plats.",
+  "m.setup.description": "Décrire votre restaurant",
+  "m.setup.descriptionBody": "Deux phrases sur ce que vous servez et ce qui vous distingue.",
+  "m.setup.cuisine": "Choisir votre type de cuisine",
+  "m.setup.cuisineBody": "C'est ainsi que les clients vous trouvent dans les filtres.",
+  "m.setup.menu": "Ajouter des plats",
+  "m.setup.menuBody": "Une carte vide ne reçoit aucune commande.",
+  "m.setup.tables": "Ajouter vos tables",
+  "m.setup.tablesBody": "Nécessaire pour les réservations et le service sur place.",
+  "m.setup.hours": "Définir vos horaires",
+  "m.setup.hoursBody": "Sans horaires, votre page affiche « fermé » en permanence.",
+  "m.setup.later": "Vous pouvez revenir ici quand vous voulez.",
+  "m.setup.go": "Ouvrir mon profil",
+  "m.setup.deliveryLabel": "Nous proposons la livraison",
+  "m.setup.deliveryOwnHint": "Vos propres livreurs. Vous fixez les frais à la confirmation de chaque commande.",
+  "m.setup.deliveryPlatformHint": "La plateforme gère la livraison et les frais sont fixés par l'administrateur.",
+  "m.setup.deliveryOffHint": "Vente à emporter et sur place uniquement. Aucun client ne verra d'option de livraison.",
+  "m.setup.deliveryOn": "Livraison activée.",
+  "m.setup.deliveryOff": "Livraison désactivée.",
+  "m.setup.deliverySettings": "Frais et zone de livraison",
   "m.attention.orders": "{count} commande(s) à traiter",
   "m.attention.reservations": "{count} réservation(s) à confirmer",
   "m.attention.lowStock": "{count} plat(s) en stock bas",
@@ -761,6 +799,10 @@ const baseFr = {
   "fee.newTotal": "Nouveau total client",
   "fee.confirm": "Confirmer la commande",
   "fee.hint": "Le client voit ce total avant que la commande soit acceptée.",
+  "fee.band":
+    "Vous annoncez des frais entre {min} et {max}. Le client a vu ces montants avant de commander.",
+  "fee.bandFrom": "Vous annoncez des frais à partir de {min}. Le client a vu ce montant avant de commander.",
+  "fee.overMax": "Au-dessus de votre maximum annoncé ({max}). Modifiez-le dans votre profil ou baissez ce montant.",
 
   /* -- Cuisine --------------------------------------------------------- */
   "mk.back": "Retour au tableau de bord",
@@ -1062,6 +1104,8 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "restaurants.sortRating": "Top rated",
   "restaurants.sortDelivery": "Fastest",
   "restaurants.sortName": "Name (A–Z)",
+  "restaurants.sortNearMe": "Near me",
+  "restaurants.nearMeNote": "{quartier} first",
   "restaurants.allCuisines": "All cuisines",
   "restaurants.allQuartiers": "All of Douala",
   "restaurants.allRatings": "Any rating",
@@ -1344,7 +1388,8 @@ const baseEn: Record<keyof typeof baseFr, string> = {
 
   "m.stat.ordersToday": "Orders today",
   "m.stat.revenueToday": "Revenue today",
-  "m.stat.revenueHint": "Cancelled orders excluded.",
+  "m.stat.revenueHint": "Confirmed orders only.",
+  "m.stat.revenuePending": "{count} order(s) awaiting your confirmation, not counted.",
   "m.stat.inProgress": "In progress",
   "m.stat.inProgressHint": "To confirm, preparing, or on the way.",
   "m.stat.rating": "Average rating",
@@ -1371,7 +1416,42 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "m.team.body": "Each person only reaches what their role allows, branch by branch.",
   "m.team.manage": "Manage the team",
 
-  "m.attention.title": "Needs your attention",
+  "m.attention.title": "Also worth doing",
+  "m.attention.urgentTitle": "Customers are waiting on you",
+
+  /* -- Finish your setup ------------------------------------------------ */
+  "m.welcome.title": "Welcome!",
+  "m.welcome.body":
+    "Your restaurant is set up. A few things are left to make your page genuinely appealing — we are taking you there.",
+  "m.welcome.dismiss": "Later",
+  "m.setup.title": "Finish setting up your page",
+  "m.setup.body":
+    "None of this is required — your restaurant already works. But every item you add makes your page more appealing to customers.",
+  "m.setup.doneTitle": "Your page is complete",
+  "m.setup.doneBody": "Everything is there. You can change any of it any time from your profile.",
+  "m.setup.logo": "Add your logo",
+  "m.setup.logoBody": "The image that represents you in listings. Without it, your card stays grey.",
+  "m.setup.cover": "Add a cover photo",
+  "m.setup.coverBody": "The wide image at the top of your page. Your dining room, or your food.",
+  "m.setup.description": "Describe your restaurant",
+  "m.setup.descriptionBody": "Two sentences on what you serve and what makes you different.",
+  "m.setup.cuisine": "Choose your cuisine",
+  "m.setup.cuisineBody": "This is how customers find you in the filters.",
+  "m.setup.menu": "Add dishes",
+  "m.setup.menuBody": "An empty menu takes no orders.",
+  "m.setup.tables": "Add your tables",
+  "m.setup.tablesBody": "Needed for bookings and dine-in service.",
+  "m.setup.hours": "Set your opening hours",
+  "m.setup.hoursBody": "With no hours, your page reads “closed” permanently.",
+  "m.setup.later": "You can come back to this whenever you like.",
+  "m.setup.go": "Open my profile",
+  "m.setup.deliveryLabel": "We offer delivery",
+  "m.setup.deliveryOwnHint": "Your own riders. You set the fee when you confirm each order.",
+  "m.setup.deliveryPlatformHint": "The platform handles delivery and the admin sets the fee.",
+  "m.setup.deliveryOffHint": "Pickup and dine-in only. No customer will see a delivery option.",
+  "m.setup.deliveryOn": "Delivery is on.",
+  "m.setup.deliveryOff": "Delivery is off.",
+  "m.setup.deliverySettings": "Delivery fees and area",
   "m.attention.orders": "{count} order(s) to handle",
   "m.attention.reservations": "{count} booking(s) to confirm",
   "m.attention.lowStock": "{count} dish(es) low in stock",
@@ -1501,6 +1581,9 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "fee.newTotal": "New customer total",
   "fee.confirm": "Confirm the order",
   "fee.hint": "The customer sees this total before the order is accepted.",
+  "fee.band": "You advertise a fee between {min} and {max}. The customer saw that before ordering.",
+  "fee.bandFrom": "You advertise a fee from {min}. The customer saw that before ordering.",
+  "fee.overMax": "Above your advertised maximum ({max}). Change it in your profile, or lower this amount.",
 
   /* -- Kitchen ---------------------------------------------------------- */
   "mk.back": "Back to the dashboard",
@@ -1642,4 +1725,33 @@ export function interpolate(
     out = out.replaceAll(`{${name}}`, String(value));
   }
   return out;
+}
+
+/**
+ * The BCP-47 tag to hand to `Intl.DateTimeFormat` / `Intl.NumberFormat`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  IT LIVES HERE, BESIDE `interpolate`, AND NOT IN use-locale.
+ *
+ *  It used to be exported from lib/i18n/use-locale, which carries "use
+ *  client". That makes every export of that module a CLIENT REFERENCE — a
+ *  stub that throws the moment a Server Component calls it:
+ *
+ *      Attempted to call intlLocale() from the server but intlLocale is on
+ *      the client.
+ *
+ *  Which is what /loyalty did, and the invoice page carries a comment
+ *  explaining that it deliberately hand-rolled the same two-line function
+ *  rather than import it. Two workarounds and one crash for a pure function
+ *  of a string.
+ *
+ *  This module has no "use client", so both sides may call it. use-locale
+ *  re-exports it, so every existing client import keeps working unchanged.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * Cameroon is the region on both, so dates and separators stay local while
+ * the language follows the reader.
+ */
+export function intlLocale(locale: Locale): string {
+  return locale === "en" ? "en-CM" : "fr-CM";
 }

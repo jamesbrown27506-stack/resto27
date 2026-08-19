@@ -1,19 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { BadgeCheck, Bike, CalendarCheck, Clock, MapPin, Phone, ShoppingBag, Store } from "lucide-react";
+import { BadgeCheck, Bike, CalendarCheck, Clock, MapPin, Phone, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { RatingStars } from "@/components/ui/rating-stars";
 import { OpenBadge } from "@/components/restaurant/open-badge";
 import { HoursTable, ReviewList } from "@/components/restaurant/restaurant-detail-parts";
-import { splitTags, ALLERGEN_LABEL, DIETARY_TAG_LABEL } from "@/lib/format/tags";
-import {
-  fetchMenuSections,
-  fetchPublicRestaurantBySlug,
-  UNCATEGORIZED_SECTION_ID,
-} from "@/lib/data/public";
+import { MenuOrderer } from "@/components/menu/menu-orderer";
+import { fetchMenuSections, fetchPublicRestaurantBySlug } from "@/lib/data/public";
 import { fetchReviews } from "@/lib/data/reviews";
 import { formatMoney } from "@/lib/format/currency";
 import { getTranslator } from "@/lib/i18n/locale-server";
@@ -183,18 +179,35 @@ export default async function RestaurantDetailPage({
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <Link href={`/browse/${restaurant.slug}`} className={buttonClasses({ size: "lg" })}>
-              <ShoppingBag className="size-4" aria-hidden />
-              {t("cbr.order")}
-            </Link>
+          {/*
+            ────────────────────────────────────────────────────────────────
+             ONE CALL TO ACTION, AND IT IS THE ONE THE PAGE CANNOT DO ITSELF.
+
+             There used to be two equal buttons here: "Order" and "Book a
+             table". "Order" went to a second copy of this restaurant on
+             another route — so the most prominent control on the page was a
+             navigation to somewhere that looked identical, while the menu
+             right below it was inert.
+
+             Ordering is now what the menu does. Tapping a dish adds a dish;
+             there is nothing left for an "Order" button to mean. Booking a
+             table is the one intention this page genuinely cannot satisfy
+             in place, so it is the one button — full width on a phone, where
+             a pair of buttons in a wrapped flex row is what pushed this
+             header sideways.
+            ────────────────────────────────────────────────────────────────
+          */}
+          <div className="flex w-full flex-col gap-2 sm:w-auto">
             <Link
               href={`/reservations?restaurant=${restaurant.slug}`}
-              className={buttonClasses({ variant: "outline", size: "lg" })}
+              className={buttonClasses({ size: "lg", fullWidth: true, className: "sm:w-auto" })}
             >
               <CalendarCheck className="size-4" aria-hidden />
-              {t("cbr.bookTable")}
+              {t("cbr.bookHere")}
             </Link>
+            <p className="text-center text-xs text-text-light sm:text-right">
+              {t("cbr.orderBelow")}
+            </p>
           </div>
         </header>
 
@@ -206,76 +219,23 @@ export default async function RestaurantDetailPage({
           <div className="min-w-0">
             <h2 className="font-display text-2xl font-bold">{t("cbr.menu")}</h2>
 
-            {menu.map(({ category, items }) => (
-              <section key={category.id} className="mt-8">
-                <h3 className="font-display text-lg font-bold text-primary">
-                  {category.id === UNCATEGORIZED_SECTION_ID ? t("cbr.others") : category.name}
-                </h3>
+            {/*
+              THE MENU IS ORDERABLE, RIGHT HERE.
 
-                <ul className="mt-3 divide-y divide-border rounded-lg border border-border bg-surface">
-                  {items.map((item) => {
-                    const soldOut =
-                      !item.isAvailable || (item.trackStock && item.stockQuantity === 0);
-                    const tags = splitTags(item.dietaryTags);
-                    const allergens = splitTags(item.allergens);
+              Same component the signed-in route used to own, now shared: each
+              dish opens the option sheet and adds to the basket, and a sticky
+              bar carries the running total once anything is in it. A customer
+              who arrived from a photograph of Water Fufu can add Water Fufu
+              from the page that photograph led to.
 
-                    return (
-                      <li key={item.id} className="flex items-start justify-between gap-5 p-5">
-                        {item.imageUrl && (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={item.imageUrl}
-                            alt=""
-                            loading="lazy"
-                            className="size-16 shrink-0 rounded-md border border-border object-cover sm:size-20"
-                          />
-                        )}
-                        <div className="min-w-0">
-                          <p className="font-semibold">
-                            {item.name}
-                            {soldOut && (
-                              <span className="ml-2 text-xs font-normal text-error">
-                                {t("cbr.soldOut")}
-                              </span>
-                            )}
-                          </p>
-                          <p className="mt-1 text-sm leading-relaxed text-text-secondary">
-                            {item.description}
-                          </p>
-
-                          {(tags.length > 0 || allergens.length > 0) && (
-                            <div className="mt-2.5 flex flex-wrap gap-1.5">
-                              {tags.map((t) => (
-                                <Badge key={t} tone="success">
-                                  {DIETARY_TAG_LABEL[t] ?? t}
-                                </Badge>
-                              ))}
-                              {allergens.map((a) => (
-                                <Badge key={a} tone="warning">
-                                  {ALLERGEN_LABEL[a] ?? a}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-
-                          {item.optionGroups.length > 0 && (
-                            <p className="mt-2 text-xs text-text-light">
-                              {t("cbr.optionGroups", {
-                                groups: item.optionGroups.map((g) => g.name).join(" · "),
-                              })}
-                            </p>
-                          )}
-                        </div>
-
-                        <p className="tnum shrink-0 font-display text-lg font-bold text-primary">
-                          {formatMoney(item.price)}
-                        </p>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            ))}
+              `acceptingOrders` is the restaurant's own pause switch — the menu
+              still reads, but nothing can be added while it is off.
+            */}
+            <MenuOrderer
+              menu={menu}
+              restaurant={{ id: restaurant.id, name: restaurant.name, slug: restaurant.slug }}
+              acceptingOrders={restaurant.isAcceptingOrders}
+            />
 
             <section className="mt-12">
               <h2 className="font-display text-2xl font-bold">
@@ -324,8 +284,24 @@ export default async function RestaurantDetailPage({
                       Never render "0 FCFA" here (§14.3). The fee is QUOTED by
                       the restaurant on confirmation, based on the quartier —
                       showing zero is a promise we are about to break.
+
+                      But "to be confirmed" is a shrug, and it was the only
+                      thing a customer had to budget with. When the restaurant
+                      has declared a band (migration 0035) the real numbers go
+                      here instead, and the ceiling is enforced when the
+                      restaurant quotes.
                     */}
-                    <dd className="font-semibold text-text-light">{t("cbr.feeToConfirm")}</dd>
+                    <dd className="tnum text-right font-semibold">
+                      {restaurant.maxDeliveryFee > 0 ? (
+                        `${formatMoney(restaurant.minDeliveryFee, { showSymbol: false })} – ${formatMoney(restaurant.maxDeliveryFee)}`
+                      ) : restaurant.minDeliveryFee > 0 ? (
+                        t("cbr.feeFrom", { amount: formatMoney(restaurant.minDeliveryFee) })
+                      ) : (
+                        <span className="font-semibold text-text-light">
+                          {t("cbr.feeToConfirm")}
+                        </span>
+                      )}
+                    </dd>
                   </div>
                 </dl>
                 <p className="mt-3 border-t border-border pt-3 text-xs leading-relaxed text-text-light">

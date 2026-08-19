@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
-import { getCartConfig } from "@/lib/orders/cart-config";
+import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { nextStatus, isTerminal, type OrderStatus } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
 import type { ActionResult } from "./admin-actions";
@@ -137,6 +137,35 @@ export async function advanceOrder(
     if (fee === undefined || !Number.isInteger(fee) || fee < 0) {
       return { ok: false, error: "Quote the delivery fee before confirming." };
     }
+
+    /*
+      THE ADVERTISED CEILING IS ENFORCED HERE, NOT ONLY IN THE DIALOG.
+
+      The restaurant page and checkout now tell the customer "delivery
+      1 000 – 3 000 FCFA" (migration 0035). A promise the customer read
+      before ordering, that the confirmation screen can then ignore, is
+      worse than never having made it — so the refusal lives on the server,
+      where the dialog's own check cannot be the only thing standing between
+      a customer and a fee they were told could not happen.
+
+      Only the CEILING is enforced. Quoting BELOW the advertised minimum is
+      a restaurant choosing to charge a customer less than it promised to,
+      which needs no protection.
+    */
+    const { data: band } = await supabase
+      .from("restaurants")
+      .select("max_delivery_fee")
+      .eq("id", active.restaurantId)
+      .maybeSingle();
+
+    const ceiling = Number(band?.max_delivery_fee) || 0;
+    if (ceiling > 0 && fee > ceiling) {
+      return {
+        ok: false,
+        error: `Your advertised maximum is ${ceiling.toLocaleString("fr-CM")} FCFA. The customer saw that before ordering — raise it in your profile first, or quote ${ceiling.toLocaleString("fr-CM")} FCFA or less.`,
+      };
+    }
+
     patch.delivery_fee = fee;
     patch.delivery_fee_set_at = new Date().toISOString();
     // The customer committed to a total that did not yet include delivery.
@@ -170,7 +199,7 @@ export async function advanceOrder(
 
   await recordHistory(orderId, next, { name: profile.name, email: profile.email });
 
-  if (next === "delivered") await awardDeliveryPoints(supabase, order);
+  if (next === "delivered") await awardDeliveryPoints(order);
 
   // The customer hears about every step — and about the quoted fee, which
   // changed the total they committed to.
@@ -196,53 +225,6 @@ export async function advanceOrder(
   return { ok: true, status: next };
 }
 
-/**
- * Points are EARNED ON DELIVERY, not at checkout.
- *
- * Awarding them at checkout would pay for orders that are later cancelled,
- * and the natural exploit is to order, collect, cancel, repeat. The one-earn
- * row per order index (0013) makes a double-advance a no-op rather than a
- * double-credit.
- */
-async function awardDeliveryPoints(
-  supabase: ReturnType<typeof createAdminClient>,
-  order: {
-    subtotal: number;
-    reference: string;
-    customer_id: string | null;
-    restaurant_id: string;
-    id: string;
-  },
-) {
-  const config = await getCartConfig();
-  if (!config.loyaltyEnabled || !order.customer_id || config.pointsPer1000 <= 0) return;
-
-  const points = Math.floor(order.subtotal / 1000) * config.pointsPer1000;
-  if (points <= 0) return;
-
-  const { error } = await supabase.from("loyalty_ledger").insert({
-    profile_id: order.customer_id,
-    order_id: order.id,
-    restaurant_id: order.restaurant_id,
-    points,
-    kind: "earn",
-    note: `Commande ${order.reference} livrée`,
-  });
-  if (error) {
-    // A failed ledger row must never retract a delivered order — it is a
-    // reconciliation problem, not a delivery problem.
-    console.error("[orders:awardDeliveryPoints]", order.id, error.message);
-  }
-
-  // The points landed; the customer should know they did.
-  await notify({
-    event: "loyalty",
-    tone: "success",
-    customerId: order.customer_id,
-    href: "/loyalty",
-    params: { points, reference: order.reference },
-  });
-}
 
 /**
  * Cancel, with a reason the customer will read.

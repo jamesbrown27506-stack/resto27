@@ -25,10 +25,19 @@ export function RestaurantDirectory({
   hrefFor,
   action,
   dishSearch,
+  homeQuartier,
 }: {
   restaurants: PublicRestaurant[];
   cuisines: string[];
   quartiers: string[];
+  /**
+   * The signed-in customer's own neighbourhood, from their default address.
+   *
+   * Undefined for anonymous visitors and for anyone who has not saved an
+   * address — in which case nothing below changes and the list sorts exactly
+   * as it always did.
+   */
+  homeQuartier?: string;
   /** Lets /browse point at its own detail route. */
   hrefFor?: (slug: string) => string;
   /** Favourite toggle, injected by the signed-in directory. */
@@ -45,7 +54,25 @@ export function RestaurantDirectory({
   const [rating, setRating] = useState(params.get("rating") ?? "all");
   const [price, setPrice] = useState(params.get("price") ?? "all");
   const [delivery, setDelivery] = useState(params.get("delivery") ?? "all");
-  const [sort, setSort] = useState(params.get("sort") ?? "rating");
+  /*
+    ──────────────────────────────────────────────────────────────────────
+     "NEAR ME" IS THE DEFAULT WHEN WE KNOW WHERE "ME" IS.
+
+     Sorting by rating first is right for a stranger and wrong for a regular:
+     the best-rated restaurant in Douala is useless to someone in Bonabéri if
+     it will not deliver there, and delivery fees rise with distance whatever
+     the star count says. When the customer has saved an address we lead with
+     their own quartier.
+
+     It is a DEFAULT, not a lock — "nearMe" is one option among four, and
+     anyone who would rather sort by rating still can. And an explicit
+     ?sort= in the URL always wins, because that came from the homepage hero
+     or from a link someone shared, and both mean something specific.
+    ──────────────────────────────────────────────────────────────────────
+  */
+  const [sort, setSort] = useState(
+    params.get("sort") ?? (homeQuartier ? "nearMe" : "rating"),
+  );
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -71,11 +98,20 @@ export function RestaurantDirectory({
     });
 
     return [...filtered].sort((a, b) => {
+      if (sort === "nearMe" && homeQuartier) {
+        // Same neighbourhood first, then best-rated within each group — so
+        // "near me" never degenerates into an arbitrary order among the
+        // dozen restaurants that are all equally near.
+        const aHome = a.quartier === homeQuartier ? 0 : 1;
+        const bHome = b.quartier === homeQuartier ? 0 : 1;
+        if (aHome !== bHome) return aHome - bHome;
+        return b.rating - a.rating;
+      }
       if (sort === "delivery") return a.deliveryEstimateMin - b.deliveryEstimateMin;
       if (sort === "name") return a.name.localeCompare(b.name, "fr");
       return b.rating - a.rating;
     });
-  }, [query, quartier, cuisine, rating, price, delivery, sort, restaurants, dishSearch]);
+  }, [query, quartier, cuisine, rating, price, delivery, sort, restaurants, dishSearch, homeQuartier]);
 
   function clear() {
     setQuery("");
@@ -84,7 +120,9 @@ export function RestaurantDirectory({
     setRating("all");
     setPrice("all");
     setDelivery("all");
-    setSort("rating");
+    // Back to the same default this screen opened with, not a hardcoded
+    // "rating" that would silently drop a customer's own neighbourhood.
+    setSort(homeQuartier ? "nearMe" : "rating");
   }
 
   return (
@@ -155,6 +193,10 @@ export function RestaurantDirectory({
             value: sort,
             onChange: setSort,
             options: [
+              // Only offered when we can actually honour it.
+              ...(homeQuartier
+                ? [{ value: "nearMe", label: t("restaurants.sortNearMe") }]
+                : []),
               { value: "rating", label: t("restaurants.sortRating") },
               { value: "delivery", label: t("restaurants.sortDelivery") },
               { value: "name", label: t("restaurants.sortName") },
@@ -166,6 +208,13 @@ export function RestaurantDirectory({
       <p className="mt-4 text-sm text-text-secondary" aria-live="polite">
         {results.length}{" "}
         {t(results.length > 1 ? "restaurants.count_other" : "restaurants.count_one")}
+        {/* Say WHY this order — an unexplained reordering reads as randomness. */}
+        {sort === "nearMe" && homeQuartier && (
+          <span className="text-text-light">
+            {" · "}
+            {t("restaurants.nearMeNote", { quartier: homeQuartier })}
+          </span>
+        )}
       </p>
 
       <div className="mt-6">

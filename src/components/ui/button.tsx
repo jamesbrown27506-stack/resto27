@@ -61,7 +61,19 @@ export function Button({
         "disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100",
         VARIANTS[variant],
         SIZES[size],
-        fullWidth && "w-full",
+        /*
+          `shrink` UNDOES THE BASE `shrink-0`, AND IT MUST.
+
+          Every button is `shrink-0` so an icon-only one is never squashed to
+          an ellipse. But a fullWidth button ALSO asks for `w-full` — 100% of
+          its container — and the two together in a flex row ("← Back" beside
+          "Continue →") demand back-button-width PLUS the full container width.
+          The row overflows, and the whole page scrolls sideways on a phone.
+
+          tailwind-merge keeps only the last rule of the flex-shrink group, so
+          this wins for exactly the buttons that need it and nothing else.
+        */
+        fullWidth && "w-full shrink",
         className,
       )}
       {...props}
@@ -113,7 +125,9 @@ export function buttonClasses({
     "transition-all duration-200 active:scale-[.98]",
     VARIANTS[variant],
     SIZES[size],
-    fullWidth && "w-full",
+    // Same reasoning as Button above: a full-width link in a flex row must be
+    // allowed to shrink, or the row overflows the viewport.
+    fullWidth && "w-full shrink",
     className,
   );
 }

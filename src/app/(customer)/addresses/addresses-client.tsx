@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Field, Input, Select, Switch } from "@/components/ui/input";
+import { Field, Input, Switch } from "@/components/ui/input";
 import { Sheet } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
 import {
@@ -245,21 +245,34 @@ export function AddressesClient({
             />
           </Field>
 
-          <Field label={t("cad.quartier")} htmlFor="ad-quartier" required>
-            <Select
+          {/*
+            A DATALIST, MATCHING CHECKOUT AND THE RESTAURANT APPLICATION.
+
+            A closed <Select> meant a customer whose neighbourhood we had not
+            seeded could not save an address at all — and saving an address is
+            upstream of every delivery order they will ever place. Anything
+            typed is now accepted and registered for the next person
+            (lib/data/quartiers).
+          */}
+          <Field
+            label={t("cad.quartier")}
+            htmlFor="ad-quartier"
+            required
+            hint={t("cad.quartierHint")}
+          >
+            <Input
               id="ad-quartier"
+              list="ad-quartier-options"
+              autoComplete="off"
               value={draft.quartier}
               onChange={(e) => setDraft({ ...draft, quartier: e.target.value })}
-            >
-              <option value="" disabled>
-                {t("cad.quartierPick")}
-              </option>
+              placeholder={t("cad.quartierPick")}
+            />
+            <datalist id="ad-quartier-options">
               {quartiers.map((q) => (
-                <option key={q} value={q}>
-                  {q}
-                </option>
+                <option key={q} value={q} />
               ))}
-            </Select>
+            </datalist>
           </Field>
 
           <Field label={t("cad.line")} htmlFor="ad-line" required>

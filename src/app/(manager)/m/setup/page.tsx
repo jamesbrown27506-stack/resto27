@@ -44,6 +44,10 @@ export default async function SetupPage() {
       tables={tables}
       categories={categories.map((c) => c.name)}
       canCreateTables={can(active.role, "tables.manage")}
+      // The fee step calls setRestaurantDeposit, which is gated on
+      // finance.manage — a role without it used to be redirected to
+      // /not-found mid-wizard instead of being told it was not their step.
+      canSetFee={can(active.role, "finance.manage")}
     />
   );
 }

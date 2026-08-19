@@ -21,7 +21,19 @@ export const setupDict = defineDict({
     "stp.tables.suggest.title": "Configuration suggérée",
     "stp.tables.suggest.body": "2 tables de 5 places — la taille la plus courante, modifiable plus tard.",
     "stp.tables.suggest.add": "Ajouter 2 tables de 5",
-    "stp.tables.suggest.added": "Configuration suggérée ajoutée.",
+    "stp.tables.suggest.added": "Table ajoutée.",
+
+    /* ── Création en lot ───────────────────────────────────────────── */
+    "stp.tables.bulkTitle": "Ajouter vos tables d'un coup",
+    "stp.tables.bulkBody":
+      "Combien de tables avez-vous, et combien de places chacune ? Nous les créons et les numérotons pour vous — tout reste modifiable ensuite.",
+    "stp.tables.bulkCount": "Combien de tables ?",
+    "stp.tables.bulkSeats": "Places par table",
+    "stp.tables.bulkAdd": "Créer {count} tables de {seats} places",
+    "stp.tables.bulkAdded": "{count} tables de {seats} places créées.",
+    "stp.tables.bulkCountInvalid": "Entrez un nombre de tables (au moins 1).",
+    "stp.tables.oneTitle": "Ajouter une seule table (numéro précis)",
+
     "stp.tables.addForm": "Ajouter une table",
     "stp.tables.add": "Ajouter",
     "stp.tables.list": "Vos tables",
@@ -35,8 +47,25 @@ export const setupDict = defineDict({
 
     /* ── Delivery capability (step 2) ──────────────────────────────── */
     "stp.delivery.title": "Livraison",
+    "stp.delivery.askBody":
+      "Livrez-vous à domicile ? Tous les restaurants ne le font pas — et vous pourrez activer ou désactiver la livraison à tout moment depuis votre tableau de bord.",
+    "stp.delivery.yes": "Oui, nous livrons",
+    "stp.delivery.yesDesc":
+      "Votre restaurant apparaîtra dans les recherches de livraison et les clients pourront commander pour se faire livrer.",
+    "stp.delivery.no": "Non, pas de livraison",
+    "stp.delivery.noDesc":
+      "Vous ne proposez que la vente à emporter et le service sur place. Aucun client ne verra d'option de livraison chez vous.",
     "stp.delivery.body":
       "Avez-vous vos propres livreurs ? Si oui, vous gérez la livraison et les frais. Si non, la plateforme prend en charge la livraison pour vous.",
+    "stp.delivery.feeTitle": "Frais de livraison annoncés",
+    "stp.delivery.feeBody":
+      "Le montant exact reste fixé par vous à la confirmation de chaque commande. Ces deux chiffres sont ce que le client voit AVANT de commander, pour qu'il sache à quoi s'attendre.",
+    "stp.delivery.feeMin": "Minimum",
+    "stp.delivery.feeMax": "Maximum",
+    "stp.delivery.feeHint":
+      "Facultatif. Laissez le maximum vide si vous ne pouvez pas vous engager sur un plafond. Sinon, vos frais ne pourront pas le dépasser.",
+    "stp.delivery.feeInvalid": "Entrez un montant en francs, entier et positif.",
+    "stp.delivery.feeOrder": "Le maximum ne peut pas être inférieur au minimum.",
     "stp.delivery.own": "J'ai mes propres livreurs",
     "stp.delivery.ownDesc":
       "Vous avez votre propre équipe de livraison. Les frais de livraison sont fixés par vos soins lors de la confirmation de chaque commande.",
@@ -62,6 +91,9 @@ export const setupDict = defineDict({
     "stp.dishes.title": "Vos plats populaires",
     "stp.dishes.body":
       "La plupart des restaurants servent ces classiques camerounais. Cochez ceux que vous proposez — vous pourrez modifier les prix et les descriptions à tout moment.",
+    "stp.dishes.price": "Prix",
+    "stp.dishes.imageNote":
+      "Les photos sont les nôtres pour vous faire démarrer — remplacez-les par les vôtres quand vous voulez depuis « Ma carte ».",
     "stp.dishes.selectAll": "Tout sélectionner",
     "stp.dishes.clear": "Tout retirer",
     "stp.dishes.add": "Ajouter {count} plat(s) et terminer",
@@ -78,6 +110,8 @@ export const setupDict = defineDict({
     "stp.fee.fixedLabel": "Montant de l'acompte",
     "stp.fee.fixedHint":
       "Le client paie cet acompte en ligne au moment de réserver (Mobile Money). Il est déduit de son addition une fois sur place.",
+    "stp.fee.noRights":
+      "Votre rôle ne permet pas de fixer les frais de réservation — votre gérant pourra le faire depuis les réservations.",
     "stp.fee.valueRequired": "Entrez un montant.",
     "stp.fee.invalid": "Entrez un montant en francs, entier et positif (0 = aucun frais).",
     "stp.fee.finish": "Terminer",
@@ -99,7 +133,19 @@ export const setupDict = defineDict({
     "stp.tables.suggest.title": "Suggested setup",
     "stp.tables.suggest.body": "2 tables of 5 seats — the most common size, and changeable later.",
     "stp.tables.suggest.add": "Add 2 tables of 5",
-    "stp.tables.suggest.added": "Suggested setup added.",
+    "stp.tables.suggest.added": "Table added.",
+
+    /* ── Bulk creation ─────────────────────────────────────────────── */
+    "stp.tables.bulkTitle": "Add your tables all at once",
+    "stp.tables.bulkBody":
+      "How many tables do you have, and how many seats each? We create and number them for you — everything stays editable afterwards.",
+    "stp.tables.bulkCount": "How many tables?",
+    "stp.tables.bulkSeats": "Seats per table",
+    "stp.tables.bulkAdd": "Create {count} tables of {seats} seats",
+    "stp.tables.bulkAdded": "Created {count} tables of {seats} seats.",
+    "stp.tables.bulkCountInvalid": "Enter how many tables (at least 1).",
+    "stp.tables.oneTitle": "Add a single table (specific number)",
+
     "stp.tables.addForm": "Add a table",
     "stp.tables.add": "Add",
     "stp.tables.list": "Your tables",
@@ -112,8 +158,25 @@ export const setupDict = defineDict({
 
     /* ── Delivery capability (step 2) ──────────────────────────────── */
     "stp.delivery.title": "Delivery",
+    "stp.delivery.askBody":
+      "Do you deliver? Not every restaurant does — and you can switch delivery on or off any time from your dashboard.",
+    "stp.delivery.yes": "Yes, we deliver",
+    "stp.delivery.yesDesc":
+      "Your restaurant appears in delivery searches and customers can order for delivery.",
+    "stp.delivery.no": "No delivery",
+    "stp.delivery.noDesc":
+      "You offer pickup and dine-in only. No customer will see a delivery option for you.",
     "stp.delivery.body":
       "Do you have your own delivery riders? If yes, you handle delivery and set fees. If no, the platform manages delivery for you.",
+    "stp.delivery.feeTitle": "The delivery fee you advertise",
+    "stp.delivery.feeBody":
+      "You still set the exact amount when you confirm each order. These two numbers are what the customer sees BEFORE ordering, so they know what to expect.",
+    "stp.delivery.feeMin": "Minimum",
+    "stp.delivery.feeMax": "Maximum",
+    "stp.delivery.feeHint":
+      "Optional. Leave the maximum empty if you cannot commit to a ceiling. Otherwise your fee can never go above it.",
+    "stp.delivery.feeInvalid": "Enter a whole, positive number of francs.",
+    "stp.delivery.feeOrder": "The maximum cannot be lower than the minimum.",
     "stp.delivery.own": "I have my own riders",
     "stp.delivery.ownDesc":
       "You have your own delivery team. Delivery fees are set by you when confirming each order.",
@@ -139,6 +202,9 @@ export const setupDict = defineDict({
     "stp.dishes.title": "Your popular dishes",
     "stp.dishes.body":
       "Most restaurants serve these Cameroonian classics. Tick the ones you offer — you can edit prices and descriptions any time.",
+    "stp.dishes.price": "Price",
+    "stp.dishes.imageNote":
+      "The photos are ours to get you started — swap them for your own any time from Your menu.",
     "stp.dishes.selectAll": "Select all",
     "stp.dishes.clear": "Clear selection",
     "stp.dishes.add": "Add {count} dish(es) and finish",
@@ -154,6 +220,8 @@ export const setupDict = defineDict({
     "stp.fee.fixedLabel": "Deposit amount",
     "stp.fee.fixedHint":
       "The customer pays this deposit online when booking (Mobile Money). It is deducted from their bill once they arrive.",
+    "stp.fee.noRights":
+      "Your role cannot set the reservation fee — your manager can do it from Reservations.",
     "stp.fee.valueRequired": "Enter an amount.",
     "stp.fee.invalid": "Enter a whole number of francs, 0 or more (0 = no fee).",
     "stp.fee.finish": "Finish",

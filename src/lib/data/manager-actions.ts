@@ -252,11 +252,50 @@ export async function ensureDefaultCategories(): Promise<ActionResult> {
  * Gated on `menu.view` like ensureDefaultCategories: every role holds it,
  * and the wizard is the first screen any of them may see.
  */
-export async function seedPopularDishes(ids: string[]): Promise<ActionResult> {
+export interface SeededDish {
+  id: string;
+  /**
+   * What the restaurant will charge, in whole XAF.
+   *
+   * The templates carry a uniform 2 500 "just start" price, which is a
+   * placeholder and reads as one. A restaurant that accepts the starter menu
+   * and never notices is now listing eleven dishes at a price it does not
+   * charge — so the picker lets the price be typed in place, and this is how
+   * it arrives. Omitted means "take the template's price".
+   */
+  price?: number;
+}
+
+export async function seedPopularDishes(selections: SeededDish[]): Promise<ActionResult> {
   const { active } = await requireCapability("menu.view");
 
-  const chosen = [...new Set(ids)]
-    .map((id) => POPULAR_DISH_BY_ID.get(id))
+  // De-duplicate by id, keeping the LAST price given for each — the picker
+  // can legitimately send the same dish twice if its state ever doubles up,
+  // and silently seeding it twice would be worse than picking one price.
+  const byId = new Map<string, SeededDish>();
+  for (const selection of selections) byId.set(selection.id, selection);
+
+  const chosen = [...byId.values()]
+    .map((selection) => {
+      const template = POPULAR_DISH_BY_ID.get(selection.id);
+      if (!template) return null;
+
+      // The price is typed by a person into a free-text box, so it is
+      // validated here rather than trusted: a negative or fractional price
+      // would violate the menu_items check constraint and fail the whole
+      // insert, taking every other chosen dish down with it. Anything not
+      // usable falls back to the template's own price — the restaurant can
+      // fix one number on /m/menu, which beats losing the entire seed.
+      const price =
+        selection.price !== undefined &&
+        Number.isFinite(selection.price) &&
+        Number.isInteger(selection.price) &&
+        selection.price >= 0
+          ? selection.price
+          : template.price;
+
+      return { ...template, price };
+    })
     .filter((d): d is DishTemplate => Boolean(d));
   if (chosen.length === 0) return { ok: true };
 
@@ -1194,6 +1233,91 @@ export async function upsertTable(input: {
   return { ok: true };
 }
 
+/**
+ * Create SEVERAL identical tables in one go.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  A DINING ROOM IS NOT ENTERED ONE TABLE AT A TIME.
+ *
+ *  The onboarding wizard asked for a number and a capacity, then made the
+ *  owner press Add again. And again. A twelve-table restaurant filled that
+ *  form twelve times before it could see its own dashboard, which is exactly
+ *  where a setup wizard loses people. "I have 12 tables of 4" is one
+ *  sentence, and it should be one action.
+ *
+ *  NUMBERING CONTINUES FROM WHAT IS ALREADY THERE, and skips what is taken.
+ *  Restarting at 1 would collide with the tables the wizard's suggested
+ *  setup just created, and `restaurant_tables` has a unique index on
+ *  (restaurant_id, number) — so a naive loop fails halfway and leaves the
+ *  floor half-entered with no explanation of which half.
+ *
+ *  ONE INSERT, NOT A LOOP OF THEM. A partial failure here is the worst
+ *  outcome available: the owner cannot tell what landed, and re-running
+ *  duplicates whatever did. A single statement either takes or does not.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function bulkCreateTables(input: {
+  count: number;
+  capacity: number;
+}): Promise<ActionResult> {
+  const { active } = await requireCapability("tables.manage");
+
+  if (!Number.isInteger(input.count) || input.count < 1) {
+    return { ok: false, error: "Enter how many tables to create." };
+  }
+  // A ceiling, because this writes one row per unit and the field is free
+  // text: a mistyped "100" is a slow afternoon, a mistyped "100000" is an
+  // outage. No real dining room in scope needs more than this in one go.
+  if (input.count > 100) {
+    return { ok: false, error: "You can create at most 100 tables at once." };
+  }
+  if (!Number.isInteger(input.capacity) || input.capacity < 1) {
+    return { ok: false, error: "Capacity must be at least 1." };
+  }
+
+  const supabase = createAdminClient();
+
+  const { data: existing, error: readError } = await supabase
+    .from("restaurant_tables")
+    .select("number")
+    .eq("restaurant_id", active.restaurantId);
+
+  if (readError) {
+    console.error("[manager:bulkCreateTables] read", readError.message);
+    return { ok: false, error: "Could not read your existing tables." };
+  }
+
+  const taken = new Set((existing ?? []).map((t) => String(t.number).trim()));
+
+  // Walk upwards from 1, skipping every number already in use, until we have
+  // `count` free ones. The bound stops a floor numbered "A1".."A9" (nothing
+  // numeric taken, so no skipping) from ever spinning.
+  const numbers: string[] = [];
+  for (let n = 1; numbers.length < input.count && n <= input.count + taken.size + 1; n++) {
+    if (!taken.has(String(n))) numbers.push(String(n));
+  }
+
+  const { error } = await supabase.from("restaurant_tables").insert(
+    numbers.map((number) => ({
+      restaurant_id: active.restaurantId,
+      number,
+      capacity: input.capacity,
+    })),
+  );
+
+  if (error) {
+    if (error.code === "23505") {
+      return { ok: false, error: "Some of those table numbers are already in use." };
+    }
+    console.error("[manager:bulkCreateTables] insert", error.message);
+    return { ok: false, error: "Could not create the tables." };
+  }
+
+  revalidatePath("/m/tables");
+  revalidatePath("/m/setup");
+  return { ok: true };
+}
+
 export async function setTableStatus(
   id: string,
   status: "available" | "occupied" | "reserved" | "out_of_service",
@@ -1239,34 +1363,146 @@ export async function completeSetup(): Promise<ActionResult> {
 /* ── Delivery mode (migration 0032) ───────────────────────────────────── */
 
 /**
- * Set whether this restaurant has its own delivery riders (migration 0032).
+ * Does this restaurant deliver at all, and if so, who carries the food?
  *
- * When `hasOwnDelivery` is false, the platform manages delivery and the
- * admin sets the fee via the admin settings console. When true, the
- * restaurant quotes the fee on each order confirmation (the existing flow).
+ * ─────────────────────────────────────────────────────────────────────────
+ *  TWO QUESTIONS, AND THE FIRST ONE USED TO BE ASSUMED.
+ *
+ *  Onboarding only ever asked "own riders, or the platform?" — which quietly
+ *  takes for granted that the restaurant delivers. Plenty do not. A grill
+ *  with two staff and no bike was forced to pick one of two delivery
+ *  arrangements it could not honour, and then appeared in the directory
+ *  promising delivery to every customer who filtered for it.
+ *
+ *  `offersDelivery` is therefore its own answer, written to `accepts_delivery`
+ *  — the column the public directory, the restaurant page and checkout have
+ *  always read. Saying no here removes the promise everywhere at once, and
+ *  the restaurant can turn it back on from their dashboard the day they hire
+ *  a rider.
+ *
+ *  `hasOwnDelivery` is only meaningful when the answer is yes, so it is
+ *  optional and simply left untouched when it is not supplied. Writing a
+ *  default would silently re-answer a question nobody asked.
+ * ─────────────────────────────────────────────────────────────────────────
  */
-export async function setDeliveryMode(hasOwnDelivery: boolean): Promise<ActionResult> {
+export async function setDeliveryOffering(input: {
+  offersDelivery: boolean;
+  /** Own riders (true) or platform-managed (false). Ignored when not delivering. */
+  hasOwnDelivery?: boolean;
+}): Promise<ActionResult> {
   const { active, profile } = await requireCapability("profile.edit");
   const supabase = createAdminClient();
 
+  const patch: Record<string, boolean> = { accepts_delivery: input.offersDelivery };
+  if (input.offersDelivery && input.hasOwnDelivery !== undefined) {
+    patch.has_own_delivery = input.hasOwnDelivery;
+  }
+
   const { error } = await supabase
     .from("restaurants")
-    .update({ has_own_delivery: hasOwnDelivery })
+    .update(patch)
     .eq("id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not save the delivery mode." };
+  if (error) {
+    console.error("[manager:setDeliveryOffering]", error.message);
+    return { ok: false, error: "Could not save the delivery settings." };
+  }
 
   await writeAudit(profile, {
     action: "restaurant.delivery_mode",
     entityType: "restaurant",
     entityId: active.restaurantId,
-    summary: hasOwnDelivery
-      ? `${active.restaurantName}: own delivery riders`
-      : `${active.restaurantName}: platform delivery`,
+    summary: !input.offersDelivery
+      ? `${active.restaurantName}: delivery off`
+      : input.hasOwnDelivery
+        ? `${active.restaurantName}: own delivery riders`
+        : `${active.restaurantName}: platform delivery`,
+  });
+
+  revalidatePath("/m/profile");
+  revalidatePath("/m/settings");
+  revalidatePath("/m/setup");
+  revalidatePath("/m");
+  // The public directory and the restaurant's own page both read
+  // accepts_delivery — a stale cache would keep offering delivery the
+  // kitchen just switched off.
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/**
+ * The delivery fee band this restaurant works within (migration 0035).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE FEE IS STILL A QUOTE. THIS IS THE PROMISE AROUND IT.
+ *
+ *  §14.3 keeps the number itself in the restaurant's hands, set at
+ *  confirmation against the real quartier. What it never gave the customer
+ *  was any way to budget: the checkout said "to be confirmed", and the first
+ *  real figure arrived attached to an order they had already placed.
+ *
+ *  min/max are advertised on the restaurant page and at checkout, and the
+ *  confirmation dialog is CONSTRAINED by them. Advertising a band and then
+ *  letting the quote land outside it would be worse than saying nothing,
+ *  because the customer believed it.
+ *
+ *  max = 0 means "no ceiling declared" and is deliberately allowed. A
+ *  restaurant delivering across an unbounded area must be able to say so
+ *  rather than be pushed into a number it will have to break.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function setDeliveryFeeRange(input: {
+  min: number;
+  max: number;
+}): Promise<ActionResult> {
+  const { active, profile } = await requireCapability("profile.edit");
+
+  const min = Math.round(input.min);
+  const max = Math.round(input.max);
+
+  if (!Number.isInteger(min) || min < 0) {
+    return { ok: false, error: "The minimum fee must be zero or a positive number of francs." };
+  }
+  if (!Number.isInteger(max) || max < 0) {
+    return { ok: false, error: "The maximum fee must be zero or a positive number of francs." };
+  }
+  // Mirrors the database constraint, so the caller gets a sentence rather
+  // than a Postgres error code.
+  if (max !== 0 && max < min) {
+    return { ok: false, error: "The maximum fee cannot be lower than the minimum." };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("restaurants")
+    .update({ min_delivery_fee: min, max_delivery_fee: max })
+    .eq("id", active.restaurantId);
+
+  if (error) {
+    console.error("[manager:setDeliveryFeeRange]", error.message);
+    return {
+      ok: false,
+      // Named explicitly: this is the one failure here that is a missing
+      // migration rather than bad input, and "could not save" sends whoever
+      // reads it looking in the wrong place.
+      error: error.message.includes("min_delivery_fee")
+        ? "The delivery fee columns are missing — run migration 0035."
+        : "Could not save the delivery fee range.",
+    };
+  }
+
+  await writeAudit(profile, {
+    action: "restaurant.delivery_fee_range",
+    entityType: "restaurant",
+    entityId: active.restaurantId,
+    summary: `${active.restaurantName}: delivery fee ${min.toLocaleString("fr-CM")}–${
+      max === 0 ? "∞" : max.toLocaleString("fr-CM")
+    } FCFA`,
   });
 
   revalidatePath("/m/profile");
   revalidatePath("/m/setup");
+  revalidatePath("/", "layout");
   return { ok: true };
 }
 
@@ -1352,7 +1588,31 @@ export async function setRestaurantDeposit(
     .update({ deposit_amount: value, deposit_type: type })
     .eq("id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not save the deposit." };
+  if (error) {
+    /*
+      "Could not save the deposit." was the whole message, for every cause.
+
+      It is the last step of onboarding, so whoever hits it is a brand-new
+      restaurant with nothing else to try — and the overwhelmingly likely
+      cause is that `deposit_type` does not exist because migration 0031 (or
+      its catch-up, 0033) was never run against this database. A sentence
+      that names the migration turns a dead end into a two-minute fix; the
+      real Postgres message goes to the server log either way.
+    */
+    console.error("[manager:setRestaurantDeposit]", error.code ?? "", error.message);
+
+    const missingColumn =
+      error.code === "42703" ||
+      error.message.includes("deposit_type") ||
+      error.message.includes("deposit_amount");
+
+    return {
+      ok: false,
+      error: missingColumn
+        ? "The reservation-fee columns are missing from the database — run migration 0031 (or 0033_catch_up)."
+        : `Could not save the deposit: ${error.message}`,
+    };
+  }
 
   await writeAudit(profile, {
     action: "restaurant.deposit_set",
@@ -1470,6 +1730,9 @@ export async function updateRestaurantProfile(input: {
   coverUrl?: string | null;
   deliveryEstimateMin?: number;
   minimumOrder?: number;
+  /** The advertised delivery band (migration 0035). 0 = not declared. */
+  minDeliveryFee?: number;
+  maxDeliveryFee?: number;
   acceptsDelivery?: boolean;
   acceptsPickup?: boolean;
 }): Promise<ActionResult> {
@@ -1497,6 +1760,26 @@ export async function updateRestaurantProfile(input: {
   if (input.coverUrl !== undefined) patch.cover_url = input.coverUrl;
   if (input.deliveryEstimateMin !== undefined) patch.delivery_estimate_min = input.deliveryEstimateMin;
   if (input.minimumOrder !== undefined) patch.minimum_order = input.minimumOrder;
+
+  /*
+    The band is validated TOGETHER, because neither number means anything
+    alone. The database carries the same rule as a check constraint; this is
+    here so a manager gets a sentence rather than a constraint name.
+  */
+  if (input.minDeliveryFee !== undefined || input.maxDeliveryFee !== undefined) {
+    const min = Math.round(input.minDeliveryFee ?? 0);
+    const max = Math.round(input.maxDeliveryFee ?? 0);
+    if (!Number.isInteger(min) || min < 0 || !Number.isInteger(max) || max < 0) {
+      return { ok: false, error: "Delivery fees must be whole, positive numbers of francs." };
+    }
+    // max = 0 is the "no ceiling declared" escape hatch and stays legal.
+    if (max !== 0 && max < min) {
+      return { ok: false, error: "The maximum delivery fee cannot be lower than the minimum." };
+    }
+    patch.min_delivery_fee = min;
+    patch.max_delivery_fee = max;
+  }
+
   if (input.acceptsDelivery !== undefined) patch.accepts_delivery = input.acceptsDelivery;
   if (input.acceptsPickup !== undefined) patch.accepts_pickup = input.acceptsPickup;
 
@@ -1509,8 +1792,17 @@ export async function updateRestaurantProfile(input: {
   const { error } = await supabase.from("restaurants").update(patch).eq("id", active.restaurantId);
 
   if (error) {
-    console.error("[manager:updateRestaurantProfile]", error.message);
-    return { ok: false, error: "Could not save the changes." };
+    console.error("[manager:updateRestaurantProfile]", error.code ?? "", error.message);
+    // 42703 = unknown column, which here means migration 0035 has not run.
+    // Named, because "could not save the changes" sends whoever reads it
+    // looking at their own input instead of at the database.
+    return {
+      ok: false,
+      error:
+        error.code === "42703"
+          ? "A column is missing from the database — check that migration 0035 has been run."
+          : "Could not save the changes.",
+    };
   }
 
   await writeAudit(profile, {
@@ -1521,5 +1813,9 @@ export async function updateRestaurantProfile(input: {
   });
 
   revalidatePath("/m", "layout");
+  // The logo, the description and the delivery band all render on the public
+  // restaurant page and in the directory — a stale cache there would show
+  // customers a promise the restaurant has just changed.
+  revalidatePath("/", "layout");
   return { ok: true };
 }

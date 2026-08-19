@@ -1,5 +1,18 @@
 "use client";
 
+/*
+  DIETARY TAGS AND ALLERGENS ARE NO LONGER SHOWN, ANYWHERE.
+
+  They were a straight import of a European menu convention. In Cameroon
+  they are not what anyone reads a menu for — the labels went untouched by
+  restaurants and unread by customers, while taking the most valuable strip
+  of every dish row and every picker: the line directly under the name.
+
+  The COLUMNS stay (`menu_items.dietary_tags`, `menu_items.allergens`), and
+  so does lib/menu/tags. Nothing is dropped and nothing is migrated, so any
+  restaurant that filled them in keeps its data and this is reversible by
+  putting the markup back. What is gone is the UI.
+*/
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { Lock, Pencil, Plus, Sliders, Trash2, UtensilsCrossed } from "lucide-react";
@@ -9,11 +22,10 @@ import { Button, buttonClasses } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ImageUpload } from "@/components/ui/image-upload";
-import { Checkbox, Field, Input, Select, Switch, Textarea } from "@/components/ui/input";
+import { Field, Input, Select, Switch, Textarea } from "@/components/ui/input";
 import { Sheet, SheetActions } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
 import { formatMoney } from "@/lib/format/currency";
-import { ALLERGENS, DIETARY_TAGS, joinTags, splitTags } from "@/lib/menu/tags";
 import {
   createMenuItem,
   deleteMenuItem,
@@ -373,8 +385,6 @@ export function MenuManager({
         ) : (
           <ul className="divide-y divide-border">
             {visible.map((item) => {
-              const tags = splitTags(item.dietaryTags);
-              const allergens = splitTags(item.allergens);
               const lowStock =
                 item.trackStock &&
                 item.stockQuantity !== null &&
@@ -453,20 +463,6 @@ export function MenuManager({
                         </p>
                       )}
 
-                      {(tags.length > 0 || allergens.length > 0) && (
-                        <div className="mt-1.5 flex flex-wrap gap-1.5">
-                          {tags.map((tag) => (
-                            <Badge key={tag} tone="success">
-                              <span>{t(`mm.diet.${tag}` as TranslationKey)}</span>
-                            </Badge>
-                          ))}
-                          {allergens.map((allergen) => (
-                            <Badge key={allergen} tone="warning">
-                              <span>{t(`mm.allergen.${allergen}` as TranslationKey)}</span>
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
                     </div>
                   </div>
 
@@ -696,51 +692,6 @@ export function MenuManager({
               the same stored "sans-gluten" reads as "Sans gluten" or "Gluten
               free" without a single database write.
             */}
-            <fieldset>
-              <legend className="mb-2 text-sm font-semibold">{t("mm.diets")}</legend>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {DIETARY_TAGS.map((tag) => {
-                  const current = splitTags(editing.draft.dietaryTags ?? "");
-                  return (
-                    <Checkbox
-                      key={tag}
-                      label={t(`mm.diet.${tag}` as TranslationKey)}
-                      checked={current.includes(tag)}
-                      onChange={(e) =>
-                        patch({
-                          dietaryTags: joinTags(
-                            e.target.checked ? [...current, tag] : current.filter((v) => v !== tag),
-                          ),
-                        })
-                      }
-                    />
-                  );
-                })}
-              </div>
-            </fieldset>
-
-            <fieldset>
-              <legend className="mb-2 text-sm font-semibold">{t("mm.allergens")}</legend>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {ALLERGENS.map((tag) => {
-                  const current = splitTags(editing.draft.allergens ?? "");
-                  return (
-                    <Checkbox
-                      key={tag}
-                      label={t(`mm.allergen.${tag}` as TranslationKey)}
-                      checked={current.includes(tag)}
-                      onChange={(e) =>
-                        patch({
-                          allergens: joinTags(
-                            e.target.checked ? [...current, tag] : current.filter((v) => v !== tag),
-                          ),
-                        })
-                      }
-                    />
-                  );
-                })}
-              </div>
-            </fieldset>
           </div>
         )}
       </Sheet>

@@ -40,6 +40,8 @@ interface Draft {
   /** Kept as typed text so the field can be emptied mid-edit; parsed on Save. */
   minimumOrder: string;
   deliveryEstimateMin: string;
+  minDeliveryFee: string;
+  maxDeliveryFee: string;
   acceptsDelivery: boolean;
   acceptsPickup: boolean;
 }
@@ -94,6 +96,10 @@ export function ProfileForm({
     quartierId: profile.quartierId ?? "",
     minimumOrder: String(profile.minimumOrder),
     deliveryEstimateMin: String(profile.deliveryEstimateMin),
+    // Blank rather than "0" when nothing is declared: an empty box reads as
+    // "not set", where a zero reads as a promise to deliver for free.
+    minDeliveryFee: profile.minDeliveryFee > 0 ? String(profile.minDeliveryFee) : "",
+    maxDeliveryFee: profile.maxDeliveryFee > 0 ? String(profile.maxDeliveryFee) : "",
     acceptsDelivery: profile.acceptsDelivery,
     acceptsPickup: profile.acceptsPickup,
   };
@@ -247,6 +253,14 @@ export function ProfileForm({
     const minimumOrder = parseMoney(draft.minimumOrder);
     if (minimumOrder === null || minimumOrder < 0) return toast(t("mpf.invalidMinimum"), "error");
 
+    // Empty is legitimate — it means "no band declared" — so blank maps to 0
+    // rather than to NaN, which would fail validation for saying nothing.
+    const minFee = draft.minDeliveryFee.trim() === "" ? 0 : parseMoney(draft.minDeliveryFee);
+    const maxFee = draft.maxDeliveryFee.trim() === "" ? 0 : parseMoney(draft.maxDeliveryFee);
+    if (minFee === null || minFee < 0) return toast(t("mpf.invalidFee"), "error");
+    if (maxFee === null || maxFee < 0) return toast(t("mpf.invalidFee"), "error");
+    if (maxFee !== 0 && maxFee < minFee) return toast(t("mpf.invalidFeeOrder"), "error");
+
     const estimate = Number.parseInt(draft.deliveryEstimateMin, 10);
     if (!Number.isInteger(estimate) || estimate < 1) return toast(t("mpf.invalidEstimate"), "error");
 
@@ -274,6 +288,8 @@ export function ProfileForm({
         coverUrl: coverResult.url,
         deliveryEstimateMin: estimate,
         minimumOrder,
+        minDeliveryFee: minFee,
+        maxDeliveryFee: maxFee,
         acceptsDelivery: draft.acceptsDelivery,
         acceptsPickup: draft.acceptsPickup,
       });
@@ -299,6 +315,8 @@ export function ProfileForm({
         addressLine: current.addressLine.trim(),
         minimumOrder: String(minimumOrder),
         deliveryEstimateMin: String(estimate),
+        minDeliveryFee: minFee > 0 ? String(minFee) : "",
+        maxDeliveryFee: maxFee > 0 ? String(maxFee) : "",
       }));
 
       release(logo);
@@ -547,6 +565,55 @@ export function ProfileForm({
                   value={draft.deliveryEstimateMin}
                   disabled={pending}
                   onChange={(e) => patch({ deliveryEstimateMin: e.target.value })}
+                />
+              </Field>
+
+              {/*
+                ──────────────────────────────────────────────────────────
+                 THE BAND YOU ADVERTISE (migration 0035).
+
+                 The fee itself is still yours to set per order — §14.3 has
+                 not changed, because in Douala the price depends on the
+                 quartier and the courier's judgement. What has changed is
+                 that the customer no longer sees only "to be confirmed":
+                 these two numbers appear on your page and at checkout,
+                 BEFORE they commit.
+
+                 Which means the maximum is a promise, and it is enforced —
+                 the confirmation dialog will not let you quote above it,
+                 and neither will the server. Leave it empty if you cannot
+                 commit to a ceiling.
+                ──────────────────────────────────────────────────────────
+              */}
+              <Field
+                label={t("mpf.minDeliveryFee")}
+                htmlFor="rp-minfee"
+                hint={t("mpf.minDeliveryFeeHint")}
+              >
+                <Input
+                  id="rp-minfee"
+                  inputMode="numeric"
+                  suffix="FCFA"
+                  placeholder={t("mpf.feeNotSet")}
+                  value={draft.minDeliveryFee}
+                  disabled={pending || !draft.acceptsDelivery}
+                  onChange={(e) => patch({ minDeliveryFee: e.target.value })}
+                />
+              </Field>
+
+              <Field
+                label={t("mpf.maxDeliveryFee")}
+                htmlFor="rp-maxfee"
+                hint={t("mpf.maxDeliveryFeeHint")}
+              >
+                <Input
+                  id="rp-maxfee"
+                  inputMode="numeric"
+                  suffix="FCFA"
+                  placeholder={t("mpf.feeNotSet")}
+                  value={draft.maxDeliveryFee}
+                  disabled={pending || !draft.acceptsDelivery}
+                  onChange={(e) => patch({ maxDeliveryFee: e.target.value })}
                 />
               </Field>
 

@@ -87,13 +87,43 @@ export function Dialog({
       }}
       aria-labelledby="dialog-title"
       className={cn(
-        "w-[calc(100vw-2rem)] rounded-lg border border-border bg-surface p-0 text-text shadow-lg",
+        /*
+          `m-auto` IS THE CENTRING, and it has to be said out loud.
+
+          The UA stylesheet centres a modal <dialog> with `margin: auto`
+          against `inset: 0`. Tailwind's Preflight then sets `margin: 0` on
+          every element, which silently kills it — the dialog collapses into
+          the top-left corner. It reads as "slightly off" on a wide screen and
+          as plainly broken on a phone, where the panel is nearly as wide as
+          the viewport and the offset is the whole story.
+        */
+        "m-auto w-[calc(100vw-2rem)] rounded-lg border border-border bg-surface p-0 text-text shadow-lg",
+        /*
+          `open:flex`, NEVER a bare `flex`. This one is a trap.
+
+          The browser hides a closed dialog with `dialog:not([open]) { display:
+          none }` in its USER-AGENT stylesheet. Author styles beat user-agent
+          styles on cascade ORIGIN, before specificity is even consulted — so a
+          plain `flex` here silently defeats that rule and every dialog in the
+          app renders open, on load, with no interaction. Confirmations,
+          delivery-fee prompts, the sign-out check: all of them, all at once.
+
+          Gating the display utility on `[open]` means the closed state has no
+          author display rule at all, so the user-agent rule applies and the
+          dialog stays hidden until showModal() runs.
+
+          Capped to the viewport and laid out as a column so the title and the
+          footer buttons stay on screen and the BODY is what scrolls — without
+          the cap a long dialog runs off the bottom of a phone and its confirm
+          button becomes unreachable.
+        */
+        "max-h-[calc(100dvh-2rem)] flex-col open:flex",
         "backdrop:bg-black/50 backdrop:backdrop-blur-sm",
         "open:animate-rise",
         SIZES[size],
       )}
     >
-      <div className="flex items-start justify-between gap-4 border-b border-border p-5">
+      <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border p-5">
         <div>
           <h2 id="dialog-title" className="font-display text-xl font-bold">
             {title}
@@ -112,10 +142,19 @@ export function Dialog({
         )}
       </div>
 
-      <div className="max-h-[65dvh] overflow-y-auto p-5">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">{children}</div>
 
       {footer && (
-        <div className="flex flex-wrap justify-end gap-3 border-t border-border bg-surface-2 p-5">
+        /*
+          `flex-col-reverse` below `sm` puts the CONFIRM on top, nearest the
+          thumb, with cancel beneath it — the same rule SheetActions follows.
+          Side by side on a phone the pair either overflows or shrinks both
+          buttons to something too small to hit accurately.
+        */
+        <div
+          className="flex shrink-0 flex-col-reverse gap-3 border-t border-border bg-surface-2 p-5 *:flex-1 sm:flex-row sm:flex-wrap sm:justify-end sm:*:flex-none"
+          style={{ paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom, 0px))" }}
+        >
           {footer}
         </div>
       )}

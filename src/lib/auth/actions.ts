@@ -7,6 +7,7 @@ import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { siteUrl } from "@/lib/site-url";
 import { rateLimit } from "@/lib/rate-limit";
 import { notify } from "@/lib/notify";
+import { resolveOrCreateQuartier } from "@/lib/data/quartiers";
 import {
   forgotPasswordSchema,
   resetPasswordSchema,
@@ -381,31 +382,15 @@ export async function signUpRestaurant(
    * The neighbourhood, as a row.
    *
    * The field accepts anything typed, but `restaurants.quartier_id` is a
-   * foreign key — so an unrecognised name is CREATED here, inactive. Inactive
-   * keeps it out of the public suggestion lists until an admin promotes it
-   * from /a/areas, while still giving the restaurant a real reference instead
-   * of a dangling string.
+   * foreign key — so an unrecognised name is CREATED here, and created ACTIVE
+   * so the next applicant from the same street is offered it instead of
+   * typing a fourth spelling of it. See lib/data/quartiers for the full
+   * reasoning and the race handling.
    */
-  const { data: existing } = await admin
-    .from("quartiers")
-    .select("id")
-    .eq("service_area_id", area.id)
-    .ilike("name", input.quartier)
-    .maybeSingle();
-
-  let quartierId = existing?.id as string | undefined;
+  const quartierId = await resolveOrCreateQuartier(input.quartier, area.id);
 
   if (!quartierId) {
-    const { data: created, error: quartierError } = await admin
-      .from("quartiers")
-      .insert({ service_area_id: area.id, name: input.quartier, is_active: false, sort_order: 999 })
-      .select("id")
-      .single();
-
-    if (quartierError || !created) {
-      return rollback("quartier insert", quartierError?.message ?? "no row returned");
-    }
-    quartierId = created.id;
+    return rollback("quartier resolve", `could not resolve or create "${input.quartier}"`);
   }
 
   // Slug collisions are real — two "Chez Marcel" in the same city is normal.

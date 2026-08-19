@@ -18,7 +18,7 @@ import { CartSummary } from "@/components/cart/cart-parts";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Field, Input, Radio, Select, Textarea } from "@/components/ui/input";
+import { Field, Input, Radio, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import {
   getRestaurantOrderCapabilities,
@@ -90,6 +90,9 @@ export function CheckoutClient({
     quartier: string;
     deliveryEstimateMin: number;
     minimumOrder: number;
+    /** The advertised delivery band (migration 0035). 0 = not declared. */
+    minDeliveryFee: number;
+    maxDeliveryFee: number;
   } | null>(null);
 
   useEffect(() => {
@@ -315,26 +318,49 @@ export function CheckoutClient({
                       onChange={(e) => setDeliveryPhone(e.target.value)}
                     />
                   </Field>
-                  <Field label={t("cct.co.quartier")} htmlFor="ck-quartier" required>
-                    <Select
+                  {/*
+                    A DATALIST, NOT A SELECT.
+
+                    A closed list cannot express Douala. The seeded quartiers
+                    are the well-known few, and a customer living anywhere
+                    else had two options: abandon the order, or pick the
+                    nearest wrong neighbourhood — which then decides the
+                    delivery fee and where the rider is sent. Anything typed
+                    is accepted and becomes a suggestion for the next person
+                    (lib/data/quartiers).
+                  */}
+                  <Field
+                    label={t("cct.co.quartier")}
+                    htmlFor="ck-quartier"
+                    required
+                    hint={t("cct.co.quartierHint")}
+                  >
+                    <Input
                       id="ck-quartier"
+                      list="ck-quartier-options"
+                      autoComplete="off"
                       value={deliveryQuartier}
                       onChange={(e) => setDeliveryQuartier(e.target.value)}
-                    >
-                      <option value="" disabled>
-                        {t("cct.co.chooseQuartier")}
-                      </option>
+                      placeholder={t("cct.co.quartierPh")}
+                    />
+                    <datalist id="ck-quartier-options">
                       {quartiers.map((q) => (
-                        <option key={q} value={q}>
-                          {q}
-                        </option>
+                        <option key={q} value={q} />
                       ))}
-                    </Select>
+                    </datalist>
                   </Field>
+                  {/*
+                    ADDRESS AND LANDMARK ARE DIFFERENT QUESTIONS, and both
+                    now say which. Two free-text boxes stacked with no
+                    explanation read as the same question asked twice, so
+                    people filled one and left the other empty — usually the
+                    landmark, which is the one riders actually navigate by.
+                  */}
                   <Field
                     label={t("cct.co.addressLine")}
                     htmlFor="ck-address"
                     required
+                    hint={t("cct.co.addressHint")}
                     className="sm:col-span-2"
                   >
                     <Input
@@ -365,10 +391,24 @@ export function CheckoutClient({
                 §14.3 — the fee is quoted on confirmation, not now. Saying so
                 here, before the total, is what stops it reading as a surprise
                 charge later.
+
+                And when the restaurant has declared a band (migration 0035),
+                say the numbers. "The fee is set later" is honest but useless
+                for budgeting; "between 1 000 and 3 000 FCFA" is what lets
+                someone decide whether they can afford this order.
               */}
               <p className="mt-4 flex items-start gap-2.5 rounded-md border border-info/25 bg-info-light p-3 text-sm text-info">
                 <Info className="mt-0.5 size-4 shrink-0" aria-hidden />
-                <span>{t("cct.co.feeNote")}</span>
+                <span>
+                  {caps && (caps.minDeliveryFee > 0 || caps.maxDeliveryFee > 0)
+                    ? caps.maxDeliveryFee > 0
+                      ? t("cct.co.feeRange", {
+                          min: formatMoney(caps.minDeliveryFee),
+                          max: formatMoney(caps.maxDeliveryFee),
+                        })
+                      : t("cct.co.feeFrom", { min: formatMoney(caps.minDeliveryFee) })
+                    : t("cct.co.feeNote")}
+                </span>
               </p>
             </section>
           )}

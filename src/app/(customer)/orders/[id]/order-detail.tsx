@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowLeft, MapPin, Phone, RotateCcw, Star, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, MapPin, PackageCheck, Phone, RotateCcw, Star, X } from "lucide-react";
 import { OrderStatusBadge } from "@/components/order/order-status-badge";
 import { OrderReceipt, OrderStatusTimeline } from "@/components/order/order-parts";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +15,13 @@ import { RatingInput } from "@/components/ui/rating-stars";
 import { useToast } from "@/components/ui/toast";
 import { formatDateTime, isoAttr } from "@/lib/format/datetime";
 import { canCustomerCancel } from "@/lib/format/order-status";
-import { cancelOwnOrder, rateOwnDelivery, submitOwnReview, uploadReviewPhoto } from "@/lib/data/customer-actions";
+import {
+  cancelOwnOrder,
+  confirmOwnDelivery,
+  rateOwnDelivery,
+  submitOwnReview,
+  uploadReviewPhoto,
+} from "@/lib/data/customer-actions";
 import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { CustomerOrder as Order } from "@/lib/data/customer";
@@ -31,7 +38,9 @@ export function OrderDetail({ order }: { order: Order }) {
   const { toast } = useToast();
   const { locale, t } = useLocale();
   const dates = intlLocale(locale);
+  const router = useRouter();
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [rating, setRating] = useState(5);
   const [body, setBody] = useState("");
@@ -41,6 +50,24 @@ export function OrderDetail({ order }: { order: Order }) {
   const [deliveryRating, setDeliveryRating] = useState(order.deliveryRating ?? 0);
 
   const cancellable = canCustomerCancel(order.status);
+
+  /**
+   * The customer can close their own order once it is out for delivery.
+   *
+   * `shipped` is the only state where this makes sense: before it the food
+   * has not left, and after it the order is already closed. See
+   * confirmOwnDelivery for why the person holding the bag is the right one
+   * to press this.
+   */
+  const confirmable = order.status === "shipped";
+
+  async function confirmReceived() {
+    setConfirming(true);
+    const result = await confirmOwnDelivery(order.id);
+    setConfirming(false);
+    toast(result.ok ? t("cor.receivedDone") : result.error, result.ok ? "success" : "error");
+    if (result.ok) router.refresh();
+  }
 
   async function confirmCancel() {
     setCancelOpen(false);
@@ -123,7 +150,7 @@ export function OrderDetail({ order }: { order: Order }) {
 
         <div className="flex flex-wrap gap-2">
           <Link
-            href={`/browse/${order.restaurantSlug}`}
+            href={`/restaurants/${order.restaurantSlug}`}
             className={buttonClasses({ variant: "outline", size: "sm" })}
           >
             <RotateCcw className="size-3.5" aria-hidden />
@@ -137,6 +164,43 @@ export function OrderDetail({ order }: { order: Order }) {
           )}
         </div>
       </header>
+
+      {/*
+        ────────────────────────────────────────────────────────────────────
+         "DID YOU GET IT?" — ASKED WHERE IT CANNOT BE MISSED.
+
+         `delivered` used to be the restaurant's word alone, which meant it
+         was a guess: the kitchen does not know when the rider arrived. It
+         also gates the customer's own loyalty points and their review, so
+         an order left open in `shipped` quietly withholds both.
+
+         Deliberately NOT a small button in the header row beside "reorder"
+         and "cancel". It is the single thing this page wants from the
+         customer while the food is in transit, so it gets a card of its own
+         above everything else, in success colours rather than error ones —
+         this is a good-news confirmation, not a warning.
+        ────────────────────────────────────────────────────────────────────
+      */}
+      {confirmable && (
+        <div className="mt-6 flex flex-wrap items-center gap-4 rounded-lg border-2 border-success/40 bg-success-light p-4">
+          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-success text-white">
+            <PackageCheck className="size-5" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-success">{t("cor.receivedTitle")}</p>
+            <p className="mt-0.5 text-sm text-text-secondary">{t("cor.receivedBody")}</p>
+          </div>
+          <Button
+            variant="primary"
+            loading={confirming}
+            disabled={confirming}
+            onClick={confirmReceived}
+            className="max-sm:w-full"
+          >
+            {t("cor.receivedAction")}
+          </Button>
+        </div>
+      )}
 
       <div className="mt-8 grid items-start gap-8 lg:grid-cols-[1fr_22rem]">
         <div className="flex flex-col gap-6">

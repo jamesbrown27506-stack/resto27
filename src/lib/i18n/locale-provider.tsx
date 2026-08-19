@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useMemo, useSyncExternalStore } from "react";
 import { LOCALES, type Locale } from "./dictionaries";
+import { rememberLocale } from "./locale-actions";
 
 export const LOCALE_COOKIE = "restolink-locale";
 
@@ -84,6 +85,20 @@ export function LocaleProvider({
     document.documentElement.setAttribute("lang", next);
 
     for (const listener of listeners) listener();
+
+    /*
+      AND ON THE PROFILE, for everything composed while you are not here.
+
+      The cookie renders the page in front of you. It cannot reach a
+      notification, which is written by background server code with no
+      request and no browser in scope — which is why every manager and
+      customer notification was hardcoded French however this toggle was set.
+
+      Not awaited and never surfaced: switching language must feel
+      instantaneous, an anonymous visitor has no profile to write to, and a
+      failed write costs one French email rather than a broken toggle.
+    */
+    void rememberLocale(next);
   }, []);
 
   const value = useMemo(() => ({ locale, setLocale }), [locale, setLocale]);

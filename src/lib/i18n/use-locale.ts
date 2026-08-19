@@ -31,7 +31,13 @@ export function useLocale() {
   return { locale, setLocale, t };
 }
 
-/** Locale-aware Intl tag, for dates and numbers. */
-export function intlLocale(locale: Locale): string {
-  return locale === "en" ? "en-CM" : "fr-CM";
-}
+/**
+ * Re-exported, not defined here.
+ *
+ * This module is "use client", so anything it DEFINES becomes a client
+ * reference that throws when a Server Component calls it — which is exactly
+ * what /loyalty hit. The implementation moved to ./dictionaries (no "use
+ * client", callable from both sides); this line keeps every existing client
+ * import working without touching a single call site.
+ */
+export { intlLocale } from "./dictionaries";
