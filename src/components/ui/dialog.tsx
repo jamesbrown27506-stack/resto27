@@ -146,13 +146,34 @@ export function Dialog({
 
       {footer && (
         /*
-          `flex-col-reverse` below `sm` puts the CONFIRM on top, nearest the
-          thumb, with cancel beneath it — the same rule SheetActions follows.
-          Side by side on a phone the pair either overflows or shrinks both
-          buttons to something too small to hit accurately.
+          ONE ROW, ON EVERY WIDTH.
+
+          This used to be `flex-col-reverse` below `sm` — the confirm stacked
+          on top of the cancel — on the reasoning that a side-by-side pair on a
+          phone either overflows or shrinks both buttons past the point you can
+          hit them. Both halves of that are avoidable, and stacking cost more
+          than it bought: two full-width bars, one directly under the other,
+          read as a list of two equal choices, and the destructive one sits
+          exactly where the thumb lands.
+
+          Side by side reads as what it is — a decision with a default. The two
+          failure modes the stack was avoiding are handled directly instead:
+
+            · `*:flex-1 *:min-w-0` — equal halves that are ALLOWED to be
+              narrower than their label, so the row can never overflow the
+              viewport;
+            · `*:min-h-12` — a 48px floor whatever the label does, which is
+              above both platform touch minimums;
+            · the labels wrap (Button's own `whitespace-nowrap` is lifted in
+              ConfirmDialog below), and because the height is a floor and not
+              a fixed height, a two-line label grows its button rather than
+              spilling out of it.
+
+          `items-stretch` keeps the pair the same height when one wraps and the
+          other does not.
         */
         <div
-          className="flex shrink-0 flex-col-reverse gap-3 border-t border-border bg-surface-2 p-5 *:flex-1 sm:flex-row sm:flex-wrap sm:justify-end sm:*:flex-none"
+          className="flex shrink-0 flex-wrap items-stretch gap-3 border-t border-border bg-surface-2 p-5 *:min-h-12 *:min-w-0 *:flex-1 sm:justify-end sm:*:min-w-32 sm:*:flex-none"
           style={{ paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom, 0px))" }}
         >
           {footer}
@@ -196,10 +217,28 @@ export function ConfirmDialog({
       size="sm"
       footer={
         <>
-          <Button variant="outline" onClick={onClose} disabled={loading}>
+          {/*
+            `whitespace-normal` lifts Button's own `whitespace-nowrap` for the
+            two buttons that share one row. "Annuler la réservation" beside
+            "Garder" on a 360px screen is wider than the viewport in one line;
+            wrapped, it is a two-line label in a button that grew to fit.
+            tailwind-merge keeps the later rule, so this is the only place the
+            base is overridden.
+          */}
+          <Button
+            variant="outline"
+            onClick={onClose}
+            disabled={loading}
+            className="px-4 text-center leading-tight whitespace-normal"
+          >
             {cancelLabel ?? t("common.cancel")}
           </Button>
-          <Button variant={destructive ? "danger" : "primary"} onClick={onConfirm} loading={loading}>
+          <Button
+            variant={destructive ? "danger" : "primary"}
+            onClick={onConfirm}
+            loading={loading}
+            className="px-4 text-center leading-tight whitespace-normal"
+          >
             {confirmLabel ?? t("common.confirm")}
           </Button>
         </>
@@ -257,10 +296,21 @@ export function TypedConfirmDialog({
       size="sm"
       footer={
         <>
-          <Button variant="outline" onClick={onClose} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={onClose}
+            disabled={loading}
+            className="px-4 text-center leading-tight whitespace-normal"
+          >
             {cancelLabel ?? t("common.cancel")}
           </Button>
-          <Button variant="danger" onClick={onConfirm} disabled={!matches} loading={loading}>
+          <Button
+            variant="danger"
+            onClick={onConfirm}
+            disabled={!matches}
+            loading={loading}
+            className="px-4 text-center leading-tight whitespace-normal"
+          >
             {confirmLabel ?? t("common.confirm")}
           </Button>
         </>

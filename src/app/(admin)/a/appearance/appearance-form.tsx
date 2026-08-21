@@ -179,7 +179,7 @@ export function AppearanceForm({ slots }: { slots: Slot[] }) {
                 onUndo={() => discard(slot.key)}
               />
 
-              <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row">
+              <div className="flex flex-wrap items-stretch gap-2 border-t border-border pt-4 *:min-w-0 *:flex-1 sm:*:flex-none">
                 {!slot.isDefault && (
                   <Button
                     variant="ghost"

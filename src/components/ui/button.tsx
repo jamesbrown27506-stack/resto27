@@ -22,12 +22,27 @@ const VARIANTS: Record<ButtonVariant, string> = {
   link: "bg-transparent text-primary underline-offset-4 hover:underline p-0 h-auto",
 };
 
+/*
+  HEIGHTS ARE TOUCH TARGETS, NOT DECORATION.
+
+  These were 32 / 40 / 48px. The middle one is the default, so the great
+  majority of the app's buttons — "Sign out", "Cancel", "Keep browsing",
+  "Finalize order" — were 40px tall on a phone, under both platform minimums
+  (44px on iOS, 48dp on Android) and visibly slimmer than the fields above
+  them. A button that is hard to hit accurately is read as a button that does
+  not work, and the two places it hurt most were exactly the ones you cannot
+  retry cheaply: a confirmation and a basket.
+
+  `min-h` rather than `h` so a label that has to wrap — a long French action
+  name in a two-up dialog footer on a 360px screen — GROWS the button instead
+  of spilling out of it. The height is a floor, not a ceiling.
+*/
 const SIZES: Record<ButtonSize, string> = {
-  sm: "h-8 px-3.5 text-[13px] gap-1.5",
-  md: "h-10 px-5 text-sm gap-2",
-  lg: "h-12 px-8 text-base gap-2.5",
-  icon: "size-10 p-0",
-  "icon-sm": "size-8 p-0",
+  sm: "min-h-9 px-4 py-1.5 text-[13px] gap-1.5",
+  md: "min-h-11 px-5 py-2 text-sm gap-2",
+  lg: "min-h-13 px-8 py-2.5 text-base gap-2.5",
+  icon: "size-11 p-0",
+  "icon-sm": "size-9 p-0",
 };
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -61,6 +76,9 @@ export function Button({
         "disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100",
         VARIANTS[variant],
         SIZES[size],
+        // `link` is text, not a control surface: it opts out of the touch
+        // target the sizes impose, which its own `h-auto p-0` always meant to.
+        variant === "link" && "min-h-0 p-0",
         /*
           `shrink` UNDOES THE BASE `shrink-0`, AND IT MUST.
 
@@ -125,6 +143,7 @@ export function buttonClasses({
     "transition-all duration-200 active:scale-[.98]",
     VARIANTS[variant],
     SIZES[size],
+    variant === "link" && "min-h-0 p-0",
     // Same reasoning as Button above: a full-width link in a flex row must be
     // allowed to shrink, or the row overflows the viewport.
     fullWidth && "w-full shrink",

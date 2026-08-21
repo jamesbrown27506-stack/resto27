@@ -43,13 +43,32 @@ export function RestaurantCard({
   return (
     <article className="group relative overflow-hidden rounded-lg border border-border bg-surface transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
       <div className="relative aspect-[4/3] overflow-hidden">
-        {restaurant.logoUrl ? (
+        {/*
+          Cover first, logo only as a stand-in — and CONTAINED when it stands
+          in, never cropped.
+
+          The card used the logo directly with `object-cover`, which takes a
+          square mark, fills a 4:3 tile with it and throws away the top and
+          bottom. Directory tiles came out as the middle third of a wordmark
+          with the words cut in half. A cover photograph is made to be cropped;
+          a logo is not, so when a logo is all there is it sits whole inside
+          the tile on a neutral ground.
+        */}
+        {restaurant.coverUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={restaurant.coverUrl}
+            alt=""
+            loading="lazy"
+            className="size-full object-cover transition-transform duration-500 group-hover:scale-105"
+          />
+        ) : restaurant.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={restaurant.logoUrl}
             alt=""
             loading="lazy"
-            className="size-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className="size-full bg-surface-2 object-contain p-6 transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
           <CoverPlaceholder

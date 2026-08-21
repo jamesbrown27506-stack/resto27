@@ -33,6 +33,25 @@ export async function getPromptUserState(): Promise<{ signedIn: boolean }> {
   return { signedIn: (await getCurrentProfile()) !== null };
 }
 
+/* ── Push self-repair ──────────────────────────────────────────────────── */
+
+/**
+ * What the on-open push sync needs to decide whether to act.
+ *
+ * `wantsPush` is the stored PREFERENCE, which is a different fact from
+ * whether this browser currently holds a live subscription — and the gap
+ * between those two is the whole bug PushSync exists to close. Like
+ * getPromptUserState this must never redirect: it runs on every page,
+ * including the public ones a guest is browsing.
+ */
+export async function getPushSyncState(): Promise<{ signedIn: boolean; wantsPush: boolean }> {
+  const profile = await getCurrentProfile();
+  if (!profile) return { signedIn: false, wantsPush: false };
+
+  const channels = await fetchNotificationChannels(profile.id).catch(() => null);
+  return { signedIn: true, wantsPush: channels?.push ?? true };
+}
+
 /* ── Bell state ────────────────────────────────────────────────────────── */
 
 export interface NotificationState {

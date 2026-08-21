@@ -41,6 +41,10 @@ export const custReservationsDict = defineDict({
     "crs.guests": "Convives",
     "crs.slot": "Créneau",
     "crs.pickDateFirst": "Choisissez d'abord une date.",
+    "crs.openWindow": "Ouvert de {opens} à {closes} ce jour-là.",
+    "crs.closedThatDay": "Ce restaurant est fermé ce jour-là. Choisissez une autre date.",
+    "crs.noSlotsToday":
+      "Plus de créneau ce soir — le service se termine. Choisissez une autre date.",
     "crs.notes": "Précisions",
     "crs.notesPh": "Anniversaire, près de la fenêtre…",
     "crs.deposit": "Acompte requis : {amount}.",
@@ -95,6 +99,10 @@ export const custReservationsDict = defineDict({
     "crs.guests": "Guests",
     "crs.slot": "Time",
     "crs.pickDateFirst": "Pick a date first.",
+    "crs.openWindow": "Open {opens} – {closes} that day.",
+    "crs.closedThatDay": "This restaurant is closed that day. Pick another date.",
+    "crs.noSlotsToday":
+      "No seatings left tonight — service is ending. Pick another date.",
     "crs.notes": "Notes",
     "crs.notesPh": "Birthday, near the window…",
     "crs.deposit": "Deposit required: {amount}.",

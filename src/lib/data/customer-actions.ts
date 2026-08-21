@@ -370,6 +370,61 @@ const ReservationSchema = z.object({
   phone: z.string().optional().default(""),
 });
 
+/** Postgres "column does not exist" — the shape a skipped migration takes. */
+const UNDEFINED_COLUMN = "42703";
+
+function isMissingColumn(error: { code?: string; message?: string } | null, column: string) {
+  if (!error) return false;
+  return error.code === UNDEFINED_COLUMN && (error.message ?? "").includes(column);
+}
+
+/**
+ * The reservation fee, read so a database that skipped migration 0031 still
+ * takes bookings.
+ *
+ * `deposit_type` splits a fee into "FCFA charged online now" and "percentage
+ * of the final bill, collected on site". Before 0031 there was only the first
+ * kind, so its absence has an exact meaning — every fee is fixed — and that is
+ * what this returns rather than refusing the booking. A restaurant that has
+ * not run the migration also cannot have set a percentage fee, so nothing is
+ * being guessed at.
+ */
+async function readDepositConfig(
+  supabase: ReturnType<typeof createAdminClient>,
+  restaurantId: string,
+): Promise<{ amount: number; type: "fixed" | "percent" }> {
+  const withType = await supabase
+    .from("restaurants")
+    .select("deposit_amount, deposit_type")
+    .eq("id", restaurantId)
+    .maybeSingle();
+
+  if (!withType.error) {
+    const row = withType.data as { deposit_amount?: number; deposit_type?: string } | null;
+    return {
+      amount: Number(row?.deposit_amount ?? 0),
+      type: row?.deposit_type === "percent" ? "percent" : "fixed",
+    };
+  }
+
+  if (!isMissingColumn(withType.error, "deposit_type")) {
+    console.error("[customer:readDepositConfig]", withType.error.message);
+    return { amount: 0, type: "fixed" };
+  }
+
+  console.warn(
+    "[customer:readDepositConfig] restaurants.deposit_type is missing — run migration 0031 (or 0033_catch_up). Treating every reservation fee as fixed.",
+  );
+
+  const { data } = await supabase
+    .from("restaurants")
+    .select("deposit_amount")
+    .eq("id", restaurantId)
+    .maybeSingle();
+
+  return { amount: Number((data as { deposit_amount?: number } | null)?.deposit_amount ?? 0), type: "fixed" };
+}
+
 /**
  * Request a table.
  *
@@ -392,17 +447,49 @@ export async function createOwnReservation(
 
   const supabase = createAdminClient();
 
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     "Restaurant introuvable." FOR A RESTAURANT YOU CAN ORDER FROM.
+
+     This lookup used to be one query — `select id, status, deposit_amount,
+     deposit_type` — and one `if (restaurantError || !restaurant)` collapsing
+     both outcomes into "restaurant not found". They are not the same thing.
+
+     `restaurants.deposit_type` is added by migration 0031 (or its catch-up,
+     0033). On a database that never ran it, PostgREST answers that select
+     with 42703 — column does not exist — for EVERY restaurant. So the row was
+     found, the restaurant was active, its menu was orderable in the next tab,
+     and the booking form still said it did not exist. The message named the
+     one thing that was not wrong, which is why it sent people looking at the
+     restaurant instead of at the schema.
+
+     Split in two, so each failure says what it is:
+       · the existence check reads only columns that have existed since 0003;
+       · the fee is read separately, and a database missing the column falls
+         back to a fixed fee of zero rather than failing the booking.
+    ─────────────────────────────────────────────────────────────────────────
+  */
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
-    .select("id, status, deposit_amount, deposit_type")
+    .select("id, status")
     .eq("id", restaurantId)
     .eq("status", "active")
     .maybeSingle();
 
-  if (restaurantError || !restaurant) return { ok: false, error: "Restaurant introuvable." };
-  const restaurantRow = restaurant as { deposit_amount?: number; deposit_type?: string };
-  const depositAmount = Number(restaurantRow.deposit_amount ?? 0);
-  const depositType = restaurantRow.deposit_type === "percent" ? "percent" : "fixed";
+  if (restaurantError) {
+    console.error(
+      "[customer:createOwnReservation] restaurant lookup",
+      restaurantError.code ?? "",
+      restaurantError.message,
+    );
+    return { ok: false, error: "La disponibilité n'a pas pu être vérifiée. Réessayez." };
+  }
+  if (!restaurant) return { ok: false, error: "Restaurant introuvable." };
+
+  const { amount: depositAmount, type: depositType } = await readDepositConfig(
+    supabase,
+    restaurantId,
+  );
   const depositPercent = depositType === "percent" ? depositAmount : 0;
 
   const slotStart = new Date(when.getTime() - 30 * 60_000).toISOString();
@@ -430,30 +517,60 @@ export async function createOwnReservation(
   }
 
   const reference = `RES-${randomUUID().slice(0, 4).toUpperCase()}`;
-  const { data: inserted, error: insertError } = await supabase
-    .from("reservations")
-    .insert({
-      reference,
-      restaurant_id: restaurantId,
-      customer_id: user.id,
-      guest_name: user.name,
-      guest_phone: phone.trim() || user.phone || "",
-      party_size: partySize,
-      reserved_for: reservedFor,
-      status: "pending",
-      // Snapshotted from the restaurant's price at booking time (0025) — a
-      // price change after the customer booked must not rewrite their booking.
-      // The percentage is snapshotted too (0031) so the board still reads the
-      // value the customer booked under.
-      deposit_amount: depositType === "fixed" ? depositAmount : 0,
-      deposit_percent: depositPercent,
-      notes: notes.trim() || null,
-    })
-    .select("id")
-    .single();
+  /*
+    `deposit_percent` is kept OUT of the base row and added on top, so the
+    retry below has something to fall back to that was never assembled with
+    it — rather than destructuring the key back out of an object that has it.
+  */
+  const baseRow = {
+    reference,
+    restaurant_id: restaurantId,
+    customer_id: user.id,
+    guest_name: user.name,
+    guest_phone: phone.trim() || user.phone || "",
+    party_size: partySize,
+    reserved_for: reservedFor,
+    status: "pending",
+    // Snapshotted from the restaurant's price at booking time (0025) — a
+    // price change after the customer booked must not rewrite their booking.
+    // The percentage is snapshotted too (0031) so the board still reads the
+    // value the customer booked under.
+    deposit_amount: depositType === "fixed" ? depositAmount : 0,
+    notes: notes.trim() || null,
+  };
+  const row = { ...baseRow, deposit_percent: depositPercent };
 
-  if (insertError || !inserted) return { ok: false, error: "La demande n'a pas pu être envoyée." };
-  const reservationId = inserted.id as string;
+  let inserted: { id: string } | null = null;
+  let insertError = null as { code?: string; message?: string } | null;
+
+  {
+    const attempt = await supabase.from("reservations").insert(row).select("id").single();
+    inserted = attempt.data as { id: string } | null;
+    insertError = attempt.error;
+
+    // Same skipped migration as the deposit read above: `deposit_percent` is
+    // 0031's column on `reservations`. Without it the whole insert is refused,
+    // so the booking is retried without the snapshot — a request that reaches
+    // the restaurant beats one lost to a column the fee never used anyway.
+    if (isMissingColumn(insertError, "deposit_percent")) {
+      console.warn(
+        "[customer:createOwnReservation] reservations.deposit_percent is missing — run migration 0031 (or 0033_catch_up). Booking saved without the percentage snapshot.",
+      );
+      const retry = await supabase.from("reservations").insert(baseRow).select("id").single();
+      inserted = retry.data as { id: string } | null;
+      insertError = retry.error;
+    }
+  }
+
+  if (insertError || !inserted) {
+    console.error(
+      "[customer:createOwnReservation] insert",
+      insertError?.code ?? "",
+      insertError?.message ?? "no row returned",
+    );
+    return { ok: false, error: "La demande n'a pas pu être envoyée." };
+  }
+  const reservationId = inserted.id;
 
   // A fixed reservation fee is paid ONLINE at booking (0031): the customer's
   // Mobile Money is charged through the platform's payment path, the money is

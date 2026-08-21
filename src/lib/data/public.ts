@@ -97,6 +97,22 @@ interface DbRestaurant {
   quartiers: { name: string }[] | null;
 }
 
+/*
+  `deposit_type` IS DELIBERATELY ABSENT FROM THIS LIST.
+
+  `DbRestaurant` declares it and `shape()` reads it, so `depositType` below is
+  always undefined and always resolves to "fixed". That is not an oversight to
+  tidy up — it is load-bearing. The column is added by migration 0031 (or the
+  catch-up, 0037) and is MISSING from the live database, and PostgREST answers
+  a select naming a column that does not exist with 42703 for every row. Adding
+  it back before the migration has run would not degrade the fee display; it
+  would take down the entire restaurant directory and every public restaurant
+  page with it.
+
+  Add it here only once `select deposit_type from restaurants` succeeds against
+  the deployed database. Until then "fixed" is the correct answer anyway: a
+  database without the column cannot hold a percentage fee.
+*/
 const RESTAURANT_COLUMNS =
   "id, slug, name, branch_label, is_primary, status, is_verified, description, phone, address_line, logo_url, cover_url, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, min_delivery_fee, max_delivery_fee, deposit_amount, created_at, cuisines ( name ), quartiers ( name )";
 

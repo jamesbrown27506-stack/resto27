@@ -10,6 +10,7 @@ import { getCartConfig } from "@/lib/orders/cart-config";
 import { ToastProvider } from "@/components/ui/toast";
 import { CartProvider } from "@/components/cart/cart-provider";
 import { PwaPrompts } from "@/components/notifications/pwa-prompts";
+import { PushSync } from "@/components/notifications/push-sync";
 import { SkipLink } from "@/components/layout/skip-link";
 import { TranslationSafeBoundary } from "@/components/layout/translation-safe";
 import "./globals.css";
@@ -197,6 +198,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 one hour before asking again.
               */}
               <PwaPrompts brandName={brand.name} />
+              {/*
+                Push self-repair. Renders nothing; it re-registers the service
+                worker and re-stores this browser's subscription on every app
+                open, which is what stops push from silently dying until
+                somebody toggles the switch off and on again. See push-sync.
+              */}
+              <PushSync />
             </ToastProvider>
           </LocaleProvider>
         </TranslationSafeBoundary>

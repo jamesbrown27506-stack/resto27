@@ -19,11 +19,15 @@ import { reservationStatusLabel, RESERVATION_STATUS_TONE } from "@/lib/format/re
 import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { CustomerReservation } from "@/lib/data/customer";
 import type { PublicRestaurant } from "@/lib/data/public";
-import { formatDayLabel, formatTime } from "@/lib/format/datetime";
+import { formatDate, formatDayLabel, formatTime, weekdayName } from "@/lib/format/datetime";
 import { formatMoney } from "@/lib/format/currency";
+import {
+  isTodayOrLater,
+  slotsForDate,
+  todayInDisplayTz,
+  weekdayOfDate,
+} from "@/lib/reservations/slots";
 import type { SessionUser } from "@/lib/session";
-
-const SLOTS = ["12:00", "12:30", "13:00", "13:30", "19:00", "19:30", "20:00", "20:30", "21:00"];
 
 const POLL_INTERVAL_MS = 4_000;
 const POLL_TRIES = 30;
@@ -40,6 +44,7 @@ export function ReservationsClient({
   initialRestaurantSlug = "",
   initialGuests = "",
   initialDate = "",
+  now: nowIso,
 }: {
   user: SessionUser;
   initial: CustomerReservation[];
@@ -48,6 +53,8 @@ export function ReservationsClient({
   initialRestaurantSlug?: string;
   initialGuests?: string;
   initialDate?: string;
+  /** The server's instant, ISO — see the comment on the page that passes it. */
+  now: string;
 }) {
   const { toast } = useToast();
   const { locale, t } = useLocale();
@@ -73,9 +80,13 @@ export function ReservationsClient({
   }
 
   // Only a well-formed YYYY-MM-DD is allowed through — anything else would
-  // make the submit build an Invalid Date and throw in toISOString.
+  // make the submit build an Invalid Date and throw in toISOString. A date
+  // that has already gone is dropped too: the hand-off from the homepage
+  // search carries whatever was typed there, and a stale `?date=` would open
+  // the form pre-filled with a day nothing can be booked on.
   function resolveDate(raw: string): string {
-    return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return "";
+    return isTodayOrLater(raw) ? raw : "";
   }
 
   const [mine, setMine] = useState(initial);
@@ -92,6 +103,33 @@ export function ReservationsClient({
   const [cancelId, setCancelId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  /*
+    The clock the slot grid is built against.
+
+    It starts as the server's instant so the first client render is identical
+    to the server's, then takes over on mount and re-reads every minute. The
+    tick is what stops a form left open through lunch from still offering
+    13:00 at half past one — the list narrows as the afternoon goes on, and
+    the "no seatings left today" state arrives on its own.
+  */
+  const [now, setNow] = useState(() => new Date(nowIso));
+
+  useEffect(() => {
+    const tick = setInterval(() => setNow(new Date()), 60_000);
+    // A phone that was asleep does not run intervals. Coming back to the tab
+    // is the moment the server's instant is most likely to be hours old, so
+    // the clock is re-read there too rather than waiting out a whole minute
+    // on a list of slots that may all have passed.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") setNow(new Date());
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(tick);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
@@ -100,6 +138,42 @@ export function ReservationsClient({
 
   const upcoming = mine.filter((r) => r.status === "pending" || r.status === "confirmed");
   const past = mine.filter((r) => !["pending", "confirmed"].includes(r.status));
+
+  /* ── What can actually be booked, for the restaurant and day chosen ──── */
+
+  const selectedRestaurant = restaurants.find((r) => r.slug === restaurantSlug);
+
+  /** `min` on the date input — the browser greys out everything before it. */
+  const minDate = todayInDisplayTz(now);
+
+  const day = date ? slotsForDate(selectedRestaurant?.hours ?? [], date, now) : null;
+  const slots = day?.slots ?? [];
+
+  /**
+   * "lundi 24 août 2026" — the weekday of the chosen date, spelled out.
+   *
+   * A date field shows 24/08/2026 and nothing else, and nobody books a table
+   * by date number: they book "Saturday". The weekday comes from the string
+   * through `weekdayOfDate` rather than from a parsed Date, so it cannot drift
+   * a day across a timezone; midday is used for the rest of the label because
+   * it is the hour furthest from either boundary.
+   */
+  const chosenWeekday = date ? weekdayOfDate(date) : null;
+  const dayLabel =
+    chosenWeekday === null
+      ? null
+      : `${weekdayName(chosenWeekday, dateLocale)} ${formatDate(
+          `${date}T12:00:00+01:00`,
+          dateLocale,
+        )}`;
+
+  /*
+    Drop a slot that the chosen day no longer offers — a different restaurant,
+    a different date, or simply the minute it stopped being bookable. Adjusted
+    during render rather than in an effect so the form is never submittable
+    with a time the grid is no longer showing.
+  */
+  if (time && !slots.includes(time)) setTime("");
 
   async function submit() {
     if (!date || !time) return;
@@ -267,8 +341,25 @@ export function ReservationsClient({
                   id="res-date"
                   type="date"
                   value={date}
-                  onChange={(e) => setDate(e.target.value)}
+                  /*
+                    `min` is the whole of the past, blocked. The native picker
+                    greys out every earlier day and the browser refuses a typed
+                    one, so a yesterday booking cannot be built at all — rather
+                    than being built, paid for, and then refused by the server.
+                  */
+                  min={minDate}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    // Belt and braces: a keyboard-typed date bypasses the
+                    // picker's greying, and Firefox accepts it below `min`.
+                    setDate(value === "" || isTodayOrLater(value, now) ? value : "");
+                  }}
                 />
+                {dayLabel && (
+                  <p className="mt-1.5 text-xs font-medium text-text-secondary capitalize">
+                    {dayLabel}
+                  </p>
+                )}
               </Field>
 
               <Field label={t("crs.guests")} htmlFor="res-guests" required>
@@ -284,35 +375,61 @@ export function ReservationsClient({
               </Field>
             </div>
 
+            {/*
+              THE SLOTS ARE THE RESTAURANT'S, NOT THE PLATFORM'S.
+
+              Nine fixed times used to be hard-coded here for every restaurant
+              on every day of the week. They now come from `restaurant_hours`
+              for the weekday actually selected, every half hour from opening
+              to the last seating — so a place open 10:00–22:00 can be booked
+              at 15:30, a Sunday it is closed offers nothing and says why, and
+              an hour that has already passed today is simply not there.
+
+              The grid is `min-h-11` per slot: these are the densest tap
+              targets on the screen and were 36px, which on a phone is a
+              mis-tap and a table booked an hour from the one you wanted.
+            */}
             <fieldset>
               <legend className="mb-2 text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
                 {t("crs.slot")}
               </legend>
-              <div className="grid grid-cols-3 gap-2">
-                {SLOTS.map((slot) => {
-                  const chosen = time === slot;
-                  return (
-                    <button
-                      key={slot}
-                      type="button"
-                      disabled={!date}
-                      aria-pressed={chosen}
-                      onClick={() => setTime(slot)}
-                      className={`tnum rounded-md border px-2 py-2 text-sm font-medium transition-colors ${
-                        chosen
-                          ? "border-primary bg-primary text-primary-fg"
-                          : !date
-                            ? "cursor-not-allowed border-border bg-surface-2 text-text-light opacity-50"
-                            : "border-border hover:border-primary hover:text-primary"
-                      }`}
-                    >
-                      {slot}
-                    </button>
-                  );
-                })}
-              </div>
-              {!date && (
-                <p className="mt-2 text-xs text-text-light">{t("crs.pickDateFirst")}</p>
+
+              {!date ? (
+                <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-text-light">
+                  {t("crs.pickDateFirst")}
+                </p>
+              ) : slots.length > 0 ? (
+                <>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
+                    {slots.map((slot) => {
+                      const chosen = time === slot;
+                      return (
+                        <button
+                          key={slot}
+                          type="button"
+                          aria-pressed={chosen}
+                          onClick={() => setTime(slot)}
+                          className={`tnum inline-flex min-h-11 items-center justify-center rounded-md border px-2 text-sm font-medium transition-colors ${
+                            chosen
+                              ? "border-primary bg-primary text-primary-fg"
+                              : "border-border hover:border-primary hover:text-primary"
+                          }`}
+                        >
+                          {slot}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {day?.opensAt && day.closesAt && (
+                    <p className="tnum mt-2 text-xs text-text-light">
+                      {t("crs.openWindow", { opens: day.opensAt, closes: day.closesAt })}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="rounded-md border border-warning/30 bg-warning-light px-3 py-4 text-center text-xs leading-relaxed text-warning">
+                  {t(day?.reason === "tooLate" ? "crs.noSlotsToday" : "crs.closedThatDay")}
+                </p>
               )}
             </fieldset>
 

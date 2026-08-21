@@ -130,13 +130,20 @@ export function Sheet({
  *  whatever the form's length or the screen's height.
  * ─────────────────────────────────────────────────────────────────────────
  *
- * `flex-col-reverse` below `sm` is deliberate. Pass the buttons in reading
- * order — cancel first, confirm second — and on a narrow screen the CONFIRM
- * lands on top, nearest the thumb, with cancel beneath it where a mis-tap is
- * least likely to throw the work away.
+ * ONE ROW ON EVERY WIDTH, matching the Dialog footer. Pass the buttons in
+ * reading order — cancel first, confirm second — and that is where they stay.
+ *
+ * The previous `flex-col-reverse` below `sm` stacked them into two full-width
+ * bars, which reads as two equal choices rather than a decision with a
+ * default. Side by side works on a phone because the pair is given the room to
+ * behave: `*:min-w-0` lets each half be narrower than its own label so the row
+ * cannot overflow, `*:min-h-12` holds a 48px floor whatever the label does,
+ * and the height being a floor means a wrapped label grows its button.
  */
 export function SheetActions({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex flex-col-reverse gap-3 *:flex-1 sm:flex-row">{children}</div>
+    <div className="flex flex-wrap items-stretch gap-3 *:min-h-12 *:min-w-0 *:flex-1">
+      {children}
+    </div>
   );
 }

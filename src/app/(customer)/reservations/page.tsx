@@ -24,6 +24,18 @@ export default async function ReservationsPage({
     fetchActiveRestaurants(),
   ]);
 
+  /*
+    The clock is handed DOWN rather than read inside the client component.
+
+    Which half-hours are still bookable depends on the current time, so a
+    `new Date()` during the client component's render would be one instant on
+    the server and a different one in the browser — and a slot that falls
+    either side of the boundary between them is a hydration mismatch. One
+    instant, rendered twice, agrees; the client takes over on mount and
+    re-reads the clock every minute after that.
+  */
+  const now = new Date().toISOString();
+
   return (
     <ReservationsClient
       user={user}
@@ -32,6 +44,7 @@ export default async function ReservationsPage({
       initialRestaurantSlug={params.restaurant ?? params.q ?? ""}
       initialGuests={params.guests ?? ""}
       initialDate={params.date ?? ""}
+      now={now}
     />
   );
 }

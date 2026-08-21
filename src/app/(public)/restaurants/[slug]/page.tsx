@@ -82,14 +82,22 @@ export default async function RestaurantDetailPage({
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
       />
 
-      {restaurant.logoUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={restaurant.logoUrl}
-          alt=""
-          className="h-48 w-full object-cover sm:h-64"
-        />
-      ) : restaurant.coverUrl ? (
+      {/*
+        THE BANNER IS THE COVER PHOTO. IT IS NEVER THE LOGO.
+
+        This read `logoUrl ? … : coverUrl ? …`, so a restaurant that had
+        uploaded a logo got that logo as its banner — `object-cover` on a
+        square mark across a 100%-wide, 192px-tall strip, which crops it to a
+        letterbox band of its middle and then repeats it forty pixels below as
+        the actual logo. The restaurant appeared to have the same image twice,
+        and its cover photo — the one picture chosen to be seen at this size —
+        was never shown at all while a logo existed.
+
+        A logo is a mark: square, small, meant to be read whole. A cover is a
+        photograph: wide, croppable, meant to be atmosphere. Substituting one
+        for the other is not a fallback, so the fallback is the gradient.
+      */}
+      {restaurant.coverUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={restaurant.coverUrl}
