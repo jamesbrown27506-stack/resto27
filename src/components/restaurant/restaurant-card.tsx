@@ -44,31 +44,36 @@ export function RestaurantCard({
     <article className="group relative overflow-hidden rounded-lg border border-border bg-surface transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
       <div className="relative aspect-[4/3] overflow-hidden">
         {/*
-          Cover first, logo only as a stand-in — and CONTAINED when it stands
-          in, never cropped.
+          THE LOGO IS THE RESTAURANT'S FACE IN A LIST.
 
-          The card used the logo directly with `object-cover`, which takes a
-          square mark, fills a 4:3 tile with it and throws away the top and
-          bottom. Directory tiles came out as the middle third of a wordmark
-          with the words cut in half. A cover photograph is made to be cropped;
-          a logo is not, so when a logo is all there is it sits whole inside
-          the tile on a neutral ground.
+          A directory is a row of restaurants being told apart, and the mark is
+          what does that — it is designed to be recognised at thumbnail size,
+          which a photograph of a dining room is not. The cover photo has its
+          own place: the full-width banner on the restaurant's own page, where
+          it is large enough to be atmosphere rather than a smudge.
+
+          CONTAINED, NEVER CROPPED. `object-cover` on a square mark inside a
+          4:3 tile throws away the top and bottom — tiles came out as the
+          middle third of a wordmark with the words cut in half. A cover
+          photograph is made to be cropped; a logo is not. So it sits whole on
+          a neutral ground, and only a restaurant with no logo at all falls
+          back to its cover photo, which IS croppable.
         */}
-        {restaurant.coverUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={restaurant.coverUrl}
-            alt=""
-            loading="lazy"
-            className="size-full object-cover transition-transform duration-500 group-hover:scale-105"
-          />
-        ) : restaurant.logoUrl ? (
+        {restaurant.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={restaurant.logoUrl}
             alt=""
             loading="lazy"
             className="size-full bg-surface-2 object-contain p-6 transition-transform duration-500 group-hover:scale-105"
+          />
+        ) : restaurant.coverUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={restaurant.coverUrl}
+            alt=""
+            loading="lazy"
+            className="size-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
           <CoverPlaceholder

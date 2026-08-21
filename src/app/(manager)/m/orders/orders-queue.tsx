@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Bike, Printer, ReceiptText, Store, ShoppingBag } from "lucide-react";
+import { Bike, Clock, Printer, ReceiptText, Store, ShoppingBag } from "lucide-react";
 import { DeliveryFeeDialog } from "@/components/order/delivery-fee-dialog";
 import { OrderStatusBadge } from "@/components/order/order-status-badge";
 import { FilterChips } from "@/components/data/filter-bar";
@@ -157,7 +157,9 @@ export function OrdersQueue({
                   key={order.id}
                   className={cn(
                     "rounded-lg border bg-surface p-4 transition-colors sm:p-5",
-                    order.status === "pending" ? "border-warning/40" : "border-border",
+                    order.status === "pending" || order.status === "awaiting_customer"
+                      ? "border-warning/40"
+                      : "border-border",
                   )}
                 >
                   <div className="flex flex-wrap items-start gap-4">
@@ -227,6 +229,25 @@ export function OrdersQueue({
                       )}
                     </div>
                   </div>
+
+                  {/*
+                    WAITING ON THE CUSTOMER — SAY SO, OR THE KITCHEN GUESSES.
+
+                    `nextStatus` returns null at `awaiting_customer`, so the
+                    advance button is already gone. A missing button with no
+                    explanation reads as a broken screen, and the guess that
+                    follows is "start cooking anyway" — which is the food waste
+                    this whole state exists to prevent. The line says what is
+                    being waited for and what not to do meanwhile.
+                  */}
+                  {order.status === "awaiting_customer" && (
+                    <p className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning-light px-3 py-2 text-xs leading-relaxed text-warning">
+                      <Clock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                      <span>
+                        <strong>{t("mo.awaitingCustomer")}</strong> {t("mo.awaitingCustomerBody")}
+                      </span>
+                    </p>
+                  )}
 
                   <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3.5">
                     {next && (

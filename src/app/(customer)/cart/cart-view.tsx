@@ -18,7 +18,15 @@ import { useLocale } from "@/lib/i18n/use-locale";
  * it merges into the account on sign-in. Forcing registration before someone
  * can see what they owe is the single biggest drop-off point in food ordering.
  */
-export function CartView({ balance }: { balance: number }) {
+export function CartView({
+  balance,
+  minRedeem,
+  pointValue,
+}: {
+  balance: number;
+  minRedeem: number;
+  pointValue: number;
+}) {
   const { lines, itemCount, totals } = useCart();
   const { t } = useLocale();
 
@@ -87,7 +95,7 @@ export function CartView({ balance }: { balance: number }) {
 
           <div className="flex flex-col gap-4 lg:sticky lg:top-24">
             <PromoInput />
-            <LoyaltyRedeem balance={balance} />
+            <LoyaltyRedeem balance={balance} minRedeem={minRedeem} pointValue={pointValue} />
 
             {/* Tell the customer what stands between them and ordering —
                 before they walk to checkout and get refused there. */}

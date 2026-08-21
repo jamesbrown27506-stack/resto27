@@ -60,6 +60,13 @@ export const custCartDict = defineDict({
     "cct.loy.min": "Il faut au moins {count} points pour les utiliser.",
     "cct.loy.have": "Vous en avez {count}.",
     "cct.loy.guest": "Connectez-vous pour utiliser vos points de fidélité.",
+    "cct.loy.belowMin":
+      "Il faut {min} points pour commencer à les utiliser. Vous en avez {balance} — encore {missing} à gagner.",
+    "cct.loy.basketTooSmall":
+      "Votre panier est trop petit pour utiliser {min} points. Ajoutez un plat pour les dépenser.",
+    "cct.loy.useMax": "Utiliser {points}",
+    "cct.loy.useNone": "Ne pas utiliser mes points",
+    "cct.loy.minHint": "Minimum {min} points par commande.",
 
     /* ── Totals ─────────────────────────────────────────────────────── */
     "cct.sum.title": "Récapitulatif",
@@ -234,6 +241,13 @@ export const custCartDict = defineDict({
     "cct.loy.min": "You need at least {count} points to redeem them.",
     "cct.loy.have": "You have {count}.",
     "cct.loy.guest": "Sign in to spend your loyalty points.",
+    "cct.loy.belowMin":
+      "You need {min} points before you can start spending them. You have {balance} — {missing} to go.",
+    "cct.loy.basketTooSmall":
+      "Your basket is too small to spend {min} points. Add a dish to use them.",
+    "cct.loy.useMax": "Use {points}",
+    "cct.loy.useNone": "Don't use my points",
+    "cct.loy.minHint": "Minimum {min} points per order.",
 
     /* ── Totals ─────────────────────────────────────────────────────── */
     "cct.sum.title": "Summary",

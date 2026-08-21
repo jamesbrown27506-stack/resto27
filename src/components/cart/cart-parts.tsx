@@ -117,19 +117,98 @@ export function PromoInput() {
 
 /* ── Loyalty redemption ────────────────────────────────────────────────── */
 
-export function LoyaltyRedeem({ balance }: { balance: number }) {
+export function LoyaltyRedeem({
+  balance,
+  minRedeem,
+  pointValue,
+}: {
+  balance: number;
+  /** The platform minimum (settings.loyalty_min_redeem). 0 = no minimum. */
+  minRedeem: number;
+  /** FCFA per point (settings.loyalty_point_value). */
+  pointValue: number;
+}) {
   const { loyaltyPointsUsed, setLoyaltyPointsUsed, totals, config } = useCart();
   const { t } = useLocale();
 
   if (!config.loyaltyEnabled || balance <= 0) return null;
 
-  // Never let a redemption exceed what the food actually costs — otherwise the
-  // customer burns points to produce a zero total and loses the remainder.
-  const maxRedeemable = Math.min(balance, totals.netFood + totals.serviceCharge);
+  /*
+    ───────────────────────────────────────────────────────────────────────
+     WHY THE SLIDER COULD NOT BE MOVED, AND WHY IT SAID NOTHING.
+
+     Three faults compounded into "I can see my points and I cannot use any
+     of them", with no explanation anywhere on the screen.
+
+     1. THE MINIMUM WAS INVISIBLE AND UNENFORCED HERE. The platform requires
+        `loyalty_min_redeem` points before anything can be spent (100 on the
+        live settings). The slider let you pick any amount, and CHECKOUT then
+        refused with "below the minimum" — a rule announced only at the point
+        of failure, on a different screen.
+
+     2. THE STEP WAS BIGGER THAN THE RANGE. `step={50}` against a balance of
+        20 gives a slider whose only reachable value is 0. It rendered, it
+        looked interactive, and it could not move. That is the literal
+        complaint.
+
+     3. POINTS WERE COMPARED TO FRANCS. `Math.min(balance, netFood +
+        serviceCharge)` capped a POINT count with a FRANC amount. It happens
+        to be harmless while a point is worth exactly one franc, and silently
+        lets a customer burn five times too many the moment an admin sets
+        `loyalty_point_value` to 5 — losing the remainder.
+
+     So: convert francs to points before capping, step in whole points, and
+     when the balance cannot reach the minimum say so plainly instead of
+     rendering a dead control.
+    ───────────────────────────────────────────────────────────────────────
+  */
+
+  // The order can only absorb so much: points must never pay more than the
+  // food itself is worth, or the remainder is burnt for nothing.
+  const spendableFrancs = totals.netFood + totals.serviceCharge;
+  const affordablePoints = pointValue > 0 ? Math.floor(spendableFrancs / pointValue) : 0;
+  const maxRedeemable = Math.max(0, Math.min(balance, affordablePoints));
+
+  // Below the minimum there is nothing to offer, so the row explains itself
+  // rather than showing a control that cannot be used.
+  if (minRedeem > 0 && balance < minRedeem) {
+    return (
+      <div className="rounded-md border border-border bg-surface-2 p-3">
+        <p className="text-sm font-semibold">{t("cct.loy.title")}</p>
+        <p className="tnum mt-1 text-xs leading-relaxed text-text-secondary">
+          {t("cct.loy.belowMin", { min: minRedeem, balance, missing: minRedeem - balance })}
+        </p>
+      </div>
+    );
+  }
+
+  // The basket is too small to absorb the minimum — a different problem with a
+  // different fix (add a dish), and worth saying rather than clamping to zero.
+  if (maxRedeemable < Math.max(1, minRedeem)) {
+    return (
+      <div className="rounded-md border border-border bg-surface-2 p-3">
+        <p className="text-sm font-semibold">{t("cct.loy.title")}</p>
+        <p className="tnum mt-1 text-xs leading-relaxed text-text-secondary">
+          {t("cct.loy.basketTooSmall", { min: minRedeem })}
+        </p>
+      </div>
+    );
+  }
+
+  const floor = Math.max(1, minRedeem);
+  // A step that cannot divide the range is what produced the immovable
+  // slider. Ten points where there is room for it, one where there is not.
+  const step = maxRedeemable - floor >= 10 ? 10 : 1;
+
+  /** 0 (spend nothing) or at least the minimum — never a refusable amount. */
+  function choose(raw: number) {
+    if (raw <= 0) return setLoyaltyPointsUsed(0);
+    setLoyaltyPointsUsed(Math.min(maxRedeemable, Math.max(floor, raw)));
+  }
 
   return (
     <div className="rounded-md border border-border bg-surface-2 p-3">
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <label htmlFor="loyalty" className="text-sm font-semibold">
           {t("cct.loy.title")}
         </label>
@@ -143,19 +222,46 @@ export function LoyaltyRedeem({ balance }: { balance: number }) {
         type="range"
         min={0}
         max={maxRedeemable}
-        step={50}
+        step={step}
         value={loyaltyPointsUsed}
-        onChange={(e) => setLoyaltyPointsUsed(Number(e.target.value))}
+        onChange={(e) => choose(Number(e.target.value))}
         className="mt-2.5 w-full accent-[var(--primary)]"
       />
 
-      <div className="mt-1 flex items-center justify-between text-xs">
+      <div className="mt-1 flex items-center justify-between gap-2 text-xs">
         <span className="text-text-light">0</span>
         <span className="tnum font-semibold text-primary">
-          −{formatMoney(loyaltyPointsUsed * config.pointValue)}
+          −{formatMoney(loyaltyPointsUsed * pointValue)}
         </span>
         <span className="tnum text-text-light">{maxRedeemable.toLocaleString("fr-CM")}</span>
       </div>
+
+      {/* Two taps that the slider makes fiddly on a phone: spend the most the
+          order allows, or spend none at all. */}
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => choose(maxRedeemable)}
+          className="tnum rounded-full border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:border-primary hover:text-primary"
+        >
+          {t("cct.loy.useMax", { points: maxRedeemable })}
+        </button>
+        {loyaltyPointsUsed > 0 && (
+          <button
+            type="button"
+            onClick={() => choose(0)}
+            className="rounded-full border border-transparent px-3 py-1.5 text-xs font-medium text-text-light transition-colors hover:text-text"
+          >
+            {t("cct.loy.useNone")}
+          </button>
+        )}
+      </div>
+
+      {minRedeem > 0 && (
+        <p className="tnum mt-2 text-xs text-text-light">
+          {t("cct.loy.minHint", { min: minRedeem })}
+        </p>
+      )}
     </div>
   );
 }

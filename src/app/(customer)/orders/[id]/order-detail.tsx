@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, MapPin, PackageCheck, Phone, RotateCcw, Star, X } from "lucide-react";
+import { ArrowLeft, Bike, MapPin, PackageCheck, Phone, RotateCcw, Star, X } from "lucide-react";
 import { OrderStatusBadge } from "@/components/order/order-status-badge";
 import { OrderReceipt, OrderStatusTimeline } from "@/components/order/order-parts";
 import { Badge } from "@/components/ui/badge";
@@ -13,10 +13,12 @@ import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/input";
 import { RatingInput } from "@/components/ui/rating-stars";
 import { useToast } from "@/components/ui/toast";
+import { formatMoney } from "@/lib/format/currency";
 import { formatDateTime, isoAttr } from "@/lib/format/datetime";
 import { canCustomerCancel } from "@/lib/format/order-status";
 import {
   cancelOwnOrder,
+  respondToDeliveryFee,
   confirmOwnDelivery,
   rateOwnDelivery,
   submitOwnReview,
@@ -60,6 +62,18 @@ export function OrderDetail({ order }: { order: Order }) {
    * to press this.
    */
   const confirmable = order.status === "shipped";
+
+  /** Which fee button is mid-flight, so only that one spins. */
+  const [feeBusy, setFeeBusy] = useState<"accept" | "decline" | null>(null);
+
+  async function respondToFee(response: "accept" | "decline") {
+    setFeeBusy(response);
+    const result = await respondToDeliveryFee(order.id, response);
+    setFeeBusy(null);
+    if (!result.ok) return toast(result.error, "error");
+    toast(t(response === "accept" ? "cor.feeAccepted" : "cor.feeDeclined"), "success");
+    router.refresh();
+  }
 
   async function confirmReceived() {
     setConfirming(true);
@@ -181,6 +195,84 @@ export function OrderDetail({ order }: { order: Order }) {
          this is a good-news confirmation, not a warning.
         ────────────────────────────────────────────────────────────────────
       */}
+      {/*
+        ────────────────────────────────────────────────────────────────────
+         THE DELIVERY FEE, PUT TO THE CUSTOMER (0040).
+
+         A delivery order is placed before anyone knows what delivering it
+         costs. The restaurant quotes the fee afterwards, and that raises the
+         total this customer already agreed to — so it is a question, not a
+         notification.
+
+         Nothing is cooking while this is on screen. Before this state
+         existed, quoting a fee confirmed the order and started the kitchen in
+         the same move, so a customer refusing the price was refusing food
+         that had already been made.
+
+         Same treatment as "did you get it?" below and for the same reason:
+         the one thing the page wants from the customer gets a card of its
+         own, not a button in the header row. Warning colours, because it is a
+         decision with a deadline rather than good news — and BOTH answers are
+         given equal weight, since a decline is a legitimate outcome and not
+         an error.
+        ────────────────────────────────────────────────────────────────────
+      */}
+      {order.status === "awaiting_customer" && (
+        <div className="mt-6 rounded-lg border-2 border-warning/40 bg-warning-light p-4">
+          <div className="flex items-start gap-4">
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-warning text-white">
+              <Bike className="size-5" aria-hidden />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-warning">{t("cor.feeTitle")}</p>
+              <p className="mt-0.5 text-sm leading-relaxed text-text-secondary">
+                {t("cor.feeBody")}
+              </p>
+
+              <dl className="tnum mt-3 flex flex-col gap-1 text-sm">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-text-secondary">{t("cor.feeAmount")}</dt>
+                  <dd className="font-semibold">{formatMoney(order.deliveryFee)}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3 border-t border-warning/25 pt-1">
+                  <dt className="font-medium">{t("cor.feeNewTotal")}</dt>
+                  <dd className="font-display text-lg font-bold text-warning">
+                    {formatMoney(order.total)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+
+          {/* Equal halves that may be narrower than their labels, a 48px
+              floor, and labels allowed to wrap — the same rule the dialog
+              footers follow, so this cannot overflow a 360px screen. */}
+          <div className="mt-4 flex flex-wrap items-stretch gap-3 *:min-h-12 *:min-w-0 *:flex-1">
+            <Button
+              variant="outline"
+              disabled={feeBusy !== null}
+              loading={feeBusy === "decline"}
+              onClick={() => void respondToFee("decline")}
+              className="px-4 text-center leading-tight whitespace-normal"
+            >
+              {t("cor.feeDecline")}
+            </Button>
+            <Button
+              disabled={feeBusy !== null}
+              loading={feeBusy === "accept"}
+              onClick={() => void respondToFee("accept")}
+              className="px-4 text-center leading-tight whitespace-normal"
+            >
+              {t("cor.feeAccept")}
+            </Button>
+          </div>
+
+          <p className="mt-2 text-center text-xs leading-relaxed text-text-secondary">
+            {t("cor.feeDeclineHint")}
+          </p>
+        </div>
+      )}
+
       {confirmable && (
         <div className="mt-6 flex flex-wrap items-center gap-4 rounded-lg border-2 border-success/40 bg-success-light p-4">
           <span className="grid size-10 shrink-0 place-items-center rounded-full bg-success text-white">

@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/session";
-import { canCustomerCancel } from "@/lib/format/order-status";
+import { canCustomerCancel, type OrderStatus } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
 import { saveUpload, type UploadKind } from "@/lib/uploads";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
@@ -87,7 +87,108 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-type CustomerStatus = "pending" | "confirmed" | "preparing" | "shipped" | "delivered" | "cancelled";
+type CustomerStatus = OrderStatus;
+
+/**
+ * Accept or refuse the delivery fee the restaurant quoted (0040).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE ORDER IS SITTING AT `awaiting_customer` AND NOTHING IS COOKING.
+ *
+ *  A delivery order is placed before anyone knows what delivering it costs.
+ *  The restaurant quotes the fee, the total rises, and that is a change to the
+ *  deal the customer agreed to — so the order stops until they answer.
+ *
+ *  Accepting moves it to `confirmed`, which is the signal the kitchen starts
+ *  on. Declining cancels it. Either way the kitchen has committed nothing:
+ *  before this state existed the fee was applied unilaterally AND the order
+ *  went straight to `confirmed`, so a customer refusing the price was
+ *  refusing food that had already been cooked.
+ *
+ *  Both are scoped to `customer_id` from the SESSION and guarded on the
+ *  current status, so a stale tab, a double-tap, or a guessed order id cannot
+ *  accept a price on somebody else's behalf.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function respondToDeliveryFee(
+  orderId: string,
+  response: "accept" | "decline",
+): Promise<ActionResult> {
+  const user = await requireUser();
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("orders")
+    .select("id, customer_id, restaurant_id, reference, status, delivery_fee")
+    .eq("id", orderId)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+
+  if (error || !data) return { ok: false, error: "Commande introuvable." };
+
+  const order = data as {
+    id: string;
+    restaurant_id: string;
+    reference: string;
+    status: string;
+    delivery_fee: number | null;
+  };
+
+  if (order.status !== "awaiting_customer") {
+    return { ok: false, error: "Cette commande n'attend pas votre réponse." };
+  }
+
+  const accepted = response === "accept";
+  const now = new Date().toISOString();
+
+  const patch = accepted
+    ? { status: "confirmed" }
+    : {
+        status: "cancelled",
+        cancelled_reason: "Frais de livraison refusés par le client",
+        cancelled_at: now,
+      };
+
+  const { error: updateError } = await supabase
+    .from("orders")
+    .update(patch)
+    .eq("id", orderId)
+    // Optimistic concurrency: if anything moved it first, this matches nothing
+    // and the refresh shows the newer truth rather than overwriting it.
+    .eq("status", "awaiting_customer");
+
+  if (updateError) {
+    console.error("[customer:respondToDeliveryFee]", updateError.code ?? "", updateError.message);
+    return { ok: false, error: "Votre réponse n'a pas pu être enregistrée. Réessayez." };
+  }
+
+  await supabase.from("order_status_history").insert({
+    order_id: orderId,
+    status: accepted ? "confirmed" : "cancelled",
+    by_name: user.name,
+    note: accepted ? "Delivery fee accepted by customer" : "Delivery fee declined by customer",
+  });
+
+  // The kitchen needs to know whether to start — that is the whole point of
+  // the state — so the branch hears either answer, not just the refusal.
+  await notify({
+    event: accepted ? "order_status" : "order_cancelled",
+    tone: accepted ? "success" : "warning",
+    restaurantId: order.restaurant_id,
+    href: `/m/orders/${orderId}`,
+    params: {
+      reference: order.reference,
+      status: accepted ? "confirmed" : undefined,
+      cancelledBy: accepted ? undefined : "customer",
+      reason: accepted ? undefined : "Frais de livraison refusés",
+    },
+  });
+
+  revalidatePath("/orders");
+  revalidatePath(`/orders/${orderId}`);
+  revalidatePath("/account");
+  return { ok: true };
+}
 
 /**
  * "I HAVE MY FOOD." — the customer closing their own order.

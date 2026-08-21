@@ -7,6 +7,13 @@ import { requireCapability } from "@/lib/auth/branch";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { nextStatus, isTerminal, type OrderStatus } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
+
+/**
+ * The statuses `notify` has copy for. `awaiting_customer` is included: the
+ * customer needs to hear that a fee is waiting on them more than they need to
+ * hear about any other step.
+ */
+type NotifyOrderStatus = "awaiting_customer" | "confirmed" | "preparing" | "shipped" | "delivered";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -127,7 +134,7 @@ export async function advanceOrder(
   const next = nextStatus(order.status);
   if (!next) return { ok: false, error: "This order is already finished." };
 
-  const patch: Record<string, unknown> = { status: next };
+  let target: OrderStatus = next;
   let quotedFee: number | undefined;
 
   if (next === "confirmed" && order.type === "delivery" && order.delivery_fee_set_at === null) {
@@ -166,14 +173,41 @@ export async function advanceOrder(
       };
     }
 
-    patch.delivery_fee = fee;
-    patch.delivery_fee_set_at = new Date().toISOString();
-    // The customer committed to a total that did not yet include delivery.
-    patch.total = order.total + fee;
     quotedFee = fee;
+
+    /*
+      ─────────────────────────────────────────────────────────────────────
+       A FEE ABOVE ZERO STOPS HERE FOR THE CUSTOMER TO ACCEPT (0040).
+
+       The customer committed to a total that did not include delivery, so
+       raising it is a change to the deal they agreed to. Confirming straight
+       through applied that change unilaterally AND told the kitchen to start
+       — which meant food was cooked for orders customers then cancelled over
+       the price. The refusal and the wasted dish were the same event.
+
+       `awaiting_customer` is where it waits. `acceptDeliveryFee` moves it to
+       `confirmed`, which is still the signal the kitchen starts on, so the
+       kitchen only ever starts on an agreed price.
+
+       A fee of zero skips the gate: "we deliver free" changes nothing the
+       customer agreed to, so there is nothing to accept.
+      ─────────────────────────────────────────────────────────────────────
+    */
+    if (fee > 0) target = "awaiting_customer";
   }
 
-  if (next === "delivered") {
+  const patch: Record<string, unknown> = { status: target };
+
+  if (quotedFee !== undefined) {
+    patch.delivery_fee = quotedFee;
+    patch.delivery_fee_set_at = new Date().toISOString();
+    // The total is raised as soon as the fee is quoted, whether or not the
+    // customer has accepted yet — the Accept screen has to show the real
+    // number, and a declined order is cancelled rather than reverted.
+    patch.total = order.total + quotedFee;
+  }
+
+  if (target === "delivered") {
     patch.delivered_at = new Date().toISOString();
   }
 
@@ -193,24 +227,24 @@ export async function advanceOrder(
 
   // The meal is over — the table goes back to the floor, unless another
   // party is still mid-service on it (releaseTableIfFree re-checks).
-  if (next === "delivered" && order.type === "dine_in") {
+  if (target === "delivered" && order.type === "dine_in") {
     await releaseTableIfFree(supabase, active.restaurantId, order.table_number);
   }
 
-  await recordHistory(orderId, next, { name: profile.name, email: profile.email });
+  await recordHistory(orderId, target, { name: profile.name, email: profile.email });
 
-  if (next === "delivered") await awardDeliveryPoints(order);
+  if (target === "delivered") await awardDeliveryPoints(order);
 
   // The customer hears about every step — and about the quoted fee, which
   // changed the total they committed to.
   if (order.customer_id) {
     await notify({
       event: "order_status",
-      tone: next === "delivered" ? "success" : "info",
+      tone: target === "delivered" ? "success" : "info",
       customerId: order.customer_id,
       href: `/orders/${order.id}`,
       params: {
-        status: next as "confirmed" | "preparing" | "shipped" | "delivered",
+        status: target as NotifyOrderStatus,
         reference: order.reference,
         restaurantName: active.restaurantName,
         deliveryFee: quotedFee,
@@ -222,7 +256,7 @@ export async function advanceOrder(
   revalidatePath(`/m/orders/${orderId}`);
   revalidatePath("/loyalty");
   revalidatePath("/account");
-  return { ok: true, status: next };
+  return { ok: true, status: target };
 }
 
 

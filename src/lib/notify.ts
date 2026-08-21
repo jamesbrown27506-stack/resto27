@@ -75,6 +75,8 @@ export interface NotifyParams {
     | "active"
     /** A booking the restaurant accepted that still owes its deposit (0039). */
     | "awaiting_payment"
+    /** A delivery order whose quoted fee the customer has not accepted (0040). */
+    | "awaiting_customer"
     | "confirmed"
     | "preparing"
     | "shipped"
@@ -176,6 +178,28 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
           };
 
     case "order_status": {
+      /*
+        A QUOTED FEE IS A QUESTION, NOT A PROGRESS UPDATE.
+
+        Every other status here is news the customer reads and does nothing
+        about. `awaiting_customer` is the one that stops until they answer, and
+        the order does not move — and the kitchen does not start — until they
+        do. Wording it like the others ("your order is awaiting customer")
+        would bury the only notification in the flow that needs an action.
+      */
+      if (p.status === "awaiting_customer") {
+        const quoted = p.deliveryFee !== undefined ? money(p.deliveryFee) : "";
+        return fr
+          ? {
+              title: `Commande ${p.reference ?? ""} — frais de livraison à valider`,
+              body: `${p.restaurantName ?? "Le restaurant"} chiffre la livraison à ${quoted}. Acceptez ou refusez : la préparation ne démarre qu'après votre réponse.`,
+            }
+          : {
+              title: `Order ${p.reference ?? ""} — delivery fee to approve`,
+              body: `${p.restaurantName ?? "The restaurant"} quotes ${quoted} for delivery. Accept or decline — nothing is cooked until you answer.`,
+            };
+      }
+
       const word = (fr ? FR_ORDER_STATUS : EN_ORDER_STATUS)[p.status ?? ""] ?? p.status ?? "";
       const fee = p.deliveryFee !== undefined ? ` · livraison ${money(p.deliveryFee)}` : "";
       return fr

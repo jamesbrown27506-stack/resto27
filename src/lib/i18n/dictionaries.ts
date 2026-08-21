@@ -746,6 +746,7 @@ const baseFr = {
 
   /* -- Statuts de commande ------------------------------------------- */
   "order.status.pending": "En attente",
+  "order.status.awaiting_customer": "Réponse du client attendue",
   "order.status.confirmed": "Confirmée",
   "order.status.preparing": "En préparation",
   "order.status.shipped": "En livraison",
@@ -780,6 +781,8 @@ const baseFr = {
   "mo.scheduled": "Programmée",
   "mo.scheduledFor": "Prévue pour {time}",
   "mo.feeMissing": "+ livraison à saisir",
+  "mo.awaitingCustomer": "En attente du client.",
+  "mo.awaitingCustomerBody": "Les frais de livraison lui ont été envoyés. Ne préparez rien tant qu'il n'a pas accepté — s'il refuse, la commande est annulée.",
   "mo.detail": "Détail",
   "mo.ticket": "Ticket",
   "mo.updated": "Commande mise à jour.",
@@ -1536,6 +1539,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
 
   /* -- Order statuses ------------------------------------------------- */
   "order.status.pending": "Pending",
+  "order.status.awaiting_customer": "Awaiting customer",
   "order.status.confirmed": "Confirmed",
   "order.status.preparing": "Preparing",
   "order.status.shipped": "Out for delivery",
@@ -1570,6 +1574,8 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "mo.scheduled": "Scheduled",
   "mo.scheduledFor": "Due {time}",
   "mo.feeMissing": "+ delivery fee to quote",
+  "mo.awaitingCustomer": "Waiting on the customer.",
+  "mo.awaitingCustomerBody": "The delivery fee has been sent to them. Do not prepare anything until they accept — if they decline, the order is cancelled.",
   "mo.detail": "Details",
   "mo.ticket": "Ticket",
   "mo.updated": "Order updated.",
