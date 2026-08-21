@@ -26,7 +26,17 @@ import type { ActionResult } from "@/lib/data/admin-actions";
 /** Seat counts offered by the bulk creator. Covers every real dining room. */
 const SEAT_OPTIONS = [2, 4, 5, 6, 8, 10, 12];
 
-type FeeType = "none" | "fixed";
+/**
+ * `none` and the two fees that are CHARGED ONLINE at booking.
+ *
+ * `percent` — a share of the final bill — is deliberately not offered here.
+ * It cannot be taken at booking (the bill does not exist yet), so it is a
+ * collect-on-arrival arrangement rather than a deposit, and putting it beside
+ * two things that do take money now would teach the wrong model on the one
+ * screen a restaurant sees before it opens. It stays available from
+ * /m/reservations for a restaurant that wants it.
+ */
+type FeeType = "none" | "fixed" | "per_seat";
 
 /**
  * The first-login setup wizard.
@@ -127,7 +137,7 @@ export function SetupWizard({
   /** Client-side check of the deposit amount — runs BEFORE any network call. */
   function feeValidationError(): string | null {
     if (!canSetFee) return null;
-    if (feeType !== "fixed") return null;
+    if (feeType === "none") return null;
     if (!feeValue.trim()) return t("stp.fee.valueRequired");
     const v = Number(feeValue);
     if (!Number.isInteger(v) || v < 0) return t("stp.fee.invalid");
@@ -274,8 +284,8 @@ export function SetupWizard({
               })
             : Promise.resolve(idle),
           setDefaultOpeningHours(),
-          canSetFee && feeType === "fixed"
-            ? setRestaurantDeposit(Number(feeValue), { type: "fixed" })
+          canSetFee && feeType !== "none"
+            ? setRestaurantDeposit(Number(feeValue), { type: feeType })
             : Promise.resolve(idle),
           seedPopularDishes(
             [...selectedDishes].map(([id, price]) => ({
@@ -861,17 +871,29 @@ export function SetupWizard({
             <>
               <p className="text-sm text-text-secondary">{t("stp.fee.body")}</p>
 
+              {/*
+                Each option carries its own one-line explanation, because the
+                difference between the two fees is the whole decision and it is
+                not visible from their names. A restaurant picking blind tends
+                to pick the flat fee, which is the one that prices a table of
+                ten the same as a two-top.
+
+                `items-start` and `min-w-0`: the descriptions wrap on a phone,
+                and a radio vertically centred against two lines of text reads
+                as belonging to neither.
+              */}
               <div className="mt-5 flex flex-col gap-2">
                 {(
                   [
-                    ["none", t("stp.fee.none")],
-                    ["fixed", t("stp.fee.fixed")],
+                    ["none", t("stp.fee.none"), t("stp.fee.noneBody")],
+                    ["fixed", t("stp.fee.fixed"), t("stp.fee.fixedBody")],
+                    ["per_seat", t("stp.fee.perSeat"), t("stp.fee.perSeatBody")],
                   ] as const
-                ).map(([value, label]) => (
+                ).map(([value, label, body]) => (
                   <label
                     key={value}
                     className={cn(
-                      "flex cursor-pointer items-center gap-3 rounded-lg border p-3 transition-colors",
+                      "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
                       feeType === value
                         ? "border-primary bg-primary-light/60"
                         : "border-border bg-surface-2/40 hover:border-primary/40",
@@ -883,16 +905,21 @@ export function SetupWizard({
                       value={value}
                       checked={feeType === value}
                       onChange={() => setFeeType(value)}
-                      className="size-4 shrink-0 accent-[var(--primary)]"
+                      className="mt-0.5 size-4 shrink-0 accent-[var(--primary)]"
                     />
-                    <span className="text-sm font-semibold">{label}</span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">{label}</span>
+                      <span className="mt-0.5 block text-xs leading-relaxed text-text-secondary">
+                        {body}
+                      </span>
+                    </span>
                   </label>
                 ))}
               </div>
 
-              {feeType === "fixed" && (
+              {feeType !== "none" && (
                 <Field
-                  label={t("stp.fee.fixedLabel")}
+                  label={feeType === "per_seat" ? t("stp.fee.perSeatLabel") : t("stp.fee.fixedLabel")}
                   htmlFor="fee-value"
                   className="mt-4"
                   error={feeError ?? undefined}
@@ -906,14 +933,26 @@ export function SetupWizard({
                       // carry a message from a previous attempt into the next one.
                       if (formError) setFormError(null);
                     }}
-                    placeholder="2 000"
+                    placeholder={feeType === "per_seat" ? "1 500" : "2 000"}
                     inputMode="numeric"
-                    suffix="FCFA"
+                    suffix={feeType === "per_seat" ? t("stp.fee.perSeatSuffix") : "FCFA"}
                     invalid={Boolean(feeError)}
                   />
                   <p className="mt-1 text-xs leading-relaxed text-text-secondary">
-                    {t("stp.fee.fixedHint")}
+                    {feeType === "per_seat" ? t("stp.fee.perSeatHint") : t("stp.fee.fixedHint")}
                   </p>
+
+                  {/* The worked example, at the sizes a dining room actually
+                      books. A per-guest rate is an abstraction until you see
+                      what a table of five pays. */}
+                  {feeType === "per_seat" && Number.isInteger(Number(feeValue)) && Number(feeValue) > 0 && (
+                    <p className="tnum mt-2 rounded-md bg-surface-2/60 p-2.5 text-xs leading-relaxed text-text-secondary">
+                      {t("stp.fee.perSeatExample", {
+                        two: formatMoney(Number(feeValue) * 2),
+                        five: formatMoney(Number(feeValue) * 5),
+                      })}
+                    </p>
+                  )}
                 </Field>
               )}
             </>

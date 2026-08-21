@@ -58,6 +58,7 @@ export const custReservationsDict = defineDict({
     "crs.payPendingBody":
       "Validez la demande sur votre téléphone. La page se met à jour automatiquement.",
     "crs.payFailed": "Le paiement de l'acompte n'a pas abouti. Réessayez.",
+    "crs.depositPerSeatMath": "{rate} par convive × {guests} convive(s).",
     "crs.depositPercent": "Acompte : {pct}% de votre addition finale.",
     "crs.depositPercentBody":
       "Aucun paiement en ligne — le pourcentage est réglé au restaurant et déduit de votre addition.",
@@ -116,6 +117,7 @@ export const custReservationsDict = defineDict({
     "crs.payPendingBody":
       "Approve the request on your phone. This page updates automatically.",
     "crs.payFailed": "The deposit payment did not go through. Please try again.",
+    "crs.depositPerSeatMath": "{rate} per guest × {guests} guest(s).",
     "crs.depositPercent": "Deposit: {pct}% of your final bill.",
     "crs.depositPercentBody":
       "No online charge — the percentage is settled at the restaurant and deducted from your bill.",

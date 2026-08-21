@@ -16,8 +16,26 @@ import {
   setReservationStatus,
   setRestaurantDeposit,
 } from "@/lib/data/manager-actions";
+import { type DepositType } from "@/lib/reservations/deposit";
 import type { Reservation, RestaurantTable } from "@/lib/data/manager";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
+
+/**
+ * Which sentence describes each kind of fee. A lookup rather than a chain of
+ * ternaries: three kinds is where a `x === "percent" ? … : …` starts quietly
+ * lumping the two it does not name into one branch.
+ */
+const DEPOSIT_TITLE_KEY: Record<DepositType, TranslationKey> = {
+  fixed: "res.depositTitle",
+  per_seat: "res.perSeatTitle",
+  percent: "res.percentTitle",
+};
+
+const DEPOSIT_BODY_KEY: Record<DepositType, TranslationKey> = {
+  fixed: "res.depositBody",
+  per_seat: "res.perSeatBody",
+  percent: "res.percentBody",
+};
 
 const STATUS_TONE: Record<Reservation["status"], BadgeTone> = {
   pending: "warning",
@@ -33,7 +51,7 @@ export function ReservationBoard({
   tables,
   canDecide,
   depositAmount,
-  depositType,
+  depositType: storedDepositType,
   canCollectDeposit,
 }: {
   reservations: Reservation[];
@@ -42,7 +60,7 @@ export function ReservationBoard({
   /** The restaurant's current acompte (migration 0025). */
   depositAmount: number;
   /** How the acompte works (migration 0031): fixed FCFA or % of the bill. */
-  depositType: "fixed" | "percent";
+  depositType: DepositType;
   canCollectDeposit: boolean;
 }) {
   const { t } = useLocale();
@@ -55,6 +73,13 @@ export function ReservationBoard({
   const [declining, setDeclining] = useState<Reservation | null>(null);
   const [reason, setReason] = useState("");
   const [depositDraft, setDepositDraft] = useState(String(depositAmount));
+  /*
+    The kind of fee, as a draft. Seeded from the stored value and owned by the
+    select until Save, so switching from "fixed" to "per guest" re-labels the
+    row immediately and the amount beside it is read as a per-guest rate before
+    it is written — which is the point of showing the two together.
+  */
+  const [depositType, setDepositTypeDraft] = useState<DepositType>(storedDepositType);
   const [collecting, setCollecting] = useState<Reservation | null>(null);
   const [billDraft, setBillDraft] = useState("");
 
@@ -262,27 +287,52 @@ export function ReservationBoard({
     <>
       {canCollectDeposit && (
         <section className="mb-6 rounded-lg border border-border bg-surface p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">
-                {depositType === "percent" ? t("res.percentTitle") : t("res.depositTitle")}
-              </p>
-              <p className="text-xs text-text-light">
-                {depositType === "percent" ? t("res.percentBody") : t("res.depositBody")}
+          {/*
+            THE KIND OF FEE IS EDITABLE HERE, NOT ONLY IN THE WIZARD.
+
+            The type arrived as a read-only prop and only the amount could be
+            changed, so a restaurant that chose a flat fee during onboarding
+            had no way ever to move to a per-seat one — the control showed the
+            consequence of a decision it would not let you revisit.
+
+            `min-w-0` on every child and `flex-wrap` on the row: the labels are
+            two lines of prose on a phone, and without a zero minimum the
+            number input and the select push the row past the viewport.
+          */}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-0 flex-1 basis-full sm:basis-auto">
+              <p className="text-sm font-semibold">{t(DEPOSIT_TITLE_KEY[depositType])}</p>
+              <p className="text-xs leading-relaxed text-text-light">
+                {t(DEPOSIT_BODY_KEY[depositType])}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+
+            <Select
+              value={depositType}
+              onChange={(e) => setDepositTypeDraft(e.target.value as DepositType)}
+              aria-label={t("res.depositKind")}
+              className="min-w-0 flex-1 sm:w-44 sm:flex-none"
+            >
+              <option value="fixed">{t("res.kindFixed")}</option>
+              <option value="per_seat">{t("res.kindPerSeat")}</option>
+              <option value="percent">{t("res.kindPercent")}</option>
+            </Select>
+
+            <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
               <Input
                 type="number"
                 min={0}
                 step={depositType === "percent" ? 1 : 100}
                 value={depositDraft}
                 onChange={(e) => setDepositDraft(e.target.value)}
-                className="w-36"
-                aria-label={depositType === "percent" ? t("res.percentTitle") : t("res.depositTitle")}
+                className="min-w-0 flex-1 sm:w-32 sm:flex-none"
+                aria-label={t(DEPOSIT_TITLE_KEY[depositType])}
               />
-              <span className="text-sm text-text-light">{depositType === "percent" ? "%" : "FCFA"}</span>
+              <span className="shrink-0 text-sm text-text-light">
+                {depositType === "percent" ? "%" : "FCFA"}
+              </span>
             </div>
+
             <Button
               variant="outline"
               size="sm"

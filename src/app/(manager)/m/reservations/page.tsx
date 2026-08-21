@@ -9,6 +9,7 @@ import { isFreeMode } from "@/lib/data/billing";
 import { PlanGateUpsell } from "@/components/billing/plan-gate";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
+import { normaliseDepositType } from "@/lib/reservations/deposit";
 
 /** The browser tab is a user-visible string too, so it follows the locale. */
 export async function generateMetadata(): Promise<Metadata> {
@@ -62,11 +63,7 @@ export default async function ReservationsPage() {
         .maybeSingle();
       return {
         amount: Number((data as { deposit_amount?: number } | null)?.deposit_amount ?? 0),
-        type: (
-          (data as { deposit_type?: string } | null)?.deposit_type === "percent"
-            ? "percent"
-            : "fixed"
-        ) as "fixed" | "percent",
+        type: normaliseDepositType((data as { deposit_type?: string } | null)?.deposit_type),
       };
     })(),
   ]);

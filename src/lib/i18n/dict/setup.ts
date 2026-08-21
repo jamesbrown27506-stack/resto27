@@ -106,10 +106,21 @@ export const setupDict = defineDict({
     "stp.fee.body":
       "Un acompte garantit qu'une table réservée est prise au sérieux. Le client est toujours informé que ce montant est déduit de son addition finale.",
     "stp.fee.none": "Aucun frais",
-    "stp.fee.fixed": "Montant fixe (FCFA)",
+    "stp.fee.noneBody": "N'importe qui peut réserver sans rien payer d'avance.",
+    "stp.fee.fixed": "Montant fixe",
+    "stp.fee.fixedBody":
+      "Le même montant pour toute réservation, quel que soit le nombre de convives.",
     "stp.fee.fixedLabel": "Montant de l'acompte",
     "stp.fee.fixedHint":
       "Le client paie cet acompte en ligne au moment de réserver (Mobile Money). Il est déduit de son addition une fois sur place.",
+    "stp.fee.perSeat": "Montant par convive",
+    "stp.fee.perSeatBody":
+      "Multiplié par le nombre de convives. Une table de dix immobilise dix couverts — et coûte dix fois plus cher à laisser vide.",
+    "stp.fee.perSeatLabel": "Acompte par convive",
+    "stp.fee.perSeatSuffix": "FCFA / convive",
+    "stp.fee.perSeatHint":
+      "Le client paie ce montant multiplié par le nombre de convives, en ligne au moment de réserver. Le total est déduit de son addition une fois sur place.",
+    "stp.fee.perSeatExample": "Une table de 2 paie {two}. Une table de 5 paie {five}.",
     "stp.fee.noRights":
       "Votre rôle ne permet pas de fixer les frais de réservation — votre gérant pourra le faire depuis les réservations.",
     "stp.fee.valueRequired": "Entrez un montant.",
@@ -216,10 +227,20 @@ export const setupDict = defineDict({
     "stp.fee.body":
       "A deposit keeps a booked table serious. The customer is always told this amount is deducted from their final bill.",
     "stp.fee.none": "No fee",
-    "stp.fee.fixed": "Fixed amount (FCFA)",
+    "stp.fee.noneBody": "Anyone can book without paying anything up front.",
+    "stp.fee.fixed": "Fixed amount",
+    "stp.fee.fixedBody": "The same amount for every booking, however many are coming.",
     "stp.fee.fixedLabel": "Deposit amount",
     "stp.fee.fixedHint":
       "The customer pays this deposit online when booking (Mobile Money). It is deducted from their bill once they arrive.",
+    "stp.fee.perSeat": "Amount per guest",
+    "stp.fee.perSeatBody":
+      "Multiplied by the party size. A table of ten holds ten covers — and costs ten times as much to leave empty.",
+    "stp.fee.perSeatLabel": "Deposit per guest",
+    "stp.fee.perSeatSuffix": "FCFA / guest",
+    "stp.fee.perSeatHint":
+      "The customer pays this amount times the party size, online when booking. The total is deducted from their bill once they arrive.",
+    "stp.fee.perSeatExample": "A table of 2 pays {two}. A table of 5 pays {five}.",
     "stp.fee.noRights":
       "Your role cannot set the reservation fee — your manager can do it from Reservations.",
     "stp.fee.valueRequired": "Enter an amount.",

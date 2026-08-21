@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { trySendMail } from "@/lib/mail";
 import { sendPush } from "@/lib/push";
 import { NOTIFICATION_EVENTS } from "@/lib/data/settings";
+import { readTopic, type CustomerTopicKey } from "@/lib/notifications/customer-topics";
 import {
   fetchNotificationChannelsFor,
   NOTIFICATION_CHANNELS_DEFAULT,
@@ -519,14 +520,26 @@ interface Channels {
   push: boolean;
 }
 
-/** Customer pref keys live in notification_json (migration 0014). */
-const CUSTOMER_PREF_KEY: Partial<Record<NotifyEvent, string>> = {
+/**
+ * Which customer topic each event belongs to. The answers live in
+ * notification_json (migration 0014), now per channel — see
+ * lib/notifications/customer-topics.
+ *
+ * `review_reply` and `chat_reply` used to fall through this map to "always
+ * on", which meant a customer could not turn off a mail for every reply to
+ * every review or message they had ever left. They have topics now.
+ *
+ * Events with no entry are still always on, and correctly so: `account` and
+ * `approval` are things happening TO the account, not messages about it.
+ */
+const CUSTOMER_PREF_KEY: Partial<Record<NotifyEvent, CustomerTopicKey>> = {
   order_status: "order_status",
   order_cancelled: "order_status",
   reservation_decision: "reservations",
+  chat_reply: "messages",
+  review_reply: "reviews",
   loyalty: "loyalty",
   broadcast: "promotions",
-  // review_reply has no toggle → always on (defaults handle it).
 };
 
 function managerDefaults(event: NotifyEvent): Channels {
@@ -539,13 +552,7 @@ function managerDefaults(event: NotifyEvent): Channels {
   return { inApp: true, email: true, push: true };
 }
 
-/** Customer defaults — a missing row means the default, like the manager side. */
-const CUSTOMER_DEFAULTS: Record<string, boolean> = {
-  order_status: true,
-  reservations: true,
-  loyalty: true,
-  promotions: true,
-};
+
 
 /**
  * WHICH EVENT reaches this person — the per-role, per-event answer only.
@@ -556,7 +563,7 @@ function eventChannelsFor(
   event: NotifyEvent,
   restaurantId: string | undefined,
   managerPrefs: Map<string, { in_app: boolean; email: boolean; push: boolean }>,
-  customerPrefs: Map<string, { notification_json: Record<string, boolean>; push_enabled: boolean }>,
+  customerPrefs: Map<string, { notification_json: unknown; push_enabled: boolean }>,
 ): Channels {
   if (recipient.kind === "admin") return { inApp: true, email: true, push: true };
 
@@ -571,11 +578,19 @@ function eventChannelsFor(
   }
 
   if (recipient.kind === "customer") {
-    const stored = customerPrefs.get(recipient.profileId);
-    const json = stored?.notification_json ?? {};
     const key = CUSTOMER_PREF_KEY[event];
-    const channelOn = key ? (json[key] ?? CUSTOMER_DEFAULTS[key] ?? true) : true;
-    return { inApp: channelOn, email: channelOn, push: stored?.push_enabled ?? true };
+    // No topic — `account`, `approval`, `push_enabled` — is not a preference.
+    if (!key) return { inApp: true, email: true, push: true };
+
+    const stored = customerPrefs.get(recipient.profileId);
+    const json =
+      typeof stored?.notification_json === "object" && stored.notification_json !== null
+        ? (stored.notification_json as Record<string, unknown>)
+        : {};
+
+    // `push_enabled` is the legacy column, and it is only consulted for a row
+    // still in the old boolean shape — readTopic decides which shape it has.
+    return readTopic(key, json[key], stored?.push_enabled ?? true);
   }
 
   return { inApp: true, email: true, push: true };
@@ -595,7 +610,7 @@ function channelsFor(
   event: NotifyEvent,
   restaurantId: string | undefined,
   managerPrefs: Map<string, { in_app: boolean; email: boolean; push: boolean }>,
-  customerPrefs: Map<string, { notification_json: Record<string, boolean>; push_enabled: boolean }>,
+  customerPrefs: Map<string, { notification_json: unknown; push_enabled: boolean }>,
   masters: Map<string, NotificationChannels>,
 ): Channels {
   const perEvent = eventChannelsFor(recipient, event, restaurantId, managerPrefs, customerPrefs);
@@ -653,7 +668,7 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
 
     const customerPrefs = new Map<
       string,
-      { notification_json: Record<string, boolean>; push_enabled: boolean }
+      { notification_json: unknown; push_enabled: boolean }
     >();
     if (customerIds.length > 0) {
       const { data } = await supabase
@@ -662,7 +677,7 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
         .in("profile_id", customerIds);
       for (const row of (data ?? []) as {
         profile_id: string;
-        notification_json: Record<string, boolean>;
+        notification_json: unknown;
         push_enabled: boolean;
       }[]) {
         customerPrefs.set(row.profile_id, {

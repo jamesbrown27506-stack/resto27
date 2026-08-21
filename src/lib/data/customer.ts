@@ -1,4 +1,9 @@
 import "server-only";
+import {
+  customerTopicDefaults,
+  readTopicPreferences,
+  type CustomerTopicPreferences,
+} from "@/lib/notifications/customer-topics";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { OrderStatus, OrderType, PaymentMethod } from "@/lib/format/order-status";
 
@@ -527,22 +532,19 @@ export async function fetchFavoriteRestaurantIds(profileId: string): Promise<str
 
 /* ── Preferences ───────────────────────────────────────────────────────── */
 
-export interface CustomerPreferences {
-  orderStatus: boolean;
-  reservations: boolean;
-  loyalty: boolean;
-  promotions: boolean;
-  /** Master push switch — delivery is per-event, like the manager side. */
-  pushEnabled: boolean;
-}
+/**
+ * One customer's answers: every topic, every channel.
+ *
+ * This was four flat booleans plus one account-wide push flag, where each
+ * boolean meant "in-app AND email together". A customer could not stop being
+ * emailed about an order without also stopping being told about it — which is
+ * the complaint this shape exists to answer. The catalogue and the merge rules
+ * live in lib/notifications/customer-topics, which the settings screen imports
+ * too so both sides read one definition.
+ */
+export type CustomerPreferences = CustomerTopicPreferences;
 
-export const CUSTOMER_PREFERENCES_DEFAULT: CustomerPreferences = {
-  orderStatus: true,
-  reservations: true,
-  loyalty: true,
-  promotions: false,
-  pushEnabled: true,
-};
+export const CUSTOMER_PREFERENCES_DEFAULT: CustomerPreferences = customerTopicDefaults();
 
 /** The stored notification prefs, or the defaults when no row exists yet. */
 export async function fetchCustomerPreferences(
@@ -556,18 +558,12 @@ export async function fetchCustomerPreferences(
     .eq("profile_id", profileId)
     .maybeSingle();
 
-  if (error || !data) return CUSTOMER_PREFERENCES_DEFAULT;
+  if (error || !data) return customerTopicDefaults();
 
   const row = data as { notification_json: unknown; push_enabled: boolean | null };
-  const stored = row.notification_json;
-  if (typeof stored !== "object" || stored === null) return { ...CUSTOMER_PREFERENCES_DEFAULT, pushEnabled: row.push_enabled !== false };
 
-  const obj = stored as Record<string, unknown>;
-  return {
-    orderStatus: typeof obj.order_status === "boolean" ? obj.order_status : true,
-    reservations: typeof obj.reservations === "boolean" ? obj.reservations : true,
-    loyalty: typeof obj.loyalty === "boolean" ? obj.loyalty : true,
-    promotions: typeof obj.promotions === "boolean" ? obj.promotions : false,
-    pushEnabled: row.push_enabled !== false,
-  };
+  // `push_enabled` is only consulted for rows still in the OLD shape, where a
+  // topic's boolean gated in-app and email and push lived in this column. A
+  // row in the new shape carries its own per-topic push answer and ignores it.
+  return readTopicPreferences(row.notification_json, row.push_enabled !== false);
 }

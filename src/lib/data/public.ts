@@ -1,4 +1,5 @@
 import "server-only";
+import { normaliseDepositType, type DepositType } from "@/lib/reservations/deposit";
 import { createAdminClient } from "@/lib/supabase/server";
 import { UNCATEGORIZED_SECTION_ID } from "@/lib/menu/constants";
 import { fetchCategories, fetchMenu, type MenuItem } from "./manager";
@@ -63,7 +64,7 @@ export interface PublicRestaurant {
    * How the acompte works (migration 0031): `fixed` FCFA charged online at
    * booking, or `percent` of the customer's final bill collected on site.
    */
-  depositType: "fixed" | "percent";
+  depositType: DepositType;
   hours: RestaurantHours[];
   createdAt: string;
 }
@@ -97,24 +98,69 @@ interface DbRestaurant {
   quartiers: { name: string }[] | null;
 }
 
-/*
-  `deposit_type` IS DELIBERATELY ABSENT FROM THIS LIST.
-
-  `DbRestaurant` declares it and `shape()` reads it, so `depositType` below is
-  always undefined and always resolves to "fixed". That is not an oversight to
-  tidy up — it is load-bearing. The column is added by migration 0031 (or the
-  catch-up, 0037) and is MISSING from the live database, and PostgREST answers
-  a select naming a column that does not exist with 42703 for every row. Adding
-  it back before the migration has run would not degrade the fee display; it
-  would take down the entire restaurant directory and every public restaurant
-  page with it.
-
-  Add it here only once `select deposit_type from restaurants` succeeds against
-  the deployed database. Until then "fixed" is the correct answer anyway: a
-  database without the column cannot hold a percentage fee.
-*/
-const RESTAURANT_COLUMNS =
+const BASE_RESTAURANT_COLUMNS =
   "id, slug, name, branch_label, is_primary, status, is_verified, description, phone, address_line, logo_url, cover_url, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, min_delivery_fee, max_delivery_fee, deposit_amount, created_at, cuisines ( name ), quartiers ( name )";
+
+/*
+  ───────────────────────────────────────────────────────────────────────────
+   `deposit_type` IS SELECTED CONDITIONALLY, AND IT HAS TO BE.
+
+   The column decides whether a reservation fee is a flat amount, an amount per
+   seat, or a percentage of the final bill — so the booking form genuinely
+   needs it, and hard-coding "fixed" would silently under-charge every
+   restaurant that chose per-seat.
+
+   But it is added by migration 0031 (superseded by 0038), and PostgREST
+   answers a select naming a column that does not exist with 42703 FOR EVERY
+   ROW. On a database one migration behind, naming it here would not degrade
+   the fee display — it would take down the entire restaurant directory, every
+   public restaurant page, the homepage and the sitemap, all at once. That is
+   the same failure that made every table booking say "Restaurant introuvable".
+
+   So: ask for it, and if the database says it has no such column, remember
+   that and stop asking. One wasted round trip on the first query of a process,
+   never again after — and the whole directory keeps working either way.
+
+   `null` = not yet known. Deliberately module-level rather than per-request:
+   a column does not appear and disappear within the life of a process, and
+   after the migration is applied a deploy resets it.
+  ───────────────────────────────────────────────────────────────────────────
+*/
+let depositTypeColumnExists: boolean | null = null;
+
+function restaurantColumns(): string {
+  return depositTypeColumnExists === false
+    ? BASE_RESTAURANT_COLUMNS
+    : `${BASE_RESTAURANT_COLUMNS}, deposit_type`;
+}
+
+/** Postgres "column does not exist" — the shape of a migration not yet run. */
+function isMissingDepositType(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === "42703" && (error.message ?? "").includes("deposit_type");
+}
+
+/**
+ * Run a restaurants query, and retry once without `deposit_type` if that is
+ * what the database objected to. `build` is called again for the retry rather
+ * than the query being reused: a PostgREST builder is a thenable that cannot
+ * be awaited twice.
+ */
+async function selectRestaurants<T>(
+  build: (columns: string) => PromiseLike<{ data: T; error: { code?: string; message?: string } | null }>,
+): Promise<{ data: T | null; error: { code?: string; message?: string } | null }> {
+  const first = await build(restaurantColumns());
+  if (!isMissingDepositType(first.error)) {
+    if (!first.error && depositTypeColumnExists === null) depositTypeColumnExists = true;
+    return first;
+  }
+
+  console.warn(
+    "[public] restaurants.deposit_type is missing — run migration 0038. Every reservation fee will read as a flat amount until it is applied.",
+  );
+  depositTypeColumnExists = false;
+  return build(BASE_RESTAURANT_COLUMNS);
+}
 
 async function attachHours(
   rows: DbRestaurant[],
@@ -172,7 +218,7 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
     minDeliveryFee: Number(r.min_delivery_fee) || 0,
     maxDeliveryFee: Number(r.max_delivery_fee) || 0,
     depositAmount: Number(r.deposit_amount),
-    depositType: r.deposit_type === "percent" ? "percent" : "fixed",
+    depositType: normaliseDepositType(r.deposit_type),
     hours,
     createdAt: r.created_at,
   };
@@ -185,18 +231,19 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
 export async function fetchActiveRestaurants(): Promise<PublicRestaurant[]> {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase
-    .from("restaurants")
-    .select(RESTAURANT_COLUMNS)
-    .eq("status", "active")
-    .order("name");
+  const { data, error } = await selectRestaurants((columns) =>
+    supabase.from("restaurants").select(columns).eq("status", "active").order("name"),
+  );
 
   if (error) {
     console.error("[public:fetchActiveRestaurants]", error.message);
     return [];
   }
 
-  const rows = (data ?? []) as DbRestaurant[];
+  // Through `unknown`: the column list is built at runtime, so PostgREST's
+  // literal-type inference has nothing to work from and types the rows as its
+  // error shape. The runtime value is the row set either way.
+  const rows = (data ?? []) as unknown as DbRestaurant[];
   const hours = await attachHours(rows);
   return rows.map((r) => shape(r, hours.get(r.id) ?? []));
 }
@@ -207,12 +254,14 @@ export async function fetchPublicRestaurantBySlug(
 ): Promise<PublicRestaurant | null> {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase
-    .from("restaurants")
-    .select(RESTAURANT_COLUMNS)
-    .eq("slug", slug)
-    .eq("status", "active")
-    .maybeSingle();
+  const { data, error } = await selectRestaurants((columns) =>
+    supabase
+      .from("restaurants")
+      .select(columns)
+      .eq("slug", slug)
+      .eq("status", "active")
+      .maybeSingle(),
+  );
 
   if (error) {
     console.error("[public:fetchPublicRestaurantBySlug]", error.message);
@@ -220,7 +269,7 @@ export async function fetchPublicRestaurantBySlug(
   }
   if (!data) return null;
 
-  const rows = [data as DbRestaurant];
+  const rows = [data as unknown as DbRestaurant];
   const hours = await attachHours(rows);
   return shape(rows[0], hours.get(rows[0].id) ?? []);
 }

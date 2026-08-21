@@ -9,6 +9,7 @@ import { trySendMail } from "@/lib/mail";
 import { notify } from "@/lib/notify";
 import { releaseTableIfFree } from "./order-actions";
 import { POPULAR_DISH_BY_ID, type DishTemplate } from "./dish-templates";
+import { normaliseDepositType, type DepositType } from "@/lib/reservations/deposit";
 import type { BranchRole } from "@/lib/capabilities";
 import type { ActionResult } from "./admin-actions";
 
@@ -1554,26 +1555,32 @@ export async function setDefaultOpeningHours(): Promise<ActionResult> {
 /* ── Reservation deposits (migration 0025) ────────────────────────────── */
 
 /**
- * Set the reservation fee this restaurant asks to hold a table (migration
- * 0031). Two kinds:
+ * Set the reservation fee this restaurant asks to hold a table (migrations
+ * 0031 and 0038). Three kinds:
  *
- *   fixed   — a fixed FCFA amount (`deposit_amount`). The customer pays it
- *             ONLINE at booking (Mobile Money); it is deducted from their
- *             final bill.
- *   percent — a percentage of the customer's final bill (the number in
- *             `deposit_amount` is then a %). NOT charged online — the bill
- *             is unknown at booking — so the booking shows "X% of your
- *             bill" and the board collects it against the real bill.
+ *   fixed    — a fixed FCFA amount (`deposit_amount`). The customer pays it
+ *              ONLINE at booking (Mobile Money); it is deducted from their
+ *              final bill.
+ *   per_seat — an FCFA amount PER GUEST, multiplied by the party size. Paid
+ *              online and deducted the same way. It exists because a flat fee
+ *              prices the wrong thing: holding a table of ten empty costs five
+ *              times what an empty two-top costs, and one number cannot be
+ *              both large enough to deter the first and small enough not to
+ *              deter the second.
+ *   percent  — a percentage of the customer's final bill (the number in
+ *              `deposit_amount` is then a %). NOT charged online — the bill is
+ *              unknown at booking — so the booking shows "X% of your bill" and
+ *              the board collects it against the real bill.
  *
- * Amount 0 + type fixed = no fee.
+ * Amount 0 = no fee, whatever the type.
  */
 export async function setRestaurantDeposit(
   amount: number,
-  options: { type?: "fixed" | "percent" } = {},
+  options: { type?: DepositType } = {},
 ): Promise<ActionResult> {
   const { active, profile } = await requireCapability("finance.manage");
 
-  const type = options.type ?? "fixed";
+  const type = normaliseDepositType(options.type);
   const value = Math.round(amount);
   if (!Number.isInteger(value) || value < 0) {
     return { ok: false, error: "Amount must be zero or a positive number of francs." };
@@ -1606,11 +1613,17 @@ export async function setRestaurantDeposit(
       error.message.includes("deposit_type") ||
       error.message.includes("deposit_amount");
 
+    // A per-seat fee also fails on a database that HAS the column but still
+    // carries 0031's two-value check constraint, which is a different repair
+    // from a missing column and the same migration fixes both.
+    const rejectedValue = error.code === "23514" || error.message.includes("deposit_type_check");
+
     return {
       ok: false,
-      error: missingColumn
-        ? "The reservation-fee columns are missing from the database — run migration 0031 (or 0033_catch_up)."
-        : `Could not save the deposit: ${error.message}`,
+      error:
+        missingColumn || rejectedValue
+          ? "The reservation-fee columns are missing or out of date in the database — run migration 0038."
+          : `Could not save the deposit: ${error.message}`,
     };
   }
 

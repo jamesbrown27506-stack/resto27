@@ -10,6 +10,12 @@ import { notify } from "@/lib/notify";
 import { saveUpload, type UploadKind } from "@/lib/uploads";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
+import { anyPushWanted, toStoredJson } from "@/lib/notifications/customer-topics";
+import {
+  depositChargedNow,
+  normaliseDepositType,
+  type DepositConfig,
+} from "@/lib/reservations/deposit";
 import {
   checkPaymentAttempt,
   initiatePaymentAttempt,
@@ -392,7 +398,7 @@ function isMissingColumn(error: { code?: string; message?: string } | null, colu
 async function readDepositConfig(
   supabase: ReturnType<typeof createAdminClient>,
   restaurantId: string,
-): Promise<{ amount: number; type: "fixed" | "percent" }> {
+): Promise<DepositConfig> {
   const withType = await supabase
     .from("restaurants")
     .select("deposit_amount, deposit_type")
@@ -403,7 +409,7 @@ async function readDepositConfig(
     const row = withType.data as { deposit_amount?: number; deposit_type?: string } | null;
     return {
       amount: Number(row?.deposit_amount ?? 0),
-      type: row?.deposit_type === "percent" ? "percent" : "fixed",
+      type: normaliseDepositType(row?.deposit_type),
     };
   }
 
@@ -413,7 +419,7 @@ async function readDepositConfig(
   }
 
   console.warn(
-    "[customer:readDepositConfig] restaurants.deposit_type is missing — run migration 0031 (or 0033_catch_up). Treating every reservation fee as fixed.",
+    "[customer:readDepositConfig] restaurants.deposit_type is missing — run migration 0038. Treating every reservation fee as a flat amount.",
   );
 
   const { data } = await supabase
@@ -486,11 +492,24 @@ export async function createOwnReservation(
   }
   if (!restaurant) return { ok: false, error: "Restaurant introuvable." };
 
-  const { amount: depositAmount, type: depositType } = await readDepositConfig(
-    supabase,
-    restaurantId,
-  );
-  const depositPercent = depositType === "percent" ? depositAmount : 0;
+  const deposit = await readDepositConfig(supabase, restaurantId);
+  const depositType = deposit.type;
+  const depositPercent = depositType === "percent" ? deposit.amount : 0;
+
+  /*
+    THE CHARGE IS COMPUTED, NOT COPIED.
+
+    A `per_seat` fee is the per-guest rate multiplied by the party size, so the
+    amount taken from a Mobile Money account is not the number stored on the
+    restaurant. It goes through the same `depositChargedNow` the booking form
+    used to show the customer their total — one expression, so the figure they
+    agreed to and the figure they are charged cannot drift apart.
+
+    `partySize` is the SERVER's validated copy from the schema above, never a
+    total posted by the client: a charge derived from a client-supplied total
+    is a charge the client can choose.
+  */
+  const chargedNow = depositChargedNow(deposit, partySize);
 
   const slotStart = new Date(when.getTime() - 30 * 60_000).toISOString();
   const slotEnd = new Date(when.getTime() + 90 * 60_000).toISOString();
@@ -535,7 +554,11 @@ export async function createOwnReservation(
     // price change after the customer booked must not rewrite their booking.
     // The percentage is snapshotted too (0031) so the board still reads the
     // value the customer booked under.
-    deposit_amount: depositType === "fixed" ? depositAmount : 0,
+    //
+    // For a per-seat fee this is the TOTAL charged, not the per-guest rate:
+    // the board is reading "what did this customer pay", and the rate alone
+    // would answer a question nobody asked.
+    deposit_amount: chargedNow,
     notes: notes.trim() || null,
   };
   const row = { ...baseRow, deposit_percent: depositPercent };
@@ -572,15 +595,15 @@ export async function createOwnReservation(
   }
   const reservationId = inserted.id;
 
-  // A fixed reservation fee is paid ONLINE at booking (0031): the customer's
-  // Mobile Money is charged through the platform's payment path, the money is
-  // credited to the restaurant's wallet, and the booking is marked paid. The
-  // fee is DEDUCTED from the customer's final bill. A percentage fee is never
-  // charged here — the bill is unknown at booking — and is collected at the
-  // restaurant against the real bill.
-  const fixedFee = depositType === "fixed" && depositAmount > 0;
-
-  if (fixedFee) {
+  // A fixed or per-seat reservation fee is paid ONLINE at booking (0031,
+  // 0038): the customer's Mobile Money is charged through the platform's
+  // payment path, the money is credited to the restaurant's wallet, and the
+  // booking is marked paid. The fee is DEDUCTED from the customer's final
+  // bill. A percentage fee is never charged here — the bill is unknown at
+  // booking — and is collected at the restaurant against the real bill.
+  // `depositChargedNow` already returns 0 for percent and for no fee, so this
+  // is the whole condition.
+  if (chargedNow > 0) {
     if (!phone.trim()) {
       // The booking exists but was never paid for — remove it so the request
       // fails cleanly and the customer can book again with a phone number.
@@ -594,7 +617,7 @@ export async function createOwnReservation(
       reservationId,
       reference,
       phone,
-      amount: depositAmount,
+      amount: chargedNow,
     });
 
     if (!initiated.ok || !initiated.attemptId) {
@@ -872,25 +895,26 @@ export async function deleteOwnAddress(addressId: string): Promise<ActionResult>
 /* ── Preferences ────────────────────────────────────────────────────────── */
 
 /**
- * Persist the notification switches. The order-status switch is locked in the
- * UI, but it is stored anyway so the saved row describes the full screen.
+ * Persist the notification grid — every topic, every channel.
+ *
+ * `toStoredJson` re-applies each topic's locked channels, so a client that
+ * posts `order_status.inApp = false` writes `true` anyway. The disabled switch
+ * on the screen is a courtesy; this is the rule.
  */
 export async function saveOwnPreferences(prefs: CustomerPreferences): Promise<ActionResult> {
   const user = await requireUser();
 
-  const clean = {
-    order_status: Boolean(prefs.orderStatus),
-    reservations: Boolean(prefs.reservations),
-    loyalty: Boolean(prefs.loyalty),
-    promotions: Boolean(prefs.promotions),
-  };
+  const clean = toStoredJson(prefs);
 
   const supabase = createAdminClient();
   const { error } = await supabase.from("customer_preferences").upsert(
     {
       profile_id: user.id,
       notification_json: clean,
-      push_enabled: prefs.pushEnabled,
+      // The legacy column, kept in step rather than dropped: it is `not null`
+      // in the schema and an older build against the same database still
+      // reads it. Nothing in this build does.
+      push_enabled: anyPushWanted(prefs),
       updated_at: new Date().toISOString(),
     },
     { onConflict: "profile_id" },

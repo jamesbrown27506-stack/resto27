@@ -21,6 +21,7 @@ import type { CustomerReservation } from "@/lib/data/customer";
 import type { PublicRestaurant } from "@/lib/data/public";
 import { formatDate, formatDayLabel, formatTime, weekdayName } from "@/lib/format/datetime";
 import { formatMoney } from "@/lib/format/currency";
+import { depositChargedNow } from "@/lib/reservations/deposit";
 import {
   isTodayOrLater,
   slotsForDate,
@@ -97,7 +98,16 @@ export function ReservationsClient({
   const [time, setTime] = useState("");
   const [guests, setGuests] = useState(() => resolveGuests(initialGuests));
   const [notes, setNotes] = useState("");
-  const [phone, setPhone] = useState("");
+  /*
+    PRE-FILLED FROM THE PROFILE.
+
+    The Mobile Money field started empty, so a customer whose number we already
+    hold — they typed it at sign-up, and it is on every order they have ever
+    placed — had to find their handset and type it again at the one moment the
+    form is asking them to pay. It is still editable: paying from a different
+    line is a real thing, and this is a default, not a lock.
+  */
+  const [phone, setPhone] = useState(() => user.phone ?? "");
   const [busy, setBusy] = useState(false);
   const [paying, setPaying] = useState(false);
   const [cancelId, setCancelId] = useState<string | null>(null);
@@ -145,6 +155,29 @@ export function ReservationsClient({
 
   /** `min` on the date input — the browser greys out everything before it. */
   const minDate = todayInDisplayTz(now);
+
+  /*
+    The party size the fee is multiplied by.
+
+    Read from the same `guests` field the booking is submitted with, and
+    floored at 1: the input is a text field the browser lets you empty, and an
+    empty one must not make a per-seat deposit read as free for the moment
+    between deleting the 2 and typing the 5.
+  */
+  const guestCount = Math.max(1, Math.round(Number(guests)) || 1);
+
+  /*
+    What the customer will actually be charged now, through the SAME function
+    the server charges with. A second expression here would be a second
+    opinion, and the two would disagree the first time either was edited —
+    with the difference being money taken from a real person.
+  */
+  const depositCharged = selectedRestaurant
+    ? depositChargedNow(
+        { amount: selectedRestaurant.depositAmount, type: selectedRestaurant.depositType },
+        guestCount,
+      )
+    : 0;
 
   const day = date ? slotsForDate(selectedRestaurant?.hours ?? [], date, now) : null;
   const slots = day?.slots ?? [];
@@ -443,77 +476,96 @@ export function ReservationsClient({
               />
             </Field>
 
-            {(() => {
-              const selected = restaurants.find((r) => r.slug === restaurantSlug);
+            {/*
+              THE FEE BLOCK, AND WHY IT USED TO BREAK THE PAGE.
 
-              if (!selected) return null;
+              `min-w-0` on the wrapper is the fix for the reported "the form is
+              not responsive once a deposit is required". Everything inside is
+              text that can be long — a formatted amount, a per-seat sum, a
+              phone hint — and without a zero minimum a flex/grid child is
+              floored at its content's intrinsic width. One unbreakable string
+              then widened the whole aside past the viewport and the PAGE
+              scrolled sideways, which reads as the layout being broken rather
+              than as one box being too wide.
+            */}
+            {depositCharged > 0 ? (
+              <div className="flex min-w-0 flex-col gap-3 rounded-md border border-warning/30 bg-warning-light p-3">
+                <p className="text-xs leading-relaxed break-words text-warning">
+                  <strong>{t("crs.deposit", { amount: formatMoney(depositCharged) })}</strong>{" "}
+                  {t("crs.depositBody")}
+                </p>
 
-              /* A fixed fee is paid online at booking (0031): the customer
-                  types their Mobile Money number and the deposit is charged
-                  now — deducted from their final bill once they arrive. */
-              if (selected.depositType === "fixed" && selected.depositAmount > 0) {
-                return (
-                  <div className="flex flex-col gap-3 rounded-md border border-warning/30 bg-warning-light p-3">
-                    <p className="text-xs leading-relaxed text-warning">
-                      <strong>{t("crs.deposit", { amount: formatMoney(selected.depositAmount) })}</strong>{" "}
-                      {t("crs.depositBody")}
-                    </p>
-                    <Field
-                      label={t("crs.phone")}
-                      htmlFor="res-phone"
-                      hint={t("crs.phoneHint")}
-                    >
-                      <Input
-                        id="res-phone"
-                        icon={<Smartphone className="size-4" aria-hidden />}
-                        inputMode="tel"
-                        autoComplete="tel"
-                        placeholder={t("crs.phonePh")}
-                        value={phone}
-                        disabled={paying}
-                        onChange={(e) => setPhone(e.target.value)}
-                      />
-                    </Field>
-                  </div>
-                );
-              }
-
-              /* A percentage fee is never charged online — the bill is
-                  unknown at booking — and is collected at the restaurant. */
-              if (selected.depositType === "percent" && selected.depositAmount > 0) {
-                return (
-                  <p className="rounded-md border border-info/30 bg-info-light p-3 text-xs leading-relaxed text-info">
-                    <strong>{t("crs.depositPercent", { pct: selected.depositAmount })}</strong>{" "}
-                    {t("crs.depositPercentBody")}
+                {/* A per-seat fee shows its arithmetic. "7 500 FCFA" for a
+                    table of three is a surprise; "2 500 × 3 guests" is a
+                    price. */}
+                {selectedRestaurant?.depositType === "per_seat" && (
+                  <p className="tnum text-xs leading-relaxed break-words text-warning/90">
+                    {t("crs.depositPerSeatMath", {
+                      rate: formatMoney(selectedRestaurant.depositAmount),
+                      guests: guestCount,
+                    })}
                   </p>
-                );
-              }
+                )}
 
-              return null;
-            })()}
+                <Field label={t("crs.phone")} htmlFor="res-phone" hint={t("crs.phoneHint")}>
+                  <Input
+                    id="res-phone"
+                    icon={<Smartphone className="size-4" aria-hidden />}
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder={t("crs.phonePh")}
+                    value={phone}
+                    disabled={paying}
+                    onChange={(e) => setPhone(e.target.value)}
+                  />
+                </Field>
+              </div>
+            ) : selectedRestaurant?.depositType === "percent" &&
+              selectedRestaurant.depositAmount > 0 ? (
+              /* A percentage fee is never charged online — the bill is unknown
+                 at booking — and is collected at the restaurant. */
+              <p className="min-w-0 rounded-md border border-info/30 bg-info-light p-3 text-xs leading-relaxed break-words text-info">
+                <strong>{t("crs.depositPercent", { pct: selectedRestaurant.depositAmount })}</strong>{" "}
+                {t("crs.depositPercentBody")}
+              </p>
+            ) : null}
 
+            {/*
+              `whitespace-normal` and the narrower padding are the other half
+              of the responsiveness fix.
+
+              With a deposit the label becomes "Payer l'acompte 7 500 FCFA et
+              réserver" — around forty characters at `text-base`, which with
+              Button's own `whitespace-nowrap` and `px-8` demands roughly 390px
+              on one unbreakable line. A full-width button inside a 360px
+              viewport cannot give it that, so the row overflowed and took the
+              page's horizontal scroll with it. Without a deposit the label is
+              short, which is exactly why the form looked fine until a
+              restaurant asked for one.
+
+              The height is a floor (see button.tsx), so wrapping to two lines
+              grows the button rather than clipping it.
+            */}
             <Button
               fullWidth
               size="lg"
               disabled={!date || !time || busy || paying}
               onClick={submit}
+              className="px-4 text-center leading-snug whitespace-normal"
             >
               {paying ? (
                 <>
-                  <LoaderCircle className="size-4 animate-spin" aria-hidden />
+                  <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden />
                   <span>{t("crs.payPendingTitle")}</span>
                 </>
               ) : (
                 <>
-                  <Check className="size-4" aria-hidden />
-                  {(() => {
-                    const selected = restaurants.find((r) => r.slug === restaurantSlug);
-                    const hasFee =
-                      selected && selected.depositType === "fixed" && selected.depositAmount > 0;
-                    return hasFee
-                      ? t("crs.payDeposit", { amount: formatMoney(selected!.depositAmount) })
-                      : t("crs.submit");
-                  })()}
+                  <Check className="size-4 shrink-0" aria-hidden />
+                  <span>
+                    {depositCharged > 0
+                      ? t("crs.payDeposit", { amount: formatMoney(depositCharged) })
+                      : t("crs.submit")}
+                  </span>
                 </>
               )}
             </Button>

@@ -236,8 +236,19 @@ export function Switch({
   label,
   description,
   className,
+  children,
   ...props
-}: React.InputHTMLAttributes<HTMLInputElement> & { label: string; description?: string }) {
+}: React.InputHTMLAttributes<HTMLInputElement> & {
+  label: string;
+  description?: string;
+  /**
+   * A small icon shown before the label. For a row of switches that repeat the
+   * same few names — in-app, email, push, once per topic — the glyph is what
+   * makes the column scannable; the word stays, because an icon alone is a
+   * guess.
+   */
+  children?: React.ReactNode;
+}) {
   const id = useId();
   const inputId = props.id ?? id;
 
@@ -248,8 +259,11 @@ export function Switch({
         <span className="block h-6 w-11 rounded-full bg-border transition-colors peer-checked:bg-primary peer-disabled:opacity-50" />
         <span className="pointer-events-none absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5" />
       </span>
-      <span className="flex-1">
-        <span className="block text-sm font-medium text-text">{label}</span>
+      <span className={cn("flex-1", props.disabled && "opacity-60")}>
+        <span className="flex items-center gap-1.5 text-sm font-medium text-text">
+          {children}
+          {label}
+        </span>
         {description && <span className="block text-xs text-text-light">{description}</span>}
       </span>
     </label>
