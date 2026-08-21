@@ -19,6 +19,7 @@ export const custReservationsDict = defineDict({
     "crs.subtitle": "Réservez une table et suivez vos demandes.",
 
     "crs.status.pending": "En attente",
+    "crs.status.awaiting_payment": "Acompte à régler",
     "crs.status.confirmed": "Confirmée",
     "crs.status.seated": "Attablée",
     "crs.status.completed": "Honorée",
@@ -47,7 +48,14 @@ export const custReservationsDict = defineDict({
       "Plus de créneau ce soir — le service se termine. Choisissez une autre date.",
     "crs.notes": "Précisions",
     "crs.notesPh": "Anniversaire, près de la fenêtre…",
-    "crs.deposit": "Acompte requis : {amount}.",
+    "crs.deposit": "Acompte de {amount}.",
+    "crs.depositAfterConfirm":
+      "Rien n'est prélevé maintenant. Le restaurant examine votre demande, et l'acompte ne vous est demandé que s'il l'accepte. Il est déduit de votre addition.",
+    "crs.depositDue": "Acompte de {amount} à régler.",
+    "crs.depositDueBody":
+      "Le restaurant garde votre table. Réglez l'acompte pour confirmer la réservation — il est déduit de votre addition sur place.",
+    "crs.depositPaidDone": "Acompte réglé. Votre table est confirmée.",
+    "crs.phoneRequired": "Entrez votre numéro Mobile Money.",
     "crs.depositBody":
       "Payé en ligne maintenant par Mobile Money — déduit de votre addition finale une fois sur place.",
     "crs.phone": "Numéro Mobile Money",
@@ -78,6 +86,7 @@ export const custReservationsDict = defineDict({
     "crs.subtitle": "Book a table and follow your requests.",
 
     "crs.status.pending": "Pending",
+    "crs.status.awaiting_payment": "Deposit due",
     "crs.status.confirmed": "Confirmed",
     "crs.status.seated": "Seated",
     "crs.status.completed": "Honoured",
@@ -106,7 +115,14 @@ export const custReservationsDict = defineDict({
       "No seatings left tonight — service is ending. Pick another date.",
     "crs.notes": "Notes",
     "crs.notesPh": "Birthday, near the window…",
-    "crs.deposit": "Deposit required: {amount}.",
+    "crs.deposit": "{amount} deposit.",
+    "crs.depositAfterConfirm":
+      "Nothing is taken now. The restaurant reviews your request, and the deposit is only asked for if it accepts. It comes off your bill.",
+    "crs.depositDue": "{amount} deposit due.",
+    "crs.depositDueBody":
+      "The restaurant is holding your table. Pay the deposit to confirm the booking — it comes off your bill when you arrive.",
+    "crs.depositPaidDone": "Deposit paid. Your table is confirmed.",
+    "crs.phoneRequired": "Enter your Mobile Money number.",
     "crs.depositBody":
       "Paid online now by Mobile Money — deducted from your final bill once you arrive.",
     "crs.phone": "Mobile Money number",

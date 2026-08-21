@@ -8,8 +8,19 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
  * depends on `next/headers` and cannot travel to the browser.
  */
 
+/**
+ * `awaiting_payment` sits between "the restaurant said yes" and "the table is
+ * yours" (migration 0039).
+ *
+ * The deposit used to be taken at booking, while the request was still
+ * `pending` and nobody at the restaurant had seen it — so a decline meant
+ * refunding somebody for a table that never existed. The restaurant decides
+ * first; only then is the customer asked to pay, and paying is what turns the
+ * booking into `confirmed`.
+ */
 export const RESERVATION_STATUSES = [
   "pending",
+  "awaiting_payment",
   "confirmed",
   "seated",
   "completed",
@@ -46,6 +57,9 @@ export const RESERVATION_STATUS_TONE: Record<
   "neutral" | "success" | "warning" | "error" | "info"
 > = {
   pending: "warning",
+  // Accent-coloured rather than merely "pending": this is the one state that
+  // needs the customer to DO something, and it expires if they do not.
+  awaiting_payment: "warning",
   confirmed: "info",
   seated: "info",
   completed: "success",

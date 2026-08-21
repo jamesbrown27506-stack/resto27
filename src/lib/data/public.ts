@@ -134,10 +134,18 @@ function restaurantColumns(): string {
     : `${BASE_RESTAURANT_COLUMNS}, deposit_type`;
 }
 
-/** Postgres "column does not exist" — the shape of a migration not yet run. */
+/**
+ * "That column does not exist" — the shape of a migration not yet run.
+ *
+ * 42703 is Postgres answering a SELECT; PGRST204 is PostgREST refusing a write
+ * against its schema cache. Only the first can happen here (this file reads),
+ * but both are matched so the check reads the same everywhere and keeps
+ * working if a writer is ever added.
+ */
 function isMissingDepositType(error: { code?: string; message?: string } | null): boolean {
   if (!error) return false;
-  return error.code === "42703" && (error.message ?? "").includes("deposit_type");
+  const known = error.code === "42703" || error.code === "PGRST204";
+  return known && (error.message ?? "").includes("deposit_type");
 }
 
 /**

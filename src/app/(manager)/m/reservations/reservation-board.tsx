@@ -39,6 +39,9 @@ const DEPOSIT_BODY_KEY: Record<DepositType, TranslationKey> = {
 
 const STATUS_TONE: Record<Reservation["status"], BadgeTone> = {
   pending: "warning",
+  // Accepted, table held, money outstanding — not a settled booking, and the
+  // board should not let it read like one.
+  awaiting_payment: "warning",
   confirmed: "success",
   seated: "info",
   completed: "neutral",
@@ -238,6 +241,33 @@ export function ReservationBoard({
                   {t("res.decline")}
                 </Button>
               </>
+            )}
+
+            {/*
+              A HELD TABLE HAS TO BE RELEASABLE.
+
+              `awaiting_payment` means the restaurant said yes and is waiting
+              to be paid, and the seat counts against availability the whole
+              time. Without this the only way out was for the customer to pay
+              or to cancel — so a guest who booked and vanished held a table
+              until the sitting was over. The deposit buttons above stay
+              available too: a guest who turns up and pays in cash is collected
+              there, and that confirms the booking the same way.
+            */}
+            {reservation.status === "awaiting_payment" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-error hover:bg-error-light"
+                disabled={pending}
+                onClick={() => {
+                  setDeclining(reservation);
+                  setReason("");
+                }}
+              >
+                <X className="size-3.5" aria-hidden />
+                {t("res.release")}
+              </Button>
             )}
 
             {reservation.status === "confirmed" && (

@@ -987,15 +987,48 @@ export async function decideReservation(
   const supabase = createAdminClient();
   const { data: reservation } = await supabase
     .from("reservations")
-    .select("id, reference, customer_id, guest_name")
+    .select("id, reference, customer_id, guest_name, deposit_amount, deposit_paid")
     .eq("id", reservationId)
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
+  const booking = reservation as {
+    id: string;
+    reference: string;
+    customer_id: string | null;
+    guest_name: string | null;
+    deposit_amount: number | null;
+    deposit_paid: boolean | null;
+  } | null;
+
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     "YES" IS NOT THE SAME AS "CONFIRMED" WHEN THERE IS A DEPOSIT TO PAY.
+
+     The deposit used to be taken at booking, before this function had run at
+     all — so declining a request meant refunding somebody for a table that
+     never existed. Nothing is charged up front any more, which moves the
+     question here: the restaurant has agreed, but the seat is not paid for.
+
+     `awaiting_payment` is that state. The customer is told to pay, the table
+     is held against availability while they do, and settling the payment is
+     what promotes the row to `confirmed` (see settlePayment). A booking with
+     no deposit due, or one whose deposit a manager already collected on the
+     board, goes straight to `confirmed` exactly as before.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const depositDue = Number(booking?.deposit_amount ?? 0);
+  const needsPayment =
+    decision === "confirmed" && depositDue > 0 && booking?.deposit_paid !== true;
+  const nextStatus = needsPayment ? "awaiting_payment" : decision;
+
   const { error } = await supabase
     .from("reservations")
     .update({
-      status: decision,
+      status: nextStatus,
+      // The table is assigned as soon as the restaurant says yes, including
+      // while the deposit is outstanding: it is being held for this guest, and
+      // the board needs to show which one.
       table_id: decision === "confirmed" ? (input.tableId ?? null) : null,
       decided_by: profile.email,
       decided_at: new Date().toISOString(),
@@ -1004,20 +1037,36 @@ export async function decideReservation(
     .eq("id", reservationId)
     .eq("restaurant_id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not save the decision." };
+  if (error) {
+    console.error("[manager:decideReservation]", error.code ?? "", error.message);
+    // 23514 = the status check constraint still carries 0006's six values, so
+    // `awaiting_payment` is refused. A different repair from a missing column,
+    // and worth naming rather than answering with "could not save".
+    if (error.code === "23514" || error.message.includes("status_check")) {
+      return {
+        ok: false,
+        error:
+          "The reservation status list is out of date in the database — run migration 0039.",
+      };
+    }
+    return { ok: false, error: "Could not save the decision." };
+  }
 
   // The guest hears the verdict — and a refusal must never arrive without the
-  // reason the restaurant was forced to give.
-  if (reservation?.customer_id) {
+  // reason the restaurant was forced to give. An approval that still needs
+  // paying for says so, because "confirmed" would be a promise the booking has
+  // not earned yet.
+  if (booking?.customer_id) {
     await notify({
       event: "reservation_decision",
-      tone: decision === "confirmed" ? "success" : "error",
-      customerId: reservation.customer_id,
+      tone: decision === "cancelled" ? "error" : needsPayment ? "warning" : "success",
+      customerId: booking.customer_id,
       href: "/reservations",
       params: {
-        reference: reservation.reference,
+        reference: booking.reference,
         restaurantName: active.restaurantName,
-        status: decision as "confirmed" | "cancelled",
+        status: needsPayment ? "awaiting_payment" : (decision as "confirmed" | "cancelled"),
+        amount: needsPayment ? depositDue : undefined,
         reason: decision === "cancelled" ? input.reason?.trim() : undefined,
       },
     });
@@ -1716,6 +1765,28 @@ export async function collectReservationDeposit(
     .eq("restaurant_id", active.restaurantId);
 
   if (updateError) return { ok: false, error: "Wallet credited, but could not mark the booking." };
+
+  /*
+    Collecting the deposit by hand CONFIRMS the table, exactly as paying online
+    does (0039).
+
+    A guest who turns up and settles the deposit in cash has done the thing the
+    `awaiting_payment` state was waiting for, and leaving the booking in it
+    would keep showing the restaurant a table it is still chasing payment for.
+    Guarded on the status so this can never resurrect a cancelled booking or
+    walk a seated one backwards.
+  */
+  const { error: promoteError } = await supabase
+    .from("reservations")
+    .update({ status: "confirmed" })
+    .eq("id", reservationId)
+    .eq("restaurant_id", active.restaurantId)
+    .eq("status", "awaiting_payment");
+
+  if (promoteError) {
+    // Not fatal: the money is in the wallet and the deposit is marked paid.
+    console.error("[manager:collectReservationDeposit] promote", promoteError.message);
+  }
 
   await writeAudit(profile, {
     action: "reservation.deposit_collected",

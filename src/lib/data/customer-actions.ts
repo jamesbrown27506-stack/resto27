@@ -376,12 +376,24 @@ const ReservationSchema = z.object({
   phone: z.string().optional().default(""),
 });
 
-/** Postgres "column does not exist" — the shape a skipped migration takes. */
-const UNDEFINED_COLUMN = "42703";
-
+/**
+ * "That column does not exist" — the shape a skipped migration takes, and it
+ * has TWO shapes depending on which way the data was going.
+ *
+ *   42703    — Postgres itself, raised when a SELECT names an unknown column.
+ *   PGRST204 — PostgREST, raised before the query is ever sent, when an INSERT
+ *              or UPDATE body names a column missing from its schema cache.
+ *              The message reads "Could not find the 'x' column of 'y' in the
+ *              schema cache" and there is no Postgres code at all.
+ *
+ * Checking only 42703 meant every retry here was dead on the write path — the
+ * exact path they exist for. Both mention the column by name, which is what
+ * keeps this from swallowing an unrelated failure.
+ */
 function isMissingColumn(error: { code?: string; message?: string } | null, column: string) {
   if (!error) return false;
-  return error.code === UNDEFINED_COLUMN && (error.message ?? "").includes(column);
+  const known = error.code === "42703" || error.code === "PGRST204";
+  return known && (error.message ?? "").includes(column);
 }
 
 /**
@@ -497,19 +509,19 @@ export async function createOwnReservation(
   const depositPercent = depositType === "percent" ? deposit.amount : 0;
 
   /*
-    THE CHARGE IS COMPUTED, NOT COPIED.
+    THE AMOUNT IS COMPUTED, NOT COPIED.
 
-    A `per_seat` fee is the per-guest rate multiplied by the party size, so the
-    amount taken from a Mobile Money account is not the number stored on the
-    restaurant. It goes through the same `depositChargedNow` the booking form
-    used to show the customer their total — one expression, so the figure they
-    agreed to and the figure they are charged cannot drift apart.
+    A `per_seat` fee is the per-guest rate multiplied by the party size, so
+    what the customer will owe is not the number stored on the restaurant. It
+    goes through the same `depositChargedNow` the booking form used to show
+    them their total — one expression, so the figure they were quoted and the
+    figure they are eventually asked for cannot drift apart.
 
     `partySize` is the SERVER's validated copy from the schema above, never a
-    total posted by the client: a charge derived from a client-supplied total
-    is a charge the client can choose.
+    total posted by the client: an amount derived from a client-supplied total
+    is an amount the client can choose.
   */
-  const chargedNow = depositChargedNow(deposit, partySize);
+  const depositDue = depositChargedNow(deposit, partySize);
 
   const slotStart = new Date(when.getTime() - 30 * 60_000).toISOString();
   const slotEnd = new Date(when.getTime() + 90 * 60_000).toISOString();
@@ -525,7 +537,9 @@ export async function createOwnReservation(
       .from("reservations")
       .select("id")
       .eq("restaurant_id", restaurantId)
-      .in("status", ["pending", "confirmed", "seated"])
+      // `awaiting_payment` counts: the restaurant has committed the seat and
+      // is waiting to be paid for it, so it must not be sold twice meanwhile.
+      .in("status", ["pending", "awaiting_payment", "confirmed", "seated"])
       .gte("reserved_for", slotStart)
       .lte("reserved_for", slotEnd);
 
@@ -555,10 +569,10 @@ export async function createOwnReservation(
     // The percentage is snapshotted too (0031) so the board still reads the
     // value the customer booked under.
     //
-    // For a per-seat fee this is the TOTAL charged, not the per-guest rate:
-    // the board is reading "what did this customer pay", and the rate alone
+    // For a per-seat fee this is the TOTAL due, not the per-guest rate: the
+    // board is reading "what does this customer owe", and the rate alone
     // would answer a question nobody asked.
-    deposit_amount: chargedNow,
+    deposit_amount: depositDue,
     notes: notes.trim() || null,
   };
   const row = { ...baseRow, deposit_percent: depositPercent };
@@ -593,53 +607,29 @@ export async function createOwnReservation(
     );
     return { ok: false, error: "La demande n'a pas pu être envoyée." };
   }
-  const reservationId = inserted.id;
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     NOTHING IS CHARGED HERE. THAT IS THE POINT OF THIS FUNCTION NOW.
 
-  // A fixed or per-seat reservation fee is paid ONLINE at booking (0031,
-  // 0038): the customer's Mobile Money is charged through the platform's
-  // payment path, the money is credited to the restaurant's wallet, and the
-  // booking is marked paid. The fee is DEDUCTED from the customer's final
-  // bill. A percentage fee is never charged here — the bill is unknown at
-  // booking — and is collected at the restaurant against the real bill.
-  // `depositChargedNow` already returns 0 for percent and for no fee, so this
-  // is the whole condition.
-  if (chargedNow > 0) {
-    if (!phone.trim()) {
-      // The booking exists but was never paid for — remove it so the request
-      // fails cleanly and the customer can book again with a phone number.
-      await supabase.from("reservations").delete().eq("id", reservationId);
-      return { ok: false, error: "Numéro Mobile Money requis pour régler l'acompte." };
-    }
+     This used to take the customer's Mobile Money the moment they pressed the
+     button — while the request was still `pending`, before anyone at the
+     restaurant had seen it. So a restaurant that was full declined a booking
+     it had never agreed to, and the customer had already paid for it. What
+     was left was a refund to chase for a table that never existed: a support
+     cost on every decline, and the worst possible first experience of the
+     platform.
 
-    const initiated = await initiatePaymentAttempt({
-      kind: "reservation",
-      restaurantId,
-      reservationId,
-      reference,
-      phone,
-      amount: chargedNow,
-    });
+     The order is now request → decide → pay. `decideReservation` moves an
+     approved booking with a deposit due to `awaiting_payment` and tells the
+     customer; `payReservationDeposit` below takes the money and turns it into
+     `confirmed`. A decline costs nobody anything, because nothing was taken.
 
-    if (!initiated.ok || !initiated.attemptId) {
-      await supabase.from("reservations").delete().eq("id", reservationId);
-      return { ok: false, error: initiated.error ?? "Le paiement de l'acompte a échoué." };
-    }
-
-    if (initiated.status === "pending") {
-      // Live mode: the customer must approve on their handset. The booking is
-      // real but unpaid; the client polls checkReservationPayment, and the
-      // CamerPay webhook settles it even if the page is closed.
-      return { ok: true, status: "pending", attemptId: initiated.attemptId };
-    }
-
-    // Sandbox: the attempt is already 'succeeded' — settle now (credits the
-    // restaurant's wallet and marks the booking deposit paid).
-    const settled = await settlePayment(initiated.attemptId);
-    if (!settled.ok) {
-      console.error("[customer:createOwnReservation] settle", settled.error);
-      return { ok: false, error: settled.error ?? "L'acompte n'a pas pu être appliqué." };
-    }
-  }
+     `deposit_amount` is still written here, and still snapshotted at booking
+     time (0025): it is the amount that will be DUE, fixed at the moment the
+     customer asked, so a restaurant raising its fee afterwards cannot rewrite
+     what an existing request owes.
+    ─────────────────────────────────────────────────────────────────────────
+  */
 
   // A booking request is only real once someone at the restaurant has seen it.
   await notify({
@@ -649,6 +639,110 @@ export async function createOwnReservation(
     href: "/m/reservations",
     params: { reference, customerName: user.name, partySize },
   });
+
+  revalidatePath("/reservations");
+  revalidatePath("/account");
+  return { ok: true, status: "succeeded" };
+}
+
+/**
+ * Pay the deposit on a booking the restaurant has already agreed to.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE SECOND HALF OF request → decide → pay.
+ *
+ *  Only a booking in `awaiting_payment` can be paid, and only by the customer
+ *  who made it. Both are checked against the SESSION, not the payload: a
+ *  reservation id is guessable and a Server Action is a public POST endpoint
+ *  that never passes through the page's guard, so "pay my deposit" must not be
+ *  able to become "charge someone else's phone" or "pay for a booking nobody
+ *  approved".
+ *
+ *  THE AMOUNT IS THE ROW'S, NOT THE CLIENT'S. `deposit_amount` was snapshotted
+ *  when the booking was made, so this charges what the customer was quoted
+ *  even if the restaurant has changed its fee since — and there is no number
+ *  in the payload for anyone to tamper with.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function payReservationDeposit(
+  reservationId: string,
+  phone: string,
+): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string }> {
+  const user = await requireUser();
+
+  if (!z.string().uuid().safeParse(reservationId).success) {
+    return { ok: false, error: "Réservation introuvable." };
+  }
+  if (!phone.trim()) {
+    return { ok: false, error: "Numéro Mobile Money requis pour régler l'acompte." };
+  }
+
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("reservations")
+    .select("id, reference, restaurant_id, status, deposit_amount, deposit_paid")
+    .eq("id", reservationId)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[customer:payReservationDeposit] lookup", error.message);
+    return { ok: false, error: "La réservation n'a pas pu être vérifiée. Réessayez." };
+  }
+  if (!data) return { ok: false, error: "Réservation introuvable." };
+
+  const booking = data as {
+    id: string;
+    reference: string;
+    restaurant_id: string;
+    status: string;
+    deposit_amount: number | null;
+    deposit_paid: boolean | null;
+  };
+
+  if (booking.deposit_paid) return { ok: false, error: "Cet acompte a déjà été réglé." };
+  if (booking.status !== "awaiting_payment") {
+    // Either the restaurant has not decided yet, or it declined, or the table
+    // is already confirmed. None of them is a bill.
+    return { ok: false, error: "Cette réservation n'attend pas de paiement." };
+  }
+
+  const amount = Number(booking.deposit_amount ?? 0);
+  if (amount <= 0) return { ok: false, error: "Aucun acompte n'est dû pour cette réservation." };
+
+  const initiated = await initiatePaymentAttempt({
+    kind: "reservation",
+    restaurantId: booking.restaurant_id,
+    reservationId: booking.id,
+    reference: booking.reference,
+    phone,
+    amount,
+  });
+
+  if (!initiated.ok || !initiated.attemptId) {
+    // The booking is NOT deleted on a failed charge, unlike the old
+    // pay-at-booking path: the restaurant has already agreed to it, and
+    // throwing away an accepted table because a payment did not go through
+    // would lose the thing the customer is trying to keep. They can try again.
+    return { ok: false, error: initiated.error ?? "Le paiement de l'acompte a échoué." };
+  }
+
+  if (initiated.status === "pending") {
+    // Live mode: the customer must approve on their handset. The client polls
+    // checkReservationPayment, and the CamerPay webhook settles it even if the
+    // page is closed.
+    return { ok: true, status: "pending", attemptId: initiated.attemptId };
+  }
+
+  // Sandbox: the attempt is already 'succeeded' — settle now. settlePayment
+  // credits the restaurant's wallet, marks the deposit paid, and promotes the
+  // booking to `confirmed`.
+  const settled = await settlePayment(initiated.attemptId);
+  if (!settled.ok) {
+    console.error("[customer:payReservationDeposit] settle", settled.error);
+    return { ok: false, error: settled.error ?? "L'acompte n'a pas pu être appliqué." };
+  }
 
   revalidatePath("/reservations");
   revalidatePath("/account");
@@ -905,22 +999,46 @@ export async function saveOwnPreferences(prefs: CustomerPreferences): Promise<Ac
   const user = await requireUser();
 
   const clean = toStoredJson(prefs);
-
   const supabase = createAdminClient();
-  const { error } = await supabase.from("customer_preferences").upsert(
-    {
-      profile_id: user.id,
-      notification_json: clean,
-      // The legacy column, kept in step rather than dropped: it is `not null`
-      // in the schema and an older build against the same database still
-      // reads it. Nothing in this build does.
-      push_enabled: anyPushWanted(prefs),
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "profile_id" },
-  );
 
-  if (error) return { ok: false, error: "Les préférences n'ont pas pu être enregistrées." };
+  /*
+    `push_enabled` IS WRITTEN IF IT EXISTS, AND SKIPPED IF IT DOES NOT.
+
+    It is migration 0018's column, and it is missing from the live database —
+    which made this upsert fail with 42703 on EVERY save since the screen
+    shipped. `customer_preferences` is empty for exactly that reason, and the
+    settings page reloaded showing defaults rather than admitting nothing had
+    been stored.
+
+    Nothing in this build reads it: the per-topic push answer lives inside
+    notification_json. It is still written where it exists, because it is
+    `not null` in the schema and an older build against the same database
+    consults it — but a preference must not be lost to a column this code does
+    not need. Migration 0039 adds it back.
+  */
+  const row = {
+    profile_id: user.id,
+    notification_json: clean,
+    updated_at: new Date().toISOString(),
+  };
+
+  let { error } = await supabase
+    .from("customer_preferences")
+    .upsert({ ...row, push_enabled: anyPushWanted(prefs) }, { onConflict: "profile_id" });
+
+  if (isMissingColumn(error, "push_enabled")) {
+    console.warn(
+      "[customer:saveOwnPreferences] customer_preferences.push_enabled is missing — run migration 0039. Preferences saved without it.",
+    );
+    ({ error } = await supabase
+      .from("customer_preferences")
+      .upsert(row, { onConflict: "profile_id" }));
+  }
+
+  if (error) {
+    console.error("[customer:saveOwnPreferences]", error.code ?? "", error.message);
+    return { ok: false, error: "Les préférences n'ont pas pu être enregistrées." };
+  }
 
   revalidatePath("/settings");
   return { ok: true };

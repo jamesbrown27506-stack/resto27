@@ -56,8 +56,18 @@ export function SettingsClient({
     // them server-side, which is the copy that decides.
     const result = await saveOwnPreferences(prefs);
     setBusy(false);
+    /*
+      The TRANSLATED sentence, not `result.error`.
+
+      The action's message is a hard-coded French string, so an English
+      interface was reporting its one failure in French — an English settings
+      page answering a save with "Les préférences n'ont pas pu être
+      enregistrées." There is no per-case detail in it worth surfacing: every
+      cause means the same thing to the person reading it, and the log carries
+      the Postgres code for whoever is debugging.
+    */
     if (result.ok) toast(t("cst.saved"), "success");
-    else toast(result.error, "error");
+    else toast(t("cst.saveFailed"), "error");
   }
 
   function setChannel(key: CustomerTopicKey, channel: NotificationChannelKey, value: boolean) {

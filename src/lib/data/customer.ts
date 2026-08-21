@@ -279,6 +279,13 @@ export interface CustomerReservation {
   partySize: number;
   tableNumber: string | null;
   status: CustomerReservationStatus;
+  /**
+   * What is owed to hold the table, snapshotted at booking (0025) — a total,
+   * so a per-seat fee is already multiplied by the party size. Read alongside
+   * `awaiting_payment` to show the customer what they are being asked for.
+   */
+  depositAmount: number;
+  depositPaid: boolean;
   notes: string | null;
   createdAt: string;
 }
@@ -295,7 +302,7 @@ export async function fetchCustomerReservations(
   const { data, error } = await supabase
     .from("reservations")
     .select(
-      "id, reference, restaurant_id, reserved_for, party_size, status, notes, created_at, restaurants ( name, slug ), restaurant_tables ( number )",
+      "id, reference, restaurant_id, reserved_for, party_size, status, deposit_amount, deposit_paid, notes, created_at, restaurants ( name, slug ), restaurant_tables ( number )",
     )
     .eq("customer_id", profileId)
     .order("reserved_for", { ascending: false });
@@ -312,6 +319,8 @@ export async function fetchCustomerReservations(
     reserved_for: string;
     party_size: number;
     status: string;
+    deposit_amount: number | null;
+    deposit_paid: boolean | null;
     notes: string | null;
     created_at: string;
     restaurants: { name: string; slug: string }[] | null;
@@ -326,6 +335,8 @@ export async function fetchCustomerReservations(
     partySize: r.party_size,
     tableNumber: r.restaurant_tables?.[0]?.number ?? null,
     status: r.status as CustomerReservationStatus,
+    depositAmount: Number(r.deposit_amount ?? 0),
+    depositPaid: r.deposit_paid === true,
     notes: r.notes,
     createdAt: r.created_at,
   }));
@@ -552,18 +563,33 @@ export async function fetchCustomerPreferences(
 ): Promise<CustomerPreferences> {
   const supabase = createAdminClient();
 
+  /*
+    ONLY `notification_json` IS ASKED FOR, AND THAT IS THE FIX.
+
+    This selected `notification_json, push_enabled`, and `push_enabled` — added
+    by migration 0018 — is absent from the live database. PostgREST answers a
+    select naming a column that does not exist with 42703 for every row, so
+    this function returned the defaults on EVERY load while quietly discarding
+    whatever the customer had actually chosen. The matching upsert failed the
+    same way, which is why the table is empty: no customer preference has ever
+    been stored.
+
+    Nothing needs the column any more. The per-topic push answer lives inside
+    notification_json, and the legacy fallback below only matters for rows in
+    the old boolean shape — of which there are none here, and on a database
+    that does have some, `true` reproduces the default they were running under.
+  */
   const { data, error } = await supabase
     .from("customer_preferences")
-    .select("notification_json, push_enabled")
+    .select("notification_json")
     .eq("profile_id", profileId)
     .maybeSingle();
 
-  if (error || !data) return customerTopicDefaults();
+  if (error) {
+    console.error("[customer:fetchCustomerPreferences]", error.message);
+    return customerTopicDefaults();
+  }
+  if (!data) return customerTopicDefaults();
 
-  const row = data as { notification_json: unknown; push_enabled: boolean | null };
-
-  // `push_enabled` is only consulted for rows still in the OLD shape, where a
-  // topic's boolean gated in-app and email and push lived in this column. A
-  // row in the new shape carries its own per-topic push answer and ignores it.
-  return readTopicPreferences(row.notification_json, row.push_enabled !== false);
+  return readTopicPreferences((data as { notification_json: unknown }).notification_json, true);
 }

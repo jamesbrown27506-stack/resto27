@@ -52,6 +52,7 @@ export const custSettingsDict = defineDict({
     "cst.lockedInApp":
       "Le suivi dans l'app ne peut pas être coupé — c'est votre seule trace de la commande. L'e-mail et le push, si.",
     "cst.saved": "Préférences enregistrées.",
+    "cst.saveFailed": "Les préférences n'ont pas pu être enregistrées. Réessayez.",
 
     "cst.delete": "Supprimer mon compte",
     "cst.deleteBody": "Action définitive.",
@@ -107,6 +108,7 @@ export const custSettingsDict = defineDict({
     "cst.lockedInApp":
       "In-app tracking cannot be turned off — it is your only record of the order. Email and push can.",
     "cst.saved": "Preferences saved.",
+    "cst.saveFailed": "Your preferences could not be saved. Try again.",
 
     "cst.delete": "Delete my account",
     "cst.deleteBody": "Permanent.",

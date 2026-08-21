@@ -672,6 +672,36 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
         p_reference: booking.reference,
       });
 
+      if (!creditError) {
+        /*
+          PAYING IS WHAT CONFIRMS THE TABLE (0039).
+
+          The restaurant accepted the booking and it went to
+          `awaiting_payment`; the seat is held but not earned until the deposit
+          lands. This is the single point both the client poll and the CamerPay
+          webhook converge on, so it is the only correct place to promote it.
+
+          Guarded on `status = 'awaiting_payment'` so a late settlement can
+          never resurrect a booking that was cancelled, completed or marked a
+          no-show in the meantime — and so a deposit collected by a manager on
+          the board, against a booking already `confirmed`, changes nothing.
+
+          A failure here is logged, not fatal: the money has moved and the
+          wallet is credited, and losing the payment over a status update would
+          be the worse outcome. The manager sees a paid deposit on the board
+          either way.
+        */
+        const { error: promoteError } = await supabase
+          .from("reservations")
+          .update({ status: "confirmed" })
+          .eq("id", row.reservationId)
+          .eq("status", "awaiting_payment");
+
+        if (promoteError) {
+          console.error("[pay:settle:reservation] promote", promoteError.message);
+        }
+      }
+
       if (creditError) {
         console.error("[pay:settle:reservation] credit", creditError.message);
         /**

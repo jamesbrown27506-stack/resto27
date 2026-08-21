@@ -73,6 +73,8 @@ export interface NotifyParams {
   status?:
     | "pending"
     | "active"
+    /** A booking the restaurant accepted that still owes its deposit (0039). */
+    | "awaiting_payment"
     | "confirmed"
     | "preparing"
     | "shipped"
@@ -220,7 +222,31 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
           };
 
     case "reservation_decision": {
+      /*
+        THREE OUTCOMES, NOT TWO. The third is the one that needs an action.
+
+        A restaurant that accepts a booking with a deposit outstanding has not
+        confirmed it — the table is being held, and it is released if nobody
+        pays. Sending "your table is booked" there would be a promise the
+        booking has not earned, and the customer would have no idea anything
+        was expected of them until the seat was gone.
+      */
+      const awaiting = p.status === "awaiting_payment";
       const confirmed = p.status === "confirmed";
+      const amount = p.amount !== undefined ? formatMoney(p.amount) : "";
+
+      if (awaiting) {
+        return fr
+          ? {
+              title: `Réservation ${p.reference ?? ""} acceptée — acompte à régler`,
+              body: `${p.restaurantName ?? "Le restaurant"} garde votre table. Réglez l'acompte de ${amount} pour la confirmer.`,
+            }
+          : {
+              title: `Reservation ${p.reference ?? ""} accepted — deposit due`,
+              body: `${p.restaurantName ?? "The restaurant"} is holding your table. Pay the ${amount} deposit to confirm it.`,
+            };
+      }
+
       return fr
         ? confirmed
           ? {

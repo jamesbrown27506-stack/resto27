@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { BranchRole } from "@/lib/capabilities";
+import type { CustomerReservationStatus } from "@/lib/format/reservation-status";
 
 /**
  * Reads for the restaurant dashboard.
@@ -305,7 +306,8 @@ export interface Reservation {
   partySize: number;
   reservedFor: string;
   durationMin: number;
-  status: "pending" | "confirmed" | "seated" | "completed" | "cancelled" | "no_show";
+  /** `awaiting_payment`: accepted, table held, deposit not yet paid (0039). */
+  status: CustomerReservationStatus;
   tableId: string | null;
   tableNumber: string | null;
   notes: string | null;

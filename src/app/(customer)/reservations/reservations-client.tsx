@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CalendarCheck, Check, LoaderCircle, Smartphone, Users } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { CalendarCheck, Check, Smartphone, Users } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import {
   cancelOwnReservation,
   checkReservationPayment,
   createOwnReservation,
+  payReservationDeposit,
 } from "@/lib/data/customer-actions";
 import { reservationStatusLabel, RESERVATION_STATUS_TONE } from "@/lib/format/reservation-status";
 import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
@@ -59,6 +61,10 @@ export function ReservationsClient({
 }) {
   const { toast } = useToast();
   const { locale, t } = useLocale();
+  // The Upcoming list is server data: after a payment the row's status and
+  // deposit both change, and a refresh is what shows the new truth rather than
+  // patching two fields locally and hoping they match.
+  const router = useRouter();
   const dateLocale = intlLocale(locale);
 
   // Resolve the hand-off (slug, or a name typed in the homepage search) to a
@@ -109,7 +115,8 @@ export function ReservationsClient({
   */
   const [phone, setPhone] = useState(() => user.phone ?? "");
   const [busy, setBusy] = useState(false);
-  const [paying, setPaying] = useState(false);
+  /** The booking whose deposit is being charged right now, or null. */
+  const [payingId, setPayingId] = useState<string | null>(null);
   const [cancelId, setCancelId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -232,37 +239,64 @@ export function ReservationsClient({
       return;
     }
 
-    // A fixed deposit in live mode stays 'pending' until the customer
-    // approves on their handset — poll until the provider (or its webhook)
-    // settles it.
+    /*
+      No payment branch here any more. Requesting a table takes no money — the
+      deposit is asked for after the restaurant accepts, by `payDeposit` below.
+      The old code polled a payment attempt from this point, which is what made
+      a decline into a refund.
+    */
+    toast(t("crs.sent"), "success");
+    setDate("");
+    setTime("");
+    setNotes("");
+    router.refresh();
+  }
+
+  /**
+   * Pay the deposit on a booking the restaurant has already accepted.
+   *
+   * The live-mode flow is unchanged from the old pay-at-booking path — the
+   * charge goes to the handset, the row stays unpaid until the customer
+   * approves, and this polls until the provider or its webhook settles it. All
+   * that moved is WHEN it runs: after a yes, rather than before anyone looked.
+   */
+  async function payDeposit(reservation: CustomerReservation) {
+    if (!phone.trim()) {
+      toast(t("crs.phoneRequired"), "error");
+      return;
+    }
+
+    setPayingId(reservation.id);
+    const result = await payReservationDeposit(reservation.id, phone);
+
+    if (!result.ok) {
+      setPayingId(null);
+      toast(result.error, "error");
+      return;
+    }
+
     if (result.status === "pending" && result.attemptId) {
-      setPaying(true);
       let tries = 0;
       pollRef.current = setInterval(async () => {
         tries += 1;
         const check = await checkReservationPayment(result.attemptId!);
         if (check.status === "succeeded") {
           if (pollRef.current) clearInterval(pollRef.current);
-          setPaying(false);
-          toast(t("crs.sent"), "success");
-          setDate("");
-          setTime("");
-          setNotes("");
-          setPhone("");
+          setPayingId(null);
+          toast(t("crs.depositPaidDone"), "success");
+          router.refresh();
         } else if (check.status === "failed" || tries >= POLL_TRIES) {
           if (pollRef.current) clearInterval(pollRef.current);
-          setPaying(false);
+          setPayingId(null);
           toast(t("crs.payFailed"), "error");
         }
       }, POLL_INTERVAL_MS);
       return;
     }
 
-    toast(t("crs.sent"), "success");
-    setDate("");
-    setTime("");
-    setNotes("");
-    setPhone("");
+    setPayingId(null);
+    toast(t("crs.depositPaidDone"), "success");
+    router.refresh();
   }
 
   async function confirmCancel() {
@@ -296,30 +330,102 @@ export function ReservationsClient({
               />
             ) : (
               <ul className="divide-y divide-border">
-                {upcoming.map((r) => (
-                  <li key={r.id} className="flex flex-wrap items-center gap-4 px-5 py-4">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold">{r.restaurantName}</p>
-                      <p className="tnum mt-0.5 text-sm text-text-secondary">
-                        {formatDayLabel(r.reservedFor, dateLocale)} ·{" "}
-                        {formatTime(r.reservedFor, dateLocale)} ·{" "}
-                        {t("crs.people", { count: r.partySize })}
-                        {r.tableNumber && ` · ${t("crs.table", { number: r.tableNumber })}`}
-                      </p>
-                      {r.notes && (
-                        <p className="mt-1 text-xs text-text-light italic">« {r.notes} »</p>
+                {upcoming.map((r) => {
+                  const owes = r.status === "awaiting_payment" && !r.depositPaid;
+                  const busyHere = payingId === r.id;
+                  return (
+                    <li key={r.id} className="px-5 py-4">
+                      <div className="flex flex-wrap items-center gap-4">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold">{r.restaurantName}</p>
+                          <p className="tnum mt-0.5 text-sm text-text-secondary">
+                            {formatDayLabel(r.reservedFor, dateLocale)} ·{" "}
+                            {formatTime(r.reservedFor, dateLocale)} ·{" "}
+                            {t("crs.people", { count: r.partySize })}
+                            {r.tableNumber && ` · ${t("crs.table", { number: r.tableNumber })}`}
+                          </p>
+                          {r.notes && (
+                            <p className="mt-1 text-xs text-text-light italic">« {r.notes} »</p>
+                          )}
+                        </div>
+
+                        <Badge tone={RESERVATION_STATUS_TONE[r.status]}>
+                          {reservationStatusLabel(r.status, t)}
+                        </Badge>
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={busyHere}
+                          onClick={() => setCancelId(r.id)}
+                        >
+                          {t("crs.cancel")}
+                        </Button>
+                      </div>
+
+                      {/*
+                        THE BILL, WHERE THE BOOKING IS — not on the form.
+
+                        This is the second half of request → decide → pay. The
+                        restaurant has accepted and is holding the table; this
+                        is the only moment money is asked for, and it names the
+                        amount, why it is owed, and that it comes off the final
+                        bill. The number is the row's own snapshot, so a
+                        restaurant that raised its fee since cannot change what
+                        this customer was quoted.
+                      */}
+                      {owes && (
+                        <div className="mt-3 flex min-w-0 flex-col gap-3 rounded-md border border-warning/30 bg-warning-light p-3">
+                          <p className="text-xs leading-relaxed break-words text-warning">
+                            <strong>
+                              {t("crs.depositDue", { amount: formatMoney(r.depositAmount) })}
+                            </strong>{" "}
+                            {t("crs.depositDueBody")}
+                          </p>
+
+                          <Field
+                            label={t("crs.phone")}
+                            htmlFor={`res-phone-${r.id}`}
+                            hint={t("crs.phoneHint")}
+                          >
+                            <Input
+                              id={`res-phone-${r.id}`}
+                              icon={<Smartphone className="size-4" aria-hidden />}
+                              inputMode="tel"
+                              autoComplete="tel"
+                              placeholder={t("crs.phonePh")}
+                              value={phone}
+                              disabled={busyHere}
+                              onChange={(e) => setPhone(e.target.value)}
+                            />
+                          </Field>
+
+                          <Button
+                            size="lg"
+                            fullWidth
+                            loading={busyHere}
+                            disabled={payingId !== null}
+                            onClick={() => void payDeposit(r)}
+                            className="px-4 text-center leading-snug whitespace-normal"
+                          >
+                            {!busyHere && <Smartphone className="size-4 shrink-0" aria-hidden />}
+                            <span>
+                              {busyHere
+                                ? t("crs.payPendingTitle")
+                                : t("crs.payDeposit", { amount: formatMoney(r.depositAmount) })}
+                            </span>
+                          </Button>
+
+                          {busyHere && (
+                            <p className="text-center text-xs leading-relaxed text-warning/90">
+                              {t("crs.payPendingBody")}
+                            </p>
+                          )}
+                        </div>
                       )}
-                    </div>
-
-                    <Badge tone={RESERVATION_STATUS_TONE[r.status]}>
-                      {reservationStatusLabel(r.status, t)}
-                    </Badge>
-
-                    <Button variant="ghost" size="sm" onClick={() => setCancelId(r.id)}>
-                      {t("crs.cancel")}
-                    </Button>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Panel>
@@ -477,22 +583,29 @@ export function ReservationsClient({
             </Field>
 
             {/*
-              THE FEE BLOCK, AND WHY IT USED TO BREAK THE PAGE.
+              THE FEE IS QUOTED HERE, NOT COLLECTED HERE.
 
-              `min-w-0` on the wrapper is the fix for the reported "the form is
-              not responsive once a deposit is required". Everything inside is
-              text that can be long — a formatted amount, a per-seat sum, a
-              phone hint — and without a zero minimum a flex/grid child is
-              floored at its content's intrinsic width. One unbreakable string
-              then widened the whole aside past the viewport and the PAGE
-              scrolled sideways, which reads as the layout being broken rather
-              than as one box being too wide.
+              This used to be a Mobile Money field, and pressing the button
+              took the money there and then — while the request was still
+              `pending` and nobody at the restaurant had seen it. A restaurant
+              that was full then declined a booking it had never agreed to,
+              leaving a refund to chase for a table that never existed. The
+              customer is now told what it will cost and asked for nothing;
+              the bill arrives, on the Upcoming list, only once the restaurant
+              has said yes.
+
+              `min-w-0` and `break-words`: this is the other half of the "form
+              is not responsive once a deposit is required" report. Without a
+              zero minimum a flex child is floored at its content's intrinsic
+              width, and one long formatted amount widened the whole aside past
+              the viewport — the page scrolled sideways, which reads as a
+              broken layout rather than one box being too wide.
             */}
             {depositCharged > 0 ? (
-              <div className="flex min-w-0 flex-col gap-3 rounded-md border border-warning/30 bg-warning-light p-3">
+              <div className="flex min-w-0 flex-col gap-1.5 rounded-md border border-warning/30 bg-warning-light p-3">
                 <p className="text-xs leading-relaxed break-words text-warning">
                   <strong>{t("crs.deposit", { amount: formatMoney(depositCharged) })}</strong>{" "}
-                  {t("crs.depositBody")}
+                  {t("crs.depositAfterConfirm")}
                 </p>
 
                 {/* A per-seat fee shows its arithmetic. "7 500 FCFA" for a
@@ -506,19 +619,6 @@ export function ReservationsClient({
                     })}
                   </p>
                 )}
-
-                <Field label={t("crs.phone")} htmlFor="res-phone" hint={t("crs.phoneHint")}>
-                  <Input
-                    id="res-phone"
-                    icon={<Smartphone className="size-4" aria-hidden />}
-                    inputMode="tel"
-                    autoComplete="tel"
-                    placeholder={t("crs.phonePh")}
-                    value={phone}
-                    disabled={paying}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-                </Field>
               </div>
             ) : selectedRestaurant?.depositType === "percent" &&
               selectedRestaurant.depositAmount > 0 ? (
@@ -549,32 +649,16 @@ export function ReservationsClient({
             <Button
               fullWidth
               size="lg"
-              disabled={!date || !time || busy || paying}
+              loading={busy}
+              disabled={!date || !time || busy}
               onClick={submit}
               className="px-4 text-center leading-snug whitespace-normal"
             >
-              {paying ? (
-                <>
-                  <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden />
-                  <span>{t("crs.payPendingTitle")}</span>
-                </>
-              ) : (
-                <>
-                  <Check className="size-4 shrink-0" aria-hidden />
-                  <span>
-                    {depositCharged > 0
-                      ? t("crs.payDeposit", { amount: formatMoney(depositCharged) })
-                      : t("crs.submit")}
-                  </span>
-                </>
-              )}
+              <Check className="size-4 shrink-0" aria-hidden />
+              {/* Always "request a table" now: pressing this takes no money,
+                  so a label promising a payment would be a lie. */}
+              <span>{t("crs.submit")}</span>
             </Button>
-
-            {paying && (
-              <p className="text-center text-xs leading-relaxed text-text-light">
-                {t("crs.payPendingBody")}
-              </p>
-            )}
 
             <p className="text-xs leading-relaxed text-text-light">{t("crs.formHint")}</p>
           </div>
