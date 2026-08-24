@@ -1,7 +1,11 @@
 import { redirect } from "next/navigation";
 import { cache } from "react";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient, createClient } from "@/lib/supabase/server";
 import type { UserRole, UserStatus } from "@/lib/session";
+import {
+  managerRestaurantRejection,
+  type RestaurantAccessStatus,
+} from "./restaurant-access";
 
 /**
  * The session layer.
@@ -37,6 +41,47 @@ export interface AuthProfile {
 
 /** Why a session was rejected — drives the reason shown on /login (§14.2). */
 export type RejectionReason = "invalid" | "pending" | "pending-manager" | "suspended";
+
+/**
+ * A manager account can be active while the restaurant it operates is not.
+ * Admin suspension changes `restaurants.status`, not `profiles.status`, so
+ * account-only validation leaves both fresh logins and existing sessions
+ * usable. Resolve the restaurant side of the relationship on every guarded
+ * request, just as we resolve the profile side.
+ */
+export async function getManagerRestaurantRejection(
+  profileId: string,
+): Promise<RejectionReason | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("restaurant_staff")
+    .select("restaurants!inner ( status )")
+    .eq("profile_id", profileId)
+    .eq("status", "active");
+
+  if (error) {
+    // Authorization fails closed. A database error must not turn into tenant
+    // access that the application could not prove was still valid.
+    console.error("[auth:manager-restaurants]", profileId, error.message);
+    return "invalid";
+  }
+
+  const statuses = (data ?? []).flatMap((row) => {
+    const joined = (row as unknown as {
+      restaurants:
+        | { status?: string }
+        | { status?: string }[]
+        | null;
+    }).restaurants;
+    const restaurant = Array.isArray(joined) ? joined[0] : joined;
+    const status = restaurant?.status;
+    return status === "active" || status === "pending" || status === "suspended"
+      ? [status as RestaurantAccessStatus]
+      : [];
+  });
+
+  return managerRestaurantRejection(statuses);
+}
 
 /**
  * The signed-in profile, or null.
@@ -129,6 +174,11 @@ export async function getActiveProfile(): Promise<
     // A restaurant awaiting approval is a different situation from a diner
     // whose account is not yet active, and the copy differs accordingly.
     return { reason: profile.role === "manager" ? "pending-manager" : "pending" };
+  }
+
+  if (profile.role === "manager") {
+    const reason = await getManagerRestaurantRejection(profile.id);
+    if (reason) return { reason };
   }
 
   return { profile };

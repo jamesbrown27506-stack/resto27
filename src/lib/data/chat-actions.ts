@@ -169,10 +169,11 @@ async function isActiveStaff(profileId: string, restaurantId: string): Promise<b
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("restaurant_staff")
-    .select("id")
+    .select("id, restaurants!inner ( status )")
     .eq("restaurant_id", restaurantId)
     .eq("profile_id", profileId)
     .eq("status", "active")
+    .eq("restaurants.status", "active")
     .maybeSingle();
   return Boolean(data);
 }

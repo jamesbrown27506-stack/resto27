@@ -15,7 +15,7 @@ import {
   signUpCustomerSchema,
   signUpRestaurantSchema,
 } from "./schemas";
-import type { RejectionReason } from "./session";
+import { getManagerRestaurantRejection, type RejectionReason } from "./session";
 
 /** What every auth action returns, so forms can render errors uniformly. */
 export interface AuthState {
@@ -144,7 +144,7 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   // Credentials were correct. Now: are they still allowed in?
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role, status, deleted_at")
+    .select("id, role, status, deleted_at")
     .eq("auth_user_id", data.user.id)
     .maybeSingle();
 
@@ -162,6 +162,14 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   if (profile.status === "pending") {
     await supabase.auth.signOut();
     return { ok: false, reason: profile.role === "manager" ? "pending-manager" : "pending" };
+  }
+
+  if (profile.role === "manager") {
+    const reason = await getManagerRestaurantRejection(profile.id);
+    if (reason) {
+      await supabase.auth.signOut();
+      return { ok: false, reason };
+    }
   }
 
   revalidatePath("/", "layout");

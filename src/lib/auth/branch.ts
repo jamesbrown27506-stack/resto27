@@ -61,7 +61,11 @@ const loadBranches = cache(async (profileId: string): Promise<Branch[]> => {
        )`,
     )
     .eq("profile_id", profileId)
-    .eq("status", "active");
+    .eq("status", "active")
+    // A roster membership is not a grant when the tenant itself is suspended.
+    // This also keeps a saved branch cookie from selecting a suspended branch
+    // when the same person still has access to another active one.
+    .eq("restaurants.status", "active");
 
   if (error) {
     console.error("[branch:loadBranches]", error.message);

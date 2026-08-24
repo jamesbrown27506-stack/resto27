@@ -170,10 +170,11 @@ export async function getManagerNavCounts(restaurantId: string): Promise<{
   // data, and an id from the URL must not resolve another tenant's queue.
   const { data: staff } = await supabase
     .from("restaurant_staff")
-    .select("id")
+    .select("id, restaurants!inner ( status )")
     .eq("restaurant_id", restaurantId)
     .eq("profile_id", profile.id)
     .eq("status", "active")
+    .eq("restaurants.status", "active")
     .maybeSingle();
 
   if (!staff) return { orders: 0, reservations: 0, messages: 0 };
