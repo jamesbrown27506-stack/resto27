@@ -280,24 +280,32 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
      * Realtime connection before rejoining.
      */
     async function authorizeRealtime(forceRefresh: boolean): Promise<boolean> {
-      const { data, error: sessionError } = await supabase.auth.getSession();
-      let error = sessionError;
-      let session = data.session;
-      const expiresSoon = !session?.expires_at || session.expires_at <= Date.now() / 1000 + 60;
+      try {
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        let error = sessionError;
+        let session = data.session;
+        const expiresSoon = !session?.expires_at || session.expires_at <= Date.now() / 1000 + 60;
 
-      if (!error && session && (forceRefresh || expiresSoon)) {
-        const refreshed = await supabase.auth.refreshSession();
-        error = refreshed.error;
-        session = refreshed.data.session;
-      }
+        if (!error && session && (forceRefresh || expiresSoon)) {
+          const refreshed = await supabase.auth.refreshSession();
+          // A refresh that fails is not automatically fatal: the token we
+          // already hold may still have minutes left on it. Keep the better
+          // of the two rather than discarding a usable one.
+          if (!refreshed.error && refreshed.data.session) session = refreshed.data.session;
+          else error = refreshed.error;
+        }
 
-      if (error || !session?.access_token) {
-        console.warn("[notify] realtime auth refresh failed", error?.message ?? "no session");
+        if (session?.access_token) {
+          await supabase.realtime.setAuth(session.access_token);
+          return true;
+        }
+
+        console.warn("[notify] realtime auth unavailable", error?.message ?? "no session");
+        return false;
+      } catch (error) {
+        console.warn("[notify] realtime auth threw", (error as Error)?.message ?? error);
         return false;
       }
-
-      await supabase.realtime.setAuth(session.access_token);
-      return true;
     }
 
     function retire(target: RealtimeChannel | null) {
@@ -326,11 +334,27 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       if (cancelled || !id) return;
       setRealtime("connecting");
 
-      if (!(await authorizeRealtime(forceRefresh))) {
-        if (!cancelled) scheduleReconnect("AUTH_REFRESH_FAILED", true);
-        return;
-      }
+      /*
+        ─────────────────────────────────────────────────────────────────────
+         A MISSING TOKEN NO LONGER MEANS "NEVER CONNECT".
+
+         This used to `return` when authorizeRealtime came back false, so the
+         channel was never created at all — it just rescheduled itself, for
+         ever, and the bell went quiet with nothing on screen to say why. Any
+         hiccup reading the session in the browser (a slow cookie read on a
+         cold PWA start, a refresh that races the proxy's own refresh) turned
+         into a permanently dead subscription rather than a slow one.
+
+         `setAuth` is an OPTIMISATION — it hands Realtime a fresh JWT so RLS
+         sees the right user. Subscribing without it is what this app did for
+         its whole life before, and the worst case is the server rejecting the
+         join, which surfaces as a normal CHANNEL_ERROR that the existing
+         backoff already retries. Trying and being refused beats not trying.
+        ─────────────────────────────────────────────────────────────────────
+      */
+      const authorized = await authorizeRealtime(forceRefresh);
       if (cancelled || profileId !== id) return;
+      if (!authorized) console.warn("[notify] subscribing without a refreshed token");
 
       retire(channel);
       const next = supabase

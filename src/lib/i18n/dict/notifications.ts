@@ -61,6 +61,11 @@ export const notificationsDict = defineDict({
     "nset.push.disabled": "Notifications push désactivées sur cet appareil.",
 
     "nset.saved": "Préférences de notification enregistrées.",
+    "nset.push.reset": "Réinitialiser les notifications",
+    "nset.push.resetHint":
+      "Efface les appareils enregistrés sur ce compte — tous — et réinscrit celui-ci de zéro. À utiliser quand le bouton dit « activé » et que rien n'arrive. Vos autres appareils se réinscrivent seuls à leur prochaine ouverture.",
+    "nset.push.resetDone": "Réinitialisé. {count} appareil(s) effacé(s), celui-ci réinscrit.",
+    "nset.push.resetFailed": "La réinitialisation a échoué. Réessayez.",
     "nset.push.test": "Envoyer une notification test",
     "nset.push.testHint":
       "Fermez complètement l'application, puis appuyez ici depuis un autre appareil — ou demandez à un collègue. Une notification reçue application ouverte ne prouve rien : c'est le cas qui marchait déjà.",
@@ -121,6 +126,11 @@ export const notificationsDict = defineDict({
     "nset.push.disabled": "Push notifications disabled on this device.",
 
     "nset.saved": "Notification preferences saved.",
+    "nset.push.reset": "Reset notifications",
+    "nset.push.resetHint":
+      "Clears the devices stored for this account — all of them — and re-registers this one from scratch. Use it when the switch says on and nothing arrives. Your other devices re-register themselves the next time each is opened.",
+    "nset.push.resetDone": "Reset. {count} device(s) cleared, this one re-registered.",
+    "nset.push.resetFailed": "The reset did not complete. Try again.",
     "nset.push.test": "Send a test notification",
     "nset.push.testHint":
       "Close the app completely first, then trigger this from another device — or ask a colleague. A notification that arrives with the app in front proves nothing: that is the case that already worked.",

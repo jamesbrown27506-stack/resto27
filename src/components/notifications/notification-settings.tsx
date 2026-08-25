@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { AlertTriangle, Bell, BellRing, Mail, Smartphone } from "lucide-react";
+import { AlertTriangle, Bell, BellRing, Mail, RotateCcw, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
@@ -22,6 +22,7 @@ import {
   getMyNotificationChannels,
   removePushSubscription,
   saveMyNotificationChannels,
+  resetPushSubscriptions,
   savePushSubscription,
   sendTestPush,
 } from "@/lib/data/notify-actions";
@@ -94,7 +95,66 @@ export function NotificationSettings({ className }: { className?: string }) {
 
   /** The real-path push test — see the button in the device box below. */
   const [testing, setTesting] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [testReport, setTestReport] = useState<Awaited<ReturnType<typeof sendTestPush>> | null>(null);
+
+  /**
+   * Full reset: forget this browser's subscription AND every row the server
+   * holds, unregister the worker, then subscribe again from nothing.
+   *
+   * Ordered deliberately. The server rows go LAST — if the browser half fails
+   * we stop before destroying the only record of the other devices. And the
+   * worker is unregistered rather than reused, because a worker evicted or
+   * half-updated is one of the states this is here to escape; `register`
+   * afterwards installs a clean one.
+   */
+  async function runReset() {
+    setResetting(true);
+    setTestReport(null);
+    try {
+      const key = configuredVapidKey();
+      if (!key) {
+        toast(t("nset.push.notConfigured"), "warning");
+        return;
+      }
+
+      // 1. Drop the browser's current subscription, if any.
+      const existing = await navigator.serviceWorker
+        .getRegistration("/sw.js")
+        .catch(() => null);
+      const sub = await existing?.pushManager.getSubscription().catch(() => null);
+      if (sub) await sub.unsubscribe().catch(() => false);
+
+      // 2. Throw the worker away so the next one is installed fresh.
+      if (existing) await existing.unregister().catch(() => false);
+
+      // 3. Now the server's rows — every device, see resetPushSubscriptions.
+      const cleared = await resetPushSubscriptions();
+      if (!cleared.ok) {
+        toast(cleared.error ?? t("nset.saveFailed"), "error");
+        return;
+      }
+
+      // 4. Rebuild this device from scratch.
+      const registration = await registerPushWorker();
+      const { subscription } = await ensurePushSubscription(registration, key);
+      const saved = await savePushSubscription(serializePushSubscription(subscription));
+      if (!saved.ok) {
+        toast(saved.error ?? t("nset.saveFailed"), "error");
+        return;
+      }
+
+      setDeviceSubscribed(true);
+      setBlock(null);
+      toast(t("nset.push.resetDone", { count: cleared.removed }), "success");
+    } catch (error) {
+      console.error("[push] reset failed", error);
+      setBlock("failed");
+      toast(t("nset.push.resetFailed"), "error");
+    } finally {
+      setResetting(false);
+    }
+  }
 
   async function runTest() {
     setTesting(true);
@@ -454,6 +514,40 @@ export function NotificationSettings({ className }: { className?: string }) {
               <p className="text-xs text-text-light">
                 <span>{t("nset.push.grantHint")}</span>
               </p>
+            )}
+
+            {/*
+              THE LAST RESORT, AND DELIBERATELY OUTSIDE THE `pushOnHere` GATE.
+
+              Every other control here assumes the two halves of push agree:
+              the browser holds a subscription and the server holds a row that
+              describes it. This is for when they do not — and in that state
+              the switch above often reads "off" on the very device you are
+              trying to repair, so hiding the repair behind "on" would hide it
+              exactly when it is needed.
+
+              Destructive enough to warrant the warning underneath: it clears
+              EVERY device on the account, not just this one, because a stale
+              row on a handset you no longer own is invisible from here and is
+              precisely the kind of thing that makes "sent" mean nothing.
+            */}
+            {!hardBlocked && (
+              <div className="flex flex-col gap-2 border-t border-border pt-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  loading={resetting}
+                  disabled={resetting || testing}
+                  onClick={() => void runReset()}
+                  className="self-start"
+                >
+                  <RotateCcw className="size-3.5" aria-hidden />
+                  <span>{t("nset.push.reset")}</span>
+                </Button>
+                <p className="text-xs leading-relaxed text-text-light">
+                  <span>{t("nset.push.resetHint")}</span>
+                </p>
+              </div>
             )}
 
             {/* Apple's rule, and the single most common "it just does not

@@ -362,6 +362,61 @@ export async function saveMyNotificationChannels(
  * handset accepting it and showing nothing. Only the third is Android's
  * battery settings, and only this can tell you which one you have.
  */
+/**
+ * Forget every push subscription this account has, on every device.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE ESCAPE HATCH FOR "IT IS PROBABLY MY DEVICE".
+ *
+ *  Push has two halves that can disagree, and nothing in the normal UI can
+ *  tell you which half is wrong: the BROWSER holds a subscription, and the
+ *  SERVER holds a row that is supposed to describe it. They drift apart in
+ *  ways no amount of re-toggling fixes, because toggling repairs the browser
+ *  half and leaves the server's stale copies behind:
+ *
+ *    · a re-subscribe writes a new endpoint and the old row stays, so the
+ *      server keeps sending to an address nobody is listening on. Six rows
+ *      for one person is six sends, five of them into the void;
+ *    · a browser that was reinstalled, or a profile that was signed into on
+ *      a borrowed handset, leaves rows that will never be claimed again;
+ *    · an endpoint the push service still ACCEPTS (201) but whose browser is
+ *      long gone looks perfectly healthy from the server, which is the worst
+ *      case of all — the diagnostics say "sent" and nothing arrives.
+ *
+ *  Deleting every row is what makes the next repair honest. `PushSync` runs
+ *  on the very next load of each real device and re-registers exactly one
+ *  current endpoint per browser, so what remains afterwards is the set of
+ *  devices that actually exist.
+ *
+ *  The other devices go quiet until each is opened once. That is the point:
+ *  a silence you caused and understand beats a silence you are guessing at.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function resetPushSubscriptions(): Promise<{
+  ok: boolean;
+  removed: number;
+  error?: string;
+}> {
+  const profile = await requireUser();
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("push_subscriptions")
+    .delete()
+    .eq("profile_id", profile.id)
+    .select("id");
+
+  if (error) {
+    console.error("[notify:resetPushSubscriptions]", error.code ?? "", error.message);
+    return { ok: false, removed: 0, error: "Could not clear the stored devices." };
+  }
+
+  revalidatePath("/settings");
+  revalidatePath("/m/settings");
+  revalidatePath("/a/notifications");
+  return { ok: true, removed: (data ?? []).length };
+}
+
 export async function sendTestPush(): Promise<{
   ok: boolean;
   configured: boolean;
