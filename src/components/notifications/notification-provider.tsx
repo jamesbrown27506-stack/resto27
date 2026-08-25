@@ -5,7 +5,10 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { getNotificationState } from "@/lib/data/notify-actions";
 import { useToast } from "@/components/ui/toast";
-import { notificationSoundUrl } from "@/lib/notification-sound";
+import {
+  playNotificationSound,
+  unlockNotificationSound,
+} from "@/lib/notifications/sound-player";
 import type { NotifyTone } from "@/lib/notify";
 
 /**
@@ -61,6 +64,11 @@ interface NotificationContextValue {
   lastEventAt: Date | null;
   decrementUnread: () => void;
   clearUnread: () => void;
+  /**
+   * True when the browser refused the last sound because nobody has clicked
+   * the page yet. Actionable, so it is surfaced rather than swallowed.
+   */
+  soundBlocked: boolean;
   /** Play the configured sound now — the settings preview and diagnostics. */
   playSound: () => void;
 }
@@ -75,6 +83,9 @@ export function useNotifications(): NotificationContextValue {
 
 /** Reconnect delays, in ms. The last value repeats for every later attempt. */
 const BACKOFF = [2_000, 5_000, 10_000, 30_000];
+
+/** How long one event stays "already announced". See `announce` below. */
+const DEDUPE_WINDOW_MS = 10_000;
 
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
@@ -92,45 +103,124 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     soundRef.current = soundName;
   }, [soundName]);
 
-  // Browsers block audio until the user has interacted with the page at least
-  // once. A realtime ding on a tab nobody has touched yet is refused by the
-  // autoplay policy — and there is nothing to announce to: the tab is not
-  // even being looked at. The first pointer or key interaction unlocks sound
-  // for the rest of the visit.
-  const unlockedRef = useRef(false);
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     THE SOUND IS UNLOCKED ONCE, ON THE FIRST INTERACTION, AND REUSED.
+
+     Browsers refuse audio from a page the user has never interacted with, and
+     they are strictest about exactly the case that matters here: a cold
+     `new Audio()` asked to start playing in a tab nobody has touched for ten
+     minutes. `unlockNotificationSound` plays one MUTED pass through a single
+     shared element while the user's first click is still on the stack, and
+     from then on that element is one the browser has already let play.
+
+     This is the whole trick behind a web app that can ding while you are in
+     another application — see lib/notifications/sound-player.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const [soundBlocked, setSoundBlocked] = useState(false);
+
   useEffect(() => {
     const unlock = () => {
-      unlockedRef.current = true;
+      unlockNotificationSound(soundRef.current);
+      setSoundBlocked(false);
     };
-    window.addEventListener("pointerdown", unlock, { once: true });
-    window.addEventListener("keydown", unlock, { once: true });
+    window.addEventListener("pointerdown", unlock);
+    window.addEventListener("keydown", unlock);
     return () => {
       window.removeEventListener("pointerdown", unlock);
       window.removeEventListener("keydown", unlock);
     };
   }, []);
 
-  const play = useCallback((force = false) => {
-    if (!force && (document.hidden || !unlockedRef.current)) return;
-    try {
-      const audio = new Audio(notificationSoundUrl(soundRef.current));
-      audio.volume = 0.6;
-      void audio.play().catch((error) => {
-        // Autoplay refusal is expected and silent; a 404 on the file is not.
-        if ((error as Error)?.name !== "NotAllowedError") {
-          console.warn("[notify] sound failed", soundRef.current, error);
-        }
-      });
-    } catch {
-      // Audio is a convenience; a failed play must never throw up.
-    }
+  /*
+     NO `document.hidden` CHECK. It used to be the first thing this function
+     did, and it was the bug: a hidden tab is the entire reason the sound
+     exists. A restaurant with the orders tab open behind their WhatsApp is
+     the normal case, not the exception, and silence there means a missed
+     order.
+
+     `force` is gone too — it only existed to bypass the hidden check for the
+     settings preview, and there is nothing left to bypass.
+  */
+  const play = useCallback(() => {
+    void playNotificationSound(soundRef.current).then((result) => {
+      // Surfaced rather than swallowed: "you must click the page once before
+      // it can make a sound" is something the person can act on, and the
+      // diagnostics screen can now say it out loud.
+      setSoundBlocked(result === "blocked");
+    });
   }, []);
+
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     ONE EVENT CAN ARRIVE TWICE, SO IT IS ANNOUNCED ONCE.
+
+     A signed-in manager with the tab open AND push subscribed gets the same
+     new order down two paths within about a second: the realtime row, and the
+     service worker's postMessage. Without this they hear two dings and read
+     two toasts for one order, which reads as a glitchy app.
+
+     Keyed on title+body — the payloads carry no id — and remembered for ten
+     seconds, which is far longer than the gap between the two paths and short
+     enough that a genuinely repeated event still announces itself. Two
+     identical notifications inside ten seconds collapsing to one ding is the
+     better outcome anyway.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const seenRef = useRef(new Map<string, number>());
+
+  const announce = useCallback(
+    (title: string, body: string, tone: NotifyTone) => {
+      const key = `${title}\u0000${body}`;
+      const now = Date.now();
+
+      for (const [k, at] of seenRef.current) {
+        if (now - at > DEDUPE_WINDOW_MS) seenRef.current.delete(k);
+      }
+      if (seenRef.current.has(key)) return;
+      seenRef.current.set(key, now);
+
+      setUnread((u) => u + 1);
+      setLastEventAt(new Date());
+      toast(title, tone);
+      play();
+    },
+    [toast, play],
+  );
+
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     THE SERVICE WORKER TELLS THE PAGE, because a push wakes the WORKER and
+     not the page.
+
+     This is the half that was missing. The tab was open the whole time and
+     perfectly capable of playing a sound; it simply had no idea a push had
+     landed. sw.js now posts every push to every open client, so a tab sitting
+     behind another application announces the order the moment it arrives —
+     with the restaurant's own chosen sound, not the generic OS blip.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || data.type !== "restolink:notification") return;
+      announce(String(data.title ?? ""), String(data.body ?? ""), (data.tone ?? "info") as NotifyTone);
+    };
+
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+  }, [announce]);
 
   useEffect(() => {
     let channel: RealtimeChannel | null = null;
     let cancelled = false;
     let attempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Held so a revive can rebuild the channel without re-reading the session. */
+    let profileId: string | null = null;
 
     // Register the service worker on every signed-in page load, not only when
     // someone toggles push in settings. A subscription saved on another device
@@ -157,10 +247,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           },
           (payload) => {
             const row = payload.new as { title: string; body: string; tone: NotifyTone };
-            setUnread((u) => u + 1);
-            setLastEventAt(new Date());
-            toast(row.title, row.tone);
-            play();
+            announce(row.title, row.body ?? "", row.tone);
           },
         )
         .subscribe((status, error) => {
@@ -210,11 +297,55 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
       setSoundName(state.sound);
       setUnread(state.unread);
+      profileId = state.profileId;
       connect(state.profileId);
     })();
 
+    /*
+      ─────────────────────────────────────────────────────────────────────
+       A SOCKET CAN DIE QUIETLY WHILE THE TAB IS IN THE BACKGROUND.
+
+       Chrome clamps timers in a tab hidden for more than five minutes to one
+       tick a minute. Realtime's heartbeat is a timer, so a long-backgrounded
+       tab can miss enough beats for the server to hang up — and the retry
+       that would fix it is a timer too, so recovery crawls at the same
+       throttled pace. The tab looks connected and silently is not.
+
+       Coming back to the tab, or the network returning, is a reliable moment
+       to distrust the channel and rebuild it. Cheap, and it converts "I
+       reloaded and then it worked" into something that never needed a reload.
+
+       This is belt and braces, not the main defence: web push does not depend
+       on page timers at all, and now that sw.js forwards every push to the
+       page, a dead channel no longer means a silent one.
+      ─────────────────────────────────────────────────────────────────────
+    */
+    function revive() {
+      if (cancelled || !profileId) return;
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (retryTimer) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+      attempt = 0;
+      const dead = channel;
+      channel = null;
+      if (dead) void supabase.removeChannel(dead);
+      setRealtime("connecting");
+      connect(profileId);
+    }
+
+    const onVisible = () => {
+      if (!document.hidden) revive();
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", revive);
+
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", revive);
       if (retryTimer) clearTimeout(retryTimer);
       if (channel) void supabase.removeChannel(channel);
     };
@@ -231,9 +362,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         lastEventAt,
         decrementUnread: () => setUnread((u) => Math.max(0, u - 1)),
         clearUnread: () => setUnread(0),
-        // Forced: a preview button IS the user interaction, so the autoplay
-        // and hidden-tab guards do not apply to it.
-        playSound: () => play(true),
+        soundBlocked,
+        playSound: () => play(),
       }}
     >
       {children}

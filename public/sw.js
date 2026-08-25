@@ -29,17 +29,76 @@ self.addEventListener("push", (event) => {
     // dropping the notification entirely.
   }
 
-  const options = {
+  event.waitUntil(deliver(data));
+});
+
+/**
+ * ───────────────────────────────────────────────────────────────────────────
+ *  ONE PUSH, TWO DELIVERIES — and which ones fire depends on what is open.
+ *
+ *  This is the mechanism behind "WhatsApp Web dings while I am in another
+ *  app". The tab is still open and its JavaScript still runs; what it lacks
+ *  is any way to know a push arrived, because a push wakes the WORKER, not
+ *  the page. So the worker tells the page.
+ *
+ *    · postMessage to every open tab — the page plays the restaurant's own
+ *      notification sound and shows its own toast, instantly, with no OS
+ *      notification needed. This is the part that was missing.
+ *    · showNotification — the OS banner, which is the only thing left when
+ *      no tab is open at all, and is REQUIRED on every push regardless:
+ *      Chrome subscribes us `userVisibleOnly` and penalises a worker that
+ *      takes a push and shows nothing.
+ *
+ *  When a tab is VISIBLE the banner is shown `silent`, because the page has
+ *  already said the same thing in the same second and two alerts for one
+ *  event is how people learn to ignore both. When every tab is hidden or
+ *  closed, it makes its normal sound.
+ * ───────────────────────────────────────────────────────────────────────────
+ */
+async function deliver(data) {
+  const url = data.href || "/";
+  // `tag` collapses repeats: five orders in a minute should update one banner,
+  // not build a stack of five the manager has to dismiss one at a time.
+  const tag = data.tag || "restolink";
+
+  let clients = [];
+  try {
+    clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  } catch {
+    // matchAll can reject in odd states; the banner below still gets shown.
+  }
+
+  for (const client of clients) {
+    try {
+      client.postMessage({
+        type: "restolink:notification",
+        title: data.title,
+        body: data.body || "",
+        href: url,
+        tone: data.tone || "info",
+      });
+    } catch {
+      // A dead client is not a reason to skip the banner.
+    }
+  }
+
+  const anyVisible = clients.some((c) => c.visibilityState === "visible");
+
+  return self.registration.showNotification(data.title, {
     body: data.body || "",
     icon: "/favicon.ico",
     badge: "/favicon.ico",
+    tag,
+    renotify: true,
+    // Silent only when a tab is in FRONT and has already announced it. A tab
+    // that is merely open — the case this whole change is about — still gets
+    // the OS sound, because the user is looking somewhere else entirely.
+    silent: anyVisible,
     // Renamed (data.href → data.url) because `data.href` is a native
     // Notification property that some browsers drop or overwrite.
-    data: { url: data.href || "/" },
-  };
-
-  event.waitUntil(self.registration.showNotification(data.title, options));
-});
+    data: { url },
+  });
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

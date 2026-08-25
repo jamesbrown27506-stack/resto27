@@ -28,7 +28,8 @@ import { cn } from "@/lib/utils";
  * ─────────────────────────────────────────────────────────────────────────
  */
 export function RealtimeStatus() {
-  const { realtime, realtimeDetail, lastEventAt, soundName, playSound } = useNotifications();
+  const { realtime, realtimeDetail, lastEventAt, soundName, soundBlocked, playSound } =
+    useNotifications();
 
   const tone =
     realtime === "connected"
@@ -85,6 +86,18 @@ export function RealtimeStatus() {
           {notificationSoundUrl(soundName)}
         </span>
       </div>
+
+      {/* The autoplay policy is the one reason a correctly-wired notification
+          stays silent, and it used to be invisible — the browser refuses,
+          nothing is logged, and the tab looks like it simply has nothing to
+          say. Naming it turns a mystery into one click. */}
+      {soundBlocked && (
+        <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning">
+          The browser refused to play the sound because this page has not been clicked yet. Click
+          anywhere on it once and notifications will be audible for the rest of the visit — including
+          while this tab is in the background.
+        </p>
+      )}
 
       <p className="text-xs leading-relaxed text-text-light">
         If this says <strong className="text-text">Not connected</strong>, the server is fine and
