@@ -164,6 +164,17 @@ export interface PushDeviceResult {
   /** HTTP status from the push service, when there was one. */
   code?: number;
   detail?: string;
+  /**
+   * True for the browser that asked for the test.
+   *
+   * Without this the report is unreadable in the exact situation it exists
+   * for: "sent to 6 devices" says nothing when what you need to know is
+   * whether THIS handset is one of the six. An account accumulates endpoints
+   * from browsers that no longer exist, and the push service returns 201 for
+   * them long after nobody is listening — so a page of green ticks can mean
+   * six deliveries into the void.
+   */
+  isThisDevice?: boolean;
 }
 
 /**
@@ -186,6 +197,8 @@ export interface PushDeviceResult {
 export async function sendPushWithReport(
   profileId: string,
   payload: PushPayload,
+  /** The caller's own endpoint, so its row can be marked in the report. */
+  currentEndpoint?: string,
 ): Promise<{ configured: boolean; platformEnabled: boolean; devices: PushDeviceResult[] }> {
   const configured = pushConfigured();
   const platformEnabled = configured ? await platformPushEnabled() : false;
@@ -213,6 +226,7 @@ export async function sendPushWithReport(
       // A malformed endpoint is itself worth seeing in the report.
     }
     const endpointTail = sub.endpoint.slice(-12);
+    const isThisDevice = currentEndpoint ? sub.endpoint === currentEndpoint : undefined;
 
     try {
       await webpush.sendNotification(
@@ -228,7 +242,7 @@ export async function sendPushWithReport(
           failure_count: 0,
         })
         .eq("id", sub.id);
-      return { service, endpointTail, status: "sent" };
+      return { service, endpointTail, status: "sent", isThisDevice };
     } catch (pushError) {
       const code = (pushError as { statusCode?: number })?.statusCode;
       if (code === 404 || code === 410) {
@@ -238,6 +252,7 @@ export async function sendPushWithReport(
           endpointTail,
           status: "expired",
           code,
+          isThisDevice,
           detail: "Endpoint gone — the row has been deleted. Re-enable push on that device.",
         };
       } else {
@@ -250,6 +265,7 @@ export async function sendPushWithReport(
           endpointTail,
           status: "failed",
           code,
+          isThisDevice,
           detail: (pushError as Error)?.message?.slice(0, 200),
         };
       }

@@ -417,24 +417,35 @@ export async function resetPushSubscriptions(): Promise<{
   return { ok: true, removed: (data ?? []).length };
 }
 
-export async function sendTestPush(): Promise<{
+export async function sendTestPush(currentEndpoint?: string): Promise<{
   ok: boolean;
   configured: boolean;
   platformEnabled: boolean;
   devices: PushDeviceResult[];
+  /** False when the caller's own browser is not among the stored devices. */
+  thisDeviceRegistered: boolean;
 }> {
   const profile = await requireUser();
 
   const href =
     profile.role === "admin" ? "/a/diagnostics" : profile.role === "manager" ? "/m/settings" : "/settings";
 
-  const report = await sendPushWithReport(profile.id, {
-    title: "Test notification",
-    body: "If you can read this with the app closed, push is working on this device.",
-    href,
-  });
+  const report = await sendPushWithReport(
+    profile.id,
+    {
+      title: "Test notification",
+      body: "If you can read this with the app closed, push is working on this device.",
+      href,
+      tag: "restolink:test",
+    },
+    currentEndpoint,
+  );
 
-  return { ok: report.devices.some((d) => d.status === "sent"), ...report };
+  return {
+    ok: report.devices.some((d) => d.status === "sent"),
+    thisDeviceRegistered: report.devices.some((d) => d.isThisDevice),
+    ...report,
+  };
 }
 
 export async function announcePushEnabled(): Promise<{ ok: boolean; error?: string }> {

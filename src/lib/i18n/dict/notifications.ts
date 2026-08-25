@@ -61,6 +61,9 @@ export const notificationsDict = defineDict({
     "nset.push.disabled": "Notifications push désactivées sur cet appareil.",
 
     "nset.saved": "Préférences de notification enregistrées.",
+    "nset.push.thisDevice": "cet appareil",
+    "nset.push.notThisDevice":
+      "Cet appareil n'est PAS dans la liste ci-dessus : le serveur envoie à d'autres navigateurs, jamais à celui-ci. Appuyez sur « Réinitialiser les notifications » ci-dessous.",
     "nset.push.reset": "Réinitialiser les notifications",
     "nset.push.resetHint":
       "Efface les appareils enregistrés sur ce compte — tous — et réinscrit celui-ci de zéro. À utiliser quand le bouton dit « activé » et que rien n'arrive. Vos autres appareils se réinscrivent seuls à leur prochaine ouverture.",
@@ -126,6 +129,9 @@ export const notificationsDict = defineDict({
     "nset.push.disabled": "Push notifications disabled on this device.",
 
     "nset.saved": "Notification preferences saved.",
+    "nset.push.thisDevice": "this device",
+    "nset.push.notThisDevice":
+      "This device is NOT in the list above — the server is sending to other browsers, never to this one. Press Reset notifications below.",
     "nset.push.reset": "Reset notifications",
     "nset.push.resetHint":
       "Clears the devices stored for this account — all of them — and re-registers this one from scratch. Use it when the switch says on and nothing arrives. Your other devices re-register themselves the next time each is opened.",

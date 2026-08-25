@@ -159,7 +159,14 @@ export function NotificationSettings({ className }: { className?: string }) {
   async function runTest() {
     setTesting(true);
     setTestReport(null);
-    const report = await sendTestPush().catch(() => null);
+    // Hand the server this browser's own endpoint so the report can say which
+    // line is this device — the only line that answers the actual question.
+    const mine = await navigator.serviceWorker
+      .getRegistration("/sw.js")
+      .then((r) => r?.pushManager.getSubscription())
+      .catch(() => null);
+
+    const report = await sendTestPush(mine?.endpoint).catch(() => null);
     setTesting(false);
     if (!report) return toast(t("nset.saveFailed"), "error");
     setTestReport(report);
@@ -471,6 +478,20 @@ export function NotificationSettings({ className }: { className?: string }) {
 
                 {testReport && (
                   <div className="flex flex-col gap-1.5">
+                    {/*
+                      THE LINE THAT ANSWERS THE QUESTION. Every other result
+                      can be a green tick for a browser that no longer exists;
+                      this one says whether the handset in your hand is even
+                      on the list. If it is not, no amount of retrying will
+                      deliver anything here — the fix is Reset, below.
+                    */}
+                    {testReport.devices.length > 0 && !testReport.thisDeviceRegistered && (
+                      <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-light p-2.5 text-xs leading-relaxed text-warning">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                        <span>{t("nset.push.notThisDevice")}</span>
+                      </p>
+                    )}
+
                     {testReport.devices.length === 0 ? (
                       <p className="flex items-start gap-2 text-xs text-warning">
                         <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -494,6 +515,9 @@ export function NotificationSettings({ className }: { className?: string }) {
                             {" — "}
                             {t(`nset.push.result.${d.status}` as TranslationKey)}
                             {d.code ? ` (${d.code})` : ""}
+                            {d.isThisDevice && (
+                              <strong> — {t("nset.push.thisDevice")}</strong>
+                            )}
                           </span>
                         </p>
                       ))
