@@ -64,6 +64,15 @@ export type NotifyEvent =
   | "chat_reply" //          → customer: the other side replied
   | "push_enabled"; //       → self    : "push is on", sent the moment it is
 
+/*
+ * Events whose push banner must STAY on screen until dismissed (desktop;
+ * sw.js applies this only when no window is visible). A new order is the
+ * product; one that slides away behind other windows after five seconds is
+ * an order the kitchen never saw. A customer chat message is the same shape
+ * of emergency from the other side. Everything else stays auto-dismissing.
+ */
+const REQUIRE_INTERACTION_EVENTS: ReadonlySet<NotifyEvent> = new Set<NotifyEvent>(["new_order", "chat"]);
+
 export interface NotifyParams {
   reference?: string;
   restaurantName?: string;
@@ -836,7 +845,14 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
     // ── Deliver per recipient, each channel fenced ──────────────────────
     const inAppRows: { profile_id: string; title: string; body: string; tone: NotifyTone; href: string | null }[] = [];
     const emails: { to: string; subject: string; body: string }[] = [];
-    const pushes: { profileId: string; title: string; body: string; href: string | null }[] = [];
+    const pushes: {
+      profileId: string;
+      title: string;
+      body: string;
+      href: string | null;
+      tone: NotifyTone;
+      locale: Locale;
+    }[] = [];
 
     for (const recipient of recipients) {
       /*
@@ -888,7 +904,18 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
         });
       }
       if (push) {
-        pushes.push({ profileId: recipient.profileId, title: text.title, body: text.body, href });
+        pushes.push({
+          profileId: recipient.profileId,
+          title: text.title,
+          body: text.body,
+          href,
+          // Tone and language travel WITH the push now: when the banner is
+          // announced by the service worker's postMessage (tab open, app
+          // hidden), the toast used to always read as "info" because the
+          // payload carried nothing else.
+          tone,
+          locale,
+        });
       }
     }
 
@@ -898,7 +925,27 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
     }
 
     await Promise.allSettled(emails.map((m) => trySendMail({ to: m.to, subject: m.subject, body: m.body })));
-    await Promise.allSettled(pushes.map((p) => sendPush(p.profileId, { title: p.title, body: p.body, href: p.href })));
+    await Promise.allSettled(
+      pushes.map((p) =>
+        sendPush(p.profileId, {
+          title: p.title,
+          body: p.body,
+          href: p.href,
+          /*
+            PER-EVENT COLLAPSE KEY. sw.js was already reading `data.tag`,
+            but the server never sent one — so every push shared the
+            default tag and a new order REPLACED an unread chat reply on
+            the lock screen. Distinct events now stack; repeats of the
+            same event still replace each other (renotify) instead of
+            building a dismiss-one-by-one pile.
+          */
+          tag: `restolink:${input.event}`,
+          tone: p.tone,
+          lang: p.locale,
+          requireInteraction: REQUIRE_INTERACTION_EVENTS.has(input.event),
+        }),
+      ),
+    );
 
     return { delivered: inAppRows.length };
   } catch (error) {

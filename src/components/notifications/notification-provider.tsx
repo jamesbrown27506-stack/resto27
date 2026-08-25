@@ -135,6 +135,36 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, []);
 
   /*
+    ─────────────────────────────────────────────────────────────────────────
+     THE BELL DIES WITH THE TAB. THE APP ICON DOES NOT.
+
+     On an installed PWA the taskbar / home-screen icon can carry an unread
+     badge of its own (Windows taskbar, Android launcher, macOS dock). Until
+     now only the in-page bell knew about unread items, so an installed app
+     with three unseen orders looked exactly like an installed app with
+     nothing to report. This mirrors `unread` onto the icon whenever it
+     changes — including when a push arrives into a hidden tab, because
+     announce() bumps the same state.
+
+     Feature-detected and fenced: browsers without setAppBadge simply keep
+     the old behaviour, and a rejection here must never break rendering.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  useEffect(() => {
+    const nav = navigator as Navigator & {
+      setAppBadge?: (count?: number) => Promise<void>;
+      clearAppBadge?: () => Promise<void>;
+    };
+    if (typeof nav.setAppBadge !== "function" || typeof nav.clearAppBadge !== "function") return;
+    try {
+      if (unread > 0) void nav.setAppBadge(unread).catch(() => {});
+      else void nav.clearAppBadge().catch(() => {});
+    } catch {
+      // Unsupported platform — the bell remains the only indicator.
+    }
+  }, [unread]);
+
+  /*
      NO `document.hidden` CHECK. It used to be the first thing this function
      did, and it was the bug: a hidden tab is the entire reason the sound
      exists. A restaurant with the orders tab open behind their WhatsApp is

@@ -128,6 +128,21 @@ async function deliver(data) {
   return self.registration.showNotification(data.title, {
     body: data.body || "",
     /*
+      THE RECIPIENT'S LANGUAGE, NOT THE DEVICE'S. The server builds each
+      push in the person's own chosen language; passing it here means the
+      OS renders — and screen readers read — the banner correctly even
+      when that differs from the phone's system language.
+    */
+    lang: data.lang || undefined,
+    /*
+      STICKY ONLY WHERE IT EARNS ITS KEEP. The server marks critical
+      operational events (a new order, a chat message) requireInteraction,
+      which keeps the banner up until dismissed on desktop. It is applied
+      here only when no window is visible: a banner nobody is looking at
+      must wait for them; one sitting under their eyes must not trap them.
+    */
+    requireInteraction: Boolean(data.requireInteraction) && !anyVisible,
+    /*
       A REAL ICON, NOT THE FAVICON. Android draws the notification icon at
       64dp and the .ico is 16–32px: it arrived as a smear, or as Chrome's
       default globe when the decode failed outright. app-icon-192.png is the

@@ -29,6 +29,41 @@ export interface PushPayload {
   title: string;
   body?: string;
   href?: string | null;
+  /**
+   * Collapse key — banners sharing a tag REPLACE each other instead of
+   * stacking. Per-event tags are what stop a new order from erasing an
+   * unread chat reply on the lock screen.
+   */
+  tag?: string;
+  /** Severity, forwarded to the page toast by sw.js (colour + semantics). */
+  tone?: "info" | "success" | "warning" | "error";
+  /** The recipient's own language ("fr"/"en") — the OS renders it. */
+  lang?: string;
+  /**
+   * Keep the banner on screen until dismissed. sw.js applies it only when
+   * no window is visible, so it never traps a banner someone is looking at.
+   */
+  requireInteraction?: boolean;
+}
+
+/**
+ * THE WIRE FORMAT, IN EXACTLY ONE PLACE.
+ *
+ * Both send paths used to serialise the payload themselves, and the copies
+ * had already started drifting — sw.js grew support for `tag` and `tone`
+ * that the server never sent. Every field the worker understands is built
+ * here or nowhere.
+ */
+function payloadBody(payload: PushPayload): string {
+  return JSON.stringify({
+    title: payload.title,
+    body: payload.body ?? "",
+    href: payload.href ?? "/",
+    ...(payload.tag ? { tag: payload.tag } : {}),
+    ...(payload.tone ? { tone: payload.tone } : {}),
+    ...(payload.lang ? { lang: payload.lang } : {}),
+    ...(payload.requireInteraction ? { requireInteraction: true } : {}),
+  });
 }
 
 /**
@@ -78,7 +113,22 @@ export function pushConfigured(): boolean {
   return true;
 }
 
+/*
+  THE MASTER SWITCH IS READ ON EVERY PUSH TO EVERY PERSON.
+
+  A broadcast to every customer on the platform used to become one identical
+  settings query PER RECIPIENT, all within the same second. A thirty-second
+  cache turns that into one query for the whole burst while still picking up
+  an admin's kill switch within half a minute — the right trade-off for a
+  switch that exists to stop noise, not to gate emergencies.
+*/
+const PLATFORM_PUSH_TTL_MS = 30_000;
+let platformPushCache: { value: boolean; at: number } | null = null;
+
 async function platformPushEnabled(): Promise<boolean> {
+  if (platformPushCache && Date.now() - platformPushCache.at < PLATFORM_PUSH_TTL_MS) {
+    return platformPushCache.value;
+  }
   try {
     const supabase = createAdminClient();
     const { data } = await supabase
@@ -86,7 +136,11 @@ async function platformPushEnabled(): Promise<boolean> {
       .select("value")
       .eq("key", "push_enabled")
       .maybeSingle();
-    return data?.value !== "false";
+    const value = data?.value !== "false";
+    // Only a successful read is cached. A transient error must not pin
+    // "disabled" for thirty seconds — falling through re-reads next call.
+    platformPushCache = { value, at: Date.now() };
+    return value;
   } catch {
     return false;
   }
@@ -149,11 +203,7 @@ export async function sendPushWithReport(
   if (rows.length === 0) return { configured, platformEnabled, devices: [] };
 
   setVapidDetails();
-  const body = JSON.stringify({
-    title: payload.title,
-    body: payload.body ?? "",
-    href: payload.href ?? "/",
-  });
+  const body = payloadBody(payload);
 
   const devices = await Promise.all(rows.map(async (sub): Promise<PushDeviceResult> => {
     let service = "unknown";
@@ -212,60 +262,21 @@ export async function sendPushWithReport(
 /**
  * Deliver one message to one person's browser(s). Never throws.
  *
- * A subscription whose endpoint the push service no longer recognises
- * (status 404/410 — the browser was uninstalled, the site was blocked, the
- * endpoint expired) is deleted here so it never spams the log again. That
- * cleanup is the "expiry handling" every Web Push guide warns about.
+ * ONE DELIVERY PATH, NOT TWO.
+ *
+ * This used to carry its own full copy of the send / 404-410 cleanup /
+ * record_push_failure logic, parallel to sendPushWithReport's. The copies
+ * had already drifted once, and anything fixed in one silently stayed
+ * broken in the other. This now delegates to the reporting path and throws
+ * away the answer: same encryption, same urgency, same expiry handling,
+ * one place to fix.
  */
 export async function sendPush(profileId: string, payload: PushPayload): Promise<void> {
   try {
-    if (!pushConfigured()) return;
-    if (!(await platformPushEnabled())) return;
-
-    const supabase = createAdminClient();
-    const { data: subs, error } = await supabase
-      .from("push_subscriptions")
-      .select("id, endpoint, p256dh, auth")
-      .eq("profile_id", profileId);
-
-    if (error || !subs || subs.length === 0) return;
-
-    setVapidDetails();
-    const body = JSON.stringify({
-      title: payload.title,
-      body: payload.body ?? "",
-      href: payload.href ?? "/",
-    });
-
-    await Promise.allSettled((subs as { id: string; endpoint: string; p256dh: string; auth: string }[]).map(async (sub) => {
-      try {
-        await webpush.sendNotification(
-          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-          body,
-          PUSH_OPTIONS,
-        );
-        await supabase
-          .from("push_subscriptions")
-          .update({
-            last_success_at: new Date().toISOString(),
-            last_failure_code: null,
-            failure_count: 0,
-          })
-          .eq("id", sub.id);
-      } catch (pushError) {
-        const status = (pushError as { statusCode?: number })?.statusCode;
-        if (status === 404 || status === 410) {
-          await supabase.from("push_subscriptions").delete().eq("id", sub.id);
-        } else {
-          await supabase.rpc("record_push_failure", {
-            p_subscription_id: sub.id,
-            p_failure_code: status ?? null,
-          });
-          console.error("[push] delivery failed", status ?? "", (pushError as Error)?.message);
-        }
-      }
-    }));
+    await sendPushWithReport(profileId, payload);
   } catch (error) {
+    // sendPushWithReport fences every device individually and never throws,
+    // but this is the fire-and-forget entry point - it stays fenced too.
     console.error("[push] send failed", error);
   }
 }
