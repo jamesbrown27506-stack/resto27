@@ -10,6 +10,14 @@ import { useToast } from "@/components/ui/toast";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import {
+  configuredVapidKey,
+  ensurePushSubscription,
+  iosInstallRequired,
+  isIOSDevice,
+  registerPushWorker,
+  serializePushSubscription,
+} from "@/lib/notifications/web-push-client";
+import {
   announcePushEnabled,
   getMyNotificationChannels,
   removePushSubscription,
@@ -65,47 +73,11 @@ type PushBlock =
   | null
   | "unsupported"
   | "insecure"
+  | "iosInstall"
   | "notConfigured"
   | "denied"
   | "dismissed"
   | "failed";
-
-function decodeVapidKey(base64: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const normalised = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(normalised);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
-}
-
-/**
- * The VAPID public key is in the browser bundle ON PURPOSE — it is public by
- * design and the browser needs it to subscribe. The private half never leaves
- * the server.
- */
-function applicationServerKey(): Uint8Array | null {
-  const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-  if (!key || key.includes("REPLACE_ME")) return null;
-  try {
-    return decodeVapidKey(key);
-  } catch {
-    return null;
-  }
-}
-
-function keyToBase64(key: ArrayBuffer | null): string {
-  if (!key) return "";
-  return btoa(String.fromCharCode(...new Uint8Array(key)));
-}
-
-function isIOS(): boolean {
-  const ua = navigator.userAgent;
-  const iPhone = /iPhone|iPod/i.test(ua);
-  // iPadOS 13+ reports a Mac user agent; the touch-point count catches it.
-  const iPad = /iPad/i.test(ua) || (/Mac/i.test(ua) && (navigator.maxTouchPoints ?? 0) > 1);
-  return iPhone || iPad;
-}
 
 export function NotificationSettings({ className }: { className?: string }) {
   const { t } = useLocale();
@@ -156,8 +128,12 @@ export function NotificationSettings({ className }: { className?: string }) {
         if (!cancelled) setBlock("insecure");
         return;
       }
+      if (iosInstallRequired()) {
+        if (!cancelled) setBlock("iosInstall");
+        return;
+      }
       try {
-        const registration = await navigator.serviceWorker.register("/sw.js");
+        const registration = await registerPushWorker();
         const subscription = await registration.pushManager.getSubscription();
         if (cancelled) return;
         setDeviceSubscribed(Boolean(subscription));
@@ -165,11 +141,14 @@ export function NotificationSettings({ className }: { className?: string }) {
         // Re-sync a subscription the server may have lost (data wiped, first
         // visit since push existed) so the stored endpoint matches reality.
         if (subscription && Notification.permission === "granted") {
-          await savePushSubscription({
-            endpoint: subscription.endpoint,
-            p256dh: keyToBase64(subscription.getKey("p256dh")),
-            auth: keyToBase64(subscription.getKey("auth")),
-          }).catch(() => {});
+          const key = configuredVapidKey();
+          if (key) {
+            const repaired = await ensurePushSubscription(registration, key);
+            await savePushSubscription(
+              serializePushSubscription(repaired.subscription, repaired.previousEndpoint),
+            ).catch(() => {});
+            if (!cancelled) setDeviceSubscribed(true);
+          }
         }
         if (!subscription && Notification.permission === "denied") setBlock("denied");
       } catch (error) {
@@ -227,7 +206,11 @@ export function NotificationSettings({ className }: { className?: string }) {
         setBlock("insecure");
         return;
       }
-      const key = applicationServerKey();
+      if (iosInstallRequired()) {
+        setBlock("iosInstall");
+        return;
+      }
+      const key = configuredVapidKey();
       if (!key) {
         // Nothing the person can do about this one — it is a server env var.
         setBlock("notConfigured");
@@ -247,24 +230,13 @@ export function NotificationSettings({ className }: { className?: string }) {
         return;
       }
 
-      const registration = await navigator.serviceWorker.register("/sw.js");
-      const existing = await registration.pushManager.getSubscription();
-      const subscription =
-        existing ??
-        (await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          // Cast: the decoder returns Uint8Array<ArrayBufferLike>, the DOM
-          // wants BufferSource — same bytes, narrower generic.
-          applicationServerKey: key as unknown as BufferSource,
-        }));
-
-      const saved = await savePushSubscription({
-        endpoint: subscription.endpoint,
-        p256dh: keyToBase64(subscription.getKey("p256dh")),
-        auth: keyToBase64(subscription.getKey("auth")),
-      });
+      const registration = await registerPushWorker();
+      const { subscription, previousEndpoint } = await ensurePushSubscription(registration, key);
+      const saved = await savePushSubscription(
+        serializePushSubscription(subscription, previousEndpoint),
+      );
       if (!saved.ok) {
-        if (!existing) await subscription.unsubscribe().catch(() => {});
+        await subscription.unsubscribe().catch(() => {});
         setBlock("failed");
         return;
       }
@@ -344,7 +316,11 @@ export function NotificationSettings({ className }: { className?: string }) {
   // and a live subscription say so.
   const pushOnHere = channels.push && deviceSubscribed;
   const pushElsewhere = channels.push && !deviceSubscribed && block === null;
-  const hardBlocked = block === "unsupported" || block === "insecure" || block === "notConfigured";
+  const hardBlocked =
+    block === "unsupported" ||
+    block === "insecure" ||
+    block === "iosInstall" ||
+    block === "notConfigured";
   const allOff = !channels.inApp && !channels.email && !channels.push;
 
   return (
@@ -483,7 +459,7 @@ export function NotificationSettings({ className }: { className?: string }) {
             {/* Apple's rule, and the single most common "it just does not
                 work" on a phone: Safari only delivers push to an installed
                 PWA, never to a normal tab. */}
-            {!pushOnHere && typeof navigator !== "undefined" && isIOS() && (
+            {!pushOnHere && typeof navigator !== "undefined" && isIOSDevice() && block !== "iosInstall" && (
               <p className="text-xs text-text-light">
                 <span>{t("nset.push.iosHint")}</span>
               </p>

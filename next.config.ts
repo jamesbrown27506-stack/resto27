@@ -90,6 +90,16 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
+        // A service worker controls how background notifications are handled.
+        // It must always be revalidated; a week-old CDN copy can otherwise
+        // keep the exact mobile bug we already deployed a fix for.
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+      {
         source: "/(.*)",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },

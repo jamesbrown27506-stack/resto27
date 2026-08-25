@@ -40,6 +40,8 @@ export const notificationsDict = defineDict({
       "Ce navigateur ne prend pas en charge les notifications push.",
     "nset.push.insecure":
       "Les notifications push exigent une connexion sécurisée (https). Ouvrez le site en https et réessayez.",
+    "nset.push.iosInstall":
+      "Sur iPhone et iPad, installez d'abord l'application : dans Safari, touchez Partager, puis « Sur l'écran d'accueil ». Ouvrez ensuite cette application pour activer les notifications.",
     "nset.push.notConfigured":
       "Les notifications push ne sont pas encore configurées sur ce serveur. Prévenez l'administrateur.",
     "nset.push.denied":
@@ -99,6 +101,8 @@ export const notificationsDict = defineDict({
     "nset.push.unsupported": "This browser does not support push notifications.",
     "nset.push.insecure":
       "Push notifications need a secure connection (https). Open the site over https and try again.",
+    "nset.push.iosInstall":
+      "On iPhone or iPad, install the app first: in Safari tap Share, then “Add to Home Screen”. Open that installed app to enable notifications.",
     "nset.push.notConfigured":
       "Push notifications are not configured on this server yet. Let the administrator know.",
     "nset.push.denied":

@@ -17,8 +17,6 @@
  * would serve stale screens. This worker exists for push and nothing else.
  */
 
-/* eslint-disable no-restricted-globals */
-
 /*
  * ───────────────────────────────────────────────────────────────────────────
  *  A NEW WORKER TAKES OVER AT ONCE, INSTEAD OF WHENEVER THE APP IS NEXT SHUT.
@@ -225,6 +223,11 @@ async function resubscribe(event) {
         endpoint: subscription.endpoint,
         p256dh: arrayBufferToBase64(subscription.getKey("p256dh")),
         auth: arrayBufferToBase64(subscription.getKey("auth")),
+        expirationTime:
+          subscription.expirationTime == null
+            ? null
+            : new Date(subscription.expirationTime).toISOString(),
+        userAgent: self.navigator.userAgent.slice(0, 500),
         // Retire the dead endpoint in the same round trip.
         previousEndpoint: event.oldSubscription ? event.oldSubscription.endpoint : null,
       }),

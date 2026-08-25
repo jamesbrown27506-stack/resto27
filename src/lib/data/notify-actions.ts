@@ -228,6 +228,9 @@ export async function savePushSubscription(input: {
   endpoint: string;
   p256dh: string;
   auth: string;
+  expirationTime?: string | null;
+  userAgent?: string;
+  previousEndpoint?: string;
 }): Promise<{ ok: boolean; error?: string }> {
   const profile = await requireUser();
 
@@ -240,20 +243,43 @@ export async function savePushSubscription(input: {
   }
 
   const supabase = createAdminClient();
-  const { error } = await supabase.from("push_subscriptions").upsert(
-    {
-      profile_id: profile.id,
-      endpoint,
-      p256dh,
-      auth,
-      updated_at: new Date().toISOString(),
-    },
+  const baseRow = {
+    profile_id: profile.id,
+    endpoint,
+    p256dh,
+    auth,
+    user_agent: input.userAgent?.slice(0, 500) || null,
+    updated_at: new Date().toISOString(),
+  };
+
+  let { error } = await supabase.from("push_subscriptions").upsert(
+    { ...baseRow, expiration_time: input.expirationTime ?? null },
     { onConflict: "endpoint" },
   );
+
+  // Code and migration can be deployed in either order. Until 0042 reaches
+  // the database, keep subscription repair working with the old row shape.
+  if (
+    error &&
+    (error.code === "42703" || error.code === "PGRST204") &&
+    error.message.includes("expiration_time")
+  ) {
+    ({ error } = await supabase
+      .from("push_subscriptions")
+      .upsert(baseRow, { onConflict: "endpoint" }));
+  }
 
   if (error) {
     console.error("[notify:savePushSubscription]", error.message);
     return { ok: false, error: "Could not save the subscription." };
+  }
+
+  if (input.previousEndpoint && input.previousEndpoint !== endpoint) {
+    await supabase
+      .from("push_subscriptions")
+      .delete()
+      .eq("endpoint", input.previousEndpoint)
+      .eq("profile_id", profile.id);
   }
   return { ok: true };
 }

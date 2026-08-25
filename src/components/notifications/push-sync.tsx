@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { getPushSyncState, savePushSubscription } from "@/lib/data/notify-actions";
+import {
+  configuredVapidKey,
+  ensurePushSubscription,
+  iosInstallRequired,
+  registerPushWorker,
+  serializePushSubscription,
+} from "@/lib/notifications/web-push-client";
 
 /**
  * Push self-repair, on every app open. Renders nothing.
@@ -58,20 +65,6 @@ import { getPushSyncState, savePushSubscription } from "@/lib/data/notify-action
  */
 const MIN_INTERVAL_MS = 60_000;
 
-function keyToBase64(key: ArrayBuffer | null): string {
-  if (!key) return "";
-  return btoa(String.fromCharCode(...new Uint8Array(key)));
-}
-
-function decodeVapidKey(base64: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const normalised = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(normalised);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
-}
-
 export function PushSync() {
   const lastRunAt = useRef(0);
   const running = useRef(false);
@@ -86,12 +79,16 @@ export function PushSync() {
       return;
     }
     if (!window.isSecureContext) return;
+    // iOS exposes Web Push only to a Home Screen web app. A normal Safari tab
+    // can retain a misleading permission-looking state but cannot receive a
+    // background push, so never pretend to repair it there.
+    if (iosInstallRequired()) return;
     // Not granted means either never asked or blocked. Both are somebody
     // else's job; see the note above about never prompting from here.
     if (Notification.permission !== "granted") return;
 
-    const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-    if (!key || key.includes("REPLACE_ME")) return;
+    const key = configuredVapidKey();
+    if (!key) return;
 
     running.current = true;
     lastRunAt.current = Date.now();
@@ -103,26 +100,16 @@ export function PushSync() {
       // `register` rather than `getRegistration`: if the worker was evicted,
       // this is what brings it back. It is idempotent when one is already
       // installed, so the common path costs a resolved promise.
-      const registration = await navigator.serviceWorker.register("/sw.js");
+      const registration = await registerPushWorker();
 
       // A subscription can exist on the device and be unknown to the server
       // (the 410 case above), so the endpoint is re-sent EITHER WAY. The write
       // is an upsert keyed on the endpoint, so re-sending a known one is a
       // no-op that costs one round trip a minute at worst.
-      const subscription =
-        (await registration.pushManager.getSubscription()) ??
-        (await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          // Cast: the decoder returns Uint8Array<ArrayBufferLike>, the DOM
-          // wants BufferSource — same bytes, narrower generic.
-          applicationServerKey: decodeVapidKey(key) as unknown as BufferSource,
-        }));
-
-      await savePushSubscription({
-        endpoint: subscription.endpoint,
-        p256dh: keyToBase64(subscription.getKey("p256dh")),
-        auth: keyToBase64(subscription.getKey("auth")),
-      }).catch(() => {});
+      const { subscription, previousEndpoint } = await ensurePushSubscription(registration, key);
+      await savePushSubscription(
+        serializePushSubscription(subscription, previousEndpoint),
+      ).catch(() => {});
     } catch (error) {
       // A failed repair is invisible on purpose: nothing was asked for, so
       // there is nothing to report. The next app open tries again.

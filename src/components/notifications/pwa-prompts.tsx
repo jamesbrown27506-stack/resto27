@@ -11,6 +11,15 @@ import {
   savePushSubscription,
 } from "@/lib/data/notify-actions";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
+import {
+  configuredVapidKey,
+  ensurePushSubscription,
+  iosInstallRequired,
+  isIOSDevice,
+  isStandaloneApp,
+  registerPushWorker,
+  serializePushSubscription,
+} from "@/lib/notifications/web-push-client";
 
 /**
  * The PWA banners — install and notification permission.
@@ -71,31 +80,6 @@ function withinCooldown(stored: string | null): boolean {
   return Date.now() - t < COOLDOWN_MS;
 }
 
-function urlBase64ToUint8Array(base64: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const base64_ = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(base64_);
-  const out = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
-}
-
-function isStandalone(): boolean {
-  return (
-    window.matchMedia?.("(display-mode: standalone)").matches ||
-    // iOS Safari keeps a separate flag; it is the only way to know there.
-    (navigator as Navigator & { standalone?: boolean }).standalone === true
-  );
-}
-
-function isIOS(): boolean {
-  const ua = navigator.userAgent;
-  const iPhone = /iPhone|iPod/i.test(ua);
-  // iPadOS 13+ reports a Mac user agent — the touch-points check catches it.
-  const iPad = /iPad/i.test(ua) || (/Mac/i.test(ua) && (navigator.maxTouchPoints ?? 0) > 1);
-  return iPhone || iPad;
-}
-
 export function PwaPrompts({ brandName }: { brandName: string }) {
   const { t } = useLocale();
   const { toast } = useToast();
@@ -124,7 +108,7 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
     // Returning to the tab may mean the user enabled/blocked notifications in
     // the browser UI, or installed from the address bar — re-check.
     const onVisible = () => {
-      setInstalled(isStandalone());
+      setInstalled(isStandaloneApp());
       if ("Notification" in window) setPermission(Notification.permission);
     };
 
@@ -148,7 +132,7 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
 
       setInstallDismissedAt(readDismissed(INSTALL_KEY));
       setNotifDismissedAt(readDismissed(NOTIF_KEY));
-      setInstalled(isStandalone());
+      setInstalled(isStandaloneApp());
       setPermission("Notification" in window ? Notification.permission : null);
       setSignedIn(state.signedIn);
       setReady(true);
@@ -162,7 +146,7 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
     };
   }, []);
 
-  const ios = isIOS();
+  const ios = isIOSDevice();
 
   function dismissInstall() {
     setInstallDismissedAt(String(Date.now()));
@@ -218,9 +202,13 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
         dismissNotif();
         return;
       }
+      if (iosInstallRequired()) {
+        toast(t("nset.push.iosInstall"), "warning");
+        return;
+      }
 
-      const key = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (!key || key.includes("REPLACE_ME")) {
+      const key = configuredVapidKey();
+      if (!key) {
         // Nothing the visitor can do — do not ask for a permission we cannot
         // use, and do not claim it worked.
         toast(t("nset.push.notConfigured"), "warning");
@@ -240,24 +228,13 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
 
       // Granted: subscribe this browser and record it, exactly like the
       // settings toggle — otherwise the permission is earned and unused.
-      const registration = await navigator.serviceWorker.register("/sw.js");
-      const existing = await registration.pushManager.getSubscription();
-      const subscription =
-        existing ??
-        (await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          // Cast: our decoder returns Uint8Array<ArrayBufferLike>, the DOM
-          // wants BufferSource — same bytes, narrower generic.
-          applicationServerKey: urlBase64ToUint8Array(key) as unknown as BufferSource,
-        }));
-
-      const saved = await savePushSubscription({
-        endpoint: subscription.endpoint,
-        p256dh: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey("p256dh")!))),
-        auth: btoa(String.fromCharCode(...new Uint8Array(subscription.getKey("auth")!))),
-      });
+      const registration = await registerPushWorker();
+      const { subscription, previousEndpoint } = await ensurePushSubscription(registration, key);
+      const saved = await savePushSubscription(
+        serializePushSubscription(subscription, previousEndpoint),
+      );
       if (!saved.ok) {
-        if (!existing) await subscription.unsubscribe().catch(() => {});
+        await subscription.unsubscribe().catch(() => {});
         toast(t("nset.push.failed"), "error");
         return;
       }
@@ -279,6 +256,9 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
     signedIn &&
     permission !== null &&
     permission !== "granted" &&
+    // Apple only exposes push to an installed Home Screen web app. Asking in
+    // Safari first wastes the one permission moment and tells the user a lie.
+    (!ios || installed) &&
     !withinCooldown(notifDismissedAt);
 
   if (!showInstall && !showNotif) return null;

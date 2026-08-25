@@ -62,6 +62,10 @@ export interface PushPayload {
 const PUSH_OPTIONS = {
   urgency: "high",
   TTL: 60 * 60 * 24,
+  // One dead vendor endpoint must not hold every other device behind it. The
+  // sends run concurrently below, and this caps the whole batch at roughly
+  // ten seconds instead of N devices × an unbounded socket wait.
+  timeout: 10_000,
 } as const;
 
 /** True when the VAPID keys are present and not placeholders. */
@@ -151,9 +155,7 @@ export async function sendPushWithReport(
     href: payload.href ?? "/",
   });
 
-  const devices: PushDeviceResult[] = [];
-
-  for (const sub of rows) {
+  const devices = await Promise.all(rows.map(async (sub): Promise<PushDeviceResult> => {
     let service = "unknown";
     try {
       service = new URL(sub.endpoint).host;
@@ -168,29 +170,41 @@ export async function sendPushWithReport(
         body,
         PUSH_OPTIONS,
       );
-      devices.push({ service, endpointTail, status: "sent" });
+      await supabase
+        .from("push_subscriptions")
+        .update({
+          last_success_at: new Date().toISOString(),
+          last_failure_code: null,
+          failure_count: 0,
+        })
+        .eq("id", sub.id);
+      return { service, endpointTail, status: "sent" };
     } catch (pushError) {
       const code = (pushError as { statusCode?: number })?.statusCode;
       if (code === 404 || code === 410) {
         await supabase.from("push_subscriptions").delete().eq("id", sub.id);
-        devices.push({
+        return {
           service,
           endpointTail,
           status: "expired",
           code,
           detail: "Endpoint gone — the row has been deleted. Re-enable push on that device.",
-        });
+        };
       } else {
-        devices.push({
+        await supabase.rpc("record_push_failure", {
+          p_subscription_id: sub.id,
+          p_failure_code: code ?? null,
+        });
+        return {
           service,
           endpointTail,
           status: "failed",
           code,
           detail: (pushError as Error)?.message?.slice(0, 200),
-        });
+        };
       }
     }
-  }
+  }));
 
   return { configured, platformEnabled, devices };
 }
@@ -223,22 +237,34 @@ export async function sendPush(profileId: string, payload: PushPayload): Promise
       href: payload.href ?? "/",
     });
 
-    for (const sub of subs as { id: string; endpoint: string; p256dh: string; auth: string }[]) {
+    await Promise.allSettled((subs as { id: string; endpoint: string; p256dh: string; auth: string }[]).map(async (sub) => {
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           body,
           PUSH_OPTIONS,
         );
+        await supabase
+          .from("push_subscriptions")
+          .update({
+            last_success_at: new Date().toISOString(),
+            last_failure_code: null,
+            failure_count: 0,
+          })
+          .eq("id", sub.id);
       } catch (pushError) {
         const status = (pushError as { statusCode?: number })?.statusCode;
         if (status === 404 || status === 410) {
           await supabase.from("push_subscriptions").delete().eq("id", sub.id);
         } else {
+          await supabase.rpc("record_push_failure", {
+            p_subscription_id: sub.id,
+            p_failure_code: status ?? null,
+          });
           console.error("[push] delivery failed", status ?? "", (pushError as Error)?.message);
         }
       }
-    }
+    }));
   } catch (error) {
     console.error("[push] send failed", error);
   }

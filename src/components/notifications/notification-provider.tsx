@@ -10,6 +10,7 @@ import {
   unlockNotificationSound,
 } from "@/lib/notifications/sound-player";
 import type { NotifyTone } from "@/lib/notify";
+import { registerPushWorker } from "@/lib/notifications/web-push-client";
 
 /**
  * The realtime engine behind the bell.
@@ -219,7 +220,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     let cancelled = false;
     let attempt = 0;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    /** Held so a revive can rebuild the channel without re-reading the session. */
     let profileId: string | null = null;
 
     // Register the service worker on every signed-in page load, not only when
@@ -227,23 +227,91 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     // — or a push the user never opted out of — must still wake the worker
     // when the message arrives; an unregistered worker silently drops it.
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
+      void registerPushWorker().catch(() => {});
     }
 
     const supabase = createClient();
 
-    function connect(profileId: string) {
-      if (cancelled) return;
+    async function refreshState() {
+      const state = await getNotificationState().catch((error: unknown) => {
+        console.error("[notify] could not refresh notification state", error);
+        return null;
+      });
+      if (cancelled || !state?.profileId) return null;
+      setSoundName(state.sound);
+      setUnread(state.unread);
+      return state;
+    }
 
-      channel = supabase
-        .channel(`notifications-${profileId}-${attempt}`)
+    /**
+     * Realtime authorizes the channel with the access token it had when the
+     * socket joined. Retrying that same channel with the same expired token is
+     * not recovery. Refresh first, then explicitly put the new JWT on the
+     * Realtime connection before rejoining.
+     */
+    async function authorizeRealtime(forceRefresh: boolean): Promise<boolean> {
+      const { data, error: sessionError } = await supabase.auth.getSession();
+      let error = sessionError;
+      let session = data.session;
+      const expiresSoon = !session?.expires_at || session.expires_at <= Date.now() / 1000 + 60;
+
+      if (!error && session && (forceRefresh || expiresSoon)) {
+        const refreshed = await supabase.auth.refreshSession();
+        error = refreshed.error;
+        session = refreshed.data.session;
+      }
+
+      if (error || !session?.access_token) {
+        console.warn("[notify] realtime auth refresh failed", error?.message ?? "no session");
+        return false;
+      }
+
+      await supabase.realtime.setAuth(session.access_token);
+      return true;
+    }
+
+    function retire(target: RealtimeChannel | null) {
+      if (!target) return;
+      if (channel === target) channel = null;
+      // Setting `channel` to null first makes the CLOSED callback from this
+      // intentional removal stale, so it cannot schedule another retry.
+      void supabase.removeChannel(target);
+    }
+
+    function scheduleReconnect(detail: string, forceRefresh: boolean) {
+      if (cancelled || !profileId || retryTimer) return;
+      setRealtime("error");
+      console.warn("[notify] realtime channel", detail);
+
+      const delay = BACKOFF[Math.min(attempt, BACKOFF.length - 1)];
+      attempt += 1;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        void connect(forceRefresh);
+      }, delay);
+    }
+
+    async function connect(forceRefresh = false) {
+      const id = profileId;
+      if (cancelled || !id) return;
+      setRealtime("connecting");
+
+      if (!(await authorizeRealtime(forceRefresh))) {
+        if (!cancelled) scheduleReconnect("AUTH_REFRESH_FAILED", true);
+        return;
+      }
+      if (cancelled || profileId !== id) return;
+
+      retire(channel);
+      const next = supabase
+        .channel(`notifications-${id}-${Date.now()}`)
         .on(
           "postgres_changes",
           {
             event: "INSERT",
             schema: "public",
             table: "notifications",
-            filter: `profile_id=eq.${profileId}`,
+            filter: `profile_id=eq.${id}`,
           },
           (payload) => {
             const row = payload.new as { title: string; body: string; tone: NotifyTone };
@@ -251,12 +319,18 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           },
         )
         .subscribe((status, error) => {
-          if (cancelled) return;
+          // Status callbacks from a channel we intentionally removed are not
+          // failures. Ignoring them is what prevents the retry explosion that
+          // previously produced hundreds of CLOSED events.
+          if (cancelled || channel !== next) return;
           setRealtimeDetail(error?.message ? `${status}: ${error.message}` : status);
 
           if (status === "SUBSCRIBED") {
             attempt = 0;
             setRealtime("connected");
+            // Any rows created while the socket was down were missed by
+            // Realtime but not by the database. Re-read the exact count now.
+            void refreshState();
             return;
           }
 
@@ -264,28 +338,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           // notifications will arrive in this tab". Say so, then retry —
           // a socket dropped by a sleeping laptop must not need a reload.
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-            setRealtime("error");
-            console.warn("[notify] realtime channel", status, error?.message ?? "");
-
-            const delay = BACKOFF[Math.min(attempt, BACKOFF.length - 1)];
-            attempt += 1;
-            retryTimer = setTimeout(() => {
-              if (cancelled) return;
-              const dead = channel;
-              channel = null;
-              if (dead) void supabase.removeChannel(dead);
-              setRealtime("connecting");
-              connect(profileId);
-            }, delay);
+            const detail = `${status}${error?.message ? `: ${error.message}` : ""}`;
+            const tokenError = /jwt|token|expired|unauthor/i.test(error?.message ?? "");
+            retire(next);
+            scheduleReconnect(detail, tokenError);
           }
         });
+      channel = next;
     }
 
     void (async () => {
-      const state = await getNotificationState().catch((error: unknown) => {
-        console.error("[notify] could not read notification state", error);
-        return null;
-      });
+      const state = await refreshState();
       if (cancelled) return;
 
       if (!state?.profileId) {
@@ -295,11 +358,23 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         return;
       }
 
-      setSoundName(state.sound);
-      setUnread(state.unread);
       profileId = state.profileId;
-      connect(state.profileId);
+      void connect();
     })();
+
+    // The Supabase client normally forwards refreshed auth tokens to Realtime.
+    // Keep the channel explicit as well: this listener covers refreshes caused
+    // by another tab and lets an already-open socket update in-band.
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled) return;
+      if ((event === "TOKEN_REFRESHED" || event === "SIGNED_IN") && session?.access_token) {
+        void supabase.realtime.setAuth(session.access_token);
+      }
+      if (event === "SIGNED_OUT") {
+        retire(channel);
+        setRealtime("signed-out");
+      }
+    });
 
     /*
       ─────────────────────────────────────────────────────────────────────
@@ -328,11 +403,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         retryTimer = null;
       }
       attempt = 0;
-      const dead = channel;
-      channel = null;
-      if (dead) void supabase.removeChannel(dead);
-      setRealtime("connecting");
-      connect(profileId);
+      retire(channel);
+      void connect();
     }
 
     const onVisible = () => {
@@ -346,8 +418,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("online", revive);
+      authListener.subscription.unsubscribe();
       if (retryTimer) clearTimeout(retryTimer);
-      if (channel) void supabase.removeChannel(channel);
+      retire(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

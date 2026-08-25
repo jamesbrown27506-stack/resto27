@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
 /**
@@ -95,7 +96,32 @@ export function createAdminClient() {
     );
   }
 
-  return createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, key, {
-    cookies: { getAll: () => [], setAll: () => {} },
+  /**
+   * New `sb_secret_…` keys are API keys, not JWTs. supabase-js currently puts
+   * its fallback credential in both `apikey` and `Authorization: Bearer` for
+   * PostgREST calls. Some Supabase gateway paths try to interpret that opaque
+   * Bearer value as a JWT; in this project that intermittently returned
+   * "JWT issued at future". A failed subscription lookup then looked exactly
+   * like "this user has no phone", and push was silently skipped.
+   *
+   * Keep the secret in the correct `apikey` header and remove ONLY the exact
+   * invalid fallback Bearer value. A real user access token, should a future
+   * caller explicitly provide one, is left untouched.
+   */
+  const fetchWithApiKeyOnly: typeof fetch = (input, init) => {
+    const headers = new Headers(init?.headers);
+    if (headers.get("Authorization") === `Bearer ${key}`) {
+      headers.delete("Authorization");
+    }
+    return fetch(input, { ...init, headers });
+  };
+
+  return createSupabaseClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, key, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+    global: { fetch: fetchWithApiKeyOnly },
   });
 }

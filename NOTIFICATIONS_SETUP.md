@@ -8,11 +8,14 @@ three values into your env file, and deploy on HTTPS. No Firebase anywhere.
 
 ## 1. Run the migration in Supabase (2 minutes)
 
-The file to run is:
+Run the migrations in numeric order. For an existing installation that has
+already applied 0018, the mobile reliability addition is:
 
 ```
-supabase/migrations/0018_notification_platform.sql
+supabase/migrations/0042_push_delivery_health.sql
 ```
+
+New installations must still run `0018_notification_platform.sql` first.
 
 Open it and run it **in the SQL editor** of your Supabase project (the same
 place you ran 0001–0017). It is idempotent — if it fails halfway, fix the
@@ -143,6 +146,8 @@ permission — and offers a small bottom banner for whatever is missing:
 Tap **Later** (or the ✕) and that banner stays quiet for **one hour**
 (stored in `localStorage`), then offers again. Accepting is remembered
 forever — an installed app or granted permission is never asked again.
+On iPhone/iPad the notification banner is deliberately withheld until the
+Home Screen app is installed; Safari tabs cannot receive iOS Web Push.
 
 ### Web push (tab closed / phone)
 
@@ -150,7 +155,9 @@ On the settings page (manager: `/m/settings`, customer: `/settings`) there's
 a **"Notifications on this device"** toggle. Tap it → browser asks
 permission → allow → the device is subscribed. Close the tab: the next
 notification still arrives as an OS-level notification, and tapping it opens
-the right page. Unsubscribing deletes the server's copy.
+the right page. Unsubscribing deletes the server's copy. Every app open also
+repairs a missing endpoint and replaces subscriptions created with an older
+VAPID key.
 
 ### Email
 
@@ -187,13 +194,15 @@ means "on by default", never "silently off".
 
 ## 5. Testing checklist (do this in order)
 
-1. **Migrate** — run 0018, watch the 5 verification queries return rows.
+1. **Migrate** — run 0018 for a new project and 0042 for mobile delivery
+   health; watch their verification queries return rows.
 2. **Restart the dev server** — so `.env.local`'s VAPID keys load.
 3. **Login as a manager**, place an order as a customer in another browser:
    badge bumps, toast appears, sound plays, email arrives (if SMTP is on).
 4. **Sidebar badge** — confirm Orders count matches the dashboard.
 5. **Push** — on `/m/settings` (HTTPS or localhost), toggle the device on,
-   close the tab, place another order, expect an OS notification.
+   use **Send a test notification** once, then close the installed app/tab and
+   trigger the test from another signed-in device. Expect an OS notification.
 6. **Admin sound** — `/a/settings` → Notifications, pick a different sound,
    order again, hear the new one.
 7. **Broadcast** — send one to managers; check bell, email (if ticked) and
@@ -211,3 +220,9 @@ means "on by default", never "silently off".
   three stay server-only, which is the safe default.
 - If you later want to regenerate the sounds (different tone/volume), edit
   `scripts/generate-sounds.mjs` and re-run `node scripts/generate-sounds.mjs`.
+- An HTTP 201/accepted result means the browser vendor accepted the message;
+  it does not prove the handset displayed it. If Android accepts but displays
+  nothing, check the site's notification category and battery/background
+  restrictions. If the service returns 404/410, the app removes that expired
+  subscription automatically. A 401/403 usually means a VAPID mismatch; open
+  the app once and the subscription repair will replace the stale endpoint.

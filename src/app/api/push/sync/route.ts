@@ -57,7 +57,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: "Malformed body." }, { status: 400 });
   }
 
-  const { endpoint, p256dh, auth, previousEndpoint } = (body ?? {}) as Record<string, unknown>;
+  const { endpoint, p256dh, auth, previousEndpoint, expirationTime, userAgent } = (body ?? {}) as Record<
+    string,
+    unknown
+  >;
 
   if (
     typeof endpoint !== "string" ||
@@ -74,16 +77,33 @@ export async function POST(request: Request) {
 
   const supabase = createAdminClient();
 
-  const { error } = await supabase.from("push_subscriptions").upsert(
-    {
-      profile_id: profile.id,
-      endpoint,
-      p256dh,
-      auth,
-      updated_at: new Date().toISOString(),
-    },
+  const baseRow = {
+    profile_id: profile.id,
+    endpoint,
+    p256dh,
+    auth,
+    user_agent: typeof userAgent === "string" ? userAgent.slice(0, 500) : null,
+    updated_at: new Date().toISOString(),
+  };
+  const expiration =
+    typeof expirationTime === "string" && !Number.isNaN(Date.parse(expirationTime))
+      ? expirationTime
+      : null;
+
+  let { error } = await supabase.from("push_subscriptions").upsert(
+    { ...baseRow, expiration_time: expiration },
     { onConflict: "endpoint" },
   );
+
+  if (
+    error &&
+    (error.code === "42703" || error.code === "PGRST204") &&
+    error.message.includes("expiration_time")
+  ) {
+    ({ error } = await supabase
+      .from("push_subscriptions")
+      .upsert(baseRow, { onConflict: "endpoint" }));
+  }
 
   if (error) {
     console.error("[api:push/sync]", error.message);
