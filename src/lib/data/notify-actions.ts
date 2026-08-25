@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { sendPushWithReport, type PushDeviceResult } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getCurrentProfile, requireUser } from "@/lib/auth/session";
 import { notify, type NotifyTone } from "@/lib/notify";
@@ -322,6 +323,39 @@ export async function saveMyNotificationChannels(
  *  off — nobody needs a mail to say a browser setting changed.
  * ─────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Send a real push to every device this person has registered, and say what
+ * each one did.
+ *
+ * Goes through the SAME code path a new order takes — same encryption, same
+ * urgency, same VAPID keys — so a pass here means an order would arrive too.
+ * A test that used a different path would only prove the test worked.
+ *
+ * Deliberately reports per DEVICE. "Push is broken" is three different
+ * problems: no subscription stored, the push service rejecting it, or the
+ * handset accepting it and showing nothing. Only the third is Android's
+ * battery settings, and only this can tell you which one you have.
+ */
+export async function sendTestPush(): Promise<{
+  ok: boolean;
+  configured: boolean;
+  platformEnabled: boolean;
+  devices: PushDeviceResult[];
+}> {
+  const profile = await requireUser();
+
+  const href =
+    profile.role === "admin" ? "/a/diagnostics" : profile.role === "manager" ? "/m/settings" : "/settings";
+
+  const report = await sendPushWithReport(profile.id, {
+    title: "Test notification",
+    body: "If you can read this with the app closed, push is working on this device.",
+    href,
+  });
+
+  return { ok: report.devices.some((d) => d.status === "sent"), ...report };
+}
+
 export async function announcePushEnabled(): Promise<{ ok: boolean; error?: string }> {
   const profile = await requireUser();
 

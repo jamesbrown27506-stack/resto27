@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertTriangle, Bell, BellRing, Mail, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
 import { Switch } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
@@ -14,6 +15,7 @@ import {
   removePushSubscription,
   saveMyNotificationChannels,
   savePushSubscription,
+  sendTestPush,
 } from "@/lib/data/notify-actions";
 
 /**
@@ -117,6 +119,20 @@ export function NotificationSettings({ className }: { className?: string }) {
   // to the push service, and flipping another switch underneath it would race
   // two writes of the same row.
   const [busy, setBusy] = useState(false);
+
+  /** The real-path push test — see the button in the device box below. */
+  const [testing, setTesting] = useState(false);
+  const [testReport, setTestReport] = useState<Awaited<ReturnType<typeof sendTestPush>> | null>(null);
+
+  async function runTest() {
+    setTesting(true);
+    setTestReport(null);
+    const report = await sendTestPush().catch(() => null);
+    setTesting(false);
+    if (!report) return toast(t("nset.saveFailed"), "error");
+    setTestReport(report);
+    toast(t(report.ok ? "nset.push.testSent" : "nset.push.testFailed"), report.ok ? "success" : "error");
+  }
 
   // A late resolve from the mount effect must not overwrite a switch the
   // person has already flipped.
@@ -383,6 +399,72 @@ export function NotificationSettings({ className }: { className?: string }) {
               <p className="text-xs text-text-light">
                 <span>{t("nset.push.deviceOther")}</span>
               </p>
+            )}
+
+            {/*
+              THE TEST THAT GOES THROUGH THE REAL PATH.
+
+              "It works on my laptop but not my phone" is three different
+              problems — no subscription stored for that handset, the push
+              service rejecting it, or Android accepting it and showing
+              nothing — and they have three different fixes. This sends a real
+              push down the same road an order takes and reports what each
+              device did, so the answer is read rather than guessed.
+
+              CLOSE THE APP FIRST is the instruction that matters: a
+              notification that arrives with the app in front proves almost
+              nothing, because that is the case that already worked.
+            */}
+            {pushOnHere && (
+              <div className="flex flex-col gap-2 border-t border-border pt-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  loading={testing}
+                  disabled={testing}
+                  onClick={() => void runTest()}
+                  className="self-start"
+                >
+                  <BellRing className="size-3.5" aria-hidden />
+                  <span>{t("nset.push.test")}</span>
+                </Button>
+
+                <p className="text-xs leading-relaxed text-text-light">
+                  <span>{t("nset.push.testHint")}</span>
+                </p>
+
+                {testReport && (
+                  <div className="flex flex-col gap-1.5">
+                    {testReport.devices.length === 0 ? (
+                      <p className="flex items-start gap-2 text-xs text-warning">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                        <span>{t("nset.push.testNoDevices")}</span>
+                      </p>
+                    ) : (
+                      testReport.devices.map((d) => (
+                        <p
+                          key={d.endpointTail}
+                          className={`flex items-start gap-2 text-xs ${
+                            d.status === "sent" ? "text-success" : "text-warning"
+                          }`}
+                        >
+                          <span className="mt-0.5 shrink-0">
+                            {d.status === "sent" ? "✓" : "✗"}
+                          </span>
+                          <span className="min-w-0 break-words">
+                            <span className="font-mono">
+                              {d.service} …{d.endpointTail}
+                            </span>
+                            {" — "}
+                            {t(`nset.push.result.${d.status}` as TranslationKey)}
+                            {d.code ? ` (${d.code})` : ""}
+                          </span>
+                        </p>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
             )}
 
             {block && (

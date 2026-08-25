@@ -59,6 +59,16 @@ export const notificationsDict = defineDict({
     "nset.push.disabled": "Notifications push désactivées sur cet appareil.",
 
     "nset.saved": "Préférences de notification enregistrées.",
+    "nset.push.test": "Envoyer une notification test",
+    "nset.push.testHint":
+      "Fermez complètement l'application, puis appuyez ici depuis un autre appareil — ou demandez à un collègue. Une notification reçue application ouverte ne prouve rien : c'est le cas qui marchait déjà.",
+    "nset.push.testSent": "Test envoyé. Regardez vos appareils.",
+    "nset.push.testFailed": "Aucun appareil n'a accepté le test.",
+    "nset.push.testNoDevices":
+      "Aucun appareil enregistré pour ce compte. Désactivez puis réactivez le push ci-dessus sur cet appareil.",
+    "nset.push.result.sent": "accepté par le service de notification",
+    "nset.push.result.expired": "abonnement expiré, supprimé — réactivez le push sur cet appareil",
+    "nset.push.result.failed": "refusé par le service de notification",
     "nset.saveFailed": "Les préférences n'ont pas pu être enregistrées.",
     "nset.allOff":
       "Tous les canaux sont désactivés : vous ne recevrez plus aucune alerte, y compris pour vos commandes.",
@@ -107,6 +117,16 @@ export const notificationsDict = defineDict({
     "nset.push.disabled": "Push notifications disabled on this device.",
 
     "nset.saved": "Notification preferences saved.",
+    "nset.push.test": "Send a test notification",
+    "nset.push.testHint":
+      "Close the app completely first, then trigger this from another device — or ask a colleague. A notification that arrives with the app in front proves nothing: that is the case that already worked.",
+    "nset.push.testSent": "Test sent. Check your devices.",
+    "nset.push.testFailed": "No device accepted the test.",
+    "nset.push.testNoDevices":
+      "No device is registered for this account. Turn push off and on again above, on this device.",
+    "nset.push.result.sent": "accepted by the push service",
+    "nset.push.result.expired": "subscription expired and was removed — turn push back on for that device",
+    "nset.push.result.failed": "rejected by the push service",
     "nset.saveFailed": "Your preferences could not be saved.",
     "nset.allOff":
       "Every channel is off: you will no longer receive any alert, including about your own orders.",

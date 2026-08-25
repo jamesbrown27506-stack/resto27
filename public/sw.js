@@ -19,6 +19,31 @@
 
 /* eslint-disable no-restricted-globals */
 
+/*
+ * ───────────────────────────────────────────────────────────────────────────
+ *  A NEW WORKER TAKES OVER AT ONCE, INSTEAD OF WHENEVER THE APP IS NEXT SHUT.
+ *
+ *  By default a freshly installed service worker sits in `waiting` until
+ *  every tab and window using the old one has CLOSED. An installed PWA on a
+ *  phone is almost never closed — it is swiped away and resumed — so a fix
+ *  shipped to this file could sit unused on the one platform that needed it
+ *  most, for days, while the app appeared to be up to date.
+ *
+ *  `skipWaiting` promotes it immediately; `clients.claim` puts existing
+ *  windows under it without a reload. Safe here because this worker holds no
+ *  cache and serves no assets: there is no half-old, half-new state for a
+ *  page to be caught between. It only receives pushes, and receiving them
+ *  with the newest code is always the right answer.
+ * ───────────────────────────────────────────────────────────────────────────
+ */
+self.addEventListener("install", () => {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 self.addEventListener("push", (event) => {
   let data = { title: "RestoLink", body: "", href: "/" };
   try {
@@ -61,9 +86,27 @@ async function deliver(data) {
   // not build a stack of five the manager has to dismiss one at a time.
   const tag = data.tag || "restolink";
 
+  /*
+    THE BANNER MUST NEVER WAIT ON THIS.
+
+    On a phone the worker is started cold, by a push, on a device that was
+    asleep a second ago — and Chrome gives it a short budget to show something
+    before deciding it misbehaved and posting "This site has been updated in
+    the background" over the top. `matchAll` is normally instant, but a cold
+    start is exactly when it might not be, and the client list is only needed
+    to decide whether the banner should be SILENT. That is a refinement; the
+    banner itself is the point.
+
+    So it is raced against a short timer: if the answer is not back quickly,
+    carry on as though no tab is open, which is the safe assumption — it makes
+    a sound rather than staying quiet.
+  */
   let clients = [];
   try {
-    clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    clients = await Promise.race([
+      self.clients.matchAll({ type: "window", includeUncontrolled: true }),
+      new Promise((resolve) => setTimeout(() => resolve([]), 800)),
+    ]);
   } catch {
     // matchAll can reject in odd states; the banner below still gets shown.
   }
@@ -86,10 +129,21 @@ async function deliver(data) {
 
   return self.registration.showNotification(data.title, {
     body: data.body || "",
-    icon: "/favicon.ico",
-    badge: "/favicon.ico",
+    /*
+      A REAL ICON, NOT THE FAVICON. Android draws the notification icon at
+      64dp and the .ico is 16–32px: it arrived as a smear, or as Chrome's
+      default globe when the decode failed outright. app-icon-192.png is the
+      same file the installed app uses, so the banner matches the home screen.
+    */
+    icon: "/app-icon-192.png",
+    badge: "/app-icon-192.png",
     tag,
     renotify: true,
+    // A phone in a pocket is the case this whole change is about, and a
+    // pocket cannot see a screen. Ignored on desktop.
+    vibrate: [200, 100, 200],
+    // Survive a device that wakes, shows, and sleeps again before it is read.
+    timestamp: Date.now(),
     // Silent only when a tab is in FRONT and has already announced it. A tab
     // that is merely open — the case this whole change is about — still gets
     // the OS sound, because the user is looking somewhere else entirely.
