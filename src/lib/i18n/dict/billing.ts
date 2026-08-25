@@ -151,6 +151,13 @@ export const billingDict = defineDict({
       "Une demande de {amount} a été envoyée au numéro {phone}. Ouvrez votre appli Mobile Money et validez.",
     "mbl.checkout.pending.hint":
       "La page suit automatiquement la confirmation. Vous pouvez la fermer : le paiement sera pris en compte de toute façon.",
+    "mbl.checkout.pending.amount": "Montant",
+    "mbl.checkout.pending.reference": "Facture",
+    "mbl.checkout.pending.phone": "Téléphone",
+    "mbl.checkout.pending.gateway": "Passerelle sécurisée",
+    "mbl.checkout.pending.stillTracking":
+      "La confirmation prend plus de temps que prévu. Le paiement n'a pas échoué : il reste suivi en arrière-plan.",
+    "mbl.checkout.pending.checkAgain": "Vérifier à nouveau",
     "mbl.checkout.done.title": "Paiement confirmé",
     "mbl.checkout.done.body":
       "Votre règlement de {amount} a été appliqué. Votre formule est active pour 30 jours.",
@@ -300,6 +307,13 @@ export const billingDict = defineDict({
       "A request for {amount} was sent to {phone}. Open your Mobile Money app and approve it.",
     "mbl.checkout.pending.hint":
       "This page follows the confirmation automatically. You may close it — the payment is picked up either way.",
+    "mbl.checkout.pending.amount": "Amount",
+    "mbl.checkout.pending.reference": "Invoice",
+    "mbl.checkout.pending.phone": "Phone",
+    "mbl.checkout.pending.gateway": "Secure gateway",
+    "mbl.checkout.pending.stillTracking":
+      "Confirmation is taking longer than expected. The payment has not failed: it is still tracked in the background.",
+    "mbl.checkout.pending.checkAgain": "Check again",
     "mbl.checkout.done.title": "Payment confirmed",
     "mbl.checkout.done.body":
       "Your payment of {amount} has been applied. Your plan is active for 30 days.",

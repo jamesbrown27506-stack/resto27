@@ -49,6 +49,11 @@ export interface InvoiceDetail extends Invoice {
   branchLabel: string;
 }
 
+export interface OpenInvoicePayment {
+  id: string;
+  phone: string | null;
+}
+
 const INVOICE_COLUMNS =
   "id, number, amount, currency, status, period_start, period_end, issued_at, paid_at, plan_id";
 
@@ -150,6 +155,39 @@ export async function fetchInvoice(
     restaurantName: row.restaurants?.name ?? "—",
     branchLabel: row.restaurants?.branch_label ?? "",
   };
+}
+
+/**
+ * Latest unsettled, trackable payment for one tenant invoice.
+ *
+ * A pending row with no transaction id is an inconclusive transport error,
+ * not a CamerPay collection the UI can follow. It is skipped so the manager
+ * may retry, while a real pending request is restored after every reload.
+ */
+export async function fetchOpenInvoicePayment(
+  restaurantId: string,
+  invoiceId: string,
+): Promise<OpenInvoicePayment | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("payment_attempts")
+    .select("id, status, transaction_id, phone")
+    .eq("restaurant_id", restaurantId)
+    .eq("invoice_id", invoiceId)
+    .in("status", ["pending", "succeeded"])
+    .is("settled_at", null)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (error) {
+    console.error("[invoices:fetchOpenInvoicePayment]", error.message);
+    return null;
+  }
+
+  const attempt = (data ?? []).find(
+    (row) => row.status === "succeeded" || Boolean(row.transaction_id),
+  );
+  return attempt ? { id: attempt.id, phone: attempt.phone } : null;
 }
 
 /* ── Plans ─────────────────────────────────────────────────────────────── */

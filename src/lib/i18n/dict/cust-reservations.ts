@@ -61,11 +61,23 @@ export const custReservationsDict = defineDict({
     "crs.phone": "Numéro Mobile Money",
     "crs.phoneHint": "MTN MoMo ou Orange Money.",
     "crs.phonePh": "6XXXXXXXX",
-    "crs.payDeposit": "Payer l'acompte {amount} et réserver",
+    "crs.payDeposit": "Payer l'acompte {amount} et confirmer",
     "crs.payPendingTitle": "Confirmation du paiement en cours…",
     "crs.payPendingBody":
       "Validez la demande sur votre téléphone. La page se met à jour automatiquement.",
+    "crs.payPendingHint":
+      "Vous pouvez fermer cet écran sans interrompre le paiement. CamerPay et RestoLink continuent de le suivre en arrière-plan.",
+    "crs.pendingBanner":
+      "Votre paiement Mobile Money attend toujours sa confirmation. Ne lancez pas un deuxième paiement.",
+    "crs.viewPayment": "Voir le paiement en cours",
+    "crs.continueBackground": "Continuer en arrière-plan",
+    "crs.paymentAmount": "Montant",
+    "crs.paymentReference": "Réservation",
+    "crs.paymentPhone": "Téléphone",
+    "crs.paymentGateway": "Passerelle sécurisée",
     "crs.payFailed": "Le paiement de l'acompte n'a pas abouti. Réessayez.",
+    "crs.payStillPending":
+      "La confirmation prend plus de temps que prévu. Votre paiement reste suivi en arrière-plan — revenez ici dans quelques instants.",
     "crs.depositPerSeatMath": "{rate} par convive × {guests} convive(s).",
     "crs.depositPercent": "Acompte : {pct}% de votre addition finale.",
     "crs.depositPercentBody":
@@ -128,11 +140,23 @@ export const custReservationsDict = defineDict({
     "crs.phone": "Mobile Money number",
     "crs.phoneHint": "MTN MoMo or Orange Money.",
     "crs.phonePh": "6XXXXXXXX",
-    "crs.payDeposit": "Pay the {amount} deposit and book",
+    "crs.payDeposit": "Pay the {amount} deposit and confirm",
     "crs.payPendingTitle": "Waiting for payment confirmation…",
     "crs.payPendingBody":
       "Approve the request on your phone. This page updates automatically.",
+    "crs.payPendingHint":
+      "You may close this screen without interrupting payment. CamerPay and RestoLink will keep tracking it in the background.",
+    "crs.pendingBanner":
+      "Your Mobile Money payment is still awaiting confirmation. Do not start a second payment.",
+    "crs.viewPayment": "View pending payment",
+    "crs.continueBackground": "Continue in background",
+    "crs.paymentAmount": "Amount",
+    "crs.paymentReference": "Booking",
+    "crs.paymentPhone": "Phone",
+    "crs.paymentGateway": "Secure gateway",
     "crs.payFailed": "The deposit payment did not go through. Please try again.",
+    "crs.payStillPending":
+      "Confirmation is taking longer than expected. Your payment is still tracked in the background — check back here shortly.",
     "crs.depositPerSeatMath": "{rate} per guest × {guests} guest(s).",
     "crs.depositPercent": "Deposit: {pct}% of your final bill.",
     "crs.depositPercentBody":

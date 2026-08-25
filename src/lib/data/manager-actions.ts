@@ -10,6 +10,12 @@ import { notify } from "@/lib/notify";
 import { releaseTableIfFree } from "./order-actions";
 import { POPULAR_DISH_BY_ID, type DishTemplate } from "./dish-templates";
 import { normaliseDepositType, type DepositType } from "@/lib/reservations/deposit";
+import {
+  canDecideReservation,
+  canManagerCollectReservationDeposit,
+  canSetReservationStatus,
+} from "@/lib/reservations/lifecycle";
+import type { CustomerReservationStatus } from "@/lib/format/reservation-status";
 import type { BranchRole } from "@/lib/capabilities";
 import type { ActionResult } from "./admin-actions";
 
@@ -987,7 +993,7 @@ export async function decideReservation(
   const supabase = createAdminClient();
   const { data: reservation } = await supabase
     .from("reservations")
-    .select("id, reference, customer_id, guest_name, deposit_amount, deposit_paid")
+    .select("id, reference, customer_id, guest_name, party_size, reserved_for, duration_min, status, deposit_amount, deposit_paid")
     .eq("id", reservationId)
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
@@ -997,9 +1003,65 @@ export async function decideReservation(
     reference: string;
     customer_id: string | null;
     guest_name: string | null;
+    party_size: number;
+    reserved_for: string;
+    duration_min: number;
+    status: CustomerReservationStatus;
     deposit_amount: number | null;
     deposit_paid: boolean | null;
   } | null;
+
+  if (!booking) return { ok: false, error: "Reservation not found." };
+  if (!canDecideReservation(booking.status, decision)) {
+    return { ok: false, error: "This reservation has already moved to another stage. Refresh and try again." };
+  }
+
+  if (decision === "cancelled" && booking.status === "awaiting_payment") {
+    const { data: openAttempt } = await supabase
+      .from("payment_attempts")
+      .select("id")
+      .eq("reservation_id", booking.id)
+      .in("status", ["pending", "succeeded"])
+      .is("settled_at", null)
+      .limit(1)
+      .maybeSingle();
+    if (openAttempt) {
+      return {
+        ok: false,
+        error: "A customer payment is still being confirmed. Wait for its result before releasing the table.",
+      };
+    }
+  }
+
+  if (decision === "confirmed" && input.tableId) {
+    const { data: table } = await supabase
+      .from("restaurant_tables")
+      .select("id, capacity, status")
+      .eq("id", input.tableId)
+      .eq("restaurant_id", active.restaurantId)
+      .maybeSingle();
+
+    if (!table || table.status === "out_of_service" || table.capacity < booking.party_size) {
+      return { ok: false, error: "That table is unavailable or too small for this party." };
+    }
+
+    const { data: assigned } = await supabase
+      .from("reservations")
+      .select("id, reserved_for, duration_min")
+      .eq("restaurant_id", active.restaurantId)
+      .eq("table_id", input.tableId)
+      .in("status", ["awaiting_payment", "confirmed", "seated"])
+      .neq("id", booking.id);
+
+    const startsAt = Date.parse(booking.reserved_for);
+    const endsAt = startsAt + Math.max(1, booking.duration_min) * 60_000;
+    const conflicts = (assigned ?? []).some((other) => {
+      const otherStart = Date.parse(other.reserved_for as string);
+      const otherEnd = otherStart + Math.max(1, Number(other.duration_min)) * 60_000;
+      return otherStart < endsAt && otherEnd > startsAt;
+    });
+    if (conflicts) return { ok: false, error: "That table is already assigned during this time." };
+  }
 
   /*
     ─────────────────────────────────────────────────────────────────────────
@@ -1022,7 +1084,7 @@ export async function decideReservation(
     decision === "confirmed" && depositDue > 0 && booking?.deposit_paid !== true;
   const nextStatus = needsPayment ? "awaiting_payment" : decision;
 
-  const { error } = await supabase
+  const { data: decided, error } = await supabase
     .from("reservations")
     .update({
       status: nextStatus,
@@ -1035,7 +1097,10 @@ export async function decideReservation(
       decline_reason: decision === "cancelled" ? input.reason!.trim() : null,
     })
     .eq("id", reservationId)
-    .eq("restaurant_id", active.restaurantId);
+    .eq("restaurant_id", active.restaurantId)
+    .eq("status", booking.status)
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     console.error("[manager:decideReservation]", error.code ?? "", error.message);
@@ -1050,6 +1115,9 @@ export async function decideReservation(
       };
     }
     return { ok: false, error: "Could not save the decision." };
+  }
+  if (!decided) {
+    return { ok: false, error: "This reservation changed while you were deciding it. Refresh and try again." };
   }
 
   // The guest hears the verdict — and a refusal must never arrive without the
@@ -1073,6 +1141,8 @@ export async function decideReservation(
   }
 
   revalidatePath("/m/reservations");
+  revalidatePath("/reservations");
+  revalidatePath("/account");
   return { ok: true };
 }
 
@@ -1087,20 +1157,27 @@ export async function setReservationStatus(
   // it in the same breath — the reservation and the floor must not drift.
   const { data: reservation } = await supabase
     .from("reservations")
-    .select("id, table_id")
+    .select("id, reference, customer_id, status, table_id")
     .eq("id", reservationId)
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
   if (!reservation) return { ok: false, error: "Could not update the reservation." };
+  if (!canSetReservationStatus(reservation.status, status)) {
+    return { ok: false, error: "That reservation cannot move to this stage. Refresh the board." };
+  }
 
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from("reservations")
     .update({ status })
     .eq("id", reservationId)
-    .eq("restaurant_id", active.restaurantId);
+    .eq("restaurant_id", active.restaurantId)
+    .eq("status", reservation.status)
+    .select("id")
+    .maybeSingle();
 
   if (error) return { ok: false, error: "Could not update the reservation." };
+  if (!updated) return { ok: false, error: "The reservation changed. Refresh the board." };
 
   // SEATING a party marks its table occupied (unless the floor already has
   // it claimed). COMPLETING the meal — or a NO-SHOW, where the table was
@@ -1125,8 +1202,24 @@ export async function setReservationStatus(
     }
   }
 
+  if (reservation.customer_id) {
+    await notify({
+      event: "reservation_status",
+      tone: status === "no_show" ? "error" : status === "completed" ? "success" : "info",
+      customerId: reservation.customer_id,
+      href: "/reservations",
+      params: {
+        reference: reservation.reference,
+        restaurantName: active.restaurantName,
+        status,
+      },
+    });
+  }
+
   revalidatePath("/m/reservations");
   revalidatePath("/m/tables");
+  revalidatePath("/reservations");
+  revalidatePath("/account");
   return { ok: true };
 }
 
@@ -1699,9 +1792,8 @@ export async function setRestaurantDeposit(
  * admin action uses, scoped to their own branch by the reservation lookup.
  *
  * Two kinds of deposit (migration 0031):
- *   · fixed — the amount is the booking's snapshotted `deposit_amount`; the
- *     customer paid it ONLINE at booking, so a manager usually never collects
- *     it twice (the row is already `deposit_paid`).
+ *   · fixed/per-seat — the customer normally pays online after acceptance;
+ *     this action is only the fallback for cash that was actually received.
  *   · percent — the customer pays nothing online; the deposit is a percentage
  *     of their actual bill, which is only known once they are eating. The
  *     manager enters the bill total and `amount = bill × pct / 100`.
@@ -1715,7 +1807,7 @@ export async function collectReservationDeposit(
 
   const { data: reservation } = await supabase
     .from("reservations")
-    .select("id, reference, deposit_amount, deposit_percent, deposit_paid, status")
+    .select("id, reference, customer_id, deposit_amount, deposit_percent, deposit_paid, status")
     .eq("id", reservationId)
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
@@ -1723,14 +1815,45 @@ export async function collectReservationDeposit(
   const row = reservation as {
     id: string;
     reference: string;
+    customer_id: string | null;
     deposit_amount: number;
     deposit_percent: number;
     deposit_paid: boolean;
-    status: string;
+    status: CustomerReservationStatus;
   } | null;
 
   if (!row) return { ok: false, error: "Reservation not found." };
   if (row.deposit_paid) return { ok: false, error: "Deposit already collected." };
+  if (!canManagerCollectReservationDeposit({
+    status: row.status,
+    depositPercent: Number(row.deposit_percent ?? 0),
+    depositPaid: row.deposit_paid,
+  })) {
+    return {
+      ok: false,
+      error:
+        row.deposit_percent > 0
+          ? "A percentage deposit can only be collected during or after service."
+          : "The customer owns the online payment step. Cash can only be recorded after the request is accepted.",
+    };
+  }
+
+  if (row.deposit_percent <= 0) {
+    const { data: openAttempt } = await supabase
+      .from("payment_attempts")
+      .select("id")
+      .eq("reservation_id", row.id)
+      .in("status", ["pending", "succeeded"])
+      .is("settled_at", null)
+      .limit(1)
+      .maybeSingle();
+    if (openAttempt) {
+      return {
+        ok: false,
+        error: "The customer's Mobile Money payment is already being confirmed. Do not collect it again in cash.",
+      };
+    }
+  }
 
   // Percent bookings carry no fixed amount — the percentage of the bill the
   // manager is entering is what must be collected.
@@ -1745,6 +1868,31 @@ export async function collectReservationDeposit(
 
   if (amount <= 0) return { ok: false, error: "This booking has no deposit." };
 
+  /*
+   * Claim the unpaid row before moving money. Two cashiers tapping together
+   * cannot both credit the wallet; only the compare-and-swap winner proceeds.
+   * A fixed cash fallback also performs the awaiting_payment → confirmed
+   * transition in that same claim.
+   */
+  const isOnlineFallback = row.deposit_percent <= 0;
+  const { data: claimed, error: claimError } = await supabase
+    .from("reservations")
+    .update(
+      isOnlineFallback
+        ? { deposit_paid: true, status: "confirmed" }
+        : { deposit_paid: true },
+    )
+    .eq("id", reservationId)
+    .eq("restaurant_id", active.restaurantId)
+    .eq("status", row.status)
+    .eq("deposit_paid", false)
+    .select("id")
+    .maybeSingle();
+
+  if (claimError || !claimed) {
+    return { ok: false, error: "The booking changed before the deposit could be recorded. Refresh and try again." };
+  }
+
   const { error: creditError } = await supabase.rpc("wallet_credit", {
     p_restaurant_id: active.restaurantId,
     p_amount: amount,
@@ -1755,37 +1903,31 @@ export async function collectReservationDeposit(
 
   if (creditError) {
     console.error("[manager:collectReservationDeposit]", creditError.message);
+    await supabase
+      .from("reservations")
+      .update(
+        isOnlineFallback
+          ? { deposit_paid: false, status: "awaiting_payment" }
+          : { deposit_paid: false },
+      )
+      .eq("id", reservationId)
+      .eq("deposit_paid", true)
+      .eq("status", isOnlineFallback ? "confirmed" : row.status);
     return { ok: false, error: "Could not credit the wallet. Is migration 0024 applied?" };
   }
 
-  const { error: updateError } = await supabase
-    .from("reservations")
-    .update({ deposit_paid: true })
-    .eq("id", reservationId)
-    .eq("restaurant_id", active.restaurantId);
-
-  if (updateError) return { ok: false, error: "Wallet credited, but could not mark the booking." };
-
-  /*
-    Collecting the deposit by hand CONFIRMS the table, exactly as paying online
-    does (0039).
-
-    A guest who turns up and settles the deposit in cash has done the thing the
-    `awaiting_payment` state was waiting for, and leaving the booking in it
-    would keep showing the restaurant a table it is still chasing payment for.
-    Guarded on the status so this can never resurrect a cancelled booking or
-    walk a seated one backwards.
-  */
-  const { error: promoteError } = await supabase
-    .from("reservations")
-    .update({ status: "confirmed" })
-    .eq("id", reservationId)
-    .eq("restaurant_id", active.restaurantId)
-    .eq("status", "awaiting_payment");
-
-  if (promoteError) {
-    // Not fatal: the money is in the wallet and the deposit is marked paid.
-    console.error("[manager:collectReservationDeposit] promote", promoteError.message);
+  if (isOnlineFallback && row.customer_id) {
+    await notify({
+      event: "reservation_decision",
+      tone: "success",
+      customerId: row.customer_id,
+      href: "/reservations",
+      params: {
+        reference: row.reference,
+        restaurantName: active.restaurantName,
+        status: "confirmed",
+      },
+    });
   }
 
   await writeAudit(profile, {
@@ -1797,6 +1939,8 @@ export async function collectReservationDeposit(
 
   revalidatePath("/m/reservations");
   revalidatePath("/m/wallet");
+  revalidatePath("/reservations");
+  revalidatePath("/account");
   return { ok: true };
 }
 

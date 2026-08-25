@@ -6,7 +6,7 @@ import { ManagerPage } from "@/components/layout/manager-shell";
 import { PaymentFlow } from "./payment-flow";
 import { buttonClasses } from "@/components/ui/button";
 import { requireCapability } from "@/lib/auth/branch";
-import { fetchInvoice } from "@/lib/data/invoices";
+import { fetchInvoice, fetchOpenInvoicePayment } from "@/lib/data/invoices";
 import { paymentMode } from "@/lib/data/billing";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
@@ -42,12 +42,13 @@ export default async function PayInvoicePage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const { active } = await requireCapability("billing.manage");
   const locale = await getLocale();
-  const [invoice, mode] = await Promise.all([
+  const [invoice, mode, openPayment] = await Promise.all([
     // Scoped by branch inside fetchInvoice: an id copied from another
     // tenant's URL returns null here, which renders as 404 rather than as
     // their invoice.
     fetchInvoice(active.restaurantId, id),
     paymentMode(),
+    fetchOpenInvoicePayment(active.restaurantId, id),
   ]);
 
   if (!invoice) notFound();
@@ -65,7 +66,12 @@ export default async function PayInvoicePage({ params }: { params: Promise<{ id:
         </Link>
       }
     >
-      <PaymentFlow invoice={invoice} mode={mode} />
+      <PaymentFlow
+        invoice={invoice}
+        mode={mode}
+        initialAttemptId={openPayment?.id ?? null}
+        initialPaymentPhone={openPayment?.phone ?? null}
+      />
     </ManagerPage>
   );
 }

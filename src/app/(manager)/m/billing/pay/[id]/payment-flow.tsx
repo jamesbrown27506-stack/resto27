@@ -6,6 +6,7 @@ import { ArrowLeft, Ban, Check, LoaderCircle, Smartphone } from "lucide-react";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
+import { PaymentPendingView } from "@/components/payment/payment-pending";
 import { formatMoney } from "@/lib/format/currency";
 import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
@@ -39,14 +40,27 @@ type Phase = "idle" | "pending" | "succeeded" | "failed";
 const POLL_INTERVAL_MS = 4_000;
 const POLL_TRIES = 30; // 2 minutes of waiting on the handset.
 
-export function PaymentFlow({ invoice, mode }: { invoice: InvoiceDetail; mode: "sandbox" | "live" }) {
+export function PaymentFlow({
+  invoice,
+  mode,
+  initialAttemptId = null,
+  initialPaymentPhone = null,
+}: {
+  invoice: InvoiceDetail;
+  mode: "sandbox" | "live";
+  initialAttemptId?: string | null;
+  initialPaymentPhone?: string | null;
+}) {
   const { t } = useLocale();
   const dates = useDates();
-  const [phone, setPhone] = useState("");
-  const [phase, setPhase] = useState<Phase>("idle");
+  const [phone, setPhone] = useState(initialPaymentPhone ?? "");
+  const [phase, setPhase] = useState<Phase>(initialAttemptId ? "pending" : "idle");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(initialAttemptId);
+  const [trackingPaused, setTrackingPaused] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const initialPollStarted = useRef(false);
 
   const backLink = (
     <Link href="/m/billing" className={buttonClasses({ variant: "outline" })}>
@@ -64,18 +78,77 @@ export function PaymentFlow({ invoice, mode }: { invoice: InvoiceDetail; mode: "
 
   useEffect(() => stopPolling, [stopPolling]);
 
+  /**
+   * Poll a real provider attempt. Reaching the UI's time budget leaves the
+   * payment pending — it does not invent a failure while CamerPay, the webhook
+   * and the reconciler may still be resolving it.
+   */
+  const startPolling = useCallback(
+    (id: string) => {
+      stopPolling();
+      setAttemptId(id);
+      setPhase("pending");
+      setBusy(false);
+      setTrackingPaused(false);
+
+      let tries = 0;
+      let checking = false;
+      pollRef.current = setInterval(async () => {
+        if (checking) return;
+        checking = true;
+        tries += 1;
+
+        try {
+          const result = await checkInvoicePayment(id);
+          if (result.status === "succeeded") {
+            stopPolling();
+            setPhase("succeeded");
+          } else if (!result.ok || result.status === "failed") {
+            stopPolling();
+            setPhase("failed");
+          } else if (tries >= POLL_TRIES) {
+            stopPolling();
+            setTrackingPaused(true);
+          }
+        } catch {
+          // Connectivity loss is not a payment verdict. Keep the pending
+          // screen, and let the manager explicitly resume checks below.
+          if (tries >= POLL_TRIES) {
+            stopPolling();
+            setTrackingPaused(true);
+          }
+        } finally {
+          checking = false;
+        }
+      }, POLL_INTERVAL_MS);
+    },
+    [stopPolling],
+  );
+
+  // A reload recovers the latest unsettled attempt from the server page and
+  // restarts observation without generating another Mobile Money request.
+  useEffect(() => {
+    if (!initialAttemptId || initialPollStarted.current) return;
+    initialPollStarted.current = true;
+    startPolling(initialAttemptId);
+  }, [initialAttemptId, startPolling]);
+
   async function submit() {
     if (!phone.trim()) {
       setError(t("mbl.checkout.phoneRequired"));
       return;
     }
     setBusy(true);
+    setAttemptId(null);
+    setPhase("pending");
+    setTrackingPaused(false);
     setError(null);
 
     const started = await payInvoice({ invoiceId: invoice.id, phone: phone.trim() });
 
     if (!started.ok) {
       setBusy(false);
+      setPhase("idle");
       setError(started.error ?? t("mbl.checkout.failedGeneric"));
       return;
     }
@@ -87,24 +160,12 @@ export function PaymentFlow({ invoice, mode }: { invoice: InvoiceDetail; mode: "
     }
 
     if (started.status === "pending" && started.attemptId) {
-      setBusy(false);
-      setPhase("pending");
-      let tries = 0;
-      pollRef.current = setInterval(async () => {
-        tries += 1;
-        const result = await checkInvoicePayment(started.attemptId!);
-        if (result.status === "succeeded") {
-          stopPolling();
-          setPhase("succeeded");
-        } else if (result.status === "failed" || tries >= POLL_TRIES) {
-          stopPolling();
-          setPhase("failed");
-        }
-      }, POLL_INTERVAL_MS);
+      startPolling(started.attemptId);
       return;
     }
 
     setBusy(false);
+    setPhase("idle");
     setError(t("mbl.checkout.failedGeneric"));
   }
 
@@ -190,7 +251,14 @@ export function PaymentFlow({ invoice, mode }: { invoice: InvoiceDetail; mode: "
             {t("mbl.checkout.failed.body")}
           </p>
           <div className="mt-6 flex flex-col items-center gap-3">
-            <Button onClick={() => setPhase("idle")}>{t("mbl.checkout.retry")}</Button>
+            <Button
+              onClick={() => {
+                setAttemptId(null);
+                setPhase("idle");
+              }}
+            >
+              {t("mbl.checkout.retry")}
+            </Button>
             {backLink}
           </div>
         </CardBody>
@@ -202,22 +270,40 @@ export function PaymentFlow({ invoice, mode }: { invoice: InvoiceDetail; mode: "
   if (phase === "pending") {
     return (
       <Card className="mx-auto max-w-md">
-        <CardBody className="py-10 text-center">
-          <span className="mx-auto grid size-14 animate-pulse place-items-center rounded-full bg-info-light text-info">
-            <LoaderCircle className="size-7 animate-spin" aria-hidden />
-          </span>
-          <h2 className="mt-4 font-display text-2xl font-bold">
+        <CardBody className="py-8 sm:p-8">
+          <h2 className="text-center font-display text-2xl font-bold">
             <span>{t("mbl.checkout.pending.title")}</span>
           </h2>
-          <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-text-secondary">
-            {t("mbl.checkout.pending.body", {
+          <PaymentPendingView
+            body={t("mbl.checkout.pending.body", {
               amount: formatMoney(invoice.amount, { currency: invoice.currency }),
               phone,
             })}
-          </p>
-          <p className="mx-auto mt-4 max-w-xs text-xs text-text-light">
-            {t("mbl.checkout.pending.hint")}
-          </p>
+            hint={t("mbl.checkout.pending.hint")}
+            amountLabel={t("mbl.checkout.pending.amount")}
+            amount={formatMoney(invoice.amount, { currency: invoice.currency })}
+            referenceLabel={t("mbl.checkout.pending.reference")}
+            reference={invoice.number}
+            phoneLabel={t("mbl.checkout.pending.phone")}
+            phone={phone}
+            gatewayLabel={t("mbl.checkout.pending.gateway")}
+            requesting={busy && attemptId === null}
+          />
+
+          {trackingPaused && (
+            <p className="mx-auto mt-5 max-w-sm rounded-md border border-info/30 bg-info-light p-3 text-center text-xs leading-relaxed text-info">
+              {t("mbl.checkout.pending.stillTracking")}
+            </p>
+          )}
+
+          <div className="mt-6 flex flex-col items-center gap-3">
+            {trackingPaused && attemptId && (
+              <Button onClick={() => startPolling(attemptId)}>
+                {t("mbl.checkout.pending.checkAgain")}
+              </Button>
+            )}
+            {backLink}
+          </div>
         </CardBody>
       </Card>
     );

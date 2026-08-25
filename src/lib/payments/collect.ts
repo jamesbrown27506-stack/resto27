@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/server";
 import { activateFromInvoice } from "@/lib/data/invoice-activation";
 import { paymentMode } from "@/lib/data/billing";
+import { notify } from "@/lib/notify";
 import {
   confirmTransaction,
   isPayableAmount,
@@ -639,8 +640,9 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
       .from("reservations")
       .update({ deposit_paid: true })
       .eq("id", row.reservationId)
+      .eq("status", "awaiting_payment")
       .eq("deposit_paid", false)
-      .select("id, reference")
+      .select("id, reference, customer_id, guest_name")
       .maybeSingle();
 
     if (claimError) {
@@ -652,18 +654,51 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
       // path that raced us, or by a manager collecting it on the board.
       const { data: existing } = await supabase
         .from("reservations")
-        .select("id")
+        .select("id, reference, customer_id, guest_name, status, deposit_paid")
         .eq("id", row.reservationId)
         .maybeSingle();
 
       if (!existing) {
         error = "Réservation introuvable.";
         reason = "reservationNotFound";
-      } else {
+      } else if (existing.deposit_paid && existing.status === "awaiting_payment") {
+        // A previous settlement won the deposit claim but stopped before the
+        // status transition. Finish that exact half-completed operation.
+        const { data: promoted, error: promoteError } = await supabase
+          .from("reservations")
+          .update({ status: "confirmed" })
+          .eq("id", row.reservationId)
+          .eq("status", "awaiting_payment")
+          .eq("deposit_paid", true)
+          .select("id")
+          .maybeSingle();
+        if (promoteError || !promoted) {
+          error = "Le paiement est reçu mais la réservation n'a pas pu être confirmée.";
+          reason = "reservationPromotionFailed";
+        } else {
+          ok = true;
+          await notifyReservationPaid({
+            restaurantId: row.restaurantId,
+            customerId: existing.customer_id as string | null,
+            customerName: existing.guest_name as string | null,
+            reference: existing.reference as string,
+          });
+        }
+      } else if (existing.deposit_paid && existing.status === "confirmed") {
         ok = true;
+      } else {
+        // A late provider success may never turn a cancelled or completed
+        // booking back into a live table or credit the restaurant for it.
+        error = "La réservation n'attend plus ce paiement.";
+        reason = "reservationNotPayable";
       }
     } else {
-      const booking = claimed as { id: string; reference: string };
+      const booking = claimed as {
+        id: string;
+        reference: string;
+        customer_id: string | null;
+        guest_name: string | null;
+      };
       const { error: creditError } = await supabase.rpc("wallet_credit", {
         p_restaurant_id: row.restaurantId,
         p_amount: row.amount,
@@ -691,14 +726,29 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
           be the worse outcome. The manager sees a paid deposit on the board
           either way.
         */
-        const { error: promoteError } = await supabase
+        const { data: promoted, error: promoteError } = await supabase
           .from("reservations")
           .update({ status: "confirmed" })
           .eq("id", row.reservationId)
-          .eq("status", "awaiting_payment");
+          .eq("status", "awaiting_payment")
+          .eq("deposit_paid", true)
+          .select("id")
+          .maybeSingle();
 
-        if (promoteError) {
-          console.error("[pay:settle:reservation] promote", promoteError.message);
+        if (promoteError || !promoted) {
+          console.error(
+            "[pay:settle:reservation] promote",
+            promoteError?.message ?? "reservation no longer awaiting payment",
+          );
+          error = "Le paiement est reçu mais la réservation n'a pas pu être confirmée.";
+          reason = "reservationPromotionFailed";
+        } else {
+          await notifyReservationPaid({
+            restaurantId: row.restaurantId,
+            customerId: booking.customer_id,
+            customerName: booking.guest_name,
+            reference: booking.reference,
+          });
         }
       }
 
@@ -719,7 +769,7 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
 
         error = "Le paiement est confirmé mais le crédit du portefeuille a échoué.";
         reason = "walletCreditFailed";
-      } else {
+      } else if (!error) {
         ok = true;
       }
     }
@@ -740,4 +790,33 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
   }
 
   return { ok, error, reason };
+}
+
+async function notifyReservationPaid(input: {
+  restaurantId: string;
+  customerId: string | null;
+  customerName: string | null;
+  reference: string;
+}): Promise<void> {
+  await notify({
+    event: "reservation",
+    tone: "success",
+    restaurantId: input.restaurantId,
+    href: "/m/reservations",
+    params: {
+      reference: input.reference,
+      customerName: input.customerName ?? undefined,
+      status: "confirmed",
+    },
+  });
+
+  if (input.customerId) {
+    await notify({
+      event: "reservation_decision",
+      tone: "success",
+      customerId: input.customerId,
+      href: "/reservations",
+      params: { reference: input.reference, status: "confirmed" },
+    });
+  }
 }

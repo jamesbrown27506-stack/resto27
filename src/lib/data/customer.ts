@@ -276,6 +276,8 @@ export interface CustomerReservation {
   restaurantSlug: string;
   /** UTC ISO. Rendered in Africa/Douala (§16). */
   reservedFor: string;
+  /** How long the table remains active after its start time. */
+  durationMin: number;
   partySize: number;
   tableNumber: string | null;
   status: CustomerReservationStatus;
@@ -286,6 +288,10 @@ export interface CustomerReservation {
    */
   depositAmount: number;
   depositPaid: boolean;
+  /** Latest unsettled CamerPay attempt, so a reload resumes the pending UI. */
+  paymentAttemptId: string | null;
+  /** The Mobile Money line used for that attempt (may differ from the profile). */
+  paymentPhone: string | null;
   notes: string | null;
   createdAt: string;
 }
@@ -302,7 +308,7 @@ export async function fetchCustomerReservations(
   const { data, error } = await supabase
     .from("reservations")
     .select(
-      "id, reference, restaurant_id, reserved_for, party_size, status, deposit_amount, deposit_paid, notes, created_at, restaurants ( name, slug ), restaurant_tables ( number )",
+      "id, reference, restaurant_id, reserved_for, duration_min, party_size, status, deposit_amount, deposit_paid, notes, created_at, restaurants ( name, slug ), restaurant_tables ( number )",
     )
     .eq("customer_id", profileId)
     .order("reserved_for", { ascending: false });
@@ -312,11 +318,12 @@ export async function fetchCustomerReservations(
     return [];
   }
 
-  return ((data ?? []) as unknown as {
+  const reservations = ((data ?? []) as unknown as {
     id: string;
     reference: string;
     restaurant_id: string;
     reserved_for: string;
+    duration_min: number;
     party_size: number;
     status: string;
     deposit_amount: number | null;
@@ -332,14 +339,59 @@ export async function fetchCustomerReservations(
     restaurantName: r.restaurants?.[0]?.name ?? "",
     restaurantSlug: r.restaurants?.[0]?.slug ?? "",
     reservedFor: r.reserved_for,
+    durationMin: Number(r.duration_min ?? 90),
     partySize: r.party_size,
     tableNumber: r.restaurant_tables?.[0]?.number ?? null,
     status: r.status as CustomerReservationStatus,
     depositAmount: Number(r.deposit_amount ?? 0),
     depositPaid: r.deposit_paid === true,
+    paymentAttemptId: null,
+    paymentPhone: null,
     notes: r.notes,
     createdAt: r.created_at,
   }));
+
+  if (reservations.length === 0) return reservations;
+
+  const { data: attempts, error: attemptsError } = await supabase
+    .from("payment_attempts")
+    .select("id, reservation_id, status, transaction_id, phone, created_at")
+    .in("reservation_id", reservations.map((reservation) => reservation.id))
+    .in("status", ["pending", "succeeded"])
+    .is("settled_at", null)
+    .order("created_at", { ascending: false });
+
+  if (attemptsError) {
+    console.error("[customer:fetchCustomerReservations] payment attempts", attemptsError.message);
+    return reservations;
+  }
+
+  const latestByReservation = new Map<string, { id: string; phone: string | null }>();
+  for (const attempt of attempts ?? []) {
+    // A pending row without CamerPay's tracking id represents an inconclusive
+    // transport error. The paying action deliberately permits a retry for it;
+    // surfacing it as an active charge here would lock the customer forever.
+    const trackable = attempt.status === "succeeded" || Boolean(attempt.transaction_id);
+    if (
+      trackable &&
+      attempt.reservation_id &&
+      !latestByReservation.has(attempt.reservation_id)
+    ) {
+      latestByReservation.set(attempt.reservation_id, {
+        id: attempt.id,
+        phone: attempt.phone,
+      });
+    }
+  }
+
+  return reservations.map((reservation) => {
+    const attempt = latestByReservation.get(reservation.id);
+    return {
+      ...reservation,
+      paymentAttemptId: attempt?.id ?? null,
+      paymentPhone: attempt?.phone ?? null,
+    };
+  });
 }
 
 /* ── Reviews ───────────────────────────────────────────────────────────── */

@@ -17,6 +17,10 @@ import {
   type DepositConfig,
 } from "@/lib/reservations/deposit";
 import {
+  canCustomerCancelReservation,
+  isUpcomingReservation,
+} from "@/lib/reservations/lifecycle";
+import {
   checkPaymentAttempt,
   initiatePaymentAttempt,
   settlePayment,
@@ -627,13 +631,24 @@ export async function createOwnReservation(
   const slotStart = new Date(when.getTime() - 30 * 60_000).toISOString();
   const slotEnd = new Date(when.getTime() + 90 * 60_000).toISOString();
 
-  const { count: tableCount } = await supabase
+  const { data: configuredTables, error: tablesError } = await supabase
     .from("restaurant_tables")
-    .select("id", { count: "exact", head: true })
+    .select("id, capacity, status")
     .eq("restaurant_id", restaurantId);
 
-  const capacity = tableCount ?? 0;
-  if (capacity > 0) {
+  if (tablesError) return { ok: false, error: "La disponibilité n'a pas pu être vérifiée." };
+
+  // No configured floor means the restaurant manages capacity manually. Once
+  // it has configured tables, however, an out-of-service or undersized table
+  // is not real capacity for this party.
+  if ((configuredTables ?? []).length > 0) {
+    const capacity = (configuredTables ?? []).filter(
+      (table) => table.status !== "out_of_service" && Number(table.capacity) >= partySize,
+    ).length;
+    if (capacity === 0) {
+      return { ok: false, error: "Aucune table ne peut accueillir ce nombre de personnes." };
+    }
+
     const { data: overlapping, error: overlapError } = await supabase
       .from("reservations")
       .select("id")
@@ -782,7 +797,7 @@ export async function payReservationDeposit(
 
   const { data, error } = await supabase
     .from("reservations")
-    .select("id, reference, restaurant_id, status, deposit_amount, deposit_paid")
+    .select("id, reference, restaurant_id, status, deposit_amount, deposit_paid, reserved_for, duration_min")
     .eq("id", reservationId)
     .eq("customer_id", user.id)
     .maybeSingle();
@@ -800,6 +815,8 @@ export async function payReservationDeposit(
     status: string;
     deposit_amount: number | null;
     deposit_paid: boolean | null;
+    reserved_for: string;
+    duration_min: number;
   };
 
   if (booking.deposit_paid) return { ok: false, error: "Cet acompte a déjà été réglé." };
@@ -808,9 +825,58 @@ export async function payReservationDeposit(
     // is already confirmed. None of them is a bill.
     return { ok: false, error: "Cette réservation n'attend pas de paiement." };
   }
+  if (
+    !isUpcomingReservation({
+      status: "awaiting_payment",
+      reservedFor: booking.reserved_for,
+      durationMin: booking.duration_min,
+    })
+  ) {
+    return { ok: false, error: "Le créneau de cette réservation est déjà passé." };
+  }
 
   const amount = Number(booking.deposit_amount ?? 0);
   if (amount <= 0) return { ok: false, error: "Aucun acompte n'est dû pour cette réservation." };
+
+  /*
+   * A reload or a second tap must resume the Mobile Money request already on
+   * the customer's handset, not send another charge. An untracked transport
+   * failure has no transaction id and is deliberately ignored so the customer
+   * can retry instead of being blocked for the reconciler's abandonment window.
+   */
+  const { data: openAttempts, error: openAttemptsError } = await supabase
+    .from("payment_attempts")
+    .select("id, status, transaction_id")
+    .eq("reservation_id", booking.id)
+    .in("status", ["pending", "succeeded"])
+    .is("settled_at", null)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (openAttemptsError) {
+    console.error("[customer:payReservationDeposit] open attempt", openAttemptsError.message);
+    return {
+      ok: false,
+      error: "Impossible de vérifier le paiement en cours. Réessayez dans un instant.",
+    };
+  }
+
+  const openAttempt = (openAttempts ?? []).find(
+    (attempt) => attempt.status === "succeeded" || Boolean(attempt.transaction_id),
+  );
+
+  if (openAttempt?.status === "succeeded") {
+    const settled = await settlePayment(openAttempt.id as string);
+    if (!settled.ok) {
+      return { ok: false, error: settled.error ?? "L'acompte n'a pas pu être appliqué." };
+    }
+    revalidatePath("/reservations");
+    revalidatePath("/account");
+    return { ok: true, status: "succeeded" };
+  }
+  if (openAttempt?.status === "pending" && openAttempt.transaction_id) {
+    return { ok: true, status: "pending", attemptId: openAttempt.id as string };
+  }
 
   const initiated = await initiatePaymentAttempt({
     kind: "reservation",
@@ -890,33 +956,86 @@ export async function checkReservationPayment(
   return { ok: true, status: result.status };
 }
 
-/** Cancel one of your own pending/confirmed reservations. */
+/** Cancel one of your own pre-service reservations. */
 export async function cancelOwnReservation(reservationId: string): Promise<ActionResult> {
   const user = await requireUser();
   const supabase = createAdminClient();
 
   const { data: reservation, error } = await supabase
     .from("reservations")
-    .select("id, status")
+    .select("id, reference, restaurant_id, guest_name, status, deposit_paid, reserved_for, duration_min")
     .eq("id", reservationId)
     .eq("customer_id", user.id)
     .maybeSingle();
 
   if (error || !reservation) return { ok: false, error: "Réservation introuvable." };
-  if (reservation.status !== "pending" && reservation.status !== "confirmed") {
+  if (!canCustomerCancelReservation(reservation.status)) {
     return { ok: false, error: "Cette réservation ne peut plus être annulée." };
   }
 
-  const { error: updateError } = await supabase
+  if (
+    !isUpcomingReservation({
+      status: reservation.status,
+      reservedFor: reservation.reserved_for,
+      durationMin: reservation.duration_min,
+    })
+  ) {
+    return { ok: false, error: "Le créneau de cette réservation est déjà passé." };
+  }
+
+  // A paid deposit needs a real Mobile Money refund. Until that refund path is
+  // executed by the restaurant, never silently cancel while keeping the money.
+  if (reservation.deposit_paid) {
+    return {
+      ok: false,
+      error: "Cette réservation a déjà été payée. Contactez le restaurant pour l'annuler et traiter le remboursement.",
+    };
+  }
+
+  // Do not race a payment that is already on the handset. It may have succeeded
+  // even if the callback has not reached us yet.
+  const { data: openAttempt } = await supabase
+    .from("payment_attempts")
+    .select("id")
+    .eq("reservation_id", reservationId)
+    .in("status", ["pending", "succeeded"])
+    .is("settled_at", null)
+    .limit(1)
+    .maybeSingle();
+  if (openAttempt) {
+    return {
+      ok: false,
+      error: "Un paiement est en cours de confirmation. Attendez son résultat avant d'annuler.",
+    };
+  }
+
+  const { data: cancelled, error: updateError } = await supabase
     .from("reservations")
-    .update({ status: "cancelled" })
+    .update({ status: "cancelled", table_id: null })
     .eq("id", reservationId)
-    .eq("status", reservation.status);
+    .eq("status", reservation.status)
+    .select("id")
+    .maybeSingle();
 
   if (updateError) return { ok: false, error: "L'annulation a échoué." };
+  if (!cancelled) return { ok: false, error: "La réservation a changé. Actualisez puis réessayez." };
+
+  await notify({
+    event: "reservation",
+    tone: "error",
+    restaurantId: reservation.restaurant_id,
+    href: "/m/reservations",
+    params: {
+      reference: reservation.reference,
+      customerName: reservation.guest_name ?? user.name,
+      status: "cancelled",
+      cancelledBy: "customer",
+    },
+  });
 
   revalidatePath("/reservations");
   revalidatePath("/account");
+  revalidatePath("/m/reservations");
   return { ok: true };
 }
 

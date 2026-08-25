@@ -45,6 +45,7 @@ export type NotifyEvent =
   | "order_cancelled" //     → both    : someone cancelled an order
   | "reservation" //         → manager : a new reservation request
   | "reservation_decision" //→ customer: confirmed or declined
+  | "reservation_status" //  → customer: seated, completed or no-show
   | "review" //              → manager : a customer wrote a review
   | "review_reply" //        → customer: the restaurant replied
   | "moderation" //          → admin   : a review was reported
@@ -78,6 +79,9 @@ export interface NotifyParams {
     /** A delivery order whose quoted fee the customer has not accepted (0040). */
     | "awaiting_customer"
     | "confirmed"
+    | "seated"
+    | "completed"
+    | "no_show"
     | "preparing"
     | "shipped"
     | "delivered"
@@ -235,6 +239,28 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
     }
 
     case "reservation":
+      if (p.status === "confirmed") {
+        return fr
+          ? {
+              title: `Acompte ${p.reference ?? ""} réglé`,
+              body: "L'acompte a été réglé. La réservation est maintenant confirmée.",
+            }
+          : {
+              title: `Deposit ${p.reference ?? ""} paid`,
+              body: "The deposit was paid. The reservation is now confirmed.",
+            };
+      }
+      if (p.status === "cancelled" && p.cancelledBy === "customer") {
+        return fr
+          ? {
+              title: `Réservation ${p.reference ?? ""} annulée`,
+              body: `${p.customerName ?? "Le client"} a annulé sa réservation. La table est libérée.`,
+            }
+          : {
+              title: `Reservation ${p.reference ?? ""} cancelled`,
+              body: `${p.customerName ?? "The guest"} cancelled the reservation. The table is released.`,
+            };
+      }
       return fr
         ? {
             title: `Nouvelle réservation ${p.reference ?? ""}`,
@@ -290,6 +316,40 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
               title: `Reservation ${p.reference ?? ""} declined`,
               body: `Reason: ${p.reason ?? "Not specified"}`,
             };
+    }
+
+    case "reservation_status": {
+      if (p.status === "seated") {
+        return fr
+          ? {
+              title: `Réservation ${p.reference ?? ""} — table installée`,
+              body: `${p.restaurantName ?? "Le restaurant"} a marqué votre arrivée. Bon appétit !`,
+            }
+          : {
+              title: `Reservation ${p.reference ?? ""} — seated`,
+              body: `${p.restaurantName ?? "The restaurant"} marked your arrival. Enjoy your meal!`,
+            };
+      }
+      if (p.status === "completed") {
+        return fr
+          ? {
+              title: `Réservation ${p.reference ?? ""} terminée`,
+              body: `Votre visite chez ${p.restaurantName ?? "le restaurant"} est maintenant dans votre historique.`,
+            }
+          : {
+              title: `Reservation ${p.reference ?? ""} completed`,
+              body: `Your visit to ${p.restaurantName ?? "the restaurant"} is now in your history.`,
+            };
+      }
+      return fr
+        ? {
+            title: `Réservation ${p.reference ?? ""} — absence enregistrée`,
+            body: `${p.restaurantName ?? "Le restaurant"} a marqué cette réservation comme non présentée.`,
+          }
+        : {
+            title: `Reservation ${p.reference ?? ""} — no show`,
+            body: `${p.restaurantName ?? "The restaurant"} marked this reservation as a no-show.`,
+          };
     }
 
     case "review":
@@ -586,6 +646,7 @@ const CUSTOMER_PREF_KEY: Partial<Record<NotifyEvent, CustomerTopicKey>> = {
   order_status: "order_status",
   order_cancelled: "order_status",
   reservation_decision: "reservations",
+  reservation_status: "reservations",
   chat_reply: "messages",
   review_reply: "reviews",
   loyalty: "loyalty",

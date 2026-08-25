@@ -21,6 +21,7 @@ import { fetchActiveRestaurants } from "@/lib/data/public";
 import { formatMoney } from "@/lib/format/currency";
 import { formatDayLabel, formatTime } from "@/lib/format/datetime";
 import { isTerminal } from "@/lib/format/order-status";
+import { partitionCustomerReservations } from "@/lib/reservations/lifecycle";
 import { RESERVATION_STATUS_TONE } from "@/lib/data/customer";
 
 export default async function AccountPage() {
@@ -43,9 +44,7 @@ export default async function AccountPage() {
   const balance = loyalty.balance;
   const pointValue = loyalty.pointValue;
 
-  const upcoming = reservations.filter(
-    (r) => r.status === "confirmed" || r.status === "pending",
-  );
+  const { upcoming } = partitionCustomerReservations(reservations);
   const favorites = restaurants.filter((r) => favoriteIds.includes(r.id)).slice(0, 3);
 
   return (

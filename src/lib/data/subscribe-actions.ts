@@ -331,6 +331,44 @@ export async function payInvoice(input: {
   if (!invoice) return { ok: false, error: "Facture introuvable." };
   if (invoice.status !== "unpaid") return { ok: false, error: "Cette facture n'est pas en attente." };
 
+  // Resume the Mobile Money request already on the handset. A double tap,
+  // reload or return from another screen must never create a second charge.
+  // Untracked pending rows are transport failures and may be retried; scan a
+  // few recent rows so one of those cannot hide an older trackable request.
+  const { data: openAttempts, error: openAttemptsError } = await supabase
+    .from("payment_attempts")
+    .select("id, status, transaction_id")
+    .eq("invoice_id", invoice.id)
+    .eq("restaurant_id", active.restaurantId)
+    .in("status", ["pending", "succeeded"])
+    .is("settled_at", null)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (openAttemptsError) {
+    console.error("[subscribe:payInvoice] open attempt", openAttemptsError.message);
+    return {
+      ok: false,
+      error: "Impossible de vérifier le paiement en cours. Réessayez dans un instant.",
+    };
+  }
+
+  const openAttempt = (openAttempts ?? []).find(
+    (attempt) => attempt.status === "succeeded" || Boolean(attempt.transaction_id),
+  );
+  if (openAttempt?.status === "succeeded") {
+    const settled = await settlePayment(openAttempt.id);
+    if (!settled.ok) {
+      return { ok: false, error: settled.error ?? "Le paiement n'a pas pu être appliqué." };
+    }
+    revalidatePath("/m", "layout");
+    revalidatePath("/a/subscriptions");
+    return { ok: true, status: "succeeded" };
+  }
+  if (openAttempt?.status === "pending" && openAttempt.transaction_id) {
+    return { ok: true, status: "pending", attemptId: openAttempt.id };
+  }
+
   const initiated = await initiatePaymentAttempt({
     kind: "subscription",
     restaurantId: active.restaurantId,
@@ -405,5 +443,4 @@ export async function checkInvoicePayment(
 
   return { ok: true, status: result.status };
 }
-
 

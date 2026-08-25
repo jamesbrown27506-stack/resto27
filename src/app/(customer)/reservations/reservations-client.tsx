@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarCheck, Check, Smartphone, Users } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
-import { ConfirmDialog } from "@/components/ui/dialog";
+import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
@@ -24,6 +24,12 @@ import type { PublicRestaurant } from "@/lib/data/public";
 import { formatDate, formatDayLabel, formatTime, weekdayName } from "@/lib/format/datetime";
 import { formatMoney } from "@/lib/format/currency";
 import { depositChargedNow } from "@/lib/reservations/deposit";
+import { PaymentPendingView } from "@/components/payment/payment-pending";
+import {
+  canCustomerCancelReservation,
+  canCustomerPayReservation,
+  partitionCustomerReservations,
+} from "@/lib/reservations/lifecycle";
 import {
   isTodayOrLater,
   slotsForDate,
@@ -117,8 +123,16 @@ export function ReservationsClient({
   const [busy, setBusy] = useState(false);
   /** The booking whose deposit is being charged right now, or null. */
   const [payingId, setPayingId] = useState<string | null>(null);
+  const firstPendingReservation = initial.find((reservation) => reservation.paymentAttemptId);
+  const [paymentScreenId, setPaymentScreenId] = useState<string | null>(
+    () => firstPendingReservation?.id ?? null,
+  );
+  const [paymentScreenOpen, setPaymentScreenOpen] = useState(
+    () => firstPendingReservation !== undefined,
+  );
   const [cancelId, setCancelId] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const automaticallyPolledAttempts = useRef(new Set<string>());
 
   /*
     The clock the slot grid is built against.
@@ -147,14 +161,123 @@ export function ReservationsClient({
     };
   }, []);
 
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+  const stopPaymentPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
   }, []);
 
-  const upcoming = mine.filter((r) => r.status === "pending" || r.status === "confirmed");
-  const past = mine.filter((r) => !["pending", "confirmed"].includes(r.status));
+  useEffect(() => stopPaymentPolling, [stopPaymentPolling]);
+
+  // `router.refresh()` supplies a new server snapshot; useState only reads its
+  // initializer once, so explicitly adopt that snapshot after decisions,
+  // payments, cancellations and new bookings.
+  useEffect(() => setMine(initial), [initial]);
+
+  /**
+   * Watch one trackable CamerPay attempt without ever turning a browser
+   * timeout into a payment failure. The webhook and server reconciler keep
+   * working after a phone sleeps, so the pending row and screen remain until
+   * a real terminal provider status arrives.
+   */
+  const startPaymentPolling = useCallback(
+    (attemptId: string, reservationId: string, paymentPhone?: string | null) => {
+      stopPaymentPolling();
+      setPayingId(reservationId);
+      setPaymentScreenId(reservationId);
+      setPaymentScreenOpen(true);
+      setMine((current) =>
+        current.map((row) =>
+          row.id === reservationId
+            ? {
+                ...row,
+                paymentAttemptId: attemptId,
+                paymentPhone: paymentPhone ?? row.paymentPhone,
+              }
+            : row,
+        ),
+      );
+
+      let tries = 0;
+      let checking = false;
+      pollRef.current = setInterval(async () => {
+        if (checking) return;
+        checking = true;
+        tries += 1;
+
+        try {
+          const check = await checkReservationPayment(attemptId);
+          if (check.status === "succeeded") {
+            stopPaymentPolling();
+            setPayingId(null);
+            setPaymentScreenOpen(false);
+            setMine((current) =>
+              current.map((row) =>
+                row.id === reservationId
+                  ? {
+                      ...row,
+                      status: "confirmed",
+                      depositPaid: true,
+                      paymentAttemptId: null,
+                      paymentPhone: null,
+                    }
+                  : row,
+              ),
+            );
+            toast(t("crs.depositPaidDone"), "success");
+            router.refresh();
+          } else if (!check.ok || check.status === "failed") {
+            stopPaymentPolling();
+            setPayingId(null);
+            setPaymentScreenOpen(false);
+            setMine((current) =>
+              current.map((row) =>
+                row.id === reservationId
+                  ? { ...row, paymentAttemptId: null, paymentPhone: null }
+                  : row,
+              ),
+            );
+            toast(check.ok ? t("crs.payFailed") : check.error, "error");
+            router.refresh();
+          } else if (tries >= POLL_TRIES) {
+            stopPaymentPolling();
+            setPayingId(null);
+            // Keep the screen and the pending marker. This is still a live
+            // payment, merely one that needs the background worker longer.
+            setPaymentScreenOpen(true);
+            toast(t("crs.payStillPending"), "info");
+            router.refresh();
+          }
+        } catch {
+          // A temporary app/network failure is not a provider refusal. Leave
+          // the attempt visible and let the next interval (or reload) retry.
+          if (tries >= POLL_TRIES) {
+            stopPaymentPolling();
+            setPayingId(null);
+            setPaymentScreenOpen(true);
+            toast(t("crs.payStillPending"), "info");
+          }
+        } finally {
+          checking = false;
+        }
+      }, POLL_INTERVAL_MS);
+    },
+    [router, stopPaymentPolling, t, toast],
+  );
+
+  // Reloading or navigating back to the page adopts the latest server-side
+  // attempt and resumes it automatically. Each id is auto-started once; the
+  // explicit “check again” action below may restart it whenever the user asks.
+  useEffect(() => {
+    const pending = initial.find((reservation) => reservation.paymentAttemptId);
+    if (!pending?.paymentAttemptId) return;
+    if (automaticallyPolledAttempts.current.has(pending.paymentAttemptId)) return;
+    automaticallyPolledAttempts.current.add(pending.paymentAttemptId);
+    startPaymentPolling(pending.paymentAttemptId, pending.id, pending.paymentPhone);
+  }, [initial, startPaymentPolling]);
+
+  const { upcoming, history: past } = partitionCustomerReservations(mine, now);
 
   /* ── What can actually be booked, for the restaurant and day chosen ──── */
 
@@ -266,35 +389,40 @@ export function ReservationsClient({
       return;
     }
 
+    stopPaymentPolling();
     setPayingId(reservation.id);
+    setPaymentScreenId(reservation.id);
+    setPaymentScreenOpen(true);
     const result = await payReservationDeposit(reservation.id, phone);
 
     if (!result.ok) {
       setPayingId(null);
+      setPaymentScreenOpen(false);
       toast(result.error, "error");
       return;
     }
 
     if (result.status === "pending" && result.attemptId) {
-      let tries = 0;
-      pollRef.current = setInterval(async () => {
-        tries += 1;
-        const check = await checkReservationPayment(result.attemptId!);
-        if (check.status === "succeeded") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          setPayingId(null);
-          toast(t("crs.depositPaidDone"), "success");
-          router.refresh();
-        } else if (check.status === "failed" || tries >= POLL_TRIES) {
-          if (pollRef.current) clearInterval(pollRef.current);
-          setPayingId(null);
-          toast(t("crs.payFailed"), "error");
-        }
-      }, POLL_INTERVAL_MS);
+      automaticallyPolledAttempts.current.add(result.attemptId);
+      startPaymentPolling(result.attemptId, reservation.id, phone.trim());
       return;
     }
 
     setPayingId(null);
+    setPaymentScreenOpen(false);
+    setMine((current) =>
+      current.map((row) =>
+        row.id === reservation.id
+          ? {
+              ...row,
+              status: "confirmed",
+              depositPaid: true,
+              paymentAttemptId: null,
+              paymentPhone: null,
+            }
+          : row,
+      ),
+    );
     toast(t("crs.depositPaidDone"), "success");
     router.refresh();
   }
@@ -305,8 +433,11 @@ export function ReservationsClient({
     const result = await cancelOwnReservation(cancelId);
     setBusy(false);
     if (result.ok) {
-      setMine((c) => c.filter((r) => r.id !== cancelId));
+      setMine((current) =>
+        current.map((row) => (row.id === cancelId ? { ...row, status: "cancelled" } : row)),
+      );
       toast(t("crs.cancelled"), "info");
+      router.refresh();
     } else {
       toast(result.error, "error");
     }
@@ -331,7 +462,8 @@ export function ReservationsClient({
             ) : (
               <ul className="divide-y divide-border">
                 {upcoming.map((r) => {
-                  const owes = r.status === "awaiting_payment" && !r.depositPaid;
+                  const hasPendingPayment = Boolean(r.paymentAttemptId);
+                  const owes = canCustomerPayReservation(r) && !hasPendingPayment;
                   const busyHere = payingId === r.id;
                   return (
                     <li key={r.id} className="px-5 py-4">
@@ -353,14 +485,16 @@ export function ReservationsClient({
                           {reservationStatusLabel(r.status, t)}
                         </Badge>
 
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={busyHere}
-                          onClick={() => setCancelId(r.id)}
-                        >
-                          {t("crs.cancel")}
-                        </Button>
+                        {canCustomerCancelReservation(r.status) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={busyHere || hasPendingPayment}
+                            onClick={() => setCancelId(r.id)}
+                          >
+                            {t("crs.cancel")}
+                          </Button>
+                        )}
                       </div>
 
                       {/*
@@ -421,6 +555,29 @@ export function ReservationsClient({
                               {t("crs.payPendingBody")}
                             </p>
                           )}
+                        </div>
+                      )}
+
+                      {hasPendingPayment && (
+                        <div className="mt-3 flex min-w-0 flex-col gap-3 rounded-md border border-info/30 bg-info-light p-3">
+                          <p className="text-xs leading-relaxed break-words text-info">
+                            {t("crs.pendingBanner")}
+                          </p>
+                          <Button
+                            variant="outline"
+                            fullWidth
+                            loading={busyHere}
+                            onClick={() => {
+                              setPaymentScreenId(r.id);
+                              setPaymentScreenOpen(true);
+                              if (r.paymentAttemptId && payingId === null) {
+                                startPaymentPolling(r.paymentAttemptId, r.id, r.paymentPhone);
+                              }
+                            }}
+                          >
+                            <Smartphone className="size-4" aria-hidden />
+                            {busyHere ? t("crs.payPendingTitle") : t("crs.viewPayment")}
+                          </Button>
                         </div>
                       )}
                     </li>
@@ -675,6 +832,37 @@ export function ReservationsClient({
         cancelLabel={t("crs.cancelKeep")}
         destructive
       />
+
+      {(() => {
+        const reservation = mine.find((row) => row.id === paymentScreenId);
+        if (!reservation) return null;
+        return (
+          <Dialog
+            open={paymentScreenOpen}
+            onClose={() => setPaymentScreenOpen(false)}
+            title={t("crs.payPendingTitle")}
+            size="sm"
+            footer={
+              <Button variant="outline" onClick={() => setPaymentScreenOpen(false)}>
+                {t("crs.continueBackground")}
+              </Button>
+            }
+          >
+            <PaymentPendingView
+              body={t("crs.payPendingBody")}
+              hint={t("crs.payPendingHint")}
+              amountLabel={t("crs.paymentAmount")}
+              amount={formatMoney(reservation.depositAmount)}
+              referenceLabel={t("crs.paymentReference")}
+              reference={reservation.reference}
+              phoneLabel={t("crs.paymentPhone")}
+              phone={reservation.paymentPhone ?? phone}
+              gatewayLabel={t("crs.paymentGateway")}
+              requesting={payingId === reservation.id && !reservation.paymentAttemptId}
+            />
+          </Dialog>
+        );
+      })()}
     </AccountShell>
   );
 }
