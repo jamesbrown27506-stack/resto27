@@ -47,3 +47,7 @@ dev-server.log
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Temporary fetch instrumentation used to count Supabase round trips.
+instrument.cjs
+loadtest.mjs
