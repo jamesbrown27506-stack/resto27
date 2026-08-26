@@ -1,21 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bike, Clock, Printer, ReceiptText, Store, ShoppingBag } from "lucide-react";
-import { DeliveryFeeDialog } from "@/components/order/delivery-fee-dialog";
+import { Bike, Printer, ReceiptText, Store, ShoppingBag } from "lucide-react";
+import { OrderActionBar } from "@/components/order/order-action-bar";
 import { OrderStatusBadge } from "@/components/order/order-status-badge";
 import { FilterChips } from "@/components/data/filter-bar";
-import { Button, buttonClasses } from "@/components/ui/button";
+import { buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Field, Textarea } from "@/components/ui/input";
-import { Dialog } from "@/components/ui/dialog";
-import { useToast } from "@/components/ui/toast";
 import { formatMoney } from "@/lib/format/currency";
 import { formatElapsed } from "@/lib/format/datetime";
-import { isTerminal, nextStatus } from "@/lib/format/order-status";
-import { advanceOrder, cancelOrder } from "@/lib/data/order-actions";
+import { isTerminal } from "@/lib/format/order-status";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { ManagerOrder } from "@/lib/data/orders";
@@ -29,34 +25,34 @@ const POLL_MS = 30_000;
 /**
  * The order queue, on live rows.
  *
- * The one rule this screen exists to enforce: CONFIRMING A DELIVERY ORDER
- * PROMPTS FOR THE FEE (§14.4). The dialog is the UI half; advanceOrder()
- * re-checks it server-side, so there is no path from `pending` to `confirmed`
- * on a delivery order that skips the quote.
- *
- * Advance actions come from `nextStatus()`, so the UI can never offer a
- * transition the state machine will refuse — and the server re-derives the
- * transition anyway, so two taps racing on one ticket cannot double-skip.
+ * WHAT THIS SCREEN OWNS is the list: the filters, the poll, and how a ticket
+ * reads at a glance. What it no longer owns is what you can DO to a ticket —
+ * advancing, quoting the delivery fee and cancelling all live in
+ * `OrderActionBar`, because the order detail screen needs exactly the same
+ * controls and a second copy is how the fee gate (§14.4) ends up enforced on
+ * one screen and not the other.
  */
 export function OrdersQueue({
   orders,
   now,
   feeBand,
+  canAdvance,
 }: {
   orders: ManagerOrder[];
   now: string;
   /** The restaurant's advertised delivery band (migration 0035). */
   feeBand: { min: number; max: number };
+  /**
+   * `orders.advance`. The queue never consulted it — both server actions
+   * re-check it, so a waiter's tap failed with an error instead of the
+   * button simply not being there.
+   */
+  canAdvance: boolean;
 }) {
   const { t } = useLocale();
-  const { toast } = useToast();
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
 
   const [filter, setFilter] = useState("active");
-  const [feeFor, setFeeFor] = useState<ManagerOrder | null>(null);
-  const [cancelling, setCancelling] = useState<ManagerOrder | null>(null);
-  const [reason, setReason] = useState("");
 
   // New orders arrive without anyone touching the page. router.refresh()
   // re-runs the Server Component, so the poll costs one RSC round trip and
@@ -82,42 +78,6 @@ export function OrdersQueue({
     if (filter === "all") return true;
     return o.status === filter;
   });
-
-  function advance(order: ManagerOrder, fee?: number) {
-    const next = nextStatus(order.status);
-    if (!next) return;
-
-    // The gate. A delivery order cannot reach `confirmed` without a fee.
-    if (
-      next === "confirmed" &&
-      order.type === "delivery" &&
-      order.deliveryFeeSetAt === null &&
-      fee === undefined
-    ) {
-      setFeeFor(order);
-      return;
-    }
-
-    startTransition(async () => {
-      const result = await advanceOrder(order.id, fee !== undefined ? { deliveryFee: fee } : {});
-      setFeeFor(null);
-      if (!result.ok) return toast(result.error, "error");
-      toast(t("mo.updated"), "success");
-    });
-  }
-
-  function submitCancel() {
-    const order = cancelling;
-    if (!order) return;
-
-    startTransition(async () => {
-      const result = await cancelOrder(order.id, reason);
-      if (!result.ok) return toast(result.error, "error");
-      setCancelling(null);
-      setReason("");
-      toast(t("mo.cancelled"), "success");
-    });
-  }
 
   return (
     <>
@@ -146,7 +106,6 @@ export function OrdersQueue({
           <ul className="flex flex-col gap-3">
             {visible.map((order) => {
               const Icon = TYPE_ICON[order.type];
-              const next = nextStatus(order.status);
               const needsFee =
                 order.type === "delivery" &&
                 order.deliveryFeeSetAt === null &&
@@ -230,31 +189,12 @@ export function OrdersQueue({
                     </div>
                   </div>
 
-                  {/*
-                    WAITING ON THE CUSTOMER — SAY SO, OR THE KITCHEN GUESSES.
-
-                    `nextStatus` returns null at `awaiting_customer`, so the
-                    advance button is already gone. A missing button with no
-                    explanation reads as a broken screen, and the guess that
-                    follows is "start cooking anyway" — which is the food waste
-                    this whole state exists to prevent. The line says what is
-                    being waited for and what not to do meanwhile.
-                  */}
-                  {order.status === "awaiting_customer" && (
-                    <p className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning-light px-3 py-2 text-xs leading-relaxed text-warning">
-                      <Clock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                      <span>
-                        <strong>{t("mo.awaitingCustomer")}</strong> {t("mo.awaitingCustomerBody")}
-                      </span>
-                    </p>
-                  )}
-
-                  <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-3.5">
-                    {next && (
-                      <Button size="sm" disabled={pending} onClick={() => advance(order)}>
-                        <span>{t(`order.next.${next}` as TranslationKey)}</span>
-                      </Button>
-                    )}
+                  <OrderActionBar
+                    order={order}
+                    canAdvance={canAdvance}
+                    feeBand={feeBand}
+                    className="mt-4 border-t border-border pt-3.5"
+                  >
                     <Link
                       href={`/m/orders/${order.id}`}
                       className={buttonClasses({ variant: "outline", size: "sm" })}
@@ -269,21 +209,7 @@ export function OrdersQueue({
                       <Printer className="size-3.5" aria-hidden />
                       <span>{t("mo.ticket")}</span>
                     </Link>
-                    {!isTerminal(order.status) && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={pending}
-                        className="ml-auto text-error hover:bg-error-light"
-                        onClick={() => {
-                          setCancelling(order);
-                          setReason("");
-                        }}
-                      >
-                        <span>{t("m.orders.cancel")}</span>
-                      </Button>
-                    )}
-                  </div>
+                  </OrderActionBar>
                 </li>
               );
             })}
@@ -291,54 +217,6 @@ export function OrdersQueue({
         )}
       </div>
 
-      <DeliveryFeeDialog
-        order={feeFor}
-        open={feeFor !== null}
-        pending={pending}
-        band={feeBand}
-        onClose={() => setFeeFor(null)}
-        onConfirm={(fee) => {
-          if (feeFor) advance(feeFor, fee);
-        }}
-      />
-
-      {/* Cancelling requires a reason — the customer reads it. */}
-      <Dialog
-        open={cancelling !== null}
-        onClose={() => setCancelling(null)}
-        title={t("mo.cancelTitle")}
-        description={cancelling?.reference}
-        size="sm"
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setCancelling(null)} disabled={pending}>
-              <span>{t("common.cancel")}</span>
-            </Button>
-            <Button
-              variant="danger"
-              disabled={pending || reason.trim().length < 3}
-              loading={pending}
-              onClick={submitCancel}
-            >
-              <span>{t("m.orders.cancel")}</span>
-            </Button>
-          </>
-        }
-      >
-        <Field
-          label={t("m.orders.cancelReason")}
-          htmlFor="cancel-reason"
-          required
-          hint={t("m.orders.cancelHint")}
-        >
-          <Textarea
-            id="cancel-reason"
-            rows={3}
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-          />
-        </Field>
-      </Dialog>
     </>
   );
 }

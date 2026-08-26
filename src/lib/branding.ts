@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { createAdminClient } from "@/lib/supabase/server";
+import { getSettingsMap } from "@/lib/settings-map";
 
 /**
  * The platform's own identity — name, tagline, logo, favicon.
@@ -45,45 +45,30 @@ export const DEFAULT_BRANDING: Branding = {
   supportEmail: "contact@restolink.cm",
 };
 
-const KEYS = [
-  "brand_name",
-  "brand_tagline",
-  "brand_logo_url",
-  "brand_favicon_url",
-  "brand_icon_url",
-  "support_email",
-] as const;
-
+/**
+ * Reads through the SHARED settings map rather than querying on its own.
+ *
+ * This used to issue its own `select … in (brand_*)`, as did appearance and
+ * the cart config — three round trips to one 2.2 KB table on every page in
+ * the platform, none of them able to see the other two. `getSettingsMap` is
+ * itself `cache()`d, so all three now resolve from a single read.
+ *
+ * Failing open is unchanged: a settings outage yields an empty map here and
+ * every field below falls back to its default, which is exactly what a
+ * missing row already did.
+ */
 export const getBranding = cache(async (): Promise<Branding> => {
-  const supabase = createAdminClient();
-
-  const { data, error } = await supabase.from("settings").select("key, value").in("key", KEYS);
-
-  if (error) {
-    /**
-     * FAIL OPEN, and loudly in the log.
-     *
-     * A settings outage must not take down every page on the platform. The
-     * defaults render a working site; the error tells whoever is on call why
-     * the logo vanished.
-     */
-    console.error("[branding] falling back to defaults —", error.message);
-    return DEFAULT_BRANDING;
-  }
-
-  const map = new Map(
-    ((data ?? []) as { key: string; value: string | null }[]).map((r) => [r.key, r.value?.trim() ?? ""]),
-  );
+  const map = await getSettingsMap();
 
   // `|| default`, not `?? default`: an administrator who clears the field is
   // asking for the default back, and an empty brand name renders as a blank
   // header.
   return {
-    name: map.get("brand_name") || DEFAULT_BRANDING.name,
-    tagline: map.get("brand_tagline") || DEFAULT_BRANDING.tagline,
-    logoUrl: map.get("brand_logo_url") || null,
-    faviconUrl: map.get("brand_favicon_url") || null,
-    iconUrl: map.get("brand_icon_url") || null,
-    supportEmail: map.get("support_email") || DEFAULT_BRANDING.supportEmail,
+    name: map.get("brand_name")?.trim() || DEFAULT_BRANDING.name,
+    tagline: map.get("brand_tagline")?.trim() || DEFAULT_BRANDING.tagline,
+    logoUrl: map.get("brand_logo_url")?.trim() || null,
+    faviconUrl: map.get("brand_favicon_url")?.trim() || null,
+    iconUrl: map.get("brand_icon_url")?.trim() || null,
+    supportEmail: map.get("support_email")?.trim() || DEFAULT_BRANDING.supportEmail,
   };
 });

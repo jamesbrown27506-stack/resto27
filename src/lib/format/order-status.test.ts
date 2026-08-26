@@ -5,6 +5,7 @@ import {
   ORDER_STATUSES,
   advanceLabel,
   canCustomerCancel,
+  hasRestaurantActions,
   isTerminal,
   nextStatus,
 } from "./order-status";
@@ -73,6 +74,33 @@ describe("canCustomerCancel", () => {
     expect(canCustomerCancel("preparing")).toBe(false);
     expect(canCustomerCancel("shipped")).toBe(false);
     expect(canCustomerCancel("delivered")).toBe(false);
+  });
+});
+
+describe("hasRestaurantActions", () => {
+  it("shows the cluster wherever there is a step to take", () => {
+    expect(hasRestaurantActions("pending", true)).toBe(true);
+    expect(hasRestaurantActions("confirmed", true)).toBe(true);
+    expect(hasRestaurantActions("shipped", true)).toBe(true);
+  });
+
+  it("shows it at awaiting_customer even without the capability", () => {
+    // There is no advance button in that state on purpose — what renders is
+    // the notice telling the kitchen not to start. Hiding the whole cluster
+    // would hide the explanation with it.
+    expect(hasRestaurantActions("awaiting_customer", false)).toBe(true);
+  });
+
+  it("hides it once the order is finished", () => {
+    expect(hasRestaurantActions("delivered", true)).toBe(false);
+    expect(hasRestaurantActions("cancelled", true)).toBe(false);
+  });
+
+  it("hides it from someone who cannot advance", () => {
+    // A waiter without orders.advance gets no buttons rather than buttons the
+    // server would refuse.
+    expect(hasRestaurantActions("pending", false)).toBe(false);
+    expect(hasRestaurantActions("confirmed", false)).toBe(false);
   });
 });
 

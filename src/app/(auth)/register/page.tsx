@@ -18,6 +18,19 @@ import { useLocale } from "@/lib/i18n/use-locale";
 const INITIAL: AuthState = { ok: false };
 
 export default function RegisterPage() {
+  /*
+    ALL FOUR FIELDS ARE CONTROLLED, NOT JUST THE PASSWORD.
+
+    The password was already held here so the strength meter could read it,
+    which meant a rejected sign-up kept the one field people mind least about
+    retyping and emptied the three they mind most — name, email and phone,
+    gone because React resets an uncontrolled form once its action returns.
+    On a phone that is the difference between correcting a typo and filling
+    the form again.
+  */
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [state, formAction, pending] = useActionState(signUpCustomer, INITIAL);
   const { t } = useLocale();
@@ -55,6 +68,8 @@ export default function RegisterPage() {
           <Input
             id="name"
             name="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
             required
             autoComplete="name"
             icon={<User />}
@@ -67,6 +82,8 @@ export default function RegisterPage() {
           <Input
             id="email"
             name="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
             type="email"
             required
             autoComplete="email"
@@ -86,6 +103,8 @@ export default function RegisterPage() {
           <Input
             id="phone"
             name="phone"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
             type="tel"
             required
             autoComplete="tel"

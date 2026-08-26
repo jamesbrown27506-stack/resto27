@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useActionState } from "react";
+import { Suspense, useActionState, useState } from "react";
 import { Mail } from "lucide-react";
 import {
   AuthHeading,
@@ -23,6 +23,30 @@ function LoginForm() {
   const params = useSearchParams();
   const { t } = useLocale();
   const [state, formAction, pending] = useActionState(signIn, INITIAL);
+
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     A REJECTED SIGN-IN NO LONGER EMPTIES THE FORM.
+
+     React resets an UNCONTROLLED form after a form action completes — that is
+     the documented behaviour, and it is correct for a form that succeeded.
+     For one that failed it is punishing: the person mistyped one character of
+     a password and got back two blank boxes, so the fix for a typo was to type
+     the whole thing again, on a phone, possibly several times.
+
+     Holding both fields in React state is what stops it. The values never
+     leave the component, so there is nothing for the action's return to clear.
+
+     AND THE PASSWORD IS DELIBERATELY NOT ROUND-TRIPPED THROUGH THE SERVER.
+     The obvious alternative — echo the submitted values back on the failed
+     AuthState — would put a plaintext password in the server's response and
+     then in a `value` attribute in the DOM. Keeping it client-side gives the
+     same result for the person typing and never sends the secret anywhere it
+     was not already going.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   // A reason can arrive two ways: from the action that just ran, or in the URL
   // when a guard bounced someone here mid-session.
@@ -57,6 +81,8 @@ function LoginForm() {
             icon={<Mail />}
             invalid={Boolean(state.fieldErrors?.email)}
             placeholder="vous@exemple.cm"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
           />
         </Field>
 
@@ -72,6 +98,8 @@ function LoginForm() {
             required
             autoComplete="current-password"
             invalid={Boolean(state.fieldErrors?.password)}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
           />
         </Field>
 

@@ -32,6 +32,7 @@ import { menuDict } from "./dict/menu";
 import { mgateDict } from "./dict/mgate";
 import { modifiersDict } from "./dict/modifiers";
 import { notificationsDict } from "./dict/notifications";
+import { orderActionsDict } from "./dict/order-actions";
 import { profileDict } from "./dict/profile";
 import { promotionsDict } from "./dict/promotions";
 import { reportsDict } from "./dict/reports";
@@ -1666,6 +1667,7 @@ const fr = {
   ...categoriesDict.fr,
   ...chatDict.fr,
   ...notificationsDict.fr,
+  ...orderActionsDict.fr,
   ...menuDict.fr,
   ...modifiersDict.fr,
   ...mgateDict.fr,
@@ -1703,6 +1705,7 @@ const en: Record<TranslationKey, string> = {
   ...categoriesDict.en,
   ...chatDict.en,
   ...notificationsDict.en,
+  ...orderActionsDict.en,
   ...menuDict.en,
   ...modifiersDict.en,
   ...mgateDict.en,

@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { createAdminClient } from "@/lib/supabase/server";
+import { getSettingsMap } from "@/lib/settings-map";
 
 /**
  * The pictures on the landing page.
@@ -100,30 +100,16 @@ export const DEFAULT_APPEARANCE: Appearance = {
   homePayment: APPEARANCE_IMAGES[6].default,
 };
 
+/**
+ * Reads through the SHARED settings map — see the note in lib/branding for
+ * why three modules querying one small table separately was the problem.
+ */
 export const getAppearance = cache(async (): Promise<Appearance> => {
-  const supabase = createAdminClient();
-
-  const { data, error } = await supabase
-    .from("settings")
-    .select("key, value")
-    .in(
-      "key",
-      APPEARANCE_IMAGES.map((image) => image.key),
-    );
-
-  if (error) {
-    // Fail open, loudly. A settings outage must not blank the homepage.
-    console.error("[appearance] falling back to defaults —", error.message);
-    return DEFAULT_APPEARANCE;
-  }
-
-  const map = new Map(
-    ((data ?? []) as { key: string; value: string | null }[]).map((r) => [r.key, r.value?.trim() ?? ""]),
-  );
+  const map = await getSettingsMap();
 
   // `|| fallback`, not `?? fallback`: an administrator who clears the field is
   // asking for the shipped photograph back, not for an empty <img>.
-  const pick = (key: AppearanceKey, fallback: string) => map.get(key) || fallback;
+  const pick = (key: AppearanceKey, fallback: string) => map.get(key)?.trim() || fallback;
 
   return {
     heroOrder: pick("hero_order_image", DEFAULT_APPEARANCE.heroOrder),

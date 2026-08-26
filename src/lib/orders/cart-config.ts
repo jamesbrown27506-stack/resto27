@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import { createAdminClient } from "@/lib/supabase/server";
+import { getSettingsMap } from "@/lib/settings-map";
 
 /**
  * The commercial dials the basket needs, read from `settings`.
@@ -41,28 +41,15 @@ function num(map: Map<string, string>, key: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/**
+ * Reads through the SHARED settings map — see the note in lib/branding for why
+ * three modules querying one small table separately was the problem.
+ *
+ * Never throws: the basket is on every page through the header badge, and a
+ * settings outage yields an empty map whose every lookup falls back below.
+ */
 export const getCartConfig = cache(async (): Promise<CartConfig> => {
-  const supabase = createAdminClient();
-
-  const { data, error } = await supabase
-    .from("settings")
-    .select("key, value")
-    .in("key", [
-      "service_charge_percent",
-      "loyalty_enabled",
-      "loyalty_points_per_1000",
-      "loyalty_point_value",
-      "loyalty_min_redeem",
-    ]);
-
-  if (error) {
-    // Never throw: the basket is on every page through the header badge, and
-    // a settings outage must not take the whole site down with it.
-    console.error("[cart:getCartConfig]", error.message);
-    return CART_CONFIG_FALLBACK;
-  }
-
-  const map = new Map(((data ?? []) as { key: string; value: string | null }[]).map((r) => [r.key, r.value ?? ""]));
+  const map = await getSettingsMap();
 
   return {
     serviceChargePercent: num(map, "service_charge_percent", 5),

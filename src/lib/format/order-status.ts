@@ -177,6 +177,28 @@ export function canCustomerCancel(status: OrderStatus): boolean {
   return status === "pending" || status === "awaiting_customer" || status === "confirmed";
 }
 
+/**
+ * Is there anything for the RESTAURANT to do to this order?
+ *
+ * Drives whether the action cluster renders at all, on both the queue and the
+ * order detail screen. Two separate reasons to show it, and the second is not
+ * an afterthought:
+ *
+ *   · `canAdvance && !isTerminal` — there is a next step and this person is
+ *     allowed to take it. A delivered or cancelled order has nowhere to go,
+ *     and a waiter without `orders.advance` gets no buttons rather than
+ *     buttons the server will refuse.
+ *   · `awaiting_customer`, ALWAYS — even for someone who cannot advance, and
+ *     even though there is deliberately no advance button in that state. What
+ *     renders there is the notice explaining that the kitchen must not start
+ *     until the customer accepts the delivery fee. A missing button with no
+ *     explanation is read as a broken screen, and the guess that follows is
+ *     "cook it anyway", which is the food waste the state exists to prevent.
+ */
+export function hasRestaurantActions(status: OrderStatus, canAdvance: boolean): boolean {
+  return status === "awaiting_customer" || (canAdvance && !isTerminal(status));
+}
+
 /** Zero-based index into ORDER_FLOW; -1 for cancelled. */
 export function flowIndex(status: OrderStatus): number {
   return ORDER_FLOW.indexOf(status);

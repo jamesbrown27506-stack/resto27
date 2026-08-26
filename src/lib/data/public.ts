@@ -526,35 +526,54 @@ export interface PublicStats {
 export async function fetchPublicStats(): Promise<PublicStats> {
   const supabase = createAdminClient();
 
-  const [restaurants, delivered, ratingRows, estimateRows] = await Promise.all([
+  /*
+    ONE READ OF `restaurants`, NOT THREE.
+
+    This asked the same table three separate times — a head-count, then every
+    rating, then every delivery estimate — each with its own round trip, all
+    filtered on `status = active`. Every active restaurant is a single row of
+    three small columns, so one read answers all three questions: the count is
+    the row count, and the two averages are reductions over the same array.
+
+    That matters because this runs on the homepage, which was measured at
+    fifteen Supabase round trips before a byte reached the browser. Round trips
+    are what the free tier runs out of, not rows.
+
+    The orders count stays a separate query because it is a different table,
+    and `head: true` means it transfers a count rather than the rows.
+  */
+  const [restaurantRows, delivered] = await Promise.all([
     supabase
       .from("restaurants")
-      .select("id", { count: "exact", head: true })
+      .select("rating, delivery_estimate_min, accepts_delivery")
       .eq("status", "active"),
     supabase
       .from("orders")
       .select("id", { count: "exact", head: true })
       .eq("status", "delivered"),
-    supabase.from("restaurants").select("rating").eq("status", "active"),
-    supabase
-      .from("restaurants")
-      .select("delivery_estimate_min")
-      .eq("status", "active")
-      .eq("accepts_delivery", true),
   ]);
 
-  const ratings = (ratingRows.data ?? []) as { rating: number }[];
-  const estimates = (estimateRows.data ?? []) as { delivery_estimate_min: number }[];
+  const rows = (restaurantRows.data ?? []) as {
+    rating: number | null;
+    delivery_estimate_min: number | null;
+    accepts_delivery: boolean | null;
+  }[];
+
+  const ratings = rows.map((r) => Number(r.rating) || 0);
+  // Only restaurants that actually deliver have a meaningful estimate, which
+  // is the filter the separate query used to apply in SQL.
+  const estimates = rows
+    .filter((r) => r.accepts_delivery)
+    .map((r) => Number(r.delivery_estimate_min) || 0);
+
+  const mean = (values: number[]) =>
+    values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
 
   return {
-    restaurantCount: restaurants.count ?? 0,
+    restaurantCount: rows.length,
     deliveredOrderCount: delivered.count ?? 0,
-    averageRating: ratings.length
-      ? ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length
-      : 0,
-    averageDeliveryMinutes: estimates.length
-      ? estimates.reduce((sum, e) => sum + e.delivery_estimate_min, 0) / estimates.length
-      : 0,
+    averageRating: mean(ratings),
+    averageDeliveryMinutes: mean(estimates),
   };
 }
 

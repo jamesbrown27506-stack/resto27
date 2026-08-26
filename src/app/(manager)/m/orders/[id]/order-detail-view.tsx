@@ -1,8 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, MapPin, Phone, Printer } from "lucide-react";
 import { ManagerPage } from "@/components/layout/manager-shell";
+import { OrderActionBar } from "@/components/order/order-action-bar";
 import { OrderStatusBadge } from "@/components/order/order-status-badge";
 import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
@@ -13,22 +16,64 @@ import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { ManagerOrder, OrderEvent } from "@/lib/data/orders";
-import type { OrderStatus } from "@/lib/format/order-status";
+import { hasRestaurantActions, type OrderStatus } from "@/lib/format/order-status";
 
 /**
- * Order detail, read-only.
+ * Order detail — and now the screen you can ACT from.
  *
- * Advancing and cancelling live on the QUEUE, deliberately — this page is for
- * checking an address or reading history mid-dispute, and stacking a second
- * set of mutation buttons here would mean two screens whose states can race.
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THIS PAGE USED TO BE READ-ONLY ON PURPOSE, AND THAT STOPPED BEING RIGHT.
+ *
+ *  The old reasoning was that advancing and cancelling belonged on the queue,
+ *  and a second set of mutation buttons would mean two screens whose states
+ *  could race. Reasonable, until push notifications started deep-linking
+ *  HERE: a new order, a table order, a delivery about to go late all open the
+ *  detail page. So the screen a manager reaches at the most urgent moment was
+ *  the one screen that could not accept the order — they had to notice the
+ *  "Back to orders" link and find the same ticket again in the queue.
+ *
+ *  The race the old comment worried about is real and is handled the same way
+ *  the queue handles it: `advanceOrder` re-derives the transition from the
+ *  CURRENT row, so a stale button cannot double-skip, and this page polls on
+ *  the same interval the queue does so a decision taken on the kitchen tablet
+ *  shows up here within thirty seconds.
+ *
+ *  The controls are not re-implemented — `OrderActionBar` is the same
+ *  component the queue renders, so the delivery-fee gate (§14.4) cannot be
+ *  enforced on one screen and forgotten on the other.
+ * ─────────────────────────────────────────────────────────────────────────
  */
+
+/** Matches the queue's poll, so the two screens age at the same rate. */
+const POLL_MS = 30_000;
+
 export function OrderDetailView({
   order,
+  canAdvance,
+  feeBand,
 }: {
   order: ManagerOrder & { history: OrderEvent[] };
+  /** `orders.advance` — see the note on the page that resolves it. */
+  canAdvance: boolean;
+  /** The restaurant's advertised delivery band (migration 0035). */
+  feeBand: { min: number; max: number };
 }) {
   const { t } = useLocale();
   const dates = useDates();
+  const router = useRouter();
+
+  /*
+    A ticket left open on a back-office screen goes stale silently, and here
+    that is worse than on the queue: the buttons below act on what this render
+    believes the status to be. The server re-derives the real transition, so a
+    stale tap cannot corrupt the order — but it can do something the manager
+    did not intend, and refreshing narrows that window to the one the queue
+    already lives with.
+  */
+  useEffect(() => {
+    const timer = setInterval(() => router.refresh(), POLL_MS);
+    return () => clearInterval(timer);
+  }, [router]);
 
   const money: { key: TranslationKey; value: number; strike?: boolean }[] = [
     { key: "mo.subtotal", value: order.subtotal },
@@ -64,6 +109,28 @@ export function OrderDetailView({
     >
       <div className="grid items-start gap-6 lg:grid-cols-[1fr_22rem]">
         <div className="flex flex-col gap-6">
+          {/*
+            FIRST IN THE LEFT COLUMN, ABOVE THE ITEMS.
+
+            On a phone the left column stacks first, so the decision is the
+            first thing on screen after the header — which is the whole point
+            when a notification put you here. It carries no CardTitle: the
+            buttons say what they do, and a heading above two buttons is a
+            label for something that is already labelled.
+          */}
+          {hasRestaurantActions(order.status, canAdvance) && (
+            <Card>
+              <CardBody>
+                <OrderActionBar
+                  order={order}
+                  canAdvance={canAdvance}
+                  feeBand={feeBand}
+                  size="md"
+                />
+              </CardBody>
+            </Card>
+          )}
+
           <Card>
             <CardBody>
               <div className="flex items-center justify-between gap-3">
