@@ -21,9 +21,10 @@ import { createAdminClient } from "@/lib/supabase/server";
  *  POST → store this endpoint for the signed-in profile, and retire the one
  *         it replaced.
  *
- *  Both are gated on the session cookie (the worker sends it with
+ *  The POST is gated on the session cookie (the worker sends it with
  *  `credentials: "include"`), so a subscription can only ever be attached to
- *  whoever is actually signed in on that device.
+ *  whoever is actually signed in on that device. The GET is not — see the
+ *  note on it.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
@@ -36,10 +37,23 @@ function vapidPublicKey(): string | null {
   return key;
 }
 
+/**
+ * The VAPID public key. DELIBERATELY UNAUTHENTICATED.
+ *
+ * It used to require a session, and that was a dependency with a cost and no
+ * benefit. The key is public by definition — the same bytes are compiled into
+ * every page's JavaScript bundle as NEXT_PUBLIC_VAPID_PUBLIC_KEY, so gating
+ * this reveals nothing that curling the homepage does not.
+ *
+ * The cost is real: the caller is a service worker handling
+ * `pushsubscriptionchange`, woken by the browser with no page in scope, on a
+ * handset whose cookies may or may not travel with a worker-initiated fetch.
+ * A 401 there ends the re-subscribe, and the device is left with a
+ * subscription the server has never heard of until the next app open.
+ *
+ * The POST below stays gated, and must: it attaches an endpoint to a profile.
+ */
 export async function GET() {
-  const profile = await getCurrentProfile();
-  if (!profile) return NextResponse.json({ key: null }, { status: 401 });
-
   const key = vapidPublicKey();
   if (!key) return NextResponse.json({ key: null }, { status: 503 });
 

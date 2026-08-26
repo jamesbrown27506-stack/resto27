@@ -550,13 +550,34 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
 
 /* ── Recipient resolution ──────────────────────────────────────────────── */
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ *  EVERY QUERY HERE DISCARDED ITS ERROR, AND THE RESULT WAS SILENCE.
+ *
+ *  `const { data } = await …` with no `error` means a failed staff lookup is
+ *  indistinguishable from a restaurant with no staff: `data` is null, the loop
+ *  runs zero times, and `notify()` returns `{ delivered: 0 }` as though there
+ *  had been nobody to tell. No in-app row, no email, no push, and nothing in
+ *  any log — for an order that was successfully placed and paid for.
+ *
+ *  Nothing here can be RECOVERED from a failed read, so the fix is not a
+ *  retry: it is saying so. A notification system that goes quiet must never do
+ *  it silently, because silence is exactly what it looks like when it is
+ *  working and there is no news.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
 async function resolveRecipients(input: NotifyInput): Promise<Recipient[]> {
   const supabase = createAdminClient();
   const byId = new Map<string, Recipient>();
   const add = (r: Recipient) => byId.set(r.profileId, r);
 
+  /** Log and carry on — a partial recipient list beats an unexplained none. */
+  const report = (who: string, error: { message?: string } | null) => {
+    if (error) console.error(`[notify] could not resolve ${who} —`, error.message ?? error);
+  };
+
   if (input.restaurantId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("restaurant_staff")
       .select(
         `profile_id,
@@ -564,6 +585,8 @@ async function resolveRecipients(input: NotifyInput): Promise<Recipient[]> {
       )
       .eq("restaurant_id", input.restaurantId)
       .eq("status", "active");
+
+    report(`staff of restaurant ${input.restaurantId}`, error);
 
     for (const row of (data ?? []) as unknown as {
       profile_id: string | null;
@@ -577,11 +600,13 @@ async function resolveRecipients(input: NotifyInput): Promise<Recipient[]> {
   }
 
   if (input.customerId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .select("id, name, email, status, deleted_at")
       .eq("id", input.customerId)
       .maybeSingle();
+
+    report(`customer ${input.customerId}`, error);
     // A suspended account still needs to read "you were suspended" — only
     // the account event may reach one.
     const usable = data && !data.deleted_at && (data.status === "active" || (data.status === "suspended" && input.event === "account"));
@@ -591,23 +616,27 @@ async function resolveRecipients(input: NotifyInput): Promise<Recipient[]> {
   }
 
   if (input.admins) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .select("id, name, email")
       .eq("role", "admin")
       .eq("status", "active")
       .is("deleted_at", null);
+
+    report("admins", error);
     for (const row of (data ?? []) as { id: string; name: string; email: string }[]) {
       add({ profileId: row.id, name: row.name, email: row.email, kind: "admin" });
     }
   }
 
   if (input.profileId) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .select("id, name, email, role, status, deleted_at")
       .eq("id", input.profileId)
       .maybeSingle();
+
+    report(`profile ${input.profileId}`, error);
     const usable = data && !data.deleted_at && data.status === "active";
     if (usable) {
       const kind = data.role === "admin" ? "admin" : data.role === "manager" ? "manager" : "customer";
@@ -616,12 +645,14 @@ async function resolveRecipients(input: NotifyInput): Promise<Recipient[]> {
   }
 
   if (input.roles?.length) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("profiles")
       .select("id, name, email, role")
       .in("role", input.roles)
       .eq("status", "active")
       .is("deleted_at", null);
+
+    report(`roles ${input.roles.join(", ")}`, error);
     for (const row of (data ?? []) as { id: string; name: string; email: string; role: string }[]) {
       const kind = row.role === "admin" ? "admin" : row.role === "manager" ? "manager" : "customer";
       add({ profileId: row.id, name: row.name, email: row.email, kind });
@@ -932,14 +963,30 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
           body: p.body,
           href: p.href,
           /*
-            PER-EVENT COLLAPSE KEY. sw.js was already reading `data.tag`,
-            but the server never sent one — so every push shared the
-            default tag and a new order REPLACED an unread chat reply on
-            the lock screen. Distinct events now stack; repeats of the
-            same event still replace each other (renotify) instead of
-            building a dismiss-one-by-one pile.
+            ────────────────────────────────────────────────────────────────
+             THE COLLAPSE KEY IS PER SUBJECT, NOT PER EVENT TYPE.
+
+             sw.js was already reading `data.tag` and the server sent none, so
+             every push shared one tag and a new order replaced an unread chat
+             reply on the lock screen. Keying it on the event fixed that and
+             introduced a worse one: `restolink:new_order` is the SAME tag for
+             every order, so three orders arriving while a phone is asleep
+             collapse into one banner and the kitchen sees the last of them.
+             Two missed orders, and nothing anywhere to say they existed.
+
+             The reference is what makes a notification about THIS order
+             distinct from one about the next. Distinct subjects now stack;
+             two notifications about the same subject — an order confirmed and
+             then out for delivery — still replace each other, which is the
+             behaviour the tag is actually for.
+
+             Events with no reference (a broadcast, "push is on") keep the
+             event-level tag: there is only ever one of them in flight.
+            ────────────────────────────────────────────────────────────────
           */
-          tag: `restolink:${input.event}`,
+          tag: input.params?.reference
+            ? `restolink:${input.event}:${input.params.reference}`
+            : `restolink:${input.event}`,
           tone: p.tone,
           lang: p.locale,
           requireInteraction: REQUIRE_INTERACTION_EVENTS.has(input.event),

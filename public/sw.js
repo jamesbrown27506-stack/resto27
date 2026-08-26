@@ -52,7 +52,26 @@ self.addEventListener("push", (event) => {
     // dropping the notification entirely.
   }
 
-  event.waitUntil(deliver(data));
+  /*
+    THE CATCH IS NOT DECORATION.
+
+    A push handler whose waitUntil rejects is, to Chrome, a worker that took a
+    push and showed nothing: it posts "This site has been updated in the
+    background" over the top and counts the origin as misbehaving. So every
+    failure inside `deliver` falls back to the plainest banner that can still
+    be built — the title alone, no tag, no options that can throw.
+  */
+  event.waitUntil(
+    deliver(data).catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error("[sw] deliver failed", error);
+      return self.registration.showNotification(data.title, {
+        body: data.body || "",
+        icon: "/app-icon-192.png",
+        data: { url: data.href || "/" },
+      });
+    }),
+  );
 });
 
 /**
@@ -125,7 +144,23 @@ async function deliver(data) {
 
   const anyVisible = clients.some((c) => c.visibilityState === "visible");
 
-  return self.registration.showNotification(data.title, {
+  /*
+    ────────────────────────────────────────────────────────────────────────
+     `silent` AND `vibrate` CANNOT BOTH BE PRESENT. THE SPEC THROWS.
+
+     The Notifications spec is explicit: creating a notification with
+     options["silent"] true while options["vibrate"] exists raises a
+     TypeError. So a banner built with a vibration pattern AND silent:true —
+     which is exactly what a VISIBLE tab produced here — never showed at all.
+     showNotification rejected, waitUntil rejected with it, and Chrome posted
+     its own "This site has been updated in the background" over the top.
+
+     The pattern is therefore attached only when the banner will make noise.
+     A silent banner has nothing to vibrate for anyway: the tab in front of
+     the person has already said the same thing.
+    ────────────────────────────────────────────────────────────────────────
+  */
+  const options = {
     body: data.body || "",
     /*
       THE RECIPIENT'S LANGUAGE, NOT THE DEVICE'S. The server builds each
@@ -152,9 +187,6 @@ async function deliver(data) {
     badge: "/app-icon-192.png",
     tag,
     renotify: true,
-    // A phone in a pocket is the case this whole change is about, and a
-    // pocket cannot see a screen. Ignored on desktop.
-    vibrate: [200, 100, 200],
     // Survive a device that wakes, shows, and sleeps again before it is read.
     timestamp: Date.now(),
     // Silent only when a tab is in FRONT and has already announced it. A tab
@@ -164,7 +196,15 @@ async function deliver(data) {
     // Renamed (data.href → data.url) because `data.href` is a native
     // Notification property that some browsers drop or overwrite.
     data: { url },
-  });
+  };
+
+  if (!anyVisible) {
+    // A phone in a pocket is the case this whole change is about, and a
+    // pocket cannot see a screen. Ignored on desktop.
+    options.vibrate = [200, 100, 200];
+  }
+
+  return self.registration.showNotification(data.title, options);
 }
 
 self.addEventListener("notificationclick", (event) => {

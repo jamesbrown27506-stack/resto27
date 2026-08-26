@@ -90,7 +90,22 @@ export const config = {
      * Excluding assets matters: this runs per request, and each run is a
      * network call to the auth server. Matching every .svg would triple the
      * request count on the homepage for nothing.
+     *
+     * ───────────────────────────────────────────────────────────────────────
+     *  sw.js AND THE MANIFEST ARE EXCLUDED FOR A SECOND, SHARPER REASON.
+     *
+     *  `.js` is not in the extension list above, so the service worker script
+     *  was matching — every registration and every update check spent a round
+     *  trip verifying a session it does not have and does not need. Worse, it
+     *  put the worker's availability behind the auth host's: a slow or failing
+     *  verification delayed or broke the response, and a service worker that
+     *  fails to register fails SILENTLY. Push then stops arriving with nothing
+     *  anywhere saying why, which is the exact class of fault being chased.
+     *
+     *  Neither file can carry a session or act on one. Excluding them makes
+     *  installing the app and refreshing the worker independent of auth.
+     * ───────────────────────────────────────────────────────────────────────
      */
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|woff2?)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|sw\\.js$|manifest\\.webmanifest$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|woff2?)$).*)",
   ],
 };

@@ -131,18 +131,39 @@ async function platformPushEnabled(): Promise<boolean> {
   }
   try {
     const supabase = createAdminClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("settings")
       .select("value")
       .eq("key", "push_enabled")
       .maybeSingle();
+
+    /*
+      A FAILED READ IS NOT A KILL SWITCH.
+
+      This returned false on any error, so an unreachable settings table
+      silently dropped EVERY push on the platform — no notification, no log,
+      nothing anywhere to connect the silence to a database blip. The one
+      failure mode a notification system must not have is going quiet without
+      saying so.
+
+      The switch exists to stop noise, not to gate emergencies, and its stored
+      default is on. So an unanswerable question resolves the way a missing row
+      already does — enabled — and the log line is what tells whoever is on
+      call that the answer was assumed rather than read.
+    */
+    if (error) {
+      console.error("[push] could not read the platform switch, assuming enabled —", error.message);
+      return true;
+    }
+
     const value = data?.value !== "false";
-    // Only a successful read is cached. A transient error must not pin
-    // "disabled" for thirty seconds — falling through re-reads next call.
+    // Only a successful read is cached. A transient error must not pin an
+    // assumed answer for thirty seconds — falling through re-reads next call.
     platformPushCache = { value, at: Date.now() };
     return value;
-  } catch {
-    return false;
+  } catch (thrown) {
+    console.error("[push] platform switch lookup threw, assuming enabled —", (thrown as Error)?.message ?? thrown);
+    return true;
   }
 }
 

@@ -109,7 +109,23 @@ export function PushSync() {
       const { subscription, previousEndpoint } = await ensurePushSubscription(registration, key);
       await savePushSubscription(
         serializePushSubscription(subscription, previousEndpoint),
-      ).catch(() => {});
+      ).then(
+        (saved) => {
+          /*
+            A REPAIR THAT DID NOT STORE IS NOT A REPAIR.
+
+            This swallowed everything, so the device could subscribe
+            perfectly, fail to hand the endpoint to the server, and report
+            nothing — leaving push exactly as broken as before with the
+            switch still reading "on". Nothing is shown to the person (this
+            is a background repair; there is no question to answer), but a
+            log line is the difference between a diagnosable fault and a
+            mystery.
+          */
+          if (!saved?.ok) console.warn("[push] endpoint not stored", saved?.error ?? "");
+        },
+        (error) => console.warn("[push] endpoint not stored", error),
+      );
     } catch (error) {
       // A failed repair is invisible on purpose: nothing was asked for, so
       // there is nothing to report. The next app open tries again.

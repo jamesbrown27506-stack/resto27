@@ -33,11 +33,57 @@ function bytesEqual(left: ArrayBuffer | null, right: Uint8Array): boolean {
   return true;
 }
 
+/**
+ * Is this subscription bound to the key we sign with?
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  "CANNOT TELL" MUST MEAN YES, NOT NO.
+ *
+ *  A mismatch here causes a re-subscribe, and a re-subscribe mints a new
+ *  endpoint. So a comparison that answers "different" when it actually means
+ *  "I could not read it" churns a fresh endpoint on EVERY repair pass — which
+ *  is how one account came to hold six subscription rows, five of them for
+ *  browsers that no longer existed, every one of them still accepted by the
+ *  push service and delivering into the void.
+ *
+ *  `options` is absent on older implementations and
+ *  `options.applicationServerKey` is null for a subscription created before
+ *  the browser started reporting it. Neither is evidence of a rotated key.
+ *  The genuine rotation case — the one this function exists for — has a key
+ *  present and DIFFERENT, and that is the only case that returns false.
+ *
+ *  Being wrong in this direction is cheap: a truly stale endpoint is refused
+ *  by the push service with 404/410 and pruned server-side. Being wrong in the
+ *  other direction is a permanent churn nothing cleans up.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
 export function subscriptionUsesVapidKey(
   subscription: Pick<PushSubscription, "options">,
   expected: Uint8Array,
 ): boolean {
-  return bytesEqual(subscription.options.applicationServerKey, expected);
+  const options = subscription.options as PushSubscriptionOptions | undefined;
+
+  /*
+    NO `options` AT ALL is "I cannot tell", and must not be read as "different".
+
+    This is the churn case. A false answer here causes a re-subscribe, and a
+    re-subscribe mints a new endpoint — so a browser that does not expose
+    `options` would mint one on EVERY repair pass. That is how one account came
+    to hold six subscription rows, five of them for browsers that no longer
+    existed, each still accepted by the push service and delivering nowhere.
+  */
+  if (!options) return true;
+
+  /*
+    A NULL key is a different thing entirely, and IS a mismatch. It means the
+    subscription was created with no application server key at all — the legacy
+    sender-id path — so it is not bound to our VAPID pair and should be
+    replaced. That is a real, answerable question, not an unreadable one.
+  */
+  const current = options.applicationServerKey;
+  if (!current) return false;
+
+  return bytesEqual(current, expected);
 }
 
 export function configuredVapidKey(): Uint8Array | null {
@@ -83,6 +129,35 @@ export async function registerPushWorker(): Promise<ServiceWorkerRegistration> {
   // older registrations created before updateViaCache was set. It is safe to
   // let this finish in the background; subscribing does not depend on it.
   void registration.update().catch(() => {});
+
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     WAIT FOR A WORKER THAT IS ACTUALLY ACTIVE.
+
+     `register()` resolves as soon as the registration EXISTS — its worker may
+     still be installing. `pushManager.subscribe()` on a registration with no
+     active worker rejects, and the caller catches, and nothing subscribes.
+
+     That is not a theoretical race: the reset control unregisters the worker
+     and immediately registers a new one, so it hits the freshly-installing
+     case every single time. The repair most likely to be reached for by
+     someone whose push is broken was the one most likely to fail.
+
+     `navigator.serviceWorker.ready` resolves once there is an ACTIVE
+     registration for this scope, which is precisely the precondition
+     `subscribe()` needs. The registration returned is the ready one.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  if (!registration.active) {
+    try {
+      return await navigator.serviceWorker.ready;
+    } catch {
+      // `ready` never rejects in practice, but a browser that resolves it
+      // late should not take the whole repair down: fall through and let
+      // subscribe() report the real problem.
+    }
+  }
+
   return registration;
 }
 
@@ -104,15 +179,50 @@ export async function ensurePushSubscription(
     return { subscription: existing };
   }
 
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     SUBSCRIBE FIRST, THEN DISCARD THE OLD ONE.
+
+     This used to unsubscribe before subscribing, which is the wrong order in
+     the one case that matters. `subscribe()` can fail — the push service is
+     unreachable, the handset is offline, the worker has just been replaced —
+     and the old subscription was already destroyed by then. The device came
+     out of the attempt with NO subscription at all, permission still granted,
+     the switch still reading "on", and no error anywhere. That is worse than
+     the stale endpoint it was trying to replace, because a stale endpoint at
+     least 410s and gets cleaned up.
+
+     Chrome allows subscribing over an existing subscription with a different
+     applicationServerKey — it replaces it and returns the new one. So the
+     unsubscribe is not required for correctness, only for tidiness, and it
+     now happens after there is something to fall back to.
+    ─────────────────────────────────────────────────────────────────────────
+  */
   const previousEndpoint = existing?.endpoint;
-  if (existing) await existing.unsubscribe().catch(() => false);
 
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: key as unknown as BufferSource,
-  });
+  let subscription: PushSubscription;
+  try {
+    subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: key as unknown as BufferSource,
+    });
+  } catch (error) {
+    // Keep whatever the device already had rather than leaving it with
+    // nothing. A stale endpoint still gets a 410 and is cleaned up server-side;
+    // no endpoint is invisible.
+    if (existing) return { subscription: existing };
+    throw error;
+  }
 
-  return previousEndpoint ? { subscription, previousEndpoint } : { subscription };
+  // Only now is the old one safe to release, and only if it is genuinely a
+  // different endpoint — Chrome may hand back the same one.
+  if (existing && existing.endpoint !== subscription.endpoint) {
+    await existing.unsubscribe().catch(() => false);
+  }
+
+  return previousEndpoint && previousEndpoint !== subscription.endpoint
+    ? { subscription, previousEndpoint }
+    : { subscription };
 }
 
 function keyToBase64(key: ArrayBuffer | null): string {

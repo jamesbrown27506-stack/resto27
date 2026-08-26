@@ -213,7 +213,23 @@ export function NotificationSettings({ className }: { className?: string }) {
             const repaired = await ensurePushSubscription(registration, key);
             await savePushSubscription(
               serializePushSubscription(repaired.subscription, repaired.previousEndpoint),
-            ).catch(() => {});
+            ).then(
+        (saved) => {
+          /*
+            A REPAIR THAT DID NOT STORE IS NOT A REPAIR.
+
+            This swallowed everything, so the device could subscribe
+            perfectly, fail to hand the endpoint to the server, and report
+            nothing — leaving push exactly as broken as before with the
+            switch still reading "on". Nothing is shown to the person (this
+            is a background repair; there is no question to answer), but a
+            log line is the difference between a diagnosable fault and a
+            mystery.
+          */
+          if (!saved?.ok) console.warn("[push] endpoint not stored", saved?.error ?? "");
+        },
+        (error) => console.warn("[push] endpoint not stored", error),
+      );
             if (!cancelled) setDeviceSubscribed(true);
           }
         }
@@ -332,26 +348,61 @@ export function NotificationSettings({ className }: { className?: string }) {
     }
   }
 
+  /**
+   * Turn push off HERE — and only clear the account-wide switch if this was
+   * the last device.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   *  THIS SWITCH SAID "THIS DEVICE" AND ACTED ON THE WHOLE ACCOUNT.
+   *
+   *  Everything around it is per-device: the badge reads "Push is on for this
+   *  device", `pushOnHere` is the preference AND a live subscription, and the
+   *  reset control talks about this browser. But turning it off wrote
+   *  `notification_channels.push = false`, which is the account's master
+   *  switch — so switching push off on a phone silenced the laptop, the
+   *  kitchen tablet and every other browser the person had ever enabled.
+   *
+   *  Worse, it is silent and it is exactly what someone does while trying to
+   *  fix push: toggling off and on is the folk remedy this whole area has
+   *  been chasing, and each "off" was quietly disarming every other device.
+   *
+   *  So the two intentions are now told apart by what is LEFT. On the only
+   *  device it owns, "off" means stop sending me push, and the master switch
+   *  goes with it. With others still registered it means not on this one, and
+   *  the master switch is left alone — the toast says which happened, because
+   *  a switch that does less than you expected must say so.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
   async function disablePush() {
     if (!channels) return;
     touched.current = true;
     setBusy(true);
 
     const previous = channels;
-    const next = { ...channels, push: false };
-    setChannels(next);
 
     try {
+      let remaining = 0;
       if ("serviceWorker" in navigator) {
         const registration = await navigator.serviceWorker.getRegistration("/sw.js");
         const subscription = await registration?.pushManager.getSubscription();
         if (subscription) {
-          await removePushSubscription(subscription.endpoint).catch(() => {});
+          const removed = await removePushSubscription(subscription.endpoint).catch(() => null);
+          remaining = removed?.remaining ?? 0;
           await subscription.unsubscribe().catch(() => {});
         }
       }
       setDeviceSubscribed(false);
       setBlock(null);
+
+      // Other devices are still listening: this one goes quiet, the account
+      // preference stays as it was.
+      if (remaining > 0) {
+        toast(t("nset.push.disabledHere", { count: remaining }), "info");
+        return;
+      }
+
+      const next = { ...channels, push: false };
+      setChannels(next);
 
       const stored = await saveMyNotificationChannels(next).catch(() => ({ ok: false as const }));
       if (!stored.ok) {
@@ -485,6 +536,18 @@ export function NotificationSettings({ className }: { className?: string }) {
                       on the list. If it is not, no amount of retrying will
                       deliver anything here — the fix is Reset, below.
                     */}
+                    {/*
+                      The gate the test itself steps over. It sends because you
+                      asked; a real order would be stopped here, so a page of
+                      green ticks with this switch off is a lie by omission.
+                    */}
+                    {!testReport.masterPushOn && (
+                      <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-light p-2.5 text-xs leading-relaxed text-warning">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                        <span>{t("nset.push.masterOff")}</span>
+                      </p>
+                    )}
+
                     {testReport.devices.length > 0 && !testReport.thisDeviceRegistered && (
                       <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-light p-2.5 text-xs leading-relaxed text-warning">
                         <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />

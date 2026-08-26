@@ -252,6 +252,22 @@ export async function savePushSubscription(input: {
     updated_at: new Date().toISOString(),
   };
 
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     UPSERTING ON `endpoint` REASSIGNS THE DEVICE, AND THAT IS CORRECT.
+
+     It looks like a bug and is not. A browser holds exactly ONE push
+     subscription per registration, so when a second account signs in on the
+     same handset the endpoint genuinely belongs to whoever is signed in now.
+     Letting two profiles share it would deliver one person's orders to
+     another's lock screen, which is a privacy leak, not a feature.
+
+     The visible consequence is worth knowing about while testing: signing in
+     as the manager on a phone that was signed in as a customer moves the row,
+     and the customer account's device count drops by one. That account's
+     settings panel then reads "on for another device", which is true.
+    ─────────────────────────────────────────────────────────────────────────
+  */
   let { error } = await supabase.from("push_subscriptions").upsert(
     { ...baseRow, expiration_time: input.expirationTime ?? null },
     { onConflict: "endpoint" },
@@ -284,7 +300,17 @@ export async function savePushSubscription(input: {
   return { ok: true };
 }
 
-export async function removePushSubscription(endpoint: string): Promise<{ ok: boolean }> {
+/**
+ * Forget ONE device, and report how many the account has left.
+ *
+ * The count is what lets the caller tell "off on this phone" apart from "off
+ * everywhere". Turning push off used to do both at once — see the note in
+ * notification-settings' disablePush — and the difference is invisible without
+ * knowing whether anything else is still listening.
+ */
+export async function removePushSubscription(
+  endpoint: string,
+): Promise<{ ok: boolean; remaining: number }> {
   const profile = await requireUser();
   const supabase = createAdminClient();
 
@@ -294,7 +320,23 @@ export async function removePushSubscription(endpoint: string): Promise<{ ok: bo
     .eq("endpoint", endpoint)
     .eq("profile_id", profile.id);
 
-  return { ok: true };
+  const { count, error } = await supabase
+    .from("push_subscriptions")
+    .select("id", { count: "exact", head: true })
+    .eq("profile_id", profile.id);
+
+  if (error) {
+    console.error("[notify:removePushSubscription] count", error.message);
+    /*
+      A count we could not read must not be reported as zero. Zero is the
+      value that tells the caller to switch the ACCOUNT-WIDE preference off,
+      and doing that on a failed query would silence every other device the
+      person owns because one SELECT timed out.
+    */
+    return { ok: true, remaining: 1 };
+  }
+
+  return { ok: true, remaining: count ?? 0 };
 }
 
 /* ── Master channel switches (migration 0027) ──────────────────────────── */
@@ -424,8 +466,20 @@ export async function sendTestPush(currentEndpoint?: string): Promise<{
   devices: PushDeviceResult[];
   /** False when the caller's own browser is not among the stored devices. */
   thisDeviceRegistered: boolean;
+  /**
+   * The person's own master push switch.
+   *
+   * The test deliberately bypasses it — you asked for this notification, so
+   * you get it — but a REAL order would not. Without reporting it, the
+   * diagnostic can show a row of green ticks to someone whose every genuine
+   * notification is being suppressed one layer up, which is precisely the
+   * confusion it exists to end.
+   */
+  masterPushOn: boolean;
 }> {
   const profile = await requireUser();
+
+  const channels = await fetchNotificationChannels(profile.id).catch(() => null);
 
   const href =
     profile.role === "admin" ? "/a/diagnostics" : profile.role === "manager" ? "/m/settings" : "/settings";
@@ -444,6 +498,10 @@ export async function sendTestPush(currentEndpoint?: string): Promise<{
   return {
     ok: report.devices.some((d) => d.status === "sent"),
     thisDeviceRegistered: report.devices.some((d) => d.isThisDevice),
+    // Unreadable preferences default to on, matching what the notifier does
+    // with a missing row — a failed read must not be reported as "you turned
+    // it off".
+    masterPushOn: channels?.push ?? true,
     ...report,
   };
 }

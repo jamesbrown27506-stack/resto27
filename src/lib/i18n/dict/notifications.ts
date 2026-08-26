@@ -58,6 +58,8 @@ export const notificationsDict = defineDict({
       "Notifications push activées — un message de confirmation vient de vous être envoyé.",
     "nset.push.enabledNoSend":
       "Notifications push activées sur cet appareil.",
+    "nset.push.disabledHere":
+      "Push désactivé sur cet appareil. Vos {count} autre(s) appareil(s) continuent de recevoir les notifications.",
     "nset.push.disabled": "Notifications push désactivées sur cet appareil.",
 
     "nset.saved": "Préférences de notification enregistrées.",
@@ -69,6 +71,8 @@ export const notificationsDict = defineDict({
       "Efface les appareils enregistrés sur ce compte — tous — et réinscrit celui-ci de zéro. À utiliser quand le bouton dit « activé » et que rien n'arrive. Vos autres appareils se réinscrivent seuls à leur prochaine ouverture.",
     "nset.push.resetDone": "Réinitialisé. {count} appareil(s) effacé(s), celui-ci réinscrit.",
     "nset.push.resetFailed": "La réinitialisation a échoué. Réessayez.",
+    "nset.push.masterOff":
+      "Ce test a été envoyé, mais votre interrupteur Push ci-dessus est désactivé : une vraie notification serait bloquée à ce niveau. Réactivez-le.",
     "nset.push.test": "Envoyer une notification test",
     "nset.push.testHint":
       "Fermez complètement l'application, puis appuyez ici depuis un autre appareil — ou demandez à un collègue. Une notification reçue application ouverte ne prouve rien : c'est le cas qui marchait déjà.",
@@ -126,6 +130,8 @@ export const notificationsDict = defineDict({
     "nset.push.enabled":
       "Push notifications enabled — a confirmation has just been sent to you.",
     "nset.push.enabledNoSend": "Push notifications enabled on this device.",
+    "nset.push.disabledHere":
+      "Push turned off on this device. Your {count} other device(s) keep receiving notifications.",
     "nset.push.disabled": "Push notifications disabled on this device.",
 
     "nset.saved": "Notification preferences saved.",
@@ -137,6 +143,8 @@ export const notificationsDict = defineDict({
       "Clears the devices stored for this account — all of them — and re-registers this one from scratch. Use it when the switch says on and nothing arrives. Your other devices re-register themselves the next time each is opened.",
     "nset.push.resetDone": "Reset. {count} device(s) cleared, this one re-registered.",
     "nset.push.resetFailed": "The reset did not complete. Try again.",
+    "nset.push.masterOff":
+      "This test was sent, but your Push switch above is off: a real notification would be stopped there. Turn it back on.",
     "nset.push.test": "Send a test notification",
     "nset.push.testHint":
       "Close the app completely first, then trigger this from another device — or ask a colleague. A notification that arrives with the app in front proves nothing: that is the case that already worked.",

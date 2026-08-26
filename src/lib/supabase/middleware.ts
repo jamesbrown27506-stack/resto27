@@ -43,12 +43,36 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
-  // Do not remove, and do not put code between createServerClient and here.
-  // getUser() verifies the token against the auth server (getSession() only
-  // decodes the cookie, which can be forged) and triggers the refresh.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  /*
+    Do not remove, and do not put code between createServerClient and here.
+    getUser() verifies the token against the auth server (getSession() only
+    decodes the cookie, which can be forged) and triggers the refresh.
+
+    ─────────────────────────────────────────────────────────────────────────
+     FENCED, BECAUSE THIS RUNS ON EVERY REQUEST ON THE PLATFORM.
+
+     `getUser()` is a network call. supabase-js reports auth problems in
+     `error` rather than by throwing, but a FETCH failure — DNS, a TLS reset, a
+     Supabase blip — rejects. Unfenced, that rejection propagates out of the
+     proxy and every request on the site answers 500 until the auth host comes
+     back: not the signed-in pages, ALL of them, including the marketing
+     homepage that needs no session and the service worker script that needs
+     no session either.
+
+     Treating a failed verification as "nobody is signed in" degrades exactly
+     as far as it should. A visitor still gets the public site; a signed-in
+     user is bounced to /login by the guard below, which is the correct
+     outcome when the platform genuinely cannot verify who they are. The log
+     line is what tells whoever is on call which of the two happened.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  let user = null;
+  try {
+    const result = await supabase.auth.getUser();
+    user = result.data.user;
+  } catch (error) {
+    console.error("[proxy] session verification failed —", (error as Error)?.message ?? error);
+  }
 
   return { supabaseResponse, user };
 }
