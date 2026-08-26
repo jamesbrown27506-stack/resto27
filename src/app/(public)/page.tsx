@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { HomeContent } from "./home-content";
 import { getBranding } from "@/lib/branding";
+import { getSettingsMap } from "@/lib/settings-map";
+import { readHomeStats } from "@/lib/home-stats";
 import { getAppearance } from "@/lib/appearance";
 import { fetchPopularDishes, fetchActiveRestaurants, fetchCuisineNames, fetchQuartierNames, fetchPublicStats, fetchFeaturedReviews } from "@/lib/data/public";
 import { listPublicPlans } from "@/lib/data/plans";
@@ -68,7 +70,7 @@ function jsonLd(brand: { name: string; logoUrl: string | null }) {
 }
 
 export default async function HomePage() {
-  const [brand, plans, restaurants, dishes, cuisines, quartiers, stats, testimonials, appearance, user, freeMode] =
+  const [brand, plans, restaurants, dishes, cuisines, quartiers, stats, testimonials, appearance, user, freeMode, settings] =
     await Promise.all([
       getBranding(),
       listPublicPlans(),
@@ -81,8 +83,15 @@ export default async function HomePage() {
       getAppearance(),
       getHeaderUser(),
       getFreeModeInfo(),
+      getSettingsMap(),
     ]);
   const JSON_LD = jsonLd(brand);
+  /*
+    Which of the four figures this platform is willing to advertise. Resolved
+    on the server and handed down, because the hero renders three of the same
+    numbers inline and it is a Client Component — see lib/home-stats.
+  */
+  const statsVisible = readHomeStats(settings);
 
   return (
     <>
@@ -100,6 +109,7 @@ export default async function HomePage() {
         cuisines={cuisines}
         quartiers={quartiers}
         stats={stats}
+        statsVisible={statsVisible}
         testimonials={testimonials}
         appearance={appearance}
         userArea={user?.area ?? null}

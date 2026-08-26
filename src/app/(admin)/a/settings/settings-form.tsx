@@ -2,7 +2,18 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Banknote, Bell, CreditCard, Palette, ReceiptText, Save, Settings as Cog } from "lucide-react";
+import {
+  Banknote,
+  Bell,
+  Bike,
+  CreditCard,
+  Gift,
+  LayoutDashboard,
+  Palette,
+  ReceiptText,
+  Save,
+  Settings as Cog,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CardBody, Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -23,13 +34,29 @@ import { cn } from "@/lib/utils";
  * it belongs to. Tabs put you in one context at a time, which is how these are
  * actually changed: you come here to adjust billing, not to read all fifteen.
  *
- * Grouping is driven by `settings.category`, so adding a setting to a new
- * category adds a tab without touching this file.
+ * Grouping is driven by `settings.category`, but a category ALSO needs an
+ * entry in `TABS` below — see the note there. A category with no entry is not
+ * a missing tab, it is settings nobody can reach.
+ */
+/**
+ * EVERY CATEGORY NEEDS A ROW HERE, and the file header used to claim otherwise.
+ *
+ * `visibleTabs` filters this list against the categories actually present, so
+ * the effect of a missing entry is not a missing tab — it is settings that
+ * exist, are saved, are read by the app, and cannot be reached from the admin
+ * screen at all. `loyalty` and `operations` had been in that state: nine keys
+ * governing the points scheme and the platform delivery fee, editable only by
+ * hand in the database.
+ *
+ * The `homepage` category was about to join them.
  */
 const TABS = [
   { id: "branding", label: "Branding", icon: Palette, hint: "Read by every page, tab, email and share card." },
+  { id: "homepage", label: "Home page", icon: LayoutDashboard, hint: "Which figures the landing page advertises. Hide the ones that measure how small the platform is; keep the ones that measure how good it is. All four off removes the band entirely." },
   { id: "money", label: "Money", icon: Banknote, hint: "XAF is zero-decimal — every amount is whole francs." },
   { id: "billing", label: "Billing", icon: ReceiptText, hint: "Grace exists because mobile money renewal is not instant." },
+  { id: "loyalty", label: "Loyalty", icon: Gift, hint: "Points are earned per 1 000 FCFA spent. The minimum is what a customer must hold before any of it can be spent." },
+  { id: "operations", label: "Operations", icon: Bike, hint: "Defaults for restaurants that do not carry their own riders." },
   { id: "notifications", label: "Notifications", icon: Bell, hint: "The sound played on realtime notifications, and the web push master switch." },
   { id: "payments", label: "Payments", icon: CreditCard, hint: "Switch on only once the provider is verified end to end." },
   { id: "general", label: "General", icon: Cog, hint: "" },

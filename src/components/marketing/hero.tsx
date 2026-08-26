@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { PublicStats } from "@/lib/data/public";
 import type { Appearance } from "@/lib/appearance";
+import { allHomeStatsHidden, type HomeStatsVisibility } from "@/lib/home-stats";
 
 /**
  * The hero — full-bleed photography, editorial type, one search pill.
@@ -101,11 +102,14 @@ export function Hero({
   cuisines,
   quartiers,
   stats,
+  statsVisible,
   appearance,
 }: {
   cuisines: string[];
   quartiers: string[];
   stats: PublicStats;
+  /** Which figures may be shown. Same four switches as the strip below. */
+  statsVisible: HomeStatsVisibility;
   appearance: Appearance;
 }) {
   const router = useRouter();
@@ -200,7 +204,18 @@ export function Hero({
       />
 
       {/* ── Content ────────────────────────────────────────────────────── */}
-      <div className="container-page relative flex flex-col gap-8 pt-14 pb-24 sm:pt-16 lg:min-h-[86vh] lg:justify-center lg:pt-20 lg:pb-32">
+      <div
+        className={cn(
+          "container-page relative flex flex-col gap-8 pt-14 sm:pt-16 lg:min-h-[86vh] lg:justify-center lg:pt-20",
+          /*
+            The stat strip overlaps this section by -mt-14 / -lg:mt-20, and
+            this padding is the room reserved for it. With every figure hidden
+            there is no strip to overlap, and the allowance becomes a dead band
+            of empty artwork at the bottom of the hero.
+          */
+          allHomeStatsHidden(statsVisible) ? "pb-14 lg:pb-20" : "pb-24 lg:pb-32",
+        )}
+      >
         {/* Mode tabs — frosted, on the photo. */}
         <div
           role="tablist"
@@ -354,29 +369,45 @@ export function Hero({
           </div>
         )}
 
-        {/* ── Trust, quietly ─────────────────────────────────────────────── */}
+        {/*
+          ── Trust, quietly ───────────────────────────────────────────────
+
+          The SAME four switches as the strip below the fold. Gating one place
+          and not the other is how a platform ends up hiding "1 restaurant"
+          from the band and announcing it in the hero, forty pixels higher and
+          in larger type. "No account needed" is not a statistic and always
+          stays.
+        */}
         <ul className="flex flex-wrap items-center gap-x-7 gap-y-2 text-sm text-white/80">
-          <li className="inline-flex items-center gap-2">
-            <Star className="size-4 fill-accent text-accent" aria-hidden />
-            <strong className="tnum font-semibold text-white">
-              {stats.averageRating > 0 ? `${stats.averageRating.toFixed(1).replace(".", ",")}/5` : "—"}
-            </strong>
-            <span>{t("hero.trust.rating")}</span>
-          </li>
-          <li className="inline-flex items-center gap-2">
-            <UtensilsCrossed className="size-4 text-accent" aria-hidden />
-            <strong className="tnum font-semibold text-white">
-              {numberFormat.format(stats.restaurantCount)}
-            </strong>
-            <span>{t("hero.trust.restaurants")}</span>
-          </li>
-          <li className="inline-flex items-center gap-2">
-            <Bike className="size-4 text-accent" aria-hidden />
-            <strong className="tnum font-semibold text-white">
-              {Math.round(stats.averageDeliveryMinutes)} min
-            </strong>
-            <span>{t("home.stats.delivery")}</span>
-          </li>
+          {statsVisible.rating && (
+            <li className="inline-flex items-center gap-2">
+              <Star className="size-4 fill-accent text-accent" aria-hidden />
+              <strong className="tnum font-semibold text-white">
+                {stats.averageRating > 0
+                  ? `${stats.averageRating.toFixed(1).replace(".", ",")}/5`
+                  : "—"}
+              </strong>
+              <span>{t("hero.trust.rating")}</span>
+            </li>
+          )}
+          {statsVisible.restaurants && (
+            <li className="inline-flex items-center gap-2">
+              <UtensilsCrossed className="size-4 text-accent" aria-hidden />
+              <strong className="tnum font-semibold text-white">
+                {numberFormat.format(stats.restaurantCount)}
+              </strong>
+              <span>{t("hero.trust.restaurants")}</span>
+            </li>
+          )}
+          {statsVisible.delivery && (
+            <li className="inline-flex items-center gap-2">
+              <Bike className="size-4 text-accent" aria-hidden />
+              <strong className="tnum font-semibold text-white">
+                {Math.round(stats.averageDeliveryMinutes)} min
+              </strong>
+              <span>{t("home.stats.delivery")}</span>
+            </li>
+          )}
           <li className="text-white/60">{t("hero.search.noAccount")}</li>
         </ul>
       </div>

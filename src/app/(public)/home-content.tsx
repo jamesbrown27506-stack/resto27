@@ -23,6 +23,7 @@ import { useDates } from "@/lib/format/use-dates";
 import { planCtaHref } from "@/lib/nav";
 import type { PopularDish, PublicRestaurant, PublicStats, FeaturedReview } from "@/lib/data/public";
 import type { Appearance } from "@/lib/appearance";
+import type { HomeStatsVisibility } from "@/lib/home-stats";
 
 /**
  * Homepage body.
@@ -42,6 +43,7 @@ export function HomeContent({
   cuisines,
   quartiers,
   stats,
+  statsVisible,
   testimonials,
   appearance,
   userArea = null,
@@ -53,6 +55,8 @@ export function HomeContent({
   cuisines: string[];
   quartiers: string[];
   stats: PublicStats;
+  /** Which of the four figures the admin advertises. See lib/home-stats. */
+  statsVisible: HomeStatsVisibility;
   testimonials: FeaturedReview[];
   appearance: Appearance;
   /** The signed-in user's area — pricing CTAs route to it (planCtaHref). */
@@ -90,30 +94,58 @@ export function HomeContent({
           </span>
         </div>
       )}
-      <Hero cuisines={cuisines} quartiers={quartiers} stats={stats} appearance={appearance} />
+      <Hero
+        cuisines={cuisines}
+        quartiers={quartiers}
+        stats={stats}
+        statsVisible={statsVisible}
+        appearance={appearance}
+      />
 
+      {/*
+        Each figure appears only if the admin is willing to advertise it. When
+        all four are off the strip is not rendered at all — an empty bordered
+        band is worse than no band, and StatStrip refuses an empty list anyway
+        so no future caller can paint one either.
+      */}
       <StatStrip
         items={[
-          {
-            value: numberFormat.format(stats.restaurantCount),
-            label: t("home.stats.restaurants"),
-            icon: <Store />,
-          },
-          {
-            value: numberFormat.format(stats.deliveredOrderCount),
-            label: t("home.stats.orders"),
-            icon: <ShoppingBag />,
-          },
-          {
-            value: stats.averageRating.toFixed(1).replace(".", ","),
-            label: t("home.stats.rating"),
-            icon: <Star />,
-          },
-          {
-            value: `${Math.round(stats.averageDeliveryMinutes)} min`,
-            label: t("home.stats.delivery"),
-            icon: <Bike />,
-          },
+          ...(statsVisible.restaurants
+            ? [
+                {
+                  value: numberFormat.format(stats.restaurantCount),
+                  label: t("home.stats.restaurants"),
+                  icon: <Store />,
+                },
+              ]
+            : []),
+          ...(statsVisible.orders
+            ? [
+                {
+                  value: numberFormat.format(stats.deliveredOrderCount),
+                  label: t("home.stats.orders"),
+                  icon: <ShoppingBag />,
+                },
+              ]
+            : []),
+          ...(statsVisible.rating
+            ? [
+                {
+                  value: stats.averageRating.toFixed(1).replace(".", ","),
+                  label: t("home.stats.rating"),
+                  icon: <Star />,
+                },
+              ]
+            : []),
+          ...(statsVisible.delivery
+            ? [
+                {
+                  value: `${Math.round(stats.averageDeliveryMinutes)} min`,
+                  label: t("home.stats.delivery"),
+                  icon: <Bike />,
+                },
+              ]
+            : []),
         ]}
       />
 

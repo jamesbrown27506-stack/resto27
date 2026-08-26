@@ -51,6 +51,14 @@ export function StatStrip({
 }: {
   items: { value: string; label: string; icon: React.ReactNode }[];
 }) {
+  /*
+    NO ITEMS, NO BAND. The strip overlaps the hero by design and carries its
+    own border and shadow, so rendering it empty leaves a hairline box floating
+    over the artwork. Refusing here means no caller can paint one by accident,
+    however its list came to be empty.
+  */
+  if (items.length === 0) return null;
+
   return (
     <section className="container-page relative z-10 -mt-14 lg:-mt-20">
       <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border shadow-lg lg:grid-cols-4">
