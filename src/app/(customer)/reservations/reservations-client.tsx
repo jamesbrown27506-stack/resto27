@@ -10,11 +10,13 @@ import { Panel } from "@/components/ui/card";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
+import { QtyStepper } from "@/components/ui/qty-stepper";
 import { useToast } from "@/components/ui/toast";
 import {
   cancelOwnReservation,
   checkReservationPayment,
   createOwnReservation,
+  fetchDayAvailability,
   payReservationDeposit,
 } from "@/lib/data/customer-actions";
 import { reservationStatusLabel, RESERVATION_STATUS_TONE } from "@/lib/format/reservation-status";
@@ -120,6 +122,30 @@ export function ReservationsClient({
     line is a real thing, and this is a default, not a lock.
   */
   const [phone, setPhone] = useState(() => user.phone ?? "");
+  /** Whether the 8+ chip is showing the stepper for a large party. */
+  const [bigParty, setBigParty] = useState(false);
+
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     WHICH SLOTS ARE ACTUALLY TAKEN, ASKED BEFORE ANYTHING IS TYPED.
+
+     `slots` is opening-hours arithmetic; this is the real capacity answer,
+     and until now it existed only inside the submit handler. A full Saturday
+     was therefore a dead end reached after the party size, the notes and the
+     phone number had all been entered, and the refusal named no alternative.
+
+     `full` greys those slots rather than removing them — a slot that
+     disappears reads as a bug, a greyed one reads as an answer.
+
+     `checking` drives a quiet line rather than a spinner over the grid: the
+     answer usually lands in well under a second, and a grid that flickers
+     empty on every party-size tap is worse than one that is briefly stale.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const [fullSlotList, setFullSlotList] = useState<string[]>([]);
+  const [checkingSlots, setCheckingSlots] = useState(false);
+  const [availabilityFailed, setAvailabilityFailed] = useState(false);
+
   const [busy, setBusy] = useState(false);
   /** The booking whose deposit is being charged right now, or null. */
   const [payingId, setPayingId] = useState<string | null>(null);
@@ -170,10 +196,24 @@ export function ReservationsClient({
 
   useEffect(() => stopPaymentPolling, [stopPaymentPolling]);
 
-  // `router.refresh()` supplies a new server snapshot; useState only reads its
-  // initializer once, so explicitly adopt that snapshot after decisions,
-  // payments, cancellations and new bookings.
-  useEffect(() => setMine(initial), [initial]);
+  /*
+    ADOPT A NEW SERVER SNAPSHOT DURING RENDER, NOT IN AN EFFECT.
+
+    `router.refresh()` supplies fresh rows after a decision, a payment, a
+    cancellation or a new booking, and `useState` reads its initializer only
+    once — so the list has to be told. Doing that in an effect renders the
+    STALE list first and the fresh one a frame later, which is the cascading
+    render React now warns about; comparing the prop to the last one seen and
+    adjusting mid-render publishes the new rows in the same pass.
+
+    The pattern is React's own "adjusting state when a prop changes", and it
+    is already used for the modifier sheet's dish reset.
+  */
+  const [lastInitial, setLastInitial] = useState(initial);
+  if (lastInitial !== initial) {
+    setLastInitial(initial);
+    setMine(initial);
+  }
 
   /**
    * Watch one trackable CamerPay attempt without ever turning a browser
@@ -312,6 +352,57 @@ export function ReservationsClient({
   const day = date ? slotsForDate(selectedRestaurant?.hours ?? [], date, now) : null;
   const slots = day?.slots ?? [];
 
+  /*
+    Ask the server which slots are taken, whenever the question changes.
+
+    Sequence-guarded rather than debounced-only: tapping 2 -> 4 -> 6 quickly
+    fires three requests, and without the guard the answer for "2" can land
+    last and grey the wrong slots. The counter makes every stale reply a
+    no-op. Debounced too, so a run along the party chips costs one query
+    rather than six.
+  */
+  const availabilitySeq = useRef(0);
+  const restaurantId = selectedRestaurant?.id ?? null;
+
+  useEffect(() => {
+    /*
+      The early exit does NOT clear state synchronously — writing state in an
+      effect body is a cascading render, and the values are derived below
+      instead: with no restaurant or no date there is no grid to grey, so
+      `fullSlots` reads as empty whatever this holds.
+    */
+    if (!restaurantId || !date) return;
+
+    const seq = ++availabilitySeq.current;
+
+    const timer = setTimeout(() => {
+      // Raised INSIDE the debounce, not beside it: a synchronous write in an
+      // effect body is a cascading render, and "checking…" during the 250ms
+      // pause would flash on every keystroke along the party chips without
+      // anything actually being checked yet.
+      setCheckingSlots(true);
+      void fetchDayAvailability({ restaurantId, date, partySize: guestCount })
+        .then((result) => {
+          if (seq !== availabilitySeq.current) return;
+          setFullSlotList(result.ok ? result.full : []);
+          // A failed check leaves every slot enabled. Greying the whole grid
+          // because a query failed would refuse bookings the restaurant could
+          // have taken; the server re-checks at submit either way.
+          setAvailabilityFailed(!result.ok);
+        })
+        .catch(() => {
+          if (seq !== availabilitySeq.current) return;
+          setFullSlotList([]);
+          setAvailabilityFailed(true);
+        })
+        .finally(() => {
+          if (seq === availabilitySeq.current) setCheckingSlots(false);
+        });
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [restaurantId, date, guestCount]);
+
   /**
    * "lundi 24 août 2026" — the weekday of the chosen date, spelled out.
    *
@@ -331,12 +422,26 @@ export function ReservationsClient({
         )}`;
 
   /*
-    Drop a slot that the chosen day no longer offers — a different restaurant,
-    a different date, or simply the minute it stopped being bookable. Adjusted
-    during render rather than in an effect so the form is never submittable
-    with a time the grid is no longer showing.
+    Only meaningful once there IS a grid. Derived rather than cleared in the
+    effect above, so a restaurant or date change cannot leave the previous
+    day's greyed slots on screen for a frame.
   */
-  if (time && !slots.includes(time)) setTime("");
+  const asking = Boolean(restaurantId && date);
+  const fullSlots = asking ? fullSlotList : [];
+  const checking = asking && checkingSlots;
+  const availabilityUnknown = asking && availabilityFailed;
+
+  /** Every slot the restaurant offers today is already taken. */
+  const wholeDayFull = slots.length > 0 && fullSlots.length === slots.length;
+
+  /*
+    Drop a slot that the chosen day no longer offers — a different restaurant,
+    a different date, or simply the minute it stopped being bookable — and one
+    that has since filled up. Adjusted during render rather than in an effect
+    so the form is never submittable with a time the grid is no longer showing,
+    or one the server would refuse.
+  */
+  if (time && (!slots.includes(time) || fullSlots.includes(time))) setTime("");
 
   async function submit() {
     if (!date || !time) return;
@@ -450,8 +555,21 @@ export function ReservationsClient({
       title={t("crs.title")}
       description={t("crs.subtitle")}
     >
+      {/*
+        THE FORM COMES FIRST ON A PHONE.
+
+        The source order is history-then-form because on a wide screen the form
+        is a sticky right-hand rail, which is right. Stacked on a phone that
+        puts "Upcoming" and the whole of "History" above the thing the page
+        exists for — someone arriving to book a table scrolls past every
+        booking they have ever made to reach the first field.
+
+        `order-*` moves it visually without touching the DOM order, so the
+        heading structure a screen reader walks is unchanged and the desktop
+        rail keeps its position.
+      */}
       <div className="grid items-start gap-6 lg:grid-cols-[1fr_20rem]">
-        <div className="flex flex-col gap-6">
+        <div className="order-2 flex flex-col gap-6 lg:order-1">
           <Panel title={t("crs.upcoming")}>
             {upcoming.length === 0 ? (
               <EmptyState
@@ -612,7 +730,7 @@ export function ReservationsClient({
           </Panel>
         </div>
 
-        <aside className="rounded-lg border border-border bg-surface p-5 lg:sticky lg:top-24">
+        <aside className="order-1 rounded-lg border border-border bg-surface p-5 lg:order-2 lg:sticky lg:top-24">
           <h2 className="font-display text-lg font-bold">{t("crs.book")}</h2>
 
           <div className="mt-4 flex flex-col gap-4">
@@ -630,6 +748,82 @@ export function ReservationsClient({
                 ))}
               </Select>
             </Field>
+
+            {/*
+              ─────────────────────────────────────────────────────────────
+               PARTY SIZE FIRST, BECAUSE EVERY OTHER ANSWER DEPENDS ON IT.
+
+               The server's own capacity rule is `table.capacity >= partySize`
+               — which means "is 20:00 free?" has no answer until the platform
+               knows how many people are coming. Asking it second-to-last, as
+               this form did, is why availability could only be tested at
+               submit.
+
+               Chips rather than `<input type="number">`. Four columns because
+               272px across six would give 41px targets, under the floor the
+               slot grid below already learned the hard way. Above seven, the
+               stepper handles the long tail without spending a row of chips
+               on party sizes almost nobody books.
+              ─────────────────────────────────────────────────────────────
+            */}
+            <fieldset>
+              <legend className="mb-2 text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
+                {t("crs.guests")}
+              </legend>
+              <div className="grid grid-cols-4 gap-2">
+                {[1, 2, 3, 4, 5, 6, 7].map((n) => {
+                  const chosen = guestCount === n && !bigParty;
+                  return (
+                    <button
+                      key={n}
+                      type="button"
+                      aria-pressed={chosen}
+                      onClick={() => {
+                        setBigParty(false);
+                        setGuests(String(n));
+                      }}
+                      className={`tnum inline-flex min-h-11 items-center justify-center rounded-md border text-sm font-medium transition-colors ${
+                        chosen
+                          ? "border-primary bg-primary text-primary-fg"
+                          : "border-border hover:border-primary hover:text-primary"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  aria-pressed={bigParty}
+                  onClick={() => {
+                    setBigParty(true);
+                    if (guestCount < 8) setGuests("8");
+                  }}
+                  className={`inline-flex min-h-11 items-center justify-center rounded-md border text-sm font-medium transition-colors ${
+                    bigParty
+                      ? "border-primary bg-primary text-primary-fg"
+                      : "border-border hover:border-primary hover:text-primary"
+                  }`}
+                >
+                  8+
+                </button>
+              </div>
+
+              {bigParty && (
+                <div className="mt-2.5 flex items-center gap-3">
+                  <Users className="size-4 shrink-0 text-text-light" aria-hidden />
+                  <QtyStepper
+                    value={guestCount}
+                    min={8}
+                    max={20}
+                    onChange={(n) => setGuests(String(n))}
+                  />
+                  <span className="text-xs text-text-light">
+                    {t("crs.people", { count: guestCount })}
+                  </span>
+                </div>
+              )}
+            </fieldset>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
               <Field label={t("crs.date")} htmlFor="res-date" required>
@@ -656,18 +850,6 @@ export function ReservationsClient({
                     {dayLabel}
                   </p>
                 )}
-              </Field>
-
-              <Field label={t("crs.guests")} htmlFor="res-guests" required>
-                <Input
-                  id="res-guests"
-                  type="number"
-                  min={1}
-                  max={20}
-                  icon={<Users />}
-                  value={guests}
-                  onChange={(e) => setGuests(e.target.value)}
-                />
               </Field>
             </div>
 
@@ -699,16 +881,27 @@ export function ReservationsClient({
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
                     {slots.map((slot) => {
                       const chosen = time === slot;
+                      const taken = fullSlots.includes(slot);
                       return (
                         <button
                           key={slot}
                           type="button"
                           aria-pressed={chosen}
+                          disabled={taken}
+                          /*
+                            Greyed, not removed. A slot that vanishes between
+                            one party-size tap and the next reads as a bug; a
+                            greyed one reads as an answer, and the customer can
+                            see that 20:00 exists and is simply gone.
+                          */
+                          title={taken ? t("crs.slotFull") : undefined}
                           onClick={() => setTime(slot)}
                           className={`tnum inline-flex min-h-11 items-center justify-center rounded-md border px-2 text-sm font-medium transition-colors ${
-                            chosen
-                              ? "border-primary bg-primary text-primary-fg"
-                              : "border-border hover:border-primary hover:text-primary"
+                            taken
+                              ? "cursor-not-allowed border-border bg-surface-2 text-text-light line-through opacity-60"
+                              : chosen
+                                ? "border-primary bg-primary text-primary-fg"
+                                : "border-border hover:border-primary hover:text-primary"
                           }`}
                         >
                           {slot}
@@ -716,6 +909,21 @@ export function ReservationsClient({
                       );
                     })}
                   </div>
+
+                  {wholeDayFull ? (
+                    <p className="mt-2 rounded-md border border-warning/30 bg-warning-light px-3 py-2.5 text-xs leading-relaxed text-warning">
+                      {t("crs.dayFull", { count: guestCount })}
+                    </p>
+                  ) : fullSlots.length > 0 ? (
+                    <p className="mt-2 text-xs text-text-light">{t("crs.someSlotsFull")}</p>
+                  ) : null}
+
+                  {checking && (
+                    <p className="mt-2 text-xs text-text-light">{t("crs.checkingAvailability")}</p>
+                  )}
+                  {availabilityUnknown && !checking && (
+                    <p className="mt-2 text-xs text-text-light">{t("crs.availabilityFailed")}</p>
+                  )}
                   {day?.opensAt && day.closesAt && (
                     <p className="tnum mt-2 text-xs text-text-light">
                       {t("crs.openWindow", { opens: day.opensAt, closes: day.closesAt })}

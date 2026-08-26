@@ -12,6 +12,18 @@ import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
 import { anyPushWanted, toStoredJson } from "@/lib/notifications/customer-topics";
 import {
+  floorIsUnmanaged,
+  fullSlots,
+  seatableTables,
+  slotIsFull,
+  slotWindow,
+  HOLDING_STATUSES,
+  SLOT_WINDOW_AFTER_MIN,
+  SLOT_WINDOW_BEFORE_MIN,
+  type FloorTable,
+} from "@/lib/reservations/availability";
+import { slotsForDate } from "@/lib/reservations/slots";
+import {
   depositChargedNow,
   normaliseDepositType,
   type DepositConfig,
@@ -628,39 +640,48 @@ export async function createOwnReservation(
   */
   const depositDue = depositChargedNow(deposit, partySize);
 
-  const slotStart = new Date(when.getTime() - 30 * 60_000).toISOString();
-  const slotEnd = new Date(when.getTime() + 90 * 60_000).toISOString();
+  /*
+    THE SAME RULE THE BOOKING FORM DRAWS ITS GREYED SLOTS FROM.
+
+    This used to be the only place capacity was tested, which is why a full
+    Saturday was a dead end reached after the whole form was filled. The rule
+    now lives in lib/reservations/availability and both sides call it — a form
+    that showed a more generous rule than this one enforces would be the same
+    bug wearing a different hat.
+  */
+  const window = slotWindow(when);
 
   const { data: configuredTables, error: tablesError } = await supabase
     .from("restaurant_tables")
-    .select("id, capacity, status")
+    .select("capacity, status")
     .eq("restaurant_id", restaurantId);
 
   if (tablesError) return { ok: false, error: "La disponibilité n'a pas pu être vérifiée." };
 
-  // No configured floor means the restaurant manages capacity manually. Once
-  // it has configured tables, however, an out-of-service or undersized table
-  // is not real capacity for this party.
-  if ((configuredTables ?? []).length > 0) {
-    const capacity = (configuredTables ?? []).filter(
-      (table) => table.status !== "out_of_service" && Number(table.capacity) >= partySize,
-    ).length;
-    if (capacity === 0) {
+  const floor = (configuredTables ?? []) as FloorTable[];
+
+  // No configured floor means the restaurant manages capacity manually — a
+  // walk-in place must not have bookings refused by a floor plan nobody
+  // filled in.
+  if (!floorIsUnmanaged(floor)) {
+    if (seatableTables(floor, partySize) === 0) {
       return { ok: false, error: "Aucune table ne peut accueillir ce nombre de personnes." };
     }
 
     const { data: overlapping, error: overlapError } = await supabase
       .from("reservations")
-      .select("id")
+      .select("reserved_for")
       .eq("restaurant_id", restaurantId)
-      // `awaiting_payment` counts: the restaurant has committed the seat and
-      // is waiting to be paid for it, so it must not be sold twice meanwhile.
-      .in("status", ["pending", "awaiting_payment", "confirmed", "seated"])
-      .gte("reserved_for", slotStart)
-      .lte("reserved_for", slotEnd);
+      .in("status", [...HOLDING_STATUSES])
+      .gte("reserved_for", window.start)
+      .lte("reserved_for", window.end);
 
     if (overlapError) return { ok: false, error: "La disponibilité n'a pas pu être vérifiée." };
-    if ((overlapping ?? []).length >= capacity) {
+
+    const holding = ((overlapping ?? []) as { reserved_for: string }[]).map(
+      (r) => new Date(r.reserved_for),
+    );
+    if (slotIsFull(when, holding, floor, partySize)) {
       return { ok: false, error: "Plus de table disponible sur ce créneau." };
     }
   }
@@ -759,6 +780,109 @@ export async function createOwnReservation(
   revalidatePath("/reservations");
   revalidatePath("/account");
   return { ok: true, status: "succeeded" };
+}
+
+/**
+ * Which of a day's slots are already sold out for a party of this size.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE FORM ASKS THIS BEFORE IT ASKS THE CUSTOMER FOR ANYTHING.
+ *
+ *  Availability used to be tested once, at submit, so a full Saturday was a
+ *  dead end reached after the party size, the notes and the phone number had
+ *  all been typed — and the refusal named no alternative. Every booking
+ *  platform worth copying inverts that: you see the times that are genuinely
+ *  free, and a full one is greyed rather than removed, because a slot that
+ *  disappears reads as a bug while a greyed one reads as an answer.
+ *
+ *  TWO QUERIES FOR THE WHOLE DAY, not one per half-hour. The floor is read
+ *  once and the day's holding bookings are read once; `fullSlots` then answers
+ *  every slot from those two arrays in memory.
+ *
+ *  THE SLOT LIST IS DERIVED HERE, not accepted from the client. A caller that
+ *  supplied its own list could ask about hours the restaurant is closed and
+ *  learn the shape of the floor plan from the answers.
+ *
+ *  No `requireUser`: the booking form is reachable signed-out, and this
+ *  reveals nothing a walk-in could not learn by telephoning.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function fetchDayAvailability(input: {
+  restaurantId: string;
+  /** YYYY-MM-DD in the display zone. */
+  date: string;
+  partySize: number;
+}): Promise<{ ok: boolean; slots: string[]; full: string[] }> {
+  const parsed = z
+    .object({
+      restaurantId: z.string().uuid(),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      partySize: z.coerce.number().int().min(1).max(20),
+    })
+    .safeParse(input);
+
+  if (!parsed.success) return { ok: false, slots: [], full: [] };
+  const { restaurantId, date, partySize } = parsed.data;
+
+  const supabase = createAdminClient();
+
+  const { data: hoursRows, error: hoursError } = await supabase
+    .from("restaurant_hours")
+    .select("weekday, opens_at, closes_at")
+    .eq("restaurant_id", restaurantId);
+
+  if (hoursError) return { ok: false, slots: [], full: [] };
+
+  const hours = ((hoursRows ?? []) as { weekday: number; opens_at: string | null; closes_at: string | null }[]).map(
+    (h) => ({ weekday: h.weekday, opensAt: h.opens_at, closesAt: h.closes_at }),
+  );
+
+  const { slots } = slotsForDate(hours, date);
+  if (slots.length === 0) return { ok: true, slots: [], full: [] };
+
+  const { data: tableRows, error: tablesError } = await supabase
+    .from("restaurant_tables")
+    .select("capacity, status")
+    .eq("restaurant_id", restaurantId);
+
+  if (tablesError) return { ok: false, slots, full: [] };
+  const floor = (tableRows ?? []) as FloorTable[];
+
+  // An unmanaged floor has no ceiling to enforce, so the second query is
+  // pointless — and answering "nothing is full" without it is not a guess,
+  // it is the rule.
+  if (floorIsUnmanaged(floor)) return { ok: true, slots, full: [] };
+
+  // The widest window any of the day's slots can occupy, so one read covers
+  // every question below.
+  const dayStart = new Date(`${date}T00:00:00+01:00`);
+  const dayEnd = new Date(`${date}T23:59:59+01:00`);
+
+  const { data: holdingRows, error: holdingError } = await supabase
+    .from("reservations")
+    .select("reserved_for")
+    .eq("restaurant_id", restaurantId)
+    .in("status", [...HOLDING_STATUSES])
+    .gte("reserved_for", new Date(dayStart.getTime() - SLOT_WINDOW_AFTER_MIN * 60_000).toISOString())
+    .lte("reserved_for", new Date(dayEnd.getTime() + SLOT_WINDOW_BEFORE_MIN * 60_000).toISOString());
+
+  if (holdingError) return { ok: false, slots, full: [] };
+
+  const holding = ((holdingRows ?? []) as { reserved_for: string }[]).map(
+    (r) => new Date(r.reserved_for),
+  );
+
+  // Africa/Douala is UTC+1 with no DST, the same conversion the submit path
+  // uses when it builds `reservedFor`.
+  const full = fullSlots(
+    slots,
+    (slot) => new Date(`${date}T${slot}:00+01:00`),
+    holding,
+    floor,
+    partySize,
+  );
+
+  return { ok: true, slots, full };
 }
 
 /**
