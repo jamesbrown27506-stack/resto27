@@ -33,6 +33,7 @@ import { mgateDict } from "./dict/mgate";
 import { modifiersDict } from "./dict/modifiers";
 import { notificationsDict } from "./dict/notifications";
 import { orderActionsDict } from "./dict/order-actions";
+import { orderStatusDict } from "./dict/order-status";
 import { profileDict } from "./dict/profile";
 import { promotionsDict } from "./dict/promotions";
 import { reportsDict } from "./dict/reports";
@@ -748,23 +749,6 @@ const baseFr = {
   "m.noBranch.home": "Retour à l'accueil",
 
   /* -- Statuts de commande ------------------------------------------- */
-  "order.status.pending": "En attente",
-  "order.status.awaiting_customer": "Réponse du client attendue",
-  "order.status.confirmed": "Confirmée",
-  "order.status.preparing": "En préparation",
-  "order.status.shipped": "En livraison",
-  "order.status.delivered": "Livrée",
-  "order.status.cancelled": "Annulée",
-  "order.statusDesc.pending": "Le restaurant n'a pas encore confirmé votre commande.",
-  "order.statusDesc.confirmed": "Le restaurant a accepté votre commande.",
-  "order.statusDesc.preparing": "Votre commande est en cuisine.",
-  "order.statusDesc.shipped": "Votre commande est en route.",
-  "order.statusDesc.delivered": "Commande livrée. Bon appétit !",
-  "order.statusDesc.cancelled": "Cette commande a été annulée.",
-  "order.next.confirmed": "Confirmer",
-  "order.next.preparing": "Commencer",
-  "order.next.shipped": "Envoyer",
-  "order.next.delivered": "Marquer livrée",
   "order.type.delivery": "Livraison",
   "order.type.pickup": "À emporter",
   "order.type.dine_in": "Sur place",
@@ -1543,23 +1527,6 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "m.noBranch.home": "Back to home",
 
   /* -- Order statuses ------------------------------------------------- */
-  "order.status.pending": "Pending",
-  "order.status.awaiting_customer": "Awaiting customer",
-  "order.status.confirmed": "Confirmed",
-  "order.status.preparing": "Preparing",
-  "order.status.shipped": "Out for delivery",
-  "order.status.delivered": "Delivered",
-  "order.status.cancelled": "Cancelled",
-  "order.statusDesc.pending": "The restaurant has not confirmed your order yet.",
-  "order.statusDesc.confirmed": "The restaurant accepted your order.",
-  "order.statusDesc.preparing": "Your order is being prepared in the kitchen.",
-  "order.statusDesc.shipped": "Your order is on its way.",
-  "order.statusDesc.delivered": "Order delivered. Enjoy!",
-  "order.statusDesc.cancelled": "This order was cancelled.",
-  "order.next.confirmed": "Confirm",
-  "order.next.preparing": "Start",
-  "order.next.shipped": "Send out",
-  "order.next.delivered": "Mark delivered",
   "order.type.delivery": "Delivery",
   "order.type.pickup": "Pickup",
   "order.type.dine_in": "Dine-in",
@@ -1668,6 +1635,7 @@ const fr = {
   ...chatDict.fr,
   ...notificationsDict.fr,
   ...orderActionsDict.fr,
+  ...orderStatusDict.fr,
   ...menuDict.fr,
   ...modifiersDict.fr,
   ...mgateDict.fr,
@@ -1706,6 +1674,7 @@ const en: Record<TranslationKey, string> = {
   ...chatDict.en,
   ...notificationsDict.en,
   ...orderActionsDict.en,
+  ...orderStatusDict.en,
   ...menuDict.en,
   ...modifiersDict.en,
   ...mgateDict.en,

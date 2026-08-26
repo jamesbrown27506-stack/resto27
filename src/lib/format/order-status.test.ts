@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   ORDER_FLOW,
-  ORDER_STATUS_META,
   ORDER_STATUSES,
-  advanceLabel,
+  ORDER_TYPES,
+  advanceLabelKey,
   canCustomerCancel,
   hasRestaurantActions,
   isTerminal,
   nextStatus,
+  orderFlow,
+  orderStatusMeta,
+  flowIndex,
 } from "./order-status";
 
 /**
@@ -47,19 +50,63 @@ describe("nextStatus", () => {
   });
 });
 
-describe("advanceLabel", () => {
+describe("advanceLabelKey", () => {
   it("offers no button at awaiting_customer", () => {
     // A button here would be the restaurant agreeing to a price on the
     // customer's behalf.
-    expect(advanceLabel("awaiting_customer")).toBeNull();
+    expect(advanceLabelKey("awaiting_customer", "delivery")).toBeNull();
   });
 
-  it("still labels every step the restaurant does own", () => {
-    expect(advanceLabel("pending")).toBe("Confirmer");
-    expect(advanceLabel("confirmed")).toBe("Commencer");
-    expect(advanceLabel("preparing")).toBe("Envoyer");
-    expect(advanceLabel("shipped")).toBe("Marquer livrée");
-    expect(advanceLabel("delivered")).toBeNull();
+  it("labels every step the restaurant owns, for delivery", () => {
+    expect(advanceLabelKey("pending", "delivery")).toBe("ost.next.confirmed");
+    expect(advanceLabelKey("confirmed", "delivery")).toBe("ost.next.preparing");
+    expect(advanceLabelKey("preparing", "delivery")).toBe("ost.next.delivery.shipped");
+    expect(advanceLabelKey("shipped", "delivery")).toBe("ost.next.delivery.delivered");
+    expect(advanceLabelKey("delivered", "delivery")).toBeNull();
+  });
+
+  it("says something different for the SAME transition on a pickup", () => {
+    // The heart of the change: one state machine, three vocabularies. Leaving
+    // preparing -> shipped as "Envoyer" told a takeaway customer their food
+    // had gone out for delivery.
+    expect(advanceLabelKey("preparing", "pickup")).toBe("ost.next.pickup.shipped");
+    expect(advanceLabelKey("shipped", "pickup")).toBe("ost.next.pickup.delivered");
+    expect(advanceLabelKey("preparing", "dine_in")).toBe("ost.next.dine_in.shipped");
+    expect(advanceLabelKey("shipped", "dine_in")).toBe("ost.next.dine_in.delivered");
+  });
+
+  it("shares the early steps, because they genuinely are the same", () => {
+    for (const type of ORDER_TYPES) {
+      expect(advanceLabelKey("pending", type)).toBe("ost.next.confirmed");
+      expect(advanceLabelKey("confirmed", type)).toBe("ost.next.preparing");
+    }
+  });
+});
+
+describe("orderFlow", () => {
+  it("keeps the fee step for delivery only", () => {
+    expect(orderFlow("delivery")).toContain("awaiting_customer");
+  });
+
+  it("drops it for pickup and dine-in", () => {
+    // A takeaway has no delivery fee to approve, so showing the step promised
+    // a stage that could never arrive.
+    expect(orderFlow("pickup")).not.toContain("awaiting_customer");
+    expect(orderFlow("dine_in")).not.toContain("awaiting_customer");
+  });
+});
+
+describe("flowIndex", () => {
+  it("does not count a step the order will never reach", () => {
+    // The off-by-one this fixes: with awaiting_customer in the array, a
+    // confirmed PICKUP order scored 2 and the timeline painted the
+    // delivery-fee step as already done.
+    expect(flowIndex("confirmed", "pickup")).toBe(1);
+    expect(flowIndex("confirmed", "delivery")).toBe(2);
+  });
+
+  it("is -1 for a cancelled order in every type", () => {
+    for (const type of ORDER_TYPES) expect(flowIndex("cancelled", type)).toBe(-1);
   });
 });
 
@@ -105,13 +152,32 @@ describe("hasRestaurantActions", () => {
 });
 
 describe("the catalogue stays whole", () => {
-  it("gives every status display metadata", () => {
-    // A status without a meta entry renders as a blank badge rather than
-    // failing loudly, which is how one gets missed.
-    for (const status of ORDER_STATUSES) {
-      expect(ORDER_STATUS_META[status], status).toBeDefined();
-      expect(ORDER_STATUS_META[status].label.length).toBeGreaterThan(0);
+  it("gives every status display metadata in every order type", () => {
+    // A combination without an entry renders as a blank badge rather than
+    // failing loudly, which is how one gets missed. 21 combinations.
+    for (const type of ORDER_TYPES) {
+      for (const status of ORDER_STATUSES) {
+        const meta = orderStatusMeta(status, type);
+        expect(meta, `${type}/${status}`).toBeDefined();
+        expect(meta.labelKey.length, `${type}/${status}`).toBeGreaterThan(0);
+        expect(meta.descKey.length, `${type}/${status}`).toBeGreaterThan(0);
+        expect(meta.badge.length, `${type}/${status}`).toBeGreaterThan(0);
+      }
     }
+  });
+
+  it("keeps colour keyed on the state, not the journey", () => {
+    // preparing is warning-coloured whether the food is going on a bike or
+    // onto a counter — only the words and the icon fork.
+    const [a, b, c] = ORDER_TYPES.map((t) => orderStatusMeta("preparing", t).badge);
+    expect(a).toBe(b);
+    expect(b).toBe(c);
+  });
+
+  it("gives pickup and dine-in their own icon at the handover step", () => {
+    expect(orderStatusMeta("shipped", "delivery").icon).toBe("truck");
+    expect(orderStatusMeta("shipped", "pickup").icon).toBe("shopping-bag");
+    expect(orderStatusMeta("shipped", "dine_in").icon).toBe("hand-platter");
   });
 
   it("keeps awaiting_customer in the customer's timeline", () => {

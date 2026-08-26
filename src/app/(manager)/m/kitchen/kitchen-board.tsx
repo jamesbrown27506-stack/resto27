@@ -5,7 +5,7 @@ import { useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Bike, Check, ChefHat, Clock, Store, ShoppingBag } from "lucide-react";
 import { formatElapsed, formatTime, minutesSince } from "@/lib/format/datetime";
-import { nextStatus } from "@/lib/format/order-status";
+import { advanceLabelKey, nextStatus } from "@/lib/format/order-status";
 import { advanceOrder } from "@/lib/data/order-actions";
 import { useToast } from "@/components/ui/toast";
 import { useLocale } from "@/lib/i18n/use-locale";
@@ -115,6 +115,9 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
             const warning = !late && minutes >= AMBER_AFTER_MIN;
             const Icon = TYPE_ICON[order.type];
             const next = nextStatus(order.status);
+            // Same transition, different promise: "Envoyer" for a rider,
+            // "Prête à retirer" for a counter. See order-status.ts.
+            const nextLabel = advanceLabelKey(order.status, order.type);
 
             return (
               <li
@@ -200,7 +203,7 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
                     // Tall tap target — this is used with wet or gloved hands.
                     className="w-full bg-primary px-4 py-4 text-lg font-bold text-primary-fg transition-colors hover:bg-primary-hover active:brightness-95 disabled:opacity-70"
                   >
-                    {t(`order.next.${next}` as TranslationKey)}
+                    {nextLabel && t(nextLabel)}
                   </button>
                 )}
               </li>

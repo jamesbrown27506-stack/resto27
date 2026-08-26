@@ -134,7 +134,7 @@ export function OrdersQueue({
                         >
                           {order.reference}
                         </Link>
-                        <OrderStatusBadge status={order.status} size="sm" />
+                        <OrderStatusBadge status={order.status} type={order.type} size="sm" />
                         {order.scheduledFor && (
                           <span
                             className="tnum text-xs font-medium text-primary"

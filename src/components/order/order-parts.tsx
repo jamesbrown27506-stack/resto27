@@ -1,24 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { Check, Clock, Flame, PackageCheck, Truck, X } from "lucide-react";
-import { OrderStatusBadge } from "./order-status-badge";
+import { X } from "lucide-react";
+import { OrderStatusBadge, STATUS_ICONS } from "./order-status-badge";
 import { formatMoney } from "@/lib/format/currency";
 import { formatDateTime, formatRelative, isoAttr } from "@/lib/format/datetime";
-import { ORDER_FLOW, ORDER_STATUS_META, flowIndex, type OrderStatus } from "@/lib/format/order-status";
+import {
+  flowIndex,
+  orderFlow,
+  orderStatusMeta,
+  type OrderStatus,
+  type OrderType,
+} from "@/lib/format/order-status";
 import type { CustomerOrder as Order } from "@/lib/data/customer";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
 
-const ICONS = {
-  clock: Clock,
-  check: Check,
-  flame: Flame,
-  truck: Truck,
-  "package-check": PackageCheck,
-  x: X,
-} as const;
 
 /**
  * Live status timeline — the centrepiece of /orders/[id], the busiest page in
@@ -29,9 +27,18 @@ const ICONS = {
  */
 export function OrderStatusTimeline({
   status,
+  type,
   history,
 }: {
   status: OrderStatus;
+  /**
+   * Which steps this order actually has, and what they are called. A pickup
+   * timeline that borrowed delivery's was wrong twice: it showed a
+   * "delivery fee to approve" step a takeaway can never reach, and because
+   * `flowIndex` counted that step, a confirmed pickup order painted it as
+   * already done.
+   */
+  type: OrderType;
   history: { status: string; at: string; byName: string | null }[];
 }) {
   const { t } = useLocale();
@@ -41,7 +48,7 @@ export function OrderStatusTimeline({
       <div className="flex items-start gap-3 rounded-md border border-error/30 bg-error-light p-4">
         <X className="mt-0.5 size-4 shrink-0 text-error" aria-hidden />
         <div>
-          <p className="font-semibold text-error">{t("order.status.cancelled")}</p>
+          <p className="font-semibold text-error">{t("ost.cancelled")}</p>
           {event && (
             <p className="mt-0.5 text-sm text-text-secondary">
               <time dateTime={isoAttr(event.at)}>{formatDateTime(event.at)}</time> · {event.byName}
@@ -52,17 +59,18 @@ export function OrderStatusTimeline({
     );
   }
 
-  const current = flowIndex(status);
+  const steps = orderFlow(type);
+  const current = flowIndex(status, type);
 
   return (
     <ol className="relative">
-      {ORDER_FLOW.map((step, i) => {
-        const meta = ORDER_STATUS_META[step];
-        const Icon = ICONS[meta.icon];
+      {steps.map((step, i) => {
+        const meta = orderStatusMeta(step, type);
+        const Icon = STATUS_ICONS[meta.icon];
         const event = history.find((h) => h.status === step);
         const done = i < current;
         const active = i === current;
-        const last = i === ORDER_FLOW.length - 1;
+        const last = i === steps.length - 1;
 
         return (
           <li key={step} className="relative flex gap-4 pb-7 last:pb-0">
@@ -94,7 +102,7 @@ export function OrderStatusTimeline({
                   active ? "text-primary" : done ? "text-text" : "text-text-light",
                 )}
               >
-                {t(`order.status.${step}` as TranslationKey)}
+                {t(meta.labelKey)}
               </p>
 
               {event ? (
@@ -104,7 +112,7 @@ export function OrderStatusTimeline({
                 </p>
               ) : active ? (
                 <p className="mt-0.5 text-sm text-text-secondary">
-                  {t(`order.statusDesc.${step}` as TranslationKey)}
+                  {t(meta.descKey)}
                 </p>
               ) : null}
 
@@ -151,7 +159,7 @@ export function OrderCard({ order, now }: { order: Order; now?: Date }) {
             </p>
           )}
         </div>
-        <OrderStatusBadge status={order.status} />
+        <OrderStatusBadge status={order.status} type={order.type} />
       </div>
 
       <ul className="mt-3.5 flex flex-col gap-1 text-sm text-text-secondary">

@@ -135,7 +135,7 @@ export function OrderDetailView({
             <CardBody>
               <div className="flex items-center justify-between gap-3">
                 <CardTitle>{t("m.orders.items")}</CardTitle>
-                <OrderStatusBadge status={order.status} />
+                <OrderStatusBadge status={order.status} type={order.type} />
               </div>
 
               <ul className="mt-4 divide-y divide-border">
@@ -202,7 +202,7 @@ export function OrderDetailView({
               <ul className="mt-4 divide-y divide-border">
                 {order.history.map((event, i) => (
                   <li key={i} className="flex items-center justify-between gap-4 py-3">
-                    <OrderStatusBadge status={event.status as OrderStatus} size="sm" />
+                    <OrderStatusBadge status={event.status as OrderStatus} type={order.type} size="sm" />
                     <div className="text-right text-sm">
                       {event.byName && (
                         <p className="font-medium">{t("mo.by", { name: event.byName })}</p>

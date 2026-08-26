@@ -11,7 +11,7 @@ import { useToast } from "@/components/ui/toast";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { formatMoney, formatMoneyCompact, formatPercent } from "@/lib/format/currency";
 import { formatDateTime, formatElapsed, formatRelative } from "@/lib/format/datetime";
-import { ORDER_STATUSES, ORDER_STATUS_META } from "@/lib/format/order-status";
+import { ORDER_STATUSES, ORDER_TYPES, orderStatusMeta } from "@/lib/format/order-status";
 import type { BadgeTone } from "@/components/ui/badge";
 
 /**
@@ -122,15 +122,23 @@ export default function StyleguidePage() {
             )}
           </div>
           <div className="flex flex-wrap gap-2">
-            {ORDER_STATUSES.map((status) => (
+            {/* Every status in every order type — the whole point of the
+                style guide is that a pickup badge and a delivery badge can be
+                compared side by side instead of discovered in production. */}
+            {ORDER_TYPES.flatMap((type) =>
+              ORDER_STATUSES.map((status) => {
+                const meta = orderStatusMeta(status, type);
+                return (
               <span
-                key={status}
-                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${ORDER_STATUS_META[status].badge}`}
+                key={`${type}-${status}`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${meta.badge}`}
               >
-                <span className={`size-1.5 rounded-full ${ORDER_STATUS_META[status].dot}`} />
-                {ORDER_STATUS_META[status].label}
+                <span className={`size-1.5 rounded-full ${meta.dot}`} />
+                {meta.labelKey}
               </span>
-            ))}
+                );
+              }),
+            )}
           </div>
         </CardBody>
       </Panel>

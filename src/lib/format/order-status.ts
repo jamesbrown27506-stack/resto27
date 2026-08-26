@@ -1,3 +1,5 @@
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
+
 /**
  * The order state machine, as the UI sees it.
  *
@@ -38,6 +40,10 @@
  * receipt. Defining it once is what stops those five screens drifting apart.
  */
 
+export const ORDER_TYPES = ["delivery", "pickup", "dine_in"] as const;
+
+export type OrderType = (typeof ORDER_TYPES)[number];
+
 export const ORDER_STATUSES = [
   "pending",
   "awaiting_customer",
@@ -62,69 +68,181 @@ export const ORDER_FLOW: OrderStatus[] = [
 
 export const TERMINAL_STATUSES: OrderStatus[] = ["delivered", "cancelled"];
 
-interface StatusMeta {
-  label: string;
+export type OrderStatusIcon =
+  | "clock"
+  | "check"
+  | "flame"
+  | "truck"
+  | "package-check"
+  | "x"
+  | "shopping-bag"
+  | "utensils"
+  | "hand-platter";
+
+export interface StatusMeta {
+  /**
+   * A KEY, never a word. Five screens render this, and only the dictionary
+   * follows the language toggle — a literal here stayed French in an English
+   * interface, which is exactly how the old map went wrong.
+   */
+  labelKey: TranslationKey;
   /** What the customer is waiting on. Shown under the timeline. */
-  description: string;
+  descKey: TranslationKey;
   /** Tailwind classes for a filled badge. */
   badge: string;
   /** Bare colour class for dots, bars and timeline rails. */
   dot: string;
-  /** Lucide icon name, resolved by the badge component. */
-  icon: "clock" | "check" | "flame" | "truck" | "package-check" | "x";
+  icon: OrderStatusIcon;
 }
 
-export const ORDER_STATUS_META: Record<OrderStatus, StatusMeta> = {
+/**
+ * COLOUR BELONGS TO THE STATE, NOT THE JOURNEY.
+ *
+ * `preparing` is warning-coloured whether the food is going on a bike or onto
+ * a counter, so the palette is keyed on status alone and shared by all three
+ * order types. Only the words and the icon fork below.
+ */
+const STATUS_TONE: Record<OrderStatus, { badge: string; dot: string }> = {
   pending: {
-    label: "En attente",
-    description: "Le restaurant n'a pas encore confirmé votre commande.",
     badge: "bg-surface-2 text-text-secondary border border-border",
     dot: "bg-text-light",
-    icon: "clock",
   },
   awaiting_customer: {
-    label: "Frais de livraison à valider",
-    description: "Le restaurant a chiffré la livraison. Acceptez ou refusez pour continuer.",
     badge: "bg-warning-light text-warning border border-warning/25",
     dot: "bg-warning",
-    icon: "clock",
   },
   confirmed: {
-    label: "Confirmée",
-    description: "Le restaurant a accepté votre commande.",
     badge: "bg-info-light text-info border border-info/25",
     dot: "bg-info",
-    icon: "check",
   },
   preparing: {
-    label: "En préparation",
-    description: "Votre commande est en cuisine.",
     badge: "bg-warning-light text-warning border border-warning/25",
     dot: "bg-warning",
-    icon: "flame",
   },
   shipped: {
-    label: "En livraison",
-    description: "Votre commande est en route.",
     badge: "bg-primary-light text-primary border border-primary/25",
     dot: "bg-primary",
-    icon: "truck",
   },
   delivered: {
-    label: "Livrée",
-    description: "Commande livrée. Bon appétit !",
     badge: "bg-success-light text-success border border-success/25",
     dot: "bg-success",
-    icon: "package-check",
   },
   cancelled: {
-    label: "Annulée",
-    description: "Cette commande a été annulée.",
     badge: "bg-error-light text-error border border-error/25",
     dot: "bg-error",
-    icon: "x",
   },
 };
+
+/**
+ * The words and the icon, per order type — twenty-one entries, written out.
+ *
+ * A `Record<OrderType, Record<OrderStatus, …>>` rather than a lookup with a
+ * fallback, on purpose: a combination nobody thought about is a COMPILE ERROR
+ * instead of silently rendering delivery's wording. Where three types genuinely
+ * say the same thing the key literal simply repeats, so the sharing is visible
+ * rather than hidden behind an `??`.
+ *
+ * `awaiting_customer` appears under pickup and dine-in to keep the Record
+ * total. It is unreachable there — `advanceOrder` only routes a DELIVERY order
+ * into that state, because only a delivery order has a fee to accept.
+ */
+const TYPE_VIEW: Record<
+  OrderType,
+  Record<OrderStatus, { labelKey: TranslationKey; descKey: TranslationKey; icon: OrderStatusIcon }>
+> = {
+  delivery: {
+    pending: { labelKey: "ost.pending", descKey: "ost.desc.pending", icon: "clock" },
+    awaiting_customer: {
+      labelKey: "ost.awaiting_customer",
+      descKey: "ost.desc.awaiting_customer",
+      icon: "clock",
+    },
+    confirmed: {
+      labelKey: "ost.delivery.confirmed",
+      descKey: "ost.desc.delivery.confirmed",
+      icon: "check",
+    },
+    preparing: {
+      labelKey: "ost.delivery.preparing",
+      descKey: "ost.desc.delivery.preparing",
+      icon: "flame",
+    },
+    shipped: {
+      labelKey: "ost.delivery.shipped",
+      descKey: "ost.desc.delivery.shipped",
+      icon: "truck",
+    },
+    delivered: {
+      labelKey: "ost.delivery.delivered",
+      descKey: "ost.desc.delivery.delivered",
+      icon: "package-check",
+    },
+    cancelled: { labelKey: "ost.cancelled", descKey: "ost.desc.cancelled", icon: "x" },
+  },
+  pickup: {
+    pending: { labelKey: "ost.pending", descKey: "ost.desc.pending", icon: "clock" },
+    awaiting_customer: {
+      labelKey: "ost.awaiting_customer",
+      descKey: "ost.desc.awaiting_customer",
+      icon: "clock",
+    },
+    confirmed: {
+      labelKey: "ost.pickup.confirmed",
+      descKey: "ost.desc.pickup.confirmed",
+      icon: "check",
+    },
+    preparing: {
+      labelKey: "ost.pickup.preparing",
+      descKey: "ost.desc.pickup.preparing",
+      icon: "flame",
+    },
+    shipped: {
+      labelKey: "ost.pickup.shipped",
+      descKey: "ost.desc.pickup.shipped",
+      icon: "shopping-bag",
+    },
+    delivered: {
+      labelKey: "ost.pickup.delivered",
+      descKey: "ost.desc.pickup.delivered",
+      icon: "package-check",
+    },
+    cancelled: { labelKey: "ost.cancelled", descKey: "ost.desc.cancelled", icon: "x" },
+  },
+  dine_in: {
+    pending: { labelKey: "ost.pending", descKey: "ost.desc.pending", icon: "clock" },
+    awaiting_customer: {
+      labelKey: "ost.awaiting_customer",
+      descKey: "ost.desc.awaiting_customer",
+      icon: "clock",
+    },
+    confirmed: {
+      labelKey: "ost.dine_in.confirmed",
+      descKey: "ost.desc.dine_in.confirmed",
+      icon: "check",
+    },
+    preparing: {
+      labelKey: "ost.dine_in.preparing",
+      descKey: "ost.desc.dine_in.preparing",
+      icon: "flame",
+    },
+    shipped: {
+      labelKey: "ost.dine_in.shipped",
+      descKey: "ost.desc.dine_in.shipped",
+      icon: "hand-platter",
+    },
+    delivered: {
+      labelKey: "ost.dine_in.delivered",
+      descKey: "ost.desc.dine_in.delivered",
+      icon: "utensils",
+    },
+    cancelled: { labelKey: "ost.cancelled", descKey: "ost.desc.cancelled", icon: "x" },
+  },
+};
+
+/** How this status should read and look for this kind of order. */
+export function orderStatusMeta(status: OrderStatus, type: OrderType): StatusMeta {
+  return { ...TYPE_VIEW[type][status], ...STATUS_TONE[status] };
+}
 
 export function isTerminal(status: OrderStatus): boolean {
   return TERMINAL_STATUSES.includes(status);
@@ -152,21 +270,39 @@ export function nextStatus(status: OrderStatus): OrderStatus | null {
 }
 
 /**
- * Label for the button that advances an order. Used by manager + kitchen.
+ * The button that advances an order, keyed by the status it moves INTO.
  *
- * Null at `awaiting_customer` because nextStatus is: the restaurant has no
- * move there, and offering one would be it accepting a price for the customer.
+ * Keyed by target rather than source because that is what the button says:
+ * from `preparing`, delivery reads "Envoyer" and pickup reads "Prête à
+ * retirer" — the same transition, two different promises to the customer.
+ *
+ * Null at `awaiting_customer` (nextStatus is null there — the restaurant has
+ * no move) and at every terminal state.
  */
-export function advanceLabel(status: OrderStatus): string | null {
+const NEXT_LABEL: Record<OrderType, Partial<Record<OrderStatus, TranslationKey>>> = {
+  delivery: {
+    confirmed: "ost.next.confirmed",
+    preparing: "ost.next.preparing",
+    shipped: "ost.next.delivery.shipped",
+    delivered: "ost.next.delivery.delivered",
+  },
+  pickup: {
+    confirmed: "ost.next.confirmed",
+    preparing: "ost.next.preparing",
+    shipped: "ost.next.pickup.shipped",
+    delivered: "ost.next.pickup.delivered",
+  },
+  dine_in: {
+    confirmed: "ost.next.confirmed",
+    preparing: "ost.next.preparing",
+    shipped: "ost.next.dine_in.shipped",
+    delivered: "ost.next.dine_in.delivered",
+  },
+};
+
+export function advanceLabelKey(status: OrderStatus, type: OrderType): TranslationKey | null {
   const next = nextStatus(status);
-  if (!next) return null;
-  const labels: Partial<Record<OrderStatus, string>> = {
-    confirmed: "Confirmer",
-    preparing: "Commencer",
-    shipped: "Envoyer",
-    delivered: "Marquer livrée",
-  };
-  return labels[next] ?? null;
+  return next ? (NEXT_LABEL[type][next] ?? null) : null;
 }
 
 /** A customer may cancel only before the kitchen has committed to the food. */
@@ -199,14 +335,25 @@ export function hasRestaurantActions(status: OrderStatus, canAdvance: boolean): 
   return status === "awaiting_customer" || (canAdvance && !isTerminal(status));
 }
 
-/** Zero-based index into ORDER_FLOW; -1 for cancelled. */
-export function flowIndex(status: OrderStatus): number {
-  return ORDER_FLOW.indexOf(status);
+/**
+ * The steps a customer of THIS kind of order will actually walk.
+ *
+ * `awaiting_customer` is a delivery-only state — it exists to hold an order
+ * while the customer accepts a delivery fee, and a takeaway has no fee to
+ * accept. Leaving it in the pickup timeline showed a step that could never
+ * happen, and worse, threw the progress bar off by one: `flowIndex` counted
+ * it, so a confirmed pickup order painted the delivery-fee step as done.
+ */
+export function orderFlow(type: OrderType): OrderStatus[] {
+  return type === "delivery" ? ORDER_FLOW : ORDER_FLOW.filter((s) => s !== "awaiting_customer");
+}
+
+/** Zero-based index into this type's flow; -1 for cancelled. */
+export function flowIndex(status: OrderStatus, type: OrderType): number {
+  return orderFlow(type).indexOf(status);
 }
 
 /* ── Order type and payment method ─────────────────────────────────────── */
-
-export type OrderType = "delivery" | "pickup" | "dine_in";
 
 export const ORDER_TYPE_LABEL: Record<OrderType, string> = {
   delivery: "Livraison",

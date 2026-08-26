@@ -143,7 +143,7 @@ export function OrderDetail({ order }: { order: Order }) {
         <div>
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="font-display text-3xl font-bold">{order.restaurantName}</h1>
-            <OrderStatusBadge status={order.status} />
+            <OrderStatusBadge status={order.status} type={order.type} />
           </div>
           <p className="tnum mt-1 text-sm text-text-secondary">
             <span translate="no">{order.reference}</span> ·{" "}
@@ -300,7 +300,7 @@ export function OrderDetail({ order }: { order: Order }) {
             <CardBody>
               <CardTitle>{t("cor.progress")}</CardTitle>
               <div className="mt-5">
-                <OrderStatusTimeline status={order.status} history={order.history} />
+                <OrderStatusTimeline status={order.status} type={order.type} history={order.history} />
               </div>
             </CardBody>
           </Card>

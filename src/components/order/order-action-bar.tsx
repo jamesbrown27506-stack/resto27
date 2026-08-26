@@ -7,10 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
-import { isTerminal, nextStatus } from "@/lib/format/order-status";
+import { advanceLabelKey, isTerminal, nextStatus } from "@/lib/format/order-status";
 import { advanceOrder, cancelOrder } from "@/lib/data/order-actions";
 import { useLocale } from "@/lib/i18n/use-locale";
-import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { ManagerOrder } from "@/lib/data/orders";
 import { cn } from "@/lib/utils";
 
@@ -100,6 +99,13 @@ export function OrderActionBar({
   const [reason, setReason] = useState("");
 
   const next = nextStatus(order.status);
+  /*
+    The button's WORDS depend on the order type, not just the transition.
+    preparing -> shipped is one move that reads "Envoyer" for a delivery and
+    "Prête à retirer" for a takeaway, because it is one promise to a rider and
+    a different one to someone walking to a counter.
+  */
+  const nextLabel = advanceLabelKey(order.status, order.type);
 
   function advance(fee?: number) {
     if (!next) return;
@@ -159,9 +165,9 @@ export function OrderActionBar({
       )}
 
       <div className={cn("flex flex-wrap items-center gap-2", className)}>
-        {canAdvance && next && (
+        {canAdvance && next && nextLabel && (
           <Button size={size} disabled={pending} onClick={() => advance()}>
-            <span>{t(`order.next.${next}` as TranslationKey)}</span>
+            <span>{t(nextLabel)}</span>
           </Button>
         )}
 
