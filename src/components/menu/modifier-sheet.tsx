@@ -53,8 +53,11 @@ export function ModifierSheet({
   restaurant: { id: string; name: string; slug: string };
   open: boolean;
   onClose: () => void;
-  /** Fired after a successful add (both plain and basket-replace paths). */
-  onAdded?: () => void;
+  /**
+   * Fired after a successful add, with the dish's name — the basket bar names
+   * it back so the confirmation is specific rather than a count ticking over.
+   */
+  onAdded?: (name: string) => void;
 }) {
   const { addLine, itemCount, restaurantId: cartRestaurantId } = useCart();
   const { t } = useLocale();
@@ -135,7 +138,7 @@ export function ModifierSheet({
       prepMinutes: item!.prepMinutes,
     });
     onClose();
-    onAdded?.();
+    onAdded?.(item!.name);
   }
 
   function add() {
