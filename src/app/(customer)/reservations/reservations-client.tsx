@@ -303,7 +303,24 @@ export function ReservationsClient({
         }
       }, POLL_INTERVAL_MS);
     },
-    [router, stopPaymentPolling, t, toast],
+    /*
+      THE SETTERS ARE LISTED, AND LISTING THEM CHANGES NOTHING AT RUNTIME.
+
+      React guarantees a `useState` setter is referentially stable for the life
+      of the component, which is why convention omits them — and why omitting
+      them here was not a bug. But the React Compiler's
+      preserve-manual-memoization check does not special-case that guarantee:
+      it inferred `setPaymentScreenOpen` as a dependency, found it absent from
+      this list, could not prove the manual memoization equivalent to its own,
+      and SKIPPED OPTIMISING THE WHOLE COMPONENT rather than risk changing when
+      the callback is rebuilt.
+
+      Naming them satisfies the check without altering behaviour by one render:
+      a stable reference in a dependency array is a no-op. The alternative —
+      restructuring live Mobile Money polling to suit a compiler — would risk
+      real money to silence a lint error, which is the wrong trade.
+    */
+    [router, stopPaymentPolling, t, toast, setPayingId, setPaymentScreenId, setPaymentScreenOpen, setMine],
   );
 
   // Reloading or navigating back to the page adopts the latest server-side

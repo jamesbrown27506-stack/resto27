@@ -227,7 +227,8 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
     // The fee is read on the server, at send time — never trusted from the
     // client. It may have been switched on or off since the page loaded.
     const feeConfig = await getWithdrawalFeeConfig();
-    let gross = amount;
+    // `gross` never moves — the fee and the net are what the config changes.
+    const gross = amount;
     let fee = 0;
     let net = amount;
     if (feeConfig.enabled && feeConfig.percent > 0) {

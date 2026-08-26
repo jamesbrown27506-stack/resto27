@@ -223,7 +223,7 @@ export function CouponsClient({ coupons }: { coupons: PlatformCouponRow[] }) {
 
       <p className="flex items-center gap-2 text-xs text-text-light">
         <Percent className="size-3.5" aria-hidden />
-        Restaurant-owned promotions still take precedence — a code that matches a restaurant's own
+        Restaurant-owned promotions still take precedence — a code that matches a restaurant&apos;s own
         promotion is handled by that restaurant.
       </p>
     </div>
