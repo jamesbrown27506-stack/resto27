@@ -1,4 +1,5 @@
 import "server-only";
+import { getSettingsRows } from "@/lib/settings-map";
 import { createAdminClient } from "@/lib/supabase/server";
 
 /**
@@ -500,24 +501,19 @@ async function rememberSetting(key: string, value: string, label: string): Promi
  * about whether today is free.
  */
 export async function getFreeModeWindow(): Promise<FreeModeWindow> {
-  const supabase = createAdminClient();
+  /*
+    THE FOURTH MODULE THAT WAS READING `settings` ON ITS OWN.
 
-  const { data, error } = await supabase
-    .from("settings")
-    .select("key, value, updated_at")
-    .in("key", [FREE_MODE_FLAG_KEY, FREE_MODE_DAYS_KEY, FREE_MODE_STARTED_KEY, FREE_MODE_ENDED_KEY]);
+    Branding, appearance and the cart config were the three the audit named;
+    this one is reached from the homepage through `getFreeModeInfo()` and made
+    it four separate round trips to one 2.2 KB table before a byte rendered.
+    It selected `updated_at` too and never read it.
 
-  if (error) {
-    // A giveaway must not be the failure mode of an unreadable settings table.
-    console.error("[billing:getFreeModeWindow]", error.message);
-    return FREE_MODE_OFF;
-  }
-
-  const rows = new Map(
-    ((data ?? []) as { key: string; value: string | null; updated_at: string | null }[]).map(
-      (row) => [row.key, row] as const,
-    ),
-  );
+    Through the shared map it costs nothing: an unreadable settings table
+    yields an empty map, every lookup below falls back, and a giveaway is not
+    the failure mode — same as the explicit error branch this replaces.
+  */
+  const rows = await getSettingsRows();
 
   const flagOn = rows.get(FREE_MODE_FLAG_KEY)?.value === "true";
   const rawDays = Number(rows.get(FREE_MODE_DAYS_KEY)?.value ?? 0);
@@ -551,7 +547,7 @@ export async function getFreeModeWindow(): Promise<FreeModeWindow> {
      */
     anchor = endedAt
       ? new Date(now).toISOString()
-      : (isoOrNull(rows.get(FREE_MODE_DAYS_KEY)?.updated_at) ?? new Date(now).toISOString());
+      : (isoOrNull(rows.get(FREE_MODE_DAYS_KEY)?.updatedAt) ?? new Date(now).toISOString());
 
     await rememberSetting(FREE_MODE_STARTED_KEY, anchor, "Free mode started");
     if (endedAt) await rememberSetting(FREE_MODE_ENDED_KEY, "", "Free mode ended");

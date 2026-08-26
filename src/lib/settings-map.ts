@@ -34,10 +34,31 @@ import { createAdminClient } from "@/lib/supabase/server";
  *  log so whoever is on call knows why the logo vanished.
  * ─────────────────────────────────────────────────────────────────────────
  */
-export const getSettingsMap = cache(async (): Promise<Map<string, string>> => {
+export interface SettingRow {
+  value: string;
+  /**
+   * When the row was last written.
+   *
+   * Only one caller needs it — `getFreeModeWindow` adopts the days row's own
+   * timestamp as the countdown anchor when a giveaway predates the row that
+   * records when it started, so that the countdown people have been reading
+   * stays exactly where it was. It costs one extra column on a read that is
+   * happening anyway, and dropping it would silently restart every legacy
+   * countdown from zero.
+   */
+  updatedAt: string | null;
+}
+
+/**
+ * The whole table, once. `getSettingsMap` is the common view of this.
+ *
+ * Two accessors over ONE cached query rather than two queries: almost every
+ * caller wants key → value, and exactly one also wants the timestamp.
+ */
+export const getSettingsRows = cache(async (): Promise<Map<string, SettingRow>> => {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase.from("settings").select("key, value");
+  const { data, error } = await supabase.from("settings").select("key, value, updated_at");
 
   if (error) {
     console.error("[settings] read failed, falling back to defaults —", error.message);
@@ -45,11 +66,16 @@ export const getSettingsMap = cache(async (): Promise<Map<string, string>> => {
   }
 
   return new Map(
-    ((data ?? []) as { key: string; value: string | null }[]).map((row) => [
-      row.key,
-      row.value ?? "",
-    ]),
+    ((data ?? []) as { key: string; value: string | null; updated_at: string | null }[]).map(
+      (row) => [row.key, { value: row.value ?? "", updatedAt: row.updated_at }],
+    ),
   );
+});
+
+/** Key to value — what every caller but one wants. */
+export const getSettingsMap = cache(async (): Promise<Map<string, string>> => {
+  const rows = await getSettingsRows();
+  return new Map([...rows].map(([key, row]) => [key, row.value]));
 });
 
 /** One setting as text, or the caller's fallback when absent or blank. */

@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { normaliseDepositType, type DepositType } from "@/lib/reservations/deposit";
 import { createAdminClient } from "@/lib/supabase/server";
 import { UNCATEGORIZED_SECTION_ID } from "@/lib/menu/constants";
@@ -256,10 +257,19 @@ export async function fetchActiveRestaurants(): Promise<PublicRestaurant[]> {
   return rows.map((r) => shape(r, hours.get(r.id) ?? []));
 }
 
-/** One active restaurant, or null — the slug lives in the URL. */
-export async function fetchPublicRestaurantBySlug(
+/**
+ * One active restaurant, or null — the slug lives in the URL.
+ *
+ * `cache()` because the restaurant page calls this TWICE on every request:
+ * once in `generateMetadata` for the title and share card, once in the page
+ * body for the content. Each call costs two round trips (the row, then its
+ * opening hours), so four of that page's queries were two queries run twice.
+ * Keyed on the slug, so two different restaurants in one render still both
+ * resolve.
+ */
+export const fetchPublicRestaurantBySlug = cache(async (
   slug: string,
-): Promise<PublicRestaurant | null> {
+): Promise<PublicRestaurant | null> => {
   const supabase = createAdminClient();
 
   const { data, error } = await selectRestaurants((columns) =>
@@ -280,7 +290,7 @@ export async function fetchPublicRestaurantBySlug(
   const rows = [data as unknown as DbRestaurant];
   const hours = await attachHours(rows);
   return shape(rows[0], hours.get(rows[0].id) ?? []);
-}
+});
 
 /* ── Menu ──────────────────────────────────────────────────────────────── */
 
