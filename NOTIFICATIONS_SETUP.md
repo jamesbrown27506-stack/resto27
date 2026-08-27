@@ -6,6 +6,57 @@ three values into your env file, and deploy on HTTPS. No Firebase anywhere.
 
 ---
 
+## 0. What the excellence pass added (run migration 0044 + set CRON_SECRET)
+
+The notification system now has a **clock** — five bearer-protected sweeps:
+
+| Route | Every | What it does |
+|---|---|---|
+| `/api/cron/order-nag` | 5 min | Re-rings unaccepted orders (up to 5×, admins alerted at the 3rd); reminds customers of unanswered fee quotes then tells the restaurant to call; sends one review invitation ~2h after delivery; alerts the kitchen when a scheduled order's prep window opens. |
+| `/api/cron/reconcile` | 10 min | **The payment reconciler finally runs.** Settles stuck payments; stamps the heartbeat `/a/health` now reads for real. |
+| `/api/cron/delivery-monitor` | 10 min | Late-delivery alerts — now **once per order** (0034's dedupe column finally used), as a real `order_delayed` event instead of a fake new order, plus dead push-subscription pruning. |
+| `/api/cron/reservation-clock` | 15 min | Booking reminders (day before + 2h before), a deposit nag, and auto-release of unpaid holds once the slot passes. |
+| `/api/cron/expire` | daily 02:15 UTC | The subscription renewal-reminder ladder and expiry, previously dead code. |
+
+**The schedule lives in Postgres, not `vercel.json`.** Vercel's Hobby plan
+allows two cron jobs at once-per-day granularity, and this needs five, four of
+them every 5–15 minutes — so `pg_cron` holds the timetable and `pg_net` makes
+the HTTP call. There is deliberately no `vercel.json` in the repo: adding one
+with these schedules would fail the deployment. If you move to Pro later, add
+it back and unschedule the database jobs (§4 of migration 0045).
+
+Setup, in order:
+
+1. Run the settings SQL that carries your secret (kept out of the repo — ask
+   Claude for it, or write it yourself: `update public.settings set value =
+   '<https://your-domain>' where key = 'cron_base_url';` and the same for
+   `cron_secret`, matching the `CRON_SECRET` env var in Vercel).
+2. Run `supabase/migrations/0045_pg_cron_schedule.sql`. It enables `pg_cron`
+   and `pg_net` (or tells you to enable them in Supabase → Database →
+   Extensions), schedules all five jobs, and ends with verification queries.
+3. Confirm with the queries at the bottom of 0045: five active jobs, then —
+   after ten minutes — rows in `cron.job_run_details` and, the honest signal,
+   rows in `public.ops_heartbeats`.
+
+Other behavior that changed: pickup orders now say "ready to collect" instead
+of "out for delivery"; push banners carry action buttons (View order / Accept
+fee / Reply) that deep-link — never mutate; chat pushes are named, per-thread,
+and open the exact conversation (`?c=`); notification emails carry an absolute
+link and the platform's configured name; customers get a booking-request
+receipt; a new order whose push reaches zero staff devices escalates to the
+admins; the settings panel gained a device list with delivery health, a Pause
+(1h/8h) button, and Do-not-disturb hours; the manager grid gained "Order
+updates" and "Customer messages" rows; and `customer_preferences` topic
+choices are respected again in production (the notifier no longer selects the
+absent `push_enabled` column).
+
+Run `supabase/migrations/0044_notification_excellence.sql` in the SQL editor
+(after 0039/0040/0042, before 0045). It is additive and idempotent, and
+everything degrades gracefully until it lands — the sweeps just skip with one
+log line.
+
+---
+
 ## 1. Run the migration in Supabase (2 minutes)
 
 Run the migrations in numeric order. For an existing installation that has
