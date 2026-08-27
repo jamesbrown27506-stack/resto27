@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { createAdminClient } from "@/lib/supabase/server";
+import { readHeartbeat } from "@/lib/cron";
 
 /**
  * Public health endpoint (§14.5) — JSON, not a screen.
@@ -9,25 +11,48 @@ import { NextResponse } from "next/server";
  * last run somewhere a monitor can poll. A reconciler you believe is running
  * but isn't is worse than no reconciler at all.
  *
- * Fixture values until P6 wires the real checks.
+ * REAL CHECKS NOW, honest answers included. The previous version returned
+ * fixtures — hardcoded `ok: true` and a fabricated reconciler timestamp six
+ * minutes in the past — so a monitor pointed here stayed green through a
+ * database outage and through the reconciler never having run at all, which
+ * is precisely the failure the docblock above warns about. A reconciler
+ * that has NEVER stamped a heartbeat reports stale, not healthy.
  */
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  // Database: one timed head-count on a small table via the admin client.
+  const database: { ok: boolean; latencyMs?: number } = { ok: false };
+  try {
+    const supabase = createAdminClient();
+    const startedAt = Date.now();
+    const { error } = await supabase
+      .from("settings")
+      .select("key", { count: "exact", head: true })
+      .limit(1);
+    database.ok = !error;
+    database.latencyMs = Date.now() - startedAt;
+  } catch {
+    // ok stays false.
+  }
+
+  // The gateway is deliberately not probed — a health poller that costs a
+  // real CamerPay call per tick is a bill, not a check. Reported honestly
+  // as unprobed rather than fabricated as fine.
   const checks = {
-    database: { ok: true, latencyMs: 12 },
-    gateway: { ok: true, latencyMs: 184 },
-    storage: { ok: true },
+    database,
+    gateway: { ok: null as boolean | null, note: "not probed" },
   };
 
-  // Fixture: 6 minutes ago. Real value comes from the row the reconciler
-  // stamps on every pass.
-  const lastReconcilerRun = new Date(Date.now() - 6 * 60_000).toISOString();
+  const lastReconcilerRun = await readHeartbeat("reconciler");
 
-  // Stale if the 10-minute sweep has not reported in over 30 minutes.
-  const reconcilerStale = Date.now() - new Date(lastReconcilerRun).getTime() > 30 * 60_000;
+  // Stale if the 10-minute sweep has not reported in over 30 minutes —
+  // and "never ran" (or 0044 unapplied) is the stalest answer of all.
+  const reconcilerStale =
+    lastReconcilerRun === null ||
+    Date.now() - new Date(lastReconcilerRun).getTime() > 30 * 60_000;
 
-  const healthy = Object.values(checks).every((c) => c.ok) && !reconcilerStale;
+  const healthy = database.ok && !reconcilerStale;
 
   return NextResponse.json(
     {
