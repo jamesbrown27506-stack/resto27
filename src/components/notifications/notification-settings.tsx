@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { AlertTriangle, Bell, BellRing, Mail, RotateCcw, Smartphone } from "lucide-react";
+import { AlertTriangle, Bell, BellRing, Mail, Moon, Pause, RotateCcw, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
@@ -20,11 +20,15 @@ import {
 import {
   announcePushEnabled,
   getMyNotificationChannels,
+  listPushDevices,
+  removePushDevice,
   removePushSubscription,
   saveMyNotificationChannels,
   resetPushSubscriptions,
   savePushSubscription,
   sendTestPush,
+  snoozeMyPush,
+  type PushDeviceRow,
 } from "@/lib/data/notify-actions";
 
 /**
@@ -36,6 +40,34 @@ interface NotificationChannels {
   inApp: boolean;
   email: boolean;
   push: boolean;
+  quietStart?: number | null;
+  quietEnd?: number | null;
+  snoozedUntil?: string | null;
+}
+
+/**
+ * "Push is off ON THIS DEVICE" — remembered by this browser, because that is
+ * what the fact is about. Without it, the background repair (PushSync, and
+ * this panel's own mount effect) saw granted permission + account preference
+ * on and silently re-subscribed a device the person had just switched off.
+ */
+const DEVICE_OPT_OUT_KEY = "restolink:pushDeviceOptOut";
+
+export function pushDeviceOptedOut(): boolean {
+  try {
+    return localStorage.getItem(DEVICE_OPT_OUT_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function setPushDeviceOptOut(on: boolean): void {
+  try {
+    if (on) localStorage.setItem(DEVICE_OPT_OUT_KEY, new Date().toISOString());
+    else localStorage.removeItem(DEVICE_OPT_OUT_KEY);
+  } catch {
+    // Private mode etc. — the repair stays as eager as before, nothing worse.
+  }
 }
 
 /**
@@ -69,6 +101,8 @@ interface NotificationChannels {
  * ─────────────────────────────────────────────────────────────────────────
  */
 
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+
 /** Why push is unavailable or was refused — each maps to its own sentence. */
 type PushBlock =
   | null
@@ -97,6 +131,14 @@ export function NotificationSettings({ className }: { className?: string }) {
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [testReport, setTestReport] = useState<Awaited<ReturnType<typeof sendTestPush>> | null>(null);
+
+  /** The stored devices, with the delivery health the send path records. */
+  const [devices, setDevices] = useState<PushDeviceRow[] | null>(null);
+
+  async function refreshDevices() {
+    const result = await listPushDevices().catch(() => null);
+    if (result?.ok) setDevices(result.devices);
+  }
 
   /**
    * Full reset: forget this browser's subscription AND every row the server
@@ -146,7 +188,18 @@ export function NotificationSettings({ className }: { className?: string }) {
 
       setDeviceSubscribed(true);
       setBlock(null);
+      setPushDeviceOptOut(false);
       toast(t("nset.push.resetDone", { count: cleared.removed }), "success");
+
+      /*
+        THE RESET ENDS WITH PROOF, LIKE THE ENABLE FLOW DOES. This is the
+        control people reach for precisely when push is suspect — ending it
+        with local state and a toast left "did it actually work?" exactly as
+        open as before. A real notification through the real writer on the
+        just-rebuilt endpoint is the answer.
+      */
+      await announcePushEnabled().catch(() => null);
+      void refreshDevices();
     } catch (error) {
       console.error("[push] reset failed", error);
       setBlock("failed");
@@ -207,7 +260,9 @@ export function NotificationSettings({ className }: { className?: string }) {
 
         // Re-sync a subscription the server may have lost (data wiped, first
         // visit since push existed) so the stored endpoint matches reality.
-        if (subscription && Notification.permission === "granted") {
+        // Never on a device whose owner explicitly switched it off — that is
+        // the opt-out the repair used to silently undo.
+        if (subscription && Notification.permission === "granted" && !pushDeviceOptedOut()) {
           const key = configuredVapidKey();
           if (key) {
             const repaired = await ensurePushSubscription(registration, key);
@@ -238,6 +293,8 @@ export function NotificationSettings({ className }: { className?: string }) {
         console.error("[push] state check failed", error);
       }
     })();
+
+    void refreshDevices();
 
     return () => {
       cancelled = true;
@@ -270,6 +327,34 @@ export function NotificationSettings({ className }: { className?: string }) {
     const next = { ...channels, [field]: value };
     setChannels(next);
     persist(next, previous);
+  }
+
+  /* ── Quiet hours + snooze — the push-only mutes ──────────────────────── */
+
+  function saveQuietHours(startHour: number | null, endHour: number | null) {
+    if (!channels) return;
+    touched.current = true;
+    const previous = channels;
+    const next = {
+      ...channels,
+      quietStart: startHour === null ? null : startHour * 60,
+      quietEnd: endHour === null ? null : endHour * 60,
+    };
+    setChannels(next);
+    persist(next, previous);
+  }
+
+  async function snooze(hours: number | null) {
+    touched.current = true;
+    const result = await snoozeMyPush(hours).catch(() => null);
+    if (!result?.ok) {
+      toast(t("nset.saveFailed"), "error");
+      return;
+    }
+    setChannels((current) =>
+      current ? { ...current, snoozedUntil: result.snoozedUntil } : current,
+    );
+    toast(t(hours === null ? "nset.snooze.resumed" : "nset.snooze.saved"), "info");
   }
 
   /* ── Push: the switch that also owns this browser's subscription ────── */
@@ -328,6 +413,8 @@ export function NotificationSettings({ className }: { className?: string }) {
       const next = { ...channels, push: true };
       setChannels(next);
       setDeviceSubscribed(true);
+      setPushDeviceOptOut(false);
+      void refreshDevices();
 
       const stored = await saveMyNotificationChannels(next).catch(() => ({ ok: false as const }));
       if (!stored.ok) {
@@ -387,12 +474,28 @@ export function NotificationSettings({ className }: { className?: string }) {
         const subscription = await registration?.pushManager.getSubscription();
         if (subscription) {
           const removed = await removePushSubscription(subscription.endpoint).catch(() => null);
-          remaining = removed?.remaining ?? 0;
+          /*
+            AN UNANSWERABLE REMOVAL MUST NOT SYNTHESIZE ZERO. The server
+            action deliberately never returns remaining:0 on a failed count
+            — zero is the value that flips the ACCOUNT master switch off —
+            and `?? 0` here was manufacturing exactly the answer the server
+            refuses to give. A rejected call (network drop, expired session)
+            now stops the flow with the browser subscription intact: the
+            server still targets this endpoint, so pretending it is off
+            would just make the switch lie in the other direction.
+          */
+          if (!removed || !removed.ok) {
+            toast(t("nset.saveFailed"), "error");
+            return;
+          }
+          remaining = removed.remaining;
           await subscription.unsubscribe().catch(() => {});
         }
       }
       setDeviceSubscribed(false);
       setBlock(null);
+      setPushDeviceOptOut(true);
+      void refreshDevices();
 
       // Other devices are still listening: this one goes quiet, the account
       // preference stays as it was.
@@ -433,6 +536,12 @@ export function NotificationSettings({ className }: { className?: string }) {
   // Honest reading: push reaches this browser only when BOTH the preference
   // and a live subscription say so.
   const pushOnHere = channels.push && deviceSubscribed;
+  const snoozeActive = Boolean(
+    channels.snoozedUntil && Date.parse(channels.snoozedUntil) > Date.now(),
+  );
+  const quietStartHour =
+    channels.quietStart == null ? null : Math.floor(channels.quietStart / 60);
+  const quietEndHour = channels.quietEnd == null ? null : Math.floor(channels.quietEnd / 60);
   const pushElsewhere = channels.push && !deviceSubscribed && block === null;
   const hardBlocked =
     block === "unsupported" ||
@@ -496,6 +605,68 @@ export function NotificationSettings({ className }: { className?: string }) {
             )}
 
             {/*
+              EVERY STORED DEVICE, WITH ITS HEALTH. The send path has been
+              recording last-success and failure counts on each row since
+              0042 and nothing ever read them back — this is where they
+              answer the actual question: which of my devices does the
+              server believe in, and is any of them silently failing? The
+              per-row remove is how a lost phone leaves the account without
+              the nuclear reset.
+            */}
+            {devices !== null && devices.length > 0 && (
+              <div className="flex flex-col gap-1.5 border-t border-border pt-3">
+                <p className="text-xs font-semibold text-text-secondary">
+                  <span>{t("nset.devices.title")}</span>
+                </p>
+                {devices.map((device) => (
+                  <div key={device.id} className="flex items-start justify-between gap-2">
+                    <p className="min-w-0 text-xs text-text-light">
+                      <span className="font-medium text-text-secondary">{device.label}</span>
+                      <span className="font-mono"> …{device.endpointTail}</span>
+                      <br />
+                      <span
+                        className={
+                          device.failureCount > 0
+                            ? "text-warning"
+                            : device.lastSuccessAt
+                              ? "text-success"
+                              : undefined
+                        }
+                      >
+                        {device.failureCount > 0
+                          ? t("nset.devices.healthFailing", {
+                              count: device.failureCount,
+                              code: device.lastFailureCode ?? "?",
+                            })
+                          : device.lastSuccessAt
+                            ? t("nset.devices.healthOk", {
+                                when: new Date(device.lastSuccessAt).toLocaleString(),
+                              })
+                            : t("nset.devices.healthNever")}
+                      </span>
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy || resetting}
+                      onClick={() =>
+                        void (async () => {
+                          const removed = await removePushDevice(device.id).catch(() => null);
+                          if (!removed?.ok) return toast(t("nset.saveFailed"), "error");
+                          toast(t("nset.devices.removed"), "info");
+                          void refreshDevices();
+                        })()
+                      }
+                      className="shrink-0"
+                    >
+                      <span>{t("nset.devices.remove")}</span>
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/*
               THE TEST THAT GOES THROUGH THE REAL PATH.
 
               "It works on my laptop but not my phone" is three different
@@ -548,6 +719,16 @@ export function NotificationSettings({ className }: { className?: string }) {
                       </p>
                     )}
 
+                    {/* A failed READ of the device list is not "no devices" —
+                        sending someone to re-pair a phone over a database
+                        blip is the wrong errand. */}
+                    {testReport.queryFailed && (
+                      <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-light p-2.5 text-xs leading-relaxed text-warning">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                        <span>{t("nset.push.queryFailed")}</span>
+                      </p>
+                    )}
+
                     {testReport.devices.length > 0 && !testReport.thisDeviceRegistered && (
                       <p className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning-light p-2.5 text-xs leading-relaxed text-warning">
                         <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -556,10 +737,12 @@ export function NotificationSettings({ className }: { className?: string }) {
                     )}
 
                     {testReport.devices.length === 0 ? (
-                      <p className="flex items-start gap-2 text-xs text-warning">
-                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                        <span>{t("nset.push.testNoDevices")}</span>
-                      </p>
+                      !testReport.queryFailed && (
+                        <p className="flex items-start gap-2 text-xs text-warning">
+                          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                          <span>{t("nset.push.testNoDevices")}</span>
+                        </p>
+                      )
                     ) : (
                       testReport.devices.map((d) => (
                         <p
@@ -645,6 +828,101 @@ export function NotificationSettings({ className }: { className?: string }) {
                 <span>{t("nset.push.iosHint")}</span>
               </p>
             )}
+          </div>
+        </div>
+
+        {/* Pause — the temporary mute that saves people from "turn it off
+            and forget to turn it back on". Expiry is implicit server-side. */}
+        <div className="flex items-start gap-3 p-5">
+          <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+            <Pause className="size-4" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">
+              <span>{t("nset.snooze.title")}</span>
+            </p>
+            <p className="mt-0.5 text-xs text-text-light">
+              <span>{t("nset.snooze.body")}</span>
+            </p>
+            {snoozeActive ? (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Badge tone="warning">
+                  <span>
+                    {t("nset.snooze.active", {
+                      time: new Date(channels.snoozedUntil as string).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      }),
+                    })}
+                  </span>
+                </Badge>
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => void snooze(null)}>
+                  <span>{t("nset.snooze.cancel")}</span>
+                </Button>
+              </div>
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => void snooze(1)}>
+                  <span>{t("nset.snooze.hour1")}</span>
+                </Button>
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => void snooze(8)}>
+                  <span>{t("nset.snooze.hour8")}</span>
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Do not disturb — a nightly window with no push, Douala time.
+            Essential alerts are exempt server-side; nothing is lost, the
+            bell and email still land. */}
+        <div className="flex items-start gap-3 p-5">
+          <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+            <Moon className="size-4" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">
+              <span>{t("nset.quiet.title")}</span>
+            </p>
+            <p className="mt-0.5 text-xs text-text-light">
+              <span>{t("nset.quiet.body")}</span>
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              <label className="flex items-center gap-1.5">
+                <span>{t("nset.quiet.from")}</span>
+                <select
+                  aria-label={t("nset.quiet.from")}
+                  className="rounded-md border border-border bg-surface px-2 py-1 text-xs"
+                  disabled={busy}
+                  value={quietStartHour ?? ""}
+                  onChange={(e) => {
+                    const value = e.target.value === "" ? null : Number(e.target.value);
+                    saveQuietHours(value, value === null ? null : (quietEndHour ?? 7));
+                  }}
+                >
+                  <option value="">{t("nset.quiet.off")}</option>
+                  {HOURS.map((h) => (
+                    <option key={h} value={h}>{`${String(h).padStart(2, "0")}h00`}</option>
+                  ))}
+                </select>
+              </label>
+              {quietStartHour !== null && (
+                <label className="flex items-center gap-1.5">
+                  <span>{t("nset.quiet.to")}</span>
+                  <select
+                    aria-label={t("nset.quiet.to")}
+                    className="rounded-md border border-border bg-surface px-2 py-1 text-xs"
+                    disabled={busy}
+                    value={quietEndHour ?? 7}
+                    onChange={(e) => saveQuietHours(quietStartHour, Number(e.target.value))}
+                  >
+                    {HOURS.map((h) => (
+                      <option key={h} value={h}>{`${String(h).padStart(2, "0")}h00`}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
           </div>
         </div>
       </div>

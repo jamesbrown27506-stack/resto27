@@ -84,10 +84,38 @@ export const notificationsDict = defineDict({
     "nset.push.result.expired": "abonnement expiré, supprimé — réactivez le push sur cet appareil",
     "nset.push.result.failed": "refusé par le service de notification",
     "nset.saveFailed": "Les préférences n'ont pas pu être enregistrées.",
+    "nset.push.queryFailed":
+      "La liste de vos appareils n'a pas pu être lue — ce n'est pas la même chose qu'« aucun appareil ». Réessayez dans un instant.",
     "nset.allOff":
       "Tous les canaux sont désactivés : vous ne recevrez plus aucune alerte, y compris pour vos commandes.",
     "nset.footnote":
       "Les messages essentiels liés à une commande en cours restent envoyés par les canaux encore actifs.",
+
+    "nset.devices.title": "Appareils enregistrés",
+    "nset.devices.none": "Aucun appareil enregistré pour ce compte.",
+    "nset.devices.remove": "Retirer",
+    "nset.devices.removed": "Appareil retiré. Il se réinscrit seul si vous y rouvrez l'application.",
+    "nset.devices.healthNever": "aucune livraison confirmée pour l'instant",
+    "nset.devices.healthOk": "dernière livraison : {when}",
+    "nset.devices.healthFailing": "{count} échec(s) de livraison — code {code}",
+    "nset.devices.added": "ajouté le {when}",
+
+    "nset.snooze.title": "Pause",
+    "nset.snooze.body":
+      "Suspend les push pour un moment — la cloche et les emails continuent, et rien ne se perd. Les nouvelles commandes passent toujours.",
+    "nset.snooze.hour1": "1 heure",
+    "nset.snooze.hour8": "8 heures",
+    "nset.snooze.active": "Push en pause jusqu'à {time}",
+    "nset.snooze.cancel": "Reprendre maintenant",
+    "nset.snooze.saved": "Push en pause.",
+    "nset.snooze.resumed": "Pause levée — les push reprennent.",
+
+    "nset.quiet.title": "Ne pas déranger",
+    "nset.quiet.body":
+      "Aucun push entre ces heures (heure de Douala). La cloche et les emails continuent, et les alertes essentielles (nouvelle commande, frais à valider) passent toujours.",
+    "nset.quiet.from": "De",
+    "nset.quiet.to": "à",
+    "nset.quiet.off": "Désactivé",
   },
   en: {
     "nset.title": "Notifications",
@@ -156,9 +184,37 @@ export const notificationsDict = defineDict({
     "nset.push.result.expired": "subscription expired and was removed — turn push back on for that device",
     "nset.push.result.failed": "rejected by the push service",
     "nset.saveFailed": "Your preferences could not be saved.",
+    "nset.push.queryFailed":
+      "Your device list could not be read — that is not the same as having no devices. Try again in a moment.",
     "nset.allOff":
       "Every channel is off: you will no longer receive any alert, including about your own orders.",
     "nset.footnote":
       "Essential messages about an order in progress are still sent through whichever channels are left on.",
+
+    "nset.devices.title": "Registered devices",
+    "nset.devices.none": "No devices registered for this account.",
+    "nset.devices.remove": "Remove",
+    "nset.devices.removed": "Device removed. It re-registers itself if you open the app there again.",
+    "nset.devices.healthNever": "no delivery confirmed yet",
+    "nset.devices.healthOk": "last delivery: {when}",
+    "nset.devices.healthFailing": "{count} delivery failure(s) — code {code}",
+    "nset.devices.added": "added {when}",
+
+    "nset.snooze.title": "Pause",
+    "nset.snooze.body":
+      "Pauses push for a while — the bell and email keep working, so nothing is lost. New orders always get through.",
+    "nset.snooze.hour1": "1 hour",
+    "nset.snooze.hour8": "8 hours",
+    "nset.snooze.active": "Push paused until {time}",
+    "nset.snooze.cancel": "Resume now",
+    "nset.snooze.saved": "Push paused.",
+    "nset.snooze.resumed": "Pause lifted — push resumes.",
+
+    "nset.quiet.title": "Do not disturb",
+    "nset.quiet.body":
+      "No push between these hours (Douala time). The bell and email keep working, and essential alerts (new order, fee to approve) always get through.",
+    "nset.quiet.from": "From",
+    "nset.quiet.to": "to",
+    "nset.quiet.off": "Off",
   },
 });

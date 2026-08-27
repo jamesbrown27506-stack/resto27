@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import { getPushSyncState, savePushSubscription } from "@/lib/data/notify-actions";
+import { pushDeviceOptedOut } from "@/components/notifications/notification-settings";
 import {
   configuredVapidKey,
   ensurePushSubscription,
@@ -86,6 +87,15 @@ export function PushSync() {
     // Not granted means either never asked or blocked. Both are somebody
     // else's job; see the note above about never prompting from here.
     if (Notification.permission !== "granted") return;
+    /*
+      "OFF ON THIS DEVICE" IS A DECISION, NOT A FAULT. The account preference
+      can be on (other devices listening) while this browser was explicitly
+      switched off in settings — and permission stays granted, so every gate
+      above still passes. Without this check the repair re-subscribed the
+      exact device the person had just silenced, which reads as "the switch
+      doesn't work". The settings panel clears the marker on enable/reset.
+    */
+    if (pushDeviceOptedOut()) return;
 
     const key = configuredVapidKey();
     if (!key) return;

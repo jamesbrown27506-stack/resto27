@@ -160,6 +160,25 @@ async function deliver(data) {
      the person has already said the same thing.
     ────────────────────────────────────────────────────────────────────────
   */
+  /*
+    Buttons on the banner (Android + desktop Chromium; platforms without
+    notification actions simply ignore them). Each button is a DEEP LINK —
+    the titles come from the server in the recipient's language, and the
+    per-action URLs ride in `data.actionUrls` for the click handler. No
+    mutation happens from the notification itself.
+  */
+  const actionUrls = {};
+  let actions;
+  if (Array.isArray(data.actions) && data.actions.length > 0 && "actions" in Notification.prototype) {
+    actions = [];
+    for (const a of data.actions.slice(0, 2)) {
+      if (!a || typeof a.action !== "string" || typeof a.title !== "string") continue;
+      actions.push({ action: a.action, title: a.title });
+      if (typeof a.href === "string") actionUrls[a.action] = a.href;
+    }
+    if (actions.length === 0) actions = undefined;
+  }
+
   const options = {
     body: data.body || "",
     /*
@@ -195,8 +214,10 @@ async function deliver(data) {
     silent: anyVisible,
     // Renamed (data.href → data.url) because `data.href` is a native
     // Notification property that some browsers drop or overwrite.
-    data: { url },
+    data: { url, actionUrls },
   };
+
+  if (actions) options.actions = actions;
 
   if (!anyVisible) {
     // A phone in a pocket is the case this whole change is about, and a
@@ -204,28 +225,84 @@ async function deliver(data) {
     options.vibrate = [200, 100, 200];
   }
 
-  return self.registration.showNotification(data.title, options);
+  await self.registration.showNotification(data.title, options);
+
+  /*
+    THE LAUNCHER BADGE, FROM THE WORKER. The page mirrors the unread count
+    while a tab lives; a push arriving with the app fully closed used to
+    leave the badge frozen at whatever some tab last wrote. Fetched after
+    the banner — the banner must never wait on a network round trip — and
+    every failure (signed out, offline, no Badging API) degrades to nothing.
+  */
+  await refreshAppBadge();
+}
+
+async function refreshAppBadge() {
+  if (!("setAppBadge" in self.navigator)) return;
+  try {
+    const response = await fetch("/api/push/sync", { credentials: "include" });
+    if (!response.ok) return;
+    const { unread } = await response.json();
+    if (typeof unread !== "number") return;
+    if (unread > 0) await self.navigator.setAppBadge(unread);
+    else await self.navigator.clearAppBadge();
+  } catch {
+    // The badge is a refinement; the banner already showed.
+  }
 }
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || "/";
+  // A button tap carries its own deep link; the banner body keeps the main one.
+  const url =
+    (event.action && event.notification.data?.actionUrls?.[event.action]) ||
+    event.notification.data?.url ||
+    "/";
 
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
-      for (const client of windowClients) {
-        // Focus an existing tab, and only navigate if it is not already there
-        // — navigating a tab that is already on the URL resets its scroll.
-        if ("focus" in client) {
-          client.focus();
-          if (new URL(client.url).pathname !== new URL(url, self.location.origin).pathname) {
-            client.navigate(url);
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then(async (windowClients) => {
+        const target = new URL(url, self.location.origin);
+        // Pathname AND query — "/messages?c=abc" is a different place than
+        // "/messages?c=def". Hash stays ignored: navigating over a hash-only
+        // difference would reset scroll for nothing.
+        const targetKey = target.pathname + target.search;
+
+        // First choice: a tab already sitting on the exact target — focus it
+        // and touch nothing, preserving its scroll and state.
+        for (const client of windowClients) {
+          try {
+            const clientUrl = new URL(client.url);
+            if (clientUrl.pathname + clientUrl.search === targetKey && "focus" in client) {
+              await client.focus();
+              await refreshAppBadge();
+              return;
+            }
+          } catch {
+            // An unparsable client URL just isn't the one we want.
           }
-          return;
         }
-      }
-      return self.clients.openWindow(url);
-    }),
+
+        // Otherwise: focus the first focusable tab and send it there.
+        for (const client of windowClients) {
+          if ("focus" in client) {
+            await client.focus();
+            try {
+              const clientUrl = new URL(client.url);
+              if (clientUrl.pathname + clientUrl.search !== targetKey) {
+                await client.navigate(url);
+              }
+            } catch {
+              await client.navigate(url);
+            }
+            await refreshAppBadge();
+            return;
+          }
+        }
+        await self.clients.openWindow(url);
+        await refreshAppBadge();
+      }),
   );
 });
 

@@ -201,8 +201,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   */
   const seenRef = useRef(new Map<string, number>());
 
+  /** Set by the realtime effect: a debounced exact re-read of the count. */
+  const refreshSoonRef = useRef<(() => void) | null>(null);
+
   const announce = useCallback(
-    (title: string, body: string, tone: NotifyTone) => {
+    (title: string, body: string, tone: NotifyTone, source: "row" | "sw") => {
       const key = `${title}\u0000${body}`;
       const now = Date.now();
 
@@ -212,7 +215,18 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       if (seenRef.current.has(key)) return;
       seenRef.current.set(key, now);
 
-      setUnread((u) => u + 1);
+      /*
+        THE BADGE IS COUNTED, NOT GUESSED. A realtime row is a real insert,
+        so the optimistic bump is safe and instant. A push is not: the event
+        may have written no bell row for this user (in-app off in the grid),
+        so blindly incrementing overstated the badge — and the title+body
+        dedupe can also collapse two different one-word chat messages, which
+        understated it. Both paths therefore end in the same debounced exact
+        re-read; the toast and the sound stay immediate either way.
+      */
+      if (source === "row") setUnread((u) => u + 1);
+      refreshSoonRef.current?.();
+
       setLastEventAt(new Date());
       toast(title, tone);
       play();
@@ -238,7 +252,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     const onMessage = (event: MessageEvent) => {
       const data = event.data;
       if (!data || data.type !== "restolink:notification") return;
-      announce(String(data.title ?? ""), String(data.body ?? ""), (data.tone ?? "info") as NotifyTone);
+      announce(String(data.title ?? ""), String(data.body ?? ""), (data.tone ?? "info") as NotifyTone, "sw");
     };
 
     navigator.serviceWorker.addEventListener("message", onMessage);
@@ -272,6 +286,15 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       setUnread(state.unread);
       return state;
     }
+
+    // The announce() paths converge here: a short debounce, then the exact
+    // count. Keeps a burst of arrivals to one query and lets a long-lived
+    // tab self-correct instead of drifting until the next reconnect.
+    let refreshDebounce: ReturnType<typeof setTimeout> | null = null;
+    refreshSoonRef.current = () => {
+      if (refreshDebounce) clearTimeout(refreshDebounce);
+      refreshDebounce = setTimeout(() => void refreshState(), 2_000);
+    };
 
     /**
      * Realtime authorizes the channel with the access token it had when the
@@ -369,7 +392,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           },
           (payload) => {
             const row = payload.new as { title: string; body: string; tone: NotifyTone };
-            announce(row.title, row.body ?? "", row.tone);
+            announce(row.title, row.body ?? "", row.tone, "row");
           },
         )
         .subscribe((status, error) => {
@@ -474,6 +497,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       window.removeEventListener("online", revive);
       authListener.subscription.unsubscribe();
       if (retryTimer) clearTimeout(retryTimer);
+      if (refreshDebounce) clearTimeout(refreshDebounce);
+      refreshSoonRef.current = null;
       retire(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

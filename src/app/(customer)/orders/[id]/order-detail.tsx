@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Bike, MapPin, PackageCheck, Phone, RotateCcw, Star, X } from "lucide-react";
 import { OrderStatusBadge } from "@/components/order/order-status-badge";
 import { OrderReceipt, OrderStatusTimeline } from "@/components/order/order-parts";
@@ -65,6 +65,46 @@ export function OrderDetail({ order }: { order: Order }) {
 
   /** Which fee button is mid-flight, so only that one spins. */
   const [feeBusy, setFeeBusy] = useState<"accept" | "decline" | null>(null);
+
+  /*
+    THIS PAGE STAYS LIVE WHILE THE ORDER DOES. Checkout sends people here,
+    the push deep-links here, and the fee-approval card only exists here —
+    a screen that renders once and goes stale left both sides waiting on
+    each other whenever a push was missed. Same cadence as the manager
+    screens; stops the moment the order reaches a terminal state.
+  */
+  const live = order.status !== "delivered" && order.status !== "cancelled";
+  useEffect(() => {
+    if (!live) return;
+    const timer = setInterval(() => router.refresh(), 15_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [live, router]);
+
+  /*
+    The push banner's Accept / Refuser buttons land here as ?fee=accept or
+    ?fee=decline. The page scrolls to the question and puts focus on the
+    chosen answer — the confirming tap still happens HERE, signed in, with
+    the amount on screen. A notification button must never move money.
+  */
+  const searchParams = useSearchParams();
+  const feeIntent = searchParams.get("fee");
+  const feeCardRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (order.status !== "awaiting_customer") return;
+    if (feeIntent !== "accept" && feeIntent !== "decline") return;
+    feeCardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    feeCardRef.current
+      ?.querySelector<HTMLButtonElement>(`[data-fee="${feeIntent}"]`)
+      ?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function respondToFee(response: "accept" | "decline") {
     setFeeBusy(response);
@@ -218,7 +258,7 @@ export function OrderDetail({ order }: { order: Order }) {
         ────────────────────────────────────────────────────────────────────
       */}
       {order.status === "awaiting_customer" && (
-        <div className="mt-6 rounded-lg border-2 border-warning/40 bg-warning-light p-4">
+        <div ref={feeCardRef} className="mt-6 rounded-lg border-2 border-warning/40 bg-warning-light p-4">
           <div className="flex items-start gap-4">
             <span className="grid size-10 shrink-0 place-items-center rounded-full bg-warning text-white">
               <Bike className="size-5" aria-hidden />
@@ -249,6 +289,7 @@ export function OrderDetail({ order }: { order: Order }) {
               footers follow, so this cannot overflow a 360px screen. */}
           <div className="mt-4 flex flex-wrap items-stretch gap-3 *:min-h-12 *:min-w-0 *:flex-1">
             <Button
+              data-fee="decline"
               variant="outline"
               disabled={feeBusy !== null}
               loading={feeBusy === "decline"}
@@ -258,6 +299,7 @@ export function OrderDetail({ order }: { order: Order }) {
               {t("cor.feeDecline")}
             </Button>
             <Button
+              data-fee="accept"
               disabled={feeBusy !== null}
               loading={feeBusy === "accept"}
               onClick={() => void respondToFee("accept")}

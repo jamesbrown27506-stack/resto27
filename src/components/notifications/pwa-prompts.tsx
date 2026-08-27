@@ -239,6 +239,15 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
         return;
       }
 
+      // A deliberate enable lifts any per-device opt-out the settings panel
+      // recorded — the repair paths respect that marker, so it must not
+      // outlive the decision it described.
+      try {
+        localStorage.removeItem("restolink:pushDeviceOptOut");
+      } catch {
+        // Storage unavailable — nothing to lift.
+      }
+
       const announced = await announcePushEnabled().catch(() => ({ ok: false as const }));
       toast(t(announced.ok ? "nset.push.enabled" : "nset.push.enabledNoSend"), "success");
     } catch (error) {
