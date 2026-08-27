@@ -27,11 +27,14 @@ export function ManagerMessagesView({
   myId,
   restaurantId,
   platformName,
+  initialConversationId,
 }: {
   myId: string;
   restaurantId: string;
   /** The platform's own name, so "write to the team" names the right team. */
   platformName: string;
+  /** Notification deep link (?c=) — opens that customer thread on mount. */
+  initialConversationId?: string | null;
 }) {
   const { t } = useLocale();
   const [tab, setTab] = useState<"customers" | "platform">("customers");
@@ -65,6 +68,7 @@ export function ManagerMessagesView({
           myId={myId}
           restaurantId={restaurantId}
           platformName={platformName}
+          initialConversationId={initialConversationId}
         />
       ) : (
         <div>

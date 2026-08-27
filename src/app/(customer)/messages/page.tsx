@@ -15,8 +15,17 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: DICTIONARIES[locale]["cmsg.title"] };
 }
 
-export default async function CustomerMessagesPage() {
-  const [user, locale, brand] = await Promise.all([requireUser(), getLocale(), getBranding()]);
+export default async function CustomerMessagesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ c?: string }>;
+}) {
+  const [user, locale, brand, params] = await Promise.all([
+    requireUser(),
+    getLocale(),
+    getBranding(),
+    searchParams,
+  ]);
 
   return (
     <AccountShell
@@ -24,7 +33,12 @@ export default async function CustomerMessagesPage() {
       title={DICTIONARIES[locale]["cmsg.title"]}
       description={DICTIONARIES[locale]["cmsg.subtitle"].replaceAll("{name}", brand.name)}
     >
-      <ChatInbox mode="customer" myId={user.id} platformName={brand.name} />
+      <ChatInbox
+        mode="customer"
+        myId={user.id}
+        platformName={brand.name}
+        initialConversationId={params.c ?? null}
+      />
     </AccountShell>
   );
 }

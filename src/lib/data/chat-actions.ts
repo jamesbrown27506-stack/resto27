@@ -211,23 +211,36 @@ async function participationIn(
   return null;
 }
 
-/** "The staff side" of a thread — a restaurant's staff, or every admin. */
-async function notifyStaffSide(thread: { restaurantId: string | null }, preview: string) {
+/**
+ * "The staff side" of a thread — a restaurant's staff, or every admin.
+ *
+ * The conversation id rides as `reference`: the copy ignores it, but it is
+ * what keys the push collapse tag, so two customers writing at once are two
+ * banners instead of the second silently replacing the first. The sender's
+ * name makes the banner answerable without opening it ("Nouveau message de
+ * Ama", not "de un client"), and the `?c=` deep link opens THAT thread
+ * rather than the inbox list.
+ */
+async function notifyStaffSide(
+  thread: { id: string; restaurantId: string | null },
+  preview: string,
+  senderName: string,
+) {
   if (thread.restaurantId) {
     await notify({
       event: "chat",
       tone: "info",
       restaurantId: thread.restaurantId,
-      href: "/m/messages",
-      params: { preview },
+      href: `/m/messages?c=${thread.id}`,
+      params: { preview, customerName: senderName, reference: thread.id },
     });
   } else {
     await notify({
       event: "chat",
       tone: "info",
       admins: true,
-      href: "/a/messages",
-      params: { preview },
+      href: `/a/messages?c=${thread.id}`,
+      params: { preview, customerName: senderName, reference: thread.id },
     });
   }
 }
@@ -318,7 +331,7 @@ export async function startConversation(input: {
     .update({ staff_unread: 1, last_message_at: new Date().toISOString() })
     .eq("id", conversation.id);
 
-  await notifyStaffSide({ restaurantId }, body.slice(0, 80));
+  await notifyStaffSide({ id: conversation.id, restaurantId }, body.slice(0, 80), initiator.name);
 
   return { ok: true, conversationId: conversation.id };
 }
@@ -383,17 +396,35 @@ export async function sendMessage(input: {
   // sending a restaurant to a page under (customer) it cannot open.
   const preview = body.slice(0, 80);
   if (part.side === "initiator") {
-    await notifyStaffSide(thread, preview);
+    await notifyStaffSide(thread, preview, profile.name);
   } else {
     const initiatorRole = await roleOf(thread.customerId);
+    /*
+      The reply is signed by whoever actually answered: the restaurant by
+      its name on a restaurant thread, the platform by its own on a
+      platform thread. "Réponse de RestoLink" from Chez Pauline read as a
+      glitch at the exact moment the feature was proving itself.
+    */
+    let restaurantName: string | undefined;
+    if (thread.restaurantId) {
+      const { data: restaurant } = await supabase
+        .from("restaurants")
+        .select("name")
+        .eq("id", thread.restaurantId)
+        .maybeSingle();
+      restaurantName = (restaurant as { name?: string } | null)?.name ?? undefined;
+    }
     await notify({
       event: "chat_reply",
       tone: "info",
       customerId: thread.customerId,
-      href: initiatorRole === "manager" ? "/m/messages" : "/messages",
-      // No restaurantName on a platform thread: the reply is from the
-      // platform, and it should say so by its real name.
-      params: { preview, platformName: (await getBranding()).name },
+      href: `${initiatorRole === "manager" ? "/m/messages" : "/messages"}?c=${thread.id}`,
+      params: {
+        preview,
+        restaurantName,
+        platformName: (await getBranding()).name,
+        reference: thread.id,
+      },
     });
   }
 

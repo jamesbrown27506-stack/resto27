@@ -15,8 +15,16 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: DICTIONARIES[locale]["mchat.title"] };
 }
 
-export default async function ManagerMessagesPage() {
-  const [{ active, profile }, brand] = await Promise.all([requireBranch(), getBranding()]);
+export default async function ManagerMessagesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ c?: string }>;
+}) {
+  const [{ active, profile }, brand, params] = await Promise.all([
+    requireBranch(),
+    getBranding(),
+    searchParams,
+  ]);
 
   return (
     <ManagerPage titleKey="mchat.title" descriptionKey="mchat.subtitle">
@@ -24,6 +32,7 @@ export default async function ManagerMessagesPage() {
         myId={profile.id}
         restaurantId={active.restaurantId}
         platformName={brand.name}
+        initialConversationId={params.c ?? null}
       />
     </ManagerPage>
   );

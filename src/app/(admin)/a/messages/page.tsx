@@ -7,15 +7,28 @@ import { getBranding } from "@/lib/branding";
 // it until someone reloads.
 export const dynamic = "force-dynamic";
 
-export default async function AdminMessagesPage() {
-  const [admin, brand] = await Promise.all([requireRole("admin"), getBranding()]);
+export default async function AdminMessagesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ c?: string }>;
+}) {
+  const [admin, brand, params] = await Promise.all([
+    requireRole("admin"),
+    getBranding(),
+    searchParams,
+  ]);
 
   return (
     <AdminPage
       title="Messages"
       description={`Conversations with the ${brand.name} team — from customers and from restaurants.`}
     >
-      <ChatInbox mode="admin" myId={admin.id} platformName={brand.name} />
+      <ChatInbox
+        mode="admin"
+        myId={admin.id}
+        platformName={brand.name}
+        initialConversationId={params.c ?? null}
+      />
     </AdminPage>
   );
 }

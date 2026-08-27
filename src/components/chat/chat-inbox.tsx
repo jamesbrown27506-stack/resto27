@@ -64,11 +64,18 @@ export function ChatInbox({
   myId,
   restaurantId,
   platformName,
+  initialConversationId,
 }: {
   mode: Mode;
   myId: string;
   /** Staff mode: the active branch. */
   restaurantId?: string | null;
+  /**
+   * Deep link from a notification (?c=<id>): open THIS thread on mount
+   * instead of the bare list. Participation is still enforced server-side —
+   * an id the viewer cannot read simply fails to load a thread.
+   */
+  initialConversationId?: string | null;
   /**
    * THE PLATFORM'S OWN NAME, from /a/settings — not the string "RestoLink".
    *
@@ -106,6 +113,15 @@ export function ChatInbox({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [thread?.messages.length]);
+
+  // The notification deep link: land inside the thread the banner was about.
+  const openedInitial = useRef(false);
+  useEffect(() => {
+    if (openedInitial.current || !initialConversationId) return;
+    openedInitial.current = true;
+    open(initialConversationId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialConversationId]);
 
   function refreshList() {
     // Both actions agree on the return; only listBranchConversations reads the
