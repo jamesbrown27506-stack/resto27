@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { sendPushWithReport, type PushDeviceResult } from "@/lib/push";
+import { capProfileSubscriptions, sendPushWithReport, type PushDeviceResult } from "@/lib/push";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getCurrentProfile, requireUser } from "@/lib/auth/session";
 import { notify, type NotifyTone } from "@/lib/notify";
@@ -297,6 +297,8 @@ export async function savePushSubscription(input: {
       .eq("endpoint", input.previousEndpoint)
       .eq("profile_id", profile.id);
   }
+
+  await capProfileSubscriptions(profile.id);
   return { ok: true };
 }
 
@@ -314,11 +316,22 @@ export async function removePushSubscription(
   const profile = await requireUser();
   const supabase = createAdminClient();
 
-  await supabase
+  const { error: deleteError } = await supabase
     .from("push_subscriptions")
     .delete()
     .eq("endpoint", endpoint)
     .eq("profile_id", profile.id);
+
+  /*
+    A DELETE THAT FAILED DID NOT DISABLE ANYTHING. Returning ok would let
+    the client unsubscribe its browser half and report "disabled" while the
+    server still targets this endpoint. remaining:1 keeps the master-switch
+    guard fail-safe, same as the count fallback below.
+  */
+  if (deleteError) {
+    console.error("[notify:removePushSubscription] delete", deleteError.message);
+    return { ok: false, remaining: 1 };
+  }
 
   const { count, error } = await supabase
     .from("push_subscriptions")
@@ -360,6 +373,11 @@ export async function saveMyNotificationChannels(
     inApp: Boolean(input.inApp),
     email: Boolean(input.email),
     push: Boolean(input.push),
+    // Quiet fields pass through as given: `undefined` = leave stored value,
+    // `null` = clear. The panel sends them only from the quiet-hours row.
+    quietStart: input.quietStart,
+    quietEnd: input.quietEnd,
+    snoozedUntil: input.snoozedUntil,
   });
   if (!result.ok) return result;
 
@@ -367,6 +385,169 @@ export async function saveMyNotificationChannels(
   revalidatePath("/settings");
   revalidatePath("/m/settings");
   revalidatePath("/a/notifications");
+  return { ok: true };
+}
+
+/**
+ * Pause push for a fixed spell — the temporary mute that stops "turn it off
+ * and forget to turn it back on" from being the only option. Expiry is
+ * implicit: notify() compares the timestamp, no job un-pauses anything.
+ * Null clears an active pause. In-app rows and email keep landing.
+ */
+export async function snoozeMyPush(hours: number | null): Promise<{
+  ok: boolean;
+  snoozedUntil: string | null;
+  error?: string;
+}> {
+  const profile = await requireUser();
+
+  const clamped = hours === null ? null : Math.min(24, Math.max(1, Math.round(hours)));
+  const snoozedUntil =
+    clamped === null ? null : new Date(Date.now() + clamped * 60 * 60 * 1000).toISOString();
+
+  const current = await fetchNotificationChannels(profile.id);
+  const result = await saveNotificationChannels(profile.id, { ...current, snoozedUntil });
+  if (!result.ok) return { ok: false, snoozedUntil: null, error: result.error };
+
+  revalidatePath("/settings");
+  revalidatePath("/m/settings");
+  revalidatePath("/a/notifications");
+  return { ok: true, snoozedUntil };
+}
+
+/* ── Device list — the stored subscriptions, with their health ─────────── */
+
+export interface PushDeviceRow {
+  id: string;
+  /** The push service's host plus the endpoint's last characters — enough to
+      tell two devices apart, never the full endpoint. */
+  service: string;
+  endpointTail: string;
+  /** Coarse label parsed from the stored user agent ("Chrome · Android"). */
+  label: string;
+  createdAt: string | null;
+  lastSuccessAt: string | null;
+  failureCount: number;
+  lastFailureCode: number | null;
+}
+
+function deviceLabel(userAgent: string | null): string {
+  if (!userAgent) return "Navigateur inconnu";
+  const ua = userAgent;
+  const browser = /edg(a|ios|e)?\//i.test(ua)
+    ? "Edge"
+    : /opr\/|opera/i.test(ua)
+      ? "Opera"
+      : /samsungbrowser/i.test(ua)
+        ? "Samsung Internet"
+        : /firefox\//i.test(ua)
+          ? "Firefox"
+          : /chrome|crios/i.test(ua)
+            ? "Chrome"
+            : /safari/i.test(ua)
+              ? "Safari"
+              : "Navigateur";
+  const os = /android/i.test(ua)
+    ? "Android"
+    : /iphone|ipad|ipod/i.test(ua)
+      ? "iOS"
+      : /windows/i.test(ua)
+        ? "Windows"
+        : /mac os x|macintosh/i.test(ua)
+          ? "macOS"
+          : /linux/i.test(ua)
+            ? "Linux"
+            : "";
+  return os ? `${browser} · ${os}` : browser;
+}
+
+/**
+ * Every device this account can be pushed to, with the delivery health the
+ * send path has been recording (0042) and nothing was ever reading. The
+ * endpoint itself stays server-side — rows are removed by id.
+ */
+export async function listPushDevices(): Promise<{
+  ok: boolean;
+  devices: PushDeviceRow[];
+}> {
+  const profile = await requireUser();
+  const supabase = createAdminClient();
+
+  const WIDE =
+    "id, endpoint, user_agent, created_at, last_success_at, last_failure_code, failure_count";
+  const NARROW = "id, endpoint, user_agent, created_at";
+
+  const wide = await supabase
+    .from("push_subscriptions")
+    .select(WIDE)
+    .eq("profile_id", profile.id)
+    .order("created_at", { ascending: false });
+  let data: unknown = wide.data;
+  let error = wide.error;
+
+  // Pre-0042 database: the health columns do not exist yet. The list still
+  // works, with health unknown, rather than failing over absent columns.
+  if (error && (error.code === "42703" || error.code === "PGRST204")) {
+    const narrow = await supabase
+      .from("push_subscriptions")
+      .select(NARROW)
+      .eq("profile_id", profile.id)
+      .order("created_at", { ascending: false });
+    data = narrow.data;
+    error = narrow.error;
+  }
+
+  if (error) {
+    console.error("[notify:listPushDevices]", error.message);
+    return { ok: false, devices: [] };
+  }
+
+  const devices = ((data ?? []) as {
+    id: string;
+    endpoint: string;
+    user_agent: string | null;
+    created_at: string | null;
+    last_success_at?: string | null;
+    last_failure_code?: number | null;
+    failure_count?: number | null;
+  }[]).map((row) => {
+    let service = "unknown";
+    try {
+      service = new URL(row.endpoint).host;
+    } catch {
+      // Shown as-is; a malformed endpoint is itself informative.
+    }
+    return {
+      id: row.id,
+      service,
+      endpointTail: row.endpoint.slice(-8),
+      label: deviceLabel(row.user_agent),
+      createdAt: row.created_at ?? null,
+      lastSuccessAt: row.last_success_at ?? null,
+      failureCount: row.failure_count ?? 0,
+      lastFailureCode: row.last_failure_code ?? null,
+    };
+  });
+
+  return { ok: true, devices };
+}
+
+/** Forget one stored device by id — the way to drop a lost phone without
+    the nuclear reset. Scoped to the caller's own rows. */
+export async function removePushDevice(id: string): Promise<{ ok: boolean; error?: string }> {
+  const profile = await requireUser();
+  const supabase = createAdminClient();
+
+  const { error } = await supabase
+    .from("push_subscriptions")
+    .delete()
+    .eq("id", id)
+    .eq("profile_id", profile.id);
+
+  if (error) {
+    console.error("[notify:removePushDevice]", error.message);
+    return { ok: false, error: "Could not remove the device." };
+  }
   return { ok: true };
 }
 
@@ -464,6 +645,8 @@ export async function sendTestPush(currentEndpoint?: string): Promise<{
   configured: boolean;
   platformEnabled: boolean;
   devices: PushDeviceResult[];
+  /** True when the device list could not be READ — not the same as empty. */
+  queryFailed?: boolean;
   /** False when the caller's own browser is not among the stored devices. */
   thisDeviceRegistered: boolean;
   /**

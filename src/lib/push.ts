@@ -44,6 +44,13 @@ export interface PushPayload {
    * no window is visible, so it never traps a banner someone is looking at.
    */
   requireInteraction?: boolean;
+  /**
+   * Buttons on the banner (Android/desktop Chrome; ignored where the
+   * platform has none, iOS included). Each carries its own deep link —
+   * sw.js routes the tap through `data.actionUrls`. Two at most: that is
+   * the ceiling every Chromium platform actually renders.
+   */
+  actions?: { action: string; title: string; href: string }[];
 }
 
 /**
@@ -63,6 +70,7 @@ function payloadBody(payload: PushPayload): string {
     ...(payload.tone ? { tone: payload.tone } : {}),
     ...(payload.lang ? { lang: payload.lang } : {}),
     ...(payload.requireInteraction ? { requireInteraction: true } : {}),
+    ...(payload.actions?.length ? { actions: payload.actions.slice(0, 2) } : {}),
   });
 }
 
@@ -103,6 +111,16 @@ const PUSH_OPTIONS = {
   timeout: 10_000,
 } as const;
 
+/*
+  The public key exists twice: VAPID_PUBLIC_KEY signs on the server and
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY is what browsers subscribe with. When they
+  drift apart, every send is rejected 403 by the push service — a failure
+  that looks exactly like "push is broken on my phone". Warned once per
+  process, not fatal: a deliberate rotation window must not become a kill
+  switch.
+*/
+let warnedVapidDrift = false;
+
 /** True when the VAPID keys are present and not placeholders. */
 export function pushConfigured(): boolean {
   const pub = process.env.VAPID_PUBLIC_KEY?.trim();
@@ -110,6 +128,14 @@ export function pushConfigured(): boolean {
   const subj = process.env.VAPID_SUBJECT?.trim();
   if (!pub || !priv || !subj) return false;
   if (pub.includes("REPLACE_ME") || priv.includes("REPLACE_ME")) return false;
+
+  const clientPub = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY?.trim();
+  if (!warnedVapidDrift && clientPub && !clientPub.includes("REPLACE_ME") && clientPub !== pub) {
+    warnedVapidDrift = true;
+    console.error(
+      "[push] VAPID_PUBLIC_KEY and NEXT_PUBLIC_VAPID_PUBLIC_KEY disagree — browsers are subscribing with a key the server does not sign with, and every send to them will be refused (403).",
+    );
+  }
   return true;
 }
 
@@ -220,7 +246,17 @@ export async function sendPushWithReport(
   payload: PushPayload,
   /** The caller's own endpoint, so its row can be marked in the report. */
   currentEndpoint?: string,
-): Promise<{ configured: boolean; platformEnabled: boolean; devices: PushDeviceResult[] }> {
+): Promise<{
+  configured: boolean;
+  platformEnabled: boolean;
+  devices: PushDeviceResult[];
+  /**
+   * True when the subscriptions could not be READ. Distinct from "no
+   * devices": a caller showing 'no devices registered' for a database blip
+   * would send someone chasing a phone problem that does not exist.
+   */
+  queryFailed?: boolean;
+}> {
   const configured = pushConfigured();
   const platformEnabled = configured ? await platformPushEnabled() : false;
   if (!configured || !platformEnabled) {
@@ -228,10 +264,20 @@ export async function sendPushWithReport(
   }
 
   const supabase = createAdminClient();
-  const { data: subs } = await supabase
+  const { data: subs, error: subsError } = await supabase
     .from("push_subscriptions")
     .select("id, endpoint, p256dh, auth")
     .eq("profile_id", profileId);
+
+  /*
+    A FAILED READ IS NOT "NO DEVICES" — same rule as the platform switch
+    above. Without this, a PostgREST blip silently dropped every push for
+    the recipient, with nothing anywhere connecting the silence to it.
+  */
+  if (subsError) {
+    console.error(`[push] could not read subscriptions for ${profileId} —`, subsError.message);
+    return { configured, platformEnabled, devices: [], queryFailed: true };
+  }
 
   const rows = (subs ?? []) as { id: string; endpoint: string; p256dh: string; auth: string }[];
   if (rows.length === 0) return { configured, platformEnabled, devices: [] };
@@ -239,7 +285,7 @@ export async function sendPushWithReport(
   setVapidDetails();
   const body = payloadBody(payload);
 
-  const devices = await Promise.all(rows.map(async (sub): Promise<PushDeviceResult> => {
+  const sendToDevice = async (sub: (typeof rows)[number]): Promise<PushDeviceResult> => {
     let service = "unknown";
     try {
       service = new URL(sub.endpoint).host;
@@ -255,7 +301,7 @@ export async function sendPushWithReport(
         body,
         PUSH_OPTIONS,
       );
-      await supabase
+      const { error: healthError } = await supabase
         .from("push_subscriptions")
         .update({
           last_success_at: new Date().toISOString(),
@@ -263,6 +309,7 @@ export async function sendPushWithReport(
           failure_count: 0,
         })
         .eq("id", sub.id);
+      reportHealthWriteError(healthError);
       return { service, endpointTail, status: "sent", isThisDevice };
     } catch (pushError) {
       const code = (pushError as { statusCode?: number })?.statusCode;
@@ -277,10 +324,38 @@ export async function sendPushWithReport(
           detail: "Endpoint gone — the row has been deleted. Re-enable push on that device.",
         };
       } else {
-        await supabase.rpc("record_push_failure", {
+        const { data: failureCount, error: rpcError } = await supabase.rpc("record_push_failure", {
           p_subscription_id: sub.id,
           p_failure_code: code ?? null,
         });
+        reportHealthWriteError(rpcError);
+
+        /*
+          RETIRE AN ENDPOINT THE SERVICE KEEPS REFUSING OUTRIGHT.
+
+          403 after a VAPID rotation, 401, 400, 413 — permanent-class
+          refusals that a retry cannot fix, unlike a network blip or a 5xx.
+          After enough of them in a row (any success resets the counter to
+          zero above), the row is dead weight: one doomed encrypt + POST per
+          notification, forever. Deleting it is safe by construction — a
+          device that is actually alive re-registers through PushSync on its
+          next open, the same argument the reset flow documents. A null
+          count (pre-0044 RPC shape, or the RPC itself failing) never
+          prunes: when the answer is unknowable, keep the row.
+        */
+        const permanent = code === 400 || code === 401 || code === 403 || code === 413;
+        const count = typeof failureCount === "number" ? failureCount : null;
+        if (permanent && count !== null && count >= 8) {
+          await supabase.from("push_subscriptions").delete().eq("id", sub.id);
+          return {
+            service,
+            endpointTail,
+            status: "expired",
+            code,
+            isThisDevice,
+            detail: `Retired after ${count} consecutive refusals (HTTP ${code}). The device re-registers on its next app open.`,
+          };
+        }
         return {
           service,
           endpointTail,
@@ -291,9 +366,75 @@ export async function sendPushWithReport(
         };
       }
     }
-  }));
+  };
+
+  /*
+    Bounded fan-out. Promise.all over every row lets one bloated account turn
+    a checkout lambda into dozens of concurrent sockets; ten at a time keeps
+    the worst case at PUSH_OPTIONS.timeout × ceil(n/10) with no visible
+    change for the honest 1–3-device account.
+  */
+  const devices: PushDeviceResult[] = [];
+  const CONCURRENCY = 10;
+  for (let i = 0; i < rows.length; i += CONCURRENCY) {
+    devices.push(...(await Promise.all(rows.slice(i, i + CONCURRENCY).map(sendToDevice))));
+  }
 
   return { configured, platformEnabled, devices };
+}
+
+/*
+  The 0042/0044 health columns are written on every send, and code and
+  migration can deploy in either order. A missing column/function is warned
+  once per process (naming the migration), not once per device per send;
+  every other error is logged each time — the file's own rule about silence.
+*/
+let warnedHealthSchemaMissing = false;
+
+function reportHealthWriteError(
+  error: { code?: string; message?: string } | null | undefined,
+): void {
+  if (!error) return;
+  const schemaMissing =
+    error.code === "42703" || error.code === "PGRST204" || error.code === "PGRST202" || error.code === "42883";
+  if (schemaMissing) {
+    if (!warnedHealthSchemaMissing) {
+      warnedHealthSchemaMissing = true;
+      console.error(
+        "[push] delivery-health writes are failing — run migrations 0042 and 0044 in the SQL editor. First error:",
+        error.message,
+      );
+    }
+    return;
+  }
+  console.error("[push] delivery-health write failed —", error.message);
+}
+
+/**
+ * At most 10 stored devices per profile — evict beyond the 10 most recently
+ * updated. Honest browsers hold one subscription each, so a real household
+ * never hits this; what it caps is fabricated endpoints, each of which
+ * would otherwise cost one doomed encrypt-and-POST on EVERY notification to
+ * the profile, forever. An evicted real device re-registers through
+ * PushSync on its next open. Never throws.
+ */
+export async function capProfileSubscriptions(profileId: string): Promise<void> {
+  try {
+    const supabase = createAdminClient();
+    const { data } = await supabase
+      .from("push_subscriptions")
+      .select("id")
+      .eq("profile_id", profileId)
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .range(10, 200);
+    const surplus = ((data ?? []) as { id: string }[]).map((r) => r.id);
+    if (surplus.length > 0) {
+      await supabase.from("push_subscriptions").delete().in("id", surplus);
+      console.warn(`[push] evicted ${surplus.length} surplus subscriptions for ${profileId}`);
+    }
+  } catch (thrown) {
+    console.error("[push] subscription cap failed —", (thrown as Error)?.message ?? thrown);
+  }
 }
 
 /**

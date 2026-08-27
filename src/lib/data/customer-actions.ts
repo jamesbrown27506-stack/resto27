@@ -428,7 +428,9 @@ export async function submitOwnReview(
     tone: "info",
     restaurantId: order.restaurant_id,
     href: "/m/reviews",
-    params: { rating, customerName: user.name },
+    // The order id keys the push collapse tag — two reviews arriving in the
+    // same hour are two banners, not one replacing the other.
+    params: { rating, customerName: user.name, reference: orderId },
   });
 
   revalidatePath("/reviews");
@@ -606,7 +608,7 @@ export async function createOwnReservation(
   */
   const { data: restaurant, error: restaurantError } = await supabase
     .from("restaurants")
-    .select("id, status")
+    .select("id, status, name")
     .eq("id", restaurantId)
     .eq("status", "active")
     .maybeSingle();
@@ -775,6 +777,33 @@ export async function createOwnReservation(
     restaurantId,
     href: "/m/reservations",
     params: { reference, customerName: user.name, partySize },
+  });
+
+  /*
+    THE CUSTOMER GETS A RECEIPT TOO. Orders confirm both ways at placement;
+    bookings told only the restaurant, and the customer held nothing that
+    said their request existed. Same collapse tag as the decision push, so
+    the answer replaces the receipt on the lock screen when it comes.
+  */
+  await notify({
+    event: "reservation_decision",
+    tone: "info",
+    customerId: user.id,
+    href: "/reservations",
+    params: {
+      reference,
+      status: "pending",
+      restaurantName: (restaurant as { name?: string }).name,
+      partySize,
+      whenLabel: new Intl.DateTimeFormat("fr-FR", {
+        timeZone: "Africa/Douala",
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(when),
+    },
   });
 
   revalidatePath("/reservations");

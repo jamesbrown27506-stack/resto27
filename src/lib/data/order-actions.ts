@@ -240,7 +240,12 @@ export async function advanceOrder(
   if (order.customer_id) {
     await notify({
       event: "order_status",
-      tone: target === "delivered" ? "success" : "info",
+      // A pickup order turning "ready" is the one push asking the customer
+      // to stand up — it earns the success tone the moment it happens.
+      tone:
+        target === "delivered" || (target === "shipped" && order.type === "pickup")
+          ? "success"
+          : "info",
       customerId: order.customer_id,
       href: `/orders/${order.id}`,
       params: {
@@ -248,6 +253,7 @@ export async function advanceOrder(
         reference: order.reference,
         restaurantName: active.restaurantName,
         deliveryFee: quotedFee,
+        orderType: order.type as "delivery" | "pickup" | "dine_in",
       },
     });
   }
@@ -498,7 +504,8 @@ export async function createTableOrder(input: {
           tone: "warning",
           restaurantId: active.restaurantId,
           href: "/m/menu",
-          params: { itemName: item.name, count: remaining },
+          // Item name keys the collapse tag — two dishes, two banners.
+          params: { itemName: item.name, count: remaining, reference: item.name },
         });
       }
     }

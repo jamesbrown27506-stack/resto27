@@ -21,8 +21,10 @@ import { createAdminClient } from "@/lib/supabase/server";
 
 export const NOTIFICATION_EVENT_KEYS = [
   "new_order",
+  "order_updates",
   "order_cancelled",
   "reservation",
+  "messages",
   "review",
   "low_stock",
   "billing",
@@ -46,8 +48,16 @@ export interface NotificationEvent {
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
   { key: "new_order", inApp: true, email: true, push: true, locked: true },
+  // The customer's answers to an order: fee accepted/declined, "I received
+  // it", delivery-delay alerts. Used to fall outside the grid and arrive
+  // all-on with no way to tune them.
+  { key: "order_updates", inApp: true, email: false, push: true, locked: false },
   { key: "order_cancelled", inApp: true, email: true, push: true, locked: false },
   { key: "reservation", inApp: true, email: true, push: true, locked: false },
+  // Customer chat messages — the other formerly untunable event. No email
+  // by default, same reasoning as the customer topic: a conversation that
+  // mails every line is an inbox full of one-line notifications.
+  { key: "messages", inApp: true, email: false, push: true, locked: false },
   { key: "review", inApp: true, email: false, push: true, locked: false },
   { key: "low_stock", inApp: true, email: false, push: true, locked: false },
   { key: "billing", inApp: true, email: true, push: true, locked: true },

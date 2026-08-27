@@ -555,7 +555,10 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
           tone: "warning",
           restaurantId: input.restaurantId,
           href: "/m/menu",
-          params: { itemName: item.name, count: remaining },
+          // The item name keys the push collapse tag: two dishes running low
+          // are two banners, while the same dish dropping again replaces its
+          // own earlier warning.
+          params: { itemName: item.name, count: remaining, reference: item.name },
         });
       }
     }
@@ -648,6 +651,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
         status: "pending",
         reference: created.reference,
         restaurantName: restaurant.name,
+        orderType: input.type,
       },
     });
   }

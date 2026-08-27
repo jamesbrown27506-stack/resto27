@@ -36,6 +36,14 @@ export interface NotificationChannels {
   email: boolean;
   /** Native web push. Needs a subscribed browser as well as this switch. */
   push: boolean;
+  /**
+   * Quiet hours (0044): minutes since midnight, Africa/Douala. Null = none.
+   * Gates only the push — the bell row and email still land.
+   */
+  quietStart?: number | null;
+  quietEnd?: number | null;
+  /** Push paused until this instant (0044). Expiry is implicit — no job. */
+  snoozedUntil?: string | null;
 }
 
 /** A missing row means all three on — nobody is silenced by never visiting. */
@@ -43,10 +51,47 @@ export const NOTIFICATION_CHANNELS_DEFAULT: NotificationChannels = {
   inApp: true,
   email: true,
   push: true,
+  quietStart: null,
+  quietEnd: null,
+  snoozedUntil: null,
 };
 
-function fromRow(row: { in_app: boolean; email: boolean; push: boolean }): NotificationChannels {
-  return { inApp: row.in_app, email: row.email, push: row.push };
+interface ChannelsRow {
+  in_app: boolean;
+  email: boolean;
+  push: boolean;
+  quiet_start?: number | null;
+  quiet_end?: number | null;
+  snoozed_until?: string | null;
+}
+
+function fromRow(row: ChannelsRow): NotificationChannels {
+  return {
+    inApp: row.in_app,
+    email: row.email,
+    push: row.push,
+    quietStart: row.quiet_start ?? null,
+    quietEnd: row.quiet_end ?? null,
+    snoozedUntil: row.snoozed_until ?? null,
+  };
+}
+
+/*
+  Code and migration deploy in either order (0044 adds the quiet columns).
+  PostgREST fails a select over ONE missing column, so the wide select gets
+  one retry with the pre-0044 shape — the same pattern savePushSubscription
+  uses. The verdict is remembered per process to save the doomed first try.
+*/
+const WIDE_COLUMNS = "in_app, email, push, quiet_start, quiet_end, snoozed_until";
+const NARROW_COLUMNS = "in_app, email, push";
+let quietColumnsMissing = false;
+
+function isMissingColumn(error: { code?: string; message?: string } | null): boolean {
+  return Boolean(
+    error &&
+      (error.code === "42703" || error.code === "PGRST204") &&
+      /quiet_start|quiet_end|snoozed_until/.test(error.message ?? ""),
+  );
 }
 
 /** One person's master switches, or the defaults when nothing is stored. */
@@ -55,11 +100,20 @@ export async function fetchNotificationChannels(
 ): Promise<NotificationChannels> {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from("notification_channels")
-    .select("in_app, email, push")
+    .select(quietColumnsMissing ? NARROW_COLUMNS : WIDE_COLUMNS)
     .eq("profile_id", profileId)
     .maybeSingle();
+
+  if (isMissingColumn(error)) {
+    quietColumnsMissing = true;
+    ({ data, error } = await supabase
+      .from("notification_channels")
+      .select(NARROW_COLUMNS)
+      .eq("profile_id", profileId)
+      .maybeSingle());
+  }
 
   if (error) {
     console.error("[notify:fetchNotificationChannels]", error.message);
@@ -67,7 +121,7 @@ export async function fetchNotificationChannels(
   }
   if (!data) return NOTIFICATION_CHANNELS_DEFAULT;
 
-  return fromRow(data as { in_app: boolean; email: boolean; push: boolean });
+  return fromRow(data as unknown as ChannelsRow);
 }
 
 /**
@@ -81,22 +135,29 @@ export async function fetchNotificationChannelsFor(
   if (profileIds.length === 0) return out;
 
   const supabase = createAdminClient();
-  const { data, error } = await supabase
+  const wide = await supabase
     .from("notification_channels")
-    .select("profile_id, in_app, email, push")
+    .select(`profile_id, ${quietColumnsMissing ? NARROW_COLUMNS : WIDE_COLUMNS}`)
     .in("profile_id", profileIds);
+  let data: unknown = wide.data;
+  let error = wide.error;
+
+  if (isMissingColumn(error)) {
+    quietColumnsMissing = true;
+    const narrow = await supabase
+      .from("notification_channels")
+      .select(`profile_id, ${NARROW_COLUMNS}`)
+      .in("profile_id", profileIds);
+    data = narrow.data;
+    error = narrow.error;
+  }
 
   if (error) {
     console.error("[notify:fetchNotificationChannelsFor]", error.message);
     return out;
   }
 
-  for (const row of (data ?? []) as {
-    profile_id: string;
-    in_app: boolean;
-    email: boolean;
-    push: boolean;
-  }[]) {
+  for (const row of (data ?? []) as unknown as ({ profile_id: string } & ChannelsRow)[]) {
     out.set(row.profile_id, fromRow(row));
   }
   return out;
@@ -109,16 +170,45 @@ export async function saveNotificationChannels(
 ): Promise<{ ok: boolean; error?: string }> {
   const supabase = createAdminClient();
 
-  const { error } = await supabase.from("notification_channels").upsert(
-    {
-      profile_id: profileId,
-      in_app: Boolean(channels.inApp),
-      email: Boolean(channels.email),
-      push: Boolean(channels.push),
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "profile_id" },
-  );
+  const baseRow = {
+    profile_id: profileId,
+    in_app: Boolean(channels.inApp),
+    email: Boolean(channels.email),
+    push: Boolean(channels.push),
+    updated_at: new Date().toISOString(),
+  };
+
+  /*
+    Quiet fields ride along ONLY when the caller passed them — an upsert
+    updates just the columns it names, so the master-switch panel saving
+    {inApp, email, push} cannot wipe a stored quiet window. `undefined`
+    means "leave it"; `null` means "clear it". A window is stored whole or
+    not at all — one edge is not a window.
+  */
+  const clamp = (v: number | null | undefined) =>
+    typeof v === "number" && Number.isFinite(v) ? Math.min(1439, Math.max(0, Math.round(v))) : null;
+  const quietRow: Record<string, unknown> = {};
+  if (channels.quietStart !== undefined || channels.quietEnd !== undefined) {
+    const quietStart = clamp(channels.quietStart);
+    const quietEnd = clamp(channels.quietEnd);
+    const whole = quietStart !== null && quietEnd !== null;
+    quietRow.quiet_start = whole ? quietStart : null;
+    quietRow.quiet_end = whole ? quietEnd : null;
+  }
+  if (channels.snoozedUntil !== undefined) {
+    quietRow.snoozed_until = channels.snoozedUntil;
+  }
+
+  let { error } = await supabase
+    .from("notification_channels")
+    .upsert(quietColumnsMissing ? baseRow : { ...baseRow, ...quietRow }, { onConflict: "profile_id" });
+
+  if (isMissingColumn(error)) {
+    quietColumnsMissing = true;
+    ({ error } = await supabase
+      .from("notification_channels")
+      .upsert(baseRow, { onConflict: "profile_id" }));
+  }
 
   if (error) {
     console.error("[notify:saveNotificationChannels]", error.message);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/server";
+import { capProfileSubscriptions } from "@/lib/push";
 
 /**
  * Push subscription repair, over HTTP rather than a Server Action.
@@ -57,7 +58,29 @@ export async function GET() {
   const key = vapidPublicKey();
   if (!key) return NextResponse.json({ key: null }, { status: 503 });
 
-  return NextResponse.json({ key });
+  /*
+    The unread count rides along FOR A SIGNED-IN CALLER ONLY — it is what
+    lets the service worker keep the launcher badge honest when a push
+    arrives with every tab closed. The key half stays unauthenticated (see
+    the note above); a signed-out caller simply gets no count.
+  */
+  let unread: number | undefined;
+  try {
+    const profile = await getCurrentProfile();
+    if (profile) {
+      const supabase = createAdminClient();
+      const { count, error } = await supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("profile_id", profile.id)
+        .is("read_at", null);
+      if (!error) unread = count ?? 0;
+    }
+  } catch {
+    // The key is the contract; the count is a refinement.
+  }
+
+  return NextResponse.json(unread === undefined ? { key } : { key, unread });
 }
 
 export async function POST(request: Request) {
@@ -139,6 +162,8 @@ export async function POST(request: Request) {
       .eq("endpoint", previousEndpoint)
       .eq("profile_id", profile.id);
   }
+
+  await capProfileSubscriptions(profile.id);
 
   return NextResponse.json({ ok: true });
 }

@@ -1,8 +1,10 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
 import { trySendMail } from "@/lib/mail";
-import { sendPush } from "@/lib/push";
-import { NOTIFICATION_EVENTS } from "@/lib/data/settings";
+import { sendPush, sendPushWithReport, type PushPayload } from "@/lib/push";
+import { siteUrl } from "@/lib/site-url";
+import { getBranding } from "@/lib/branding";
+import { NOTIFICATION_EVENTS, type NotificationEventKey } from "@/lib/data/settings";
 import { readTopic, type CustomerTopicKey } from "@/lib/notifications/customer-topics";
 import {
   fetchNotificationChannelsFor,
@@ -62,6 +64,9 @@ export type NotifyEvent =
   | "support" //             → admin   : a support message arrived
   | "chat" //                → staff   : a customer sent a message (restaurant or platform thread)
   | "chat_reply" //          → customer: the other side replied
+  | "order_delayed" //       → both    : a shipped delivery is overdue (cron)
+  | "reservation_reminder" //→ customer: the booked slot is tomorrow / soon (cron)
+  | "review_prompt" //       → customer: yesterday's delivered order can be rated (cron)
   | "push_enabled"; //       → self    : "push is on", sent the moment it is
 
 /*
@@ -116,6 +121,20 @@ export interface NotifyParams {
   preview?: string;
   /** The platform's own name, for copy that would otherwise hardcode it. */
   platformName?: string;
+  /**
+   * The order's fulfilment mode. The words fork on it: a pickup order is
+   * "ready to collect", never "out for delivery" — the same fork the
+   * in-app UI already made (order-status.ts, commit 3fc967f).
+   */
+  orderType?: "delivery" | "pickup" | "dine_in";
+  /** Which side of the counter reads this copy, for two-sided cron events. */
+  audience?: "customer" | "staff";
+  /** True on a watchdog re-send — the copy says "still waiting", not "new". */
+  reminder?: boolean;
+  /** reservation_reminder: how far out the slot is. */
+  stage?: "day" | "soon";
+  /** A pre-formatted, recipient-facing time ("sam. 30 août, 20:00"). */
+  whenLabel?: string;
 }
 
 export interface NotifyInput {
@@ -180,6 +199,36 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
 
   switch (event) {
     case "new_order":
+      /*
+        Three voices for one event, told apart by params:
+          · reminder    — the watchdog re-ring for an order nobody has
+            accepted. Same collapse tag as the original, so the banner is
+            REPLACED and re-buzzes (renotify) instead of stacking.
+          · whenLabel   — a scheduled order whose prep window has arrived.
+          · neither     — the original "a customer just ordered".
+      */
+      if (p.reminder) {
+        return fr
+          ? {
+              title: `Commande ${p.reference ?? ""} toujours en attente`,
+              body: `${p.customerName ?? "Client"} · ${money(p.amount)} — personne n'a encore confirmé.`,
+            }
+          : {
+              title: `Order ${p.reference ?? ""} still waiting`,
+              body: `${p.customerName ?? "Customer"} · ${money(p.amount)} — nobody has confirmed it yet.`,
+            };
+      }
+      if (p.whenLabel) {
+        return fr
+          ? {
+              title: `Commande programmée ${p.reference ?? ""} — pour ${p.whenLabel}`,
+              body: `${p.customerName ?? "Client"} · ${money(p.amount)}. C'est le moment de la préparer.`,
+            }
+          : {
+              title: `Scheduled order ${p.reference ?? ""} — for ${p.whenLabel}`,
+              body: `${p.customerName ?? "Customer"} · ${money(p.amount)}. Time to start preparing it.`,
+            };
+      }
       return fr
         ? {
             title: `Nouvelle commande ${p.reference ?? ""}`,
@@ -213,7 +262,37 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
             };
       }
 
-      const word = (fr ? FR_ORDER_STATUS : EN_ORDER_STATUS)[p.status ?? ""] ?? p.status ?? "";
+      /*
+        THE WORDS FOLLOW THE FULFILMENT MODE. "Out for delivery" on a pickup
+        order contradicts the very screen the push deep-links to — the UI
+        forked this copy per type long ago (commit 3fc967f); the push now
+        forks with it. A pickup order that is ready is the one push in the
+        flow that asks the customer to stand up, so it gets its own title.
+      */
+      if (p.orderType === "pickup" && p.status === "shipped") {
+        return fr
+          ? {
+              title: `Commande ${p.reference ?? ""} prête !`,
+              body: `Votre commande chez ${p.restaurantName ?? "le restaurant"} est prête à récupérer.`,
+            }
+          : {
+              title: `Order ${p.reference ?? ""} is ready!`,
+              body: `Your order at ${p.restaurantName ?? "the restaurant"} is ready for pickup.`,
+            };
+      }
+      const typeWords: Record<string, Record<string, { fr: string; en: string }>> = {
+        pickup: { delivered: { fr: "récupérée", en: "collected" } },
+        dine_in: {
+          shipped: { fr: "servie", en: "served" },
+          delivered: { fr: "terminée", en: "complete" },
+        },
+      };
+      const forked = p.orderType ? typeWords[p.orderType]?.[p.status ?? ""] : undefined;
+      const word =
+        (forked ? (fr ? forked.fr : forked.en) : undefined) ??
+        (fr ? FR_ORDER_STATUS : EN_ORDER_STATUS)[p.status ?? ""] ??
+        p.status ??
+        "";
       const fee = p.deliveryFee !== undefined ? ` · livraison ${money(p.deliveryFee)}` : "";
       return fr
         ? {
@@ -225,6 +304,42 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
             body: `Your order at ${p.restaurantName ?? "the restaurant"} is ${word}.${fee}`,
           };
     }
+
+    case "order_delayed":
+      // Two audiences, one event: the customer needs reassurance and honesty;
+      // the kitchen needs the age of the problem and a nudge to act. The
+      // awaiting_customer variant is the fee quote nobody answered — the
+      // phone number on the ticket is the way out.
+      if (p.audience === "staff" && p.status === "awaiting_customer") {
+        return fr
+          ? {
+              title: `Devis sans réponse — commande ${p.reference ?? ""}`,
+              body: "Le client n'a pas répondu au devis de livraison depuis plus d'une heure. Appelez-le, ou annulez la commande.",
+            }
+          : {
+              title: `Quote unanswered — order ${p.reference ?? ""}`,
+              body: "The customer has not answered the delivery quote for over an hour. Call them, or cancel the order.",
+            };
+      }
+      return p.audience === "staff"
+        ? fr
+          ? {
+              title: `Commande ${p.reference ?? ""} en retard de livraison`,
+              body: "Expédiée depuis plus de 30 minutes sans confirmation de livraison. Vérifiez avec votre livreur.",
+            }
+          : {
+              title: `Order ${p.reference ?? ""} delivery overdue`,
+              body: "Marked out for delivery over 30 minutes ago with no confirmation. Check with your rider.",
+            }
+        : fr
+          ? {
+              title: `Commande ${p.reference ?? ""} — livraison retardée`,
+              body: `Votre livraison chez ${p.restaurantName ?? "le restaurant"} prend plus de temps que prévu. Le restaurant a été alerté.`,
+            }
+          : {
+              title: `Order ${p.reference ?? ""} — delivery delayed`,
+              body: `Your delivery from ${p.restaurantName ?? "the restaurant"} is taking longer than expected. The restaurant has been alerted.`,
+            };
 
     case "order_cancelled": {
       const byCustomer = p.cancelledBy === "customer";
@@ -270,6 +385,20 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
               body: `${p.customerName ?? "The guest"} cancelled the reservation. The table is released.`,
             };
       }
+      if (p.status === "cancelled") {
+        // Released by the platform, not by either party: the deposit never
+        // came and the slot has passed. Honest wording — "the client
+        // cancelled" would blame someone who merely went quiet.
+        return fr
+          ? {
+              title: `Réservation ${p.reference ?? ""} libérée`,
+              body: `Acompte non réglé avant l'heure de la réservation — la table est de nouveau disponible.`,
+            }
+          : {
+              title: `Reservation ${p.reference ?? ""} released`,
+              body: `The deposit was never paid and the slot has passed — the table is available again.`,
+            };
+      }
       return fr
         ? {
             title: `Nouvelle réservation ${p.reference ?? ""}`,
@@ -290,6 +419,24 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
         booking has not earned, and the customer would have no idea anything
         was expected of them until the seat was gone.
       */
+      /*
+        The RECEIPT, before any decision exists. Orders already confirm both
+        ways at placement; bookings told only the restaurant, and the customer
+        held nothing that said their request was real. Same collapse tag as
+        the decision, so the answer replaces the receipt on the lock screen.
+      */
+      if (p.status === "pending") {
+        return fr
+          ? {
+              title: `Demande ${p.reference ?? ""} envoyée`,
+              body: `${p.restaurantName ?? "Le restaurant"} confirme sous peu — ${p.partySize ?? 1} pers.${p.whenLabel ? `, ${p.whenLabel}` : ""}`,
+            }
+          : {
+              title: `Request ${p.reference ?? ""} sent`,
+              body: `${p.restaurantName ?? "The restaurant"} will confirm shortly — ${p.partySize ?? 1} people${p.whenLabel ? `, ${p.whenLabel}` : ""}`,
+            };
+      }
+
       const awaiting = p.status === "awaiting_payment";
       const confirmed = p.status === "confirmed";
       const amount = p.amount !== undefined ? formatMoney(p.amount) : "";
@@ -531,6 +678,39 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
             body: p.preview ?? "",
           };
 
+    case "reservation_reminder":
+      // The defense against forgetting — most no-shows are nothing worse.
+      return p.stage === "soon"
+        ? fr
+          ? {
+              title: `C'est bientôt — votre table chez ${p.restaurantName ?? "le restaurant"}`,
+              body: `Réservation ${p.reference ?? ""} à ${p.whenLabel ?? ""} pour ${p.partySize ?? 1} pers. À tout de suite !`,
+            }
+          : {
+              title: `Coming up — your table at ${p.restaurantName ?? "the restaurant"}`,
+              body: `Reservation ${p.reference ?? ""} at ${p.whenLabel ?? ""} for ${p.partySize ?? 1}. See you soon!`,
+            }
+        : fr
+          ? {
+              title: `Rappel — votre table chez ${p.restaurantName ?? "le restaurant"} demain`,
+              body: `Réservation ${p.reference ?? ""} · ${p.whenLabel ?? ""} · ${p.partySize ?? 1} pers. Un empêchement ? Annulez depuis l'application pour libérer la table.`,
+            }
+          : {
+              title: `Reminder — your table at ${p.restaurantName ?? "the restaurant"} tomorrow`,
+              body: `Reservation ${p.reference ?? ""} · ${p.whenLabel ?? ""} · ${p.partySize ?? 1} people. Can't make it? Cancel in the app to free the table.`,
+            };
+
+    case "review_prompt":
+      return fr
+        ? {
+            title: `Comment était ${p.restaurantName ?? "votre commande"} ?`,
+            body: `Notez votre commande ${p.reference ?? ""} — deux tapes suffisent, et les autres gourmands vous remercient.`,
+          }
+        : {
+            title: `How was ${p.restaurantName ?? "your order"}?`,
+            body: `Rate your order ${p.reference ?? ""} — it takes two taps and helps everyone else choose.`,
+          };
+
     case "push_enabled":
       // The proof, not a promise. Sent to whoever just switched push on, over
       // the very channel they enabled — if this one does not arrive, push does
@@ -685,21 +865,49 @@ interface Channels {
 const CUSTOMER_PREF_KEY: Partial<Record<NotifyEvent, CustomerTopicKey>> = {
   order_status: "order_status",
   order_cancelled: "order_status",
+  order_delayed: "order_status",
   reservation_decision: "reservations",
   reservation_status: "reservations",
+  reservation_reminder: "reservations",
   chat_reply: "messages",
   review_reply: "reviews",
+  review_prompt: "reviews",
   loyalty: "loyalty",
   broadcast: "promotions",
 };
 
+/**
+ * Which grid row governs each manager-facing event.
+ *
+ * The grid renders the catalogue in settings.ts; events used to fall through
+ * to "all channels on" whenever their key was not literally a catalogue key —
+ * which was every chat message, every settled invoice, every customer
+ * response to an order. Mapped events are tunable; unmapped ones (approval,
+ * account, broadcast) stay always-on deliberately: they are things happening
+ * TO the account, not messages about the business.
+ */
+const MANAGER_PREF_KEY: Partial<Record<NotifyEvent, NotificationEventKey>> = {
+  new_order: "new_order",
+  order_cancelled: "order_cancelled",
+  order_status: "order_updates",
+  order_delayed: "order_updates",
+  reservation: "reservation",
+  review: "review",
+  low_stock: "low_stock",
+  billing: "billing",
+  billing_paid: "billing",
+  billing_refund: "billing",
+  chat: "messages",
+};
+
 function managerDefaults(event: NotifyEvent): Channels {
-  const known = NOTIFICATION_EVENTS.find((e) => e.key === event);
+  const key = MANAGER_PREF_KEY[event];
+  const known = key ? NOTIFICATION_EVENTS.find((e) => e.key === key) : undefined;
   if (known) {
-    return { inApp: known.inApp, email: known.email, push: true };
+    return { inApp: known.inApp, email: known.email, push: known.push };
   }
-  // Events outside the catalogue (approval, account, low_stock, broadcasts…)
-  // default to everything on.
+  // Events outside the catalogue (approval, account, broadcasts…) default to
+  // everything on.
   return { inApp: true, email: true, push: true };
 }
 
@@ -801,12 +1009,18 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
       { in_app: boolean; email: boolean; push: boolean }
     >();
     if (input.restaurantId && managerIds.length > 0) {
-      const { data } = await supabase
+      // The stored row lives under the GRID key, not the raw event name —
+      // billing_paid is answered by the "billing" row, chat by "messages".
+      const gridKey = MANAGER_PREF_KEY[input.event] ?? input.event;
+      const { data, error } = await supabase
         .from("notification_preferences")
         .select("profile_id, in_app, email, push")
         .eq("restaurant_id", input.restaurantId)
         .in("profile_id", managerIds)
-        .eq("event_key", input.event === "order_cancelled" ? "order_cancelled" : input.event);
+        .eq("event_key", gridKey);
+      // A failed read degrades everyone to the catalogue defaults — say so,
+      // because that is people getting emails they turned off.
+      if (error) console.error(`[notify] manager prefs read failed (${input.event}) —`, error.message);
       for (const row of (data ?? []) as {
         profile_id: string;
         in_app: boolean;
@@ -822,18 +1036,27 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
       { notification_json: unknown; push_enabled: boolean }
     >();
     if (customerIds.length > 0) {
-      const { data } = await supabase
+      /*
+        `push_enabled` IS DELIBERATELY NOT SELECTED. The column is missing
+        from the live database (customer.ts documents the 42703 this causes),
+        and PostgREST fails the WHOLE select over one absent column — which
+        silently degraded every customer to topic defaults. Nothing needs it:
+        readTopic only consults the legacy flag for bare-boolean rows, and
+        `true` reproduces the pre-grid default exactly (customer.ts does the
+        same).
+      */
+      const { data, error } = await supabase
         .from("customer_preferences")
-        .select("profile_id, notification_json, push_enabled")
+        .select("profile_id, notification_json")
         .in("profile_id", customerIds);
+      if (error) console.error(`[notify] customer prefs read failed (${input.event}) —`, error.message);
       for (const row of (data ?? []) as {
         profile_id: string;
         notification_json: unknown;
-        push_enabled: boolean;
       }[]) {
         customerPrefs.set(row.profile_id, {
           notification_json: row.notification_json ?? {},
-          push_enabled: row.push_enabled,
+          push_enabled: true,
         });
       }
     }
@@ -872,6 +1095,19 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
     const tone = input.tone ?? "info";
     const params = input.params ?? {};
     const href = input.href ?? null;
+
+    /*
+      Resolved once per event, not per recipient. The email link must be
+      ABSOLUTE — a bare "/orders/abc" pasted into plain text is dead in every
+      mail client — and the signature is the platform's configured name, not
+      a hardcoded one. Both are cached upstream; failures fall back rather
+      than block the delivery.
+    */
+    const [base, branding] = await Promise.all([
+      siteUrl().catch(() => ""),
+      getBranding().catch(() => null),
+    ]);
+    const brandName = branding?.name?.trim() || "RestoLink";
 
     // ── Deliver per recipient, each channel fenced ──────────────────────
     const inAppRows: { profile_id: string; title: string; body: string; tone: NotifyTone; href: string | null }[] = [];
@@ -916,7 +1152,15 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
 
       const inApp = input.inApp !== false && (input.channels?.inApp ?? prefs.inApp);
       const email = input.email !== false && (input.channels?.email ?? prefs.email);
-      const push = input.push !== false && (input.channels?.push ?? prefs.push);
+      /*
+        Quiet hours and snooze gate ONLY the push — the wake-up. The bell row
+        and the email still land, so nothing is lost, just not rung at 3am.
+        Action-required and account events are exempt: see pushSuppressedFor.
+      */
+      const push =
+        input.push !== false &&
+        (input.channels?.push ?? prefs.push) &&
+        !pushSuppressedFor(input.event, params, masterChannels.get(recipient.profileId));
 
       if (inApp) {
         inAppRows.push({
@@ -931,7 +1175,7 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
         emails.push({
           to: recipient.email,
           subject: text.title,
-          body: [text.title, "", text.body, href ? `${href}` : "", "", `— RestoLink`].join("\n"),
+          body: [text.title, "", text.body, href ? `${base}${href}` : "", "", `— ${brandName}`].join("\n"),
         });
       }
       if (push) {
@@ -950,54 +1194,233 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
       }
     }
 
+    let inAppWritten = true;
     if (inAppRows.length > 0) {
       const { error } = await supabase.from("notifications").insert(inAppRows);
-      if (error) console.error("[notify] in-app insert failed", error.message);
+      if (error) {
+        console.error("[notify] in-app insert failed", error.message);
+        // The returned count must not vouch for rows that were never
+        // written — the broadcast composer records it as a delivered figure.
+        inAppWritten = false;
+      }
     }
 
-    await Promise.allSettled(emails.map((m) => trySendMail({ to: m.to, subject: m.subject, body: m.body })));
-    await Promise.allSettled(
-      pushes.map((p) =>
-        sendPush(p.profileId, {
-          title: p.title,
-          body: p.body,
-          href: p.href,
-          /*
-            ────────────────────────────────────────────────────────────────
-             THE COLLAPSE KEY IS PER SUBJECT, NOT PER EVENT TYPE.
+    /*
+      ────────────────────────────────────────────────────────────────────
+       THE COLLAPSE KEY IS PER SUBJECT, NOT PER EVENT TYPE.
 
-             sw.js was already reading `data.tag` and the server sent none, so
-             every push shared one tag and a new order replaced an unread chat
-             reply on the lock screen. Keying it on the event fixed that and
-             introduced a worse one: `restolink:new_order` is the SAME tag for
-             every order, so three orders arriving while a phone is asleep
-             collapse into one banner and the kitchen sees the last of them.
-             Two missed orders, and nothing anywhere to say they existed.
+       sw.js was already reading `data.tag` and the server sent none, so
+       every push shared one tag and a new order replaced an unread chat
+       reply on the lock screen. Keying it on the event fixed that and
+       introduced a worse one: `restolink:new_order` is the SAME tag for
+       every order, so three orders arriving while a phone is asleep
+       collapse into one banner and the kitchen sees the last of them.
+       Two missed orders, and nothing anywhere to say they existed.
 
-             The reference is what makes a notification about THIS order
-             distinct from one about the next. Distinct subjects now stack;
-             two notifications about the same subject — an order confirmed and
-             then out for delivery — still replace each other, which is the
-             behaviour the tag is actually for.
+       The reference is what makes a notification about THIS order
+       distinct from one about the next. Distinct subjects now stack;
+       two notifications about the same subject — an order confirmed and
+       then out for delivery — still replace each other, which is the
+       behaviour the tag is actually for.
 
-             Events with no reference (a broadcast, "push is on") keep the
-             event-level tag: there is only ever one of them in flight.
-            ────────────────────────────────────────────────────────────────
-          */
-          tag: input.params?.reference
-            ? `restolink:${input.event}:${input.params.reference}`
-            : `restolink:${input.event}`,
-          tone: p.tone,
-          lang: p.locale,
-          requireInteraction: REQUIRE_INTERACTION_EVENTS.has(input.event),
-        }),
-      ),
+       Events with no reference (a broadcast, "push is on") keep the
+       event-level tag: there is only ever one of them in flight.
+      ────────────────────────────────────────────────────────────────────
+    */
+    const tag = input.params?.reference
+      ? `restolink:${input.event}:${input.params.reference}`
+      : `restolink:${input.event}`;
+
+    const payloadFor = (p: (typeof pushes)[number]): PushPayload => ({
+      title: p.title,
+      body: p.body,
+      href: p.href,
+      tag,
+      tone: p.tone,
+      lang: p.locale,
+      requireInteraction: REQUIRE_INTERACTION_EVENTS.has(input.event),
+      actions: pushActionsFor(input.event, params, p.href, p.locale),
+    });
+
+    /*
+      EMAIL AND PUSH RUN SIDE BY SIDE, NOT IN LINE. Email goes through a
+      pooled SMTP transport three connections wide; a broadcast's pushes
+      used to queue behind the whole mail run inside one lambda. Neither
+      channel waits on the other now.
+    */
+    const emailTask = Promise.allSettled(
+      emails.map((m) => trySendMail({ to: m.to, subject: m.subject, body: m.body })),
     );
 
-    return { delivered: inAppRows.length };
+    const pushTask =
+      input.event === "new_order" && input.restaurantId
+        ? deliverNewOrderPush(pushes, payloadFor, input.restaurantId, params)
+        : Promise.allSettled(pushes.map((p) => sendPush(p.profileId, payloadFor(p)))).then(() => undefined);
+
+    await Promise.all([emailTask, pushTask]);
+
+    return { delivered: inAppWritten ? inAppRows.length : 0 };
   } catch (error) {
     // Never throw — see the file header.
     console.error("[notify] failed", input.event, error);
     return { delivered: 0 };
+  }
+}
+
+/* ── Push-only refinements ─────────────────────────────────────────────── */
+
+/**
+ * Events a snooze or quiet-hours window must never silence: the order the
+ * kitchen has not seen, the question that stops the kitchen, the account
+ * being suspended, and the proof-of-push the person just asked for.
+ */
+const QUIET_EXEMPT_EVENTS: ReadonlySet<NotifyEvent> = new Set<NotifyEvent>([
+  "new_order",
+  "account",
+  "push_enabled",
+]);
+
+/**
+ * Should the PUSH stay quiet for this recipient right now? In-app and email
+ * are untouched — this only decides whether a phone buzzes.
+ *
+ * Windows are minutes-since-midnight in Africa/Douala (UTC+1, no DST — the
+ * same fixed offset checkout already anchors on). An overnight window
+ * (start > end) wraps midnight. A recipient with no window still has one for
+ * marketing: broadcasts default to quiet 21:00–07:00, because "opted in to
+ * promotions" is not "wake me for them".
+ */
+function pushSuppressedFor(
+  event: NotifyEvent,
+  params: NotifyParams,
+  master: NotificationChannels | undefined,
+): boolean {
+  if (QUIET_EXEMPT_EVENTS.has(event)) return false;
+  // The fee question blocks the kitchen until answered — never suppressed.
+  if (event === "order_status" && params.status === "awaiting_customer") return false;
+
+  const now = new Date();
+  if (master?.snoozedUntil && Date.parse(master.snoozedUntil) > now.getTime()) return true;
+
+  const minutesInDouala = (now.getUTCHours() * 60 + now.getUTCMinutes() + 60) % 1440;
+  const inWindow = (start: number, end: number) =>
+    start <= end
+      ? minutesInDouala >= start && minutesInDouala < end
+      : minutesInDouala >= start || minutesInDouala < end;
+
+  const start = master?.quietStart ?? null;
+  const end = master?.quietEnd ?? null;
+  if (start !== null && end !== null && start !== end) return inWindow(start, end);
+  if (event === "broadcast") return inWindow(21 * 60, 7 * 60);
+  return false;
+}
+
+/**
+ * Buttons on the banner, per event. Every button is a DEEP LINK — the tap
+ * opens the page where the real, authenticated, confirmed action lives.
+ * No mutation ever happens from the notification itself.
+ */
+function pushActionsFor(
+  event: NotifyEvent,
+  params: NotifyParams,
+  href: string | null,
+  locale: Locale,
+): PushPayload["actions"] {
+  if (!href) return undefined;
+  const fr = locale === "fr";
+
+  switch (event) {
+    case "new_order":
+      return [{ action: "view", title: fr ? "Voir la commande" : "View order", href }];
+    case "order_status":
+      // The one push that asks a question gets its answers as buttons. The
+      // links land on the order page with the choice preselected — the page
+      // still asks for the confirming tap, signed in.
+      if (params.status === "awaiting_customer") {
+        return [
+          { action: "fee-accept", title: fr ? "Accepter" : "Accept", href: `${href}?fee=accept` },
+          { action: "fee-decline", title: fr ? "Refuser" : "Decline", href: `${href}?fee=decline` },
+        ];
+      }
+      return undefined;
+    case "chat":
+    case "chat_reply":
+      return [{ action: "open", title: fr ? "Répondre" : "Reply", href }];
+    case "review_prompt":
+      return [{ action: "rate", title: fr ? "Noter" : "Rate", href }];
+    default:
+      return undefined;
+  }
+}
+
+interface QueuedPush {
+  profileId: string;
+  title: string;
+  body: string;
+  href: string | null;
+  tone: NotifyTone;
+  locale: Locale;
+}
+
+/**
+ * new_order push, with the answer kept.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  A NEW ORDER THAT REACHES ZERO DEVICES IS AN INCIDENT, NOT A LOG LINE.
+ *
+ *  Every other event is fire-and-forget, correctly. This one is the
+ *  business: if no staff device at the branch accepted the push — every
+ *  endpoint dead, or nobody ever subscribed — the order is waiting on an
+ *  email nobody may open and a bell nobody is looking at. The platform is
+ *  the only party who can still act (call the restaurant), so the admins
+ *  are told, once per restaurant thanks to the collapse tag, through the
+ *  broadcast passthrough (their events are always-on).
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+async function deliverNewOrderPush(
+  pushes: QueuedPush[],
+  payloadFor: (p: QueuedPush) => PushPayload,
+  restaurantId: string,
+  params: NotifyParams,
+): Promise<void> {
+  const results = await Promise.allSettled(
+    pushes.map((p) => sendPushWithReport(p.profileId, payloadFor(p))),
+  );
+
+  const reports = results
+    .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof sendPushWithReport>>> => r.status === "fulfilled")
+    .map((r) => r.value);
+
+  // Not configured / platform switch off is a chosen state, not an outage.
+  if (reports.length === 0 || !reports.some((r) => r.configured && r.platformEnabled)) return;
+
+  const anySent = reports.some((r) => r.devices.some((d) => d.status === "sent"));
+  const anyUnknown = reports.some((r) => r.queryFailed);
+  if (anySent || anyUnknown) return;
+
+  try {
+    const supabase = createAdminClient();
+    const { data } = await supabase
+      .from("restaurants")
+      .select("name")
+      .eq("id", restaurantId)
+      .maybeSingle();
+    const name = (data as { name?: string } | null)?.name ?? restaurantId;
+
+    await notify({
+      event: "broadcast",
+      tone: "error",
+      admins: true,
+      href: "/a/restaurants",
+      // Collapse per restaurant: a dead branch alerts once per lock screen,
+      // not once per order.
+      params: {
+        reference: `unreachable:${restaurantId}`,
+        subject: `Restaurant unreachable by push — ${name}`,
+        bodyText: `New order ${params.reference ?? ""} at ${name}: no staff device received the push. Staff may not know the order exists — call the restaurant.`,
+      },
+    });
+  } catch (error) {
+    console.error("[notify] unreachable-restaurant escalation failed", error);
   }
 }
