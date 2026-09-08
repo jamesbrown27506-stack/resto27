@@ -10,6 +10,7 @@ import { getCartConfig } from "@/lib/orders/cart-config";
 import { ToastProvider } from "@/components/ui/toast";
 import { CartProvider } from "@/components/cart/cart-provider";
 import { PwaPrompts } from "@/components/notifications/pwa-prompts";
+import { FirebaseInit } from "@/components/firebase/firebase-init";
 import { PushSync } from "@/components/notifications/push-sync";
 import { SkipLink } from "@/components/layout/skip-link";
 import { TranslationSafeBoundary } from "@/components/layout/translation-safe";
@@ -205,6 +206,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 somebody toggles the switch off and on again. See push-sync.
               */}
               <PushSync />
+              <FirebaseInit />
             </ToastProvider>
           </LocaleProvider>
         </TranslationSafeBoundary>

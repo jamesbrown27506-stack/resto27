@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertTriangle, Bell, BellRing, Mail, Moon, Pause, RotateCcw, Smartphone } from "lucide-react";
 import { BackgroundSettings } from "./background-settings";
+import { FirebaseMessagingSettings } from "@/components/firebase/firebase-messaging-settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
@@ -600,6 +601,8 @@ export function NotificationSettings({ className }: { className?: string }) {
             )}
 
             <BackgroundSettings />
+
+            <FirebaseMessagingSettings />
 
             {pushElsewhere && (
               <p className="text-xs text-text-light">

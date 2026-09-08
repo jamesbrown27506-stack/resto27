@@ -62,14 +62,14 @@ function contentSecurityPolicy(production: boolean): string {
   const upgrade = production ? " upgrade-insecure-requests;" : "";
   return [
     "default-src 'self'",
-    `script-src 'self' 'unsafe-inline' 'unsafe-eval'`,
+    `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.gstatic.com`,
     "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: blob: https://images.unsplash.com${https}`,
+    `img-src 'self' data: blob: https://images.unsplash.com${https} https://*.google-analytics.com https://*.googletagmanager.com`,
     // The notification sound: the built-ins from our own origin, an uploaded
     // one from the storage bucket.
     `media-src 'self' data: blob:${https}`,
     "font-src 'self' data:",
-    `connect-src 'self'${https}${sockets}`,
+    `connect-src 'self' https://firebaseinstallations.googleapis.com https://firebase.googleapis.com https://fcm.googleapis.com https://fcmregistrations.googleapis.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com${https}${sockets}`,
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
