@@ -315,7 +315,7 @@ const baseFr = {
 
   /* ── Restaurants directory ─────────────────────────────────────────── */
   "restaurants.title": "Restaurants",
-  "restaurants.subtitle": "Tous les établissements actifs sur RestoLink, à Douala et environs.",
+  "restaurants.subtitle": "Tous les établissements actifs sur Resto237, à Douala et environs.",
   "restaurants.searchPlaceholder": "Restaurant, plat ou cuisine…",
   "restaurants.sort": "Trier",
   "restaurants.sortRating": "Mieux notés",
@@ -1096,7 +1096,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
 
   /* ── Restaurants directory ─────────────────────────────────────────── */
   "restaurants.title": "Restaurants",
-  "restaurants.subtitle": "Every active restaurant on RestoLink, in Douala and around.",
+  "restaurants.subtitle": "Every active restaurant on Resto237, in Douala and around.",
   "restaurants.searchPlaceholder": "Restaurant, dish or cuisine…",
   "restaurants.sort": "Sort",
   "restaurants.sortRating": "Top rated",

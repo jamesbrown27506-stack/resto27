@@ -12,6 +12,11 @@ import {
 import { trySendMail } from "@/lib/mail";
 import { notify } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
+import {
+  SOCIAL_PLATFORMS,
+  socialUrlIsValid,
+  socialUrlKey,
+} from "@/lib/social-platforms";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -365,7 +370,7 @@ export async function replyToSupport(messageId: string, reply: string): Promise<
       to: message.email,
       replyTo: admin.email,
       subject: `Re: ${message.subject}`,
-      body: [`Hello ${message.name.split(" ")[0]},`, "", reply.trim(), "", "— RestoLink support"].join(
+      body: [`Hello ${message.name.split(" ")[0]},`, "", reply.trim(), "", "— Resto237 support"].join(
         "\n",
       ),
     });
@@ -494,9 +499,22 @@ export async function updateSettings(changes: Record<string, string>): Promise<A
   const supabase = createAdminClient();
 
   if ("push_provider" in changes) return { ok: false, error: "Use the Notification delivery panel to change providers." };
-  const entries = Object.entries(changes);
-  if (entries.length === 0) return { ok: true };
+  if (Object.keys(changes).length === 0) return { ok: true };
 
+  for (const platform of SOCIAL_PLATFORMS) {
+    const key = socialUrlKey(platform.id);
+    if (!(key in changes)) continue;
+    const value = changes[key].trim();
+    if (value && !socialUrlIsValid(platform.id, value)) {
+      return {
+        ok: false,
+        error: `Enter a complete HTTPS ${platform.label} profile URL on the official domain.`,
+      };
+    }
+    changes[key] = value;
+  }
+
+  const entries = Object.entries(changes);
   for (const [key, value] of entries) {
     const { error } = await supabase.from("settings").update({ value }).eq("key", key);
     if (error) {

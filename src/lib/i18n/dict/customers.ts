@@ -38,7 +38,7 @@ export const customersDict = defineDict({
 
     /* ── Inscrit ou invité ───────────────────────────────────────────── */
     "mcu.registered": "Inscrit",
-    "mcu.registeredHint": "A un compte RestoLink — ses commandes sont regroupées automatiquement.",
+    "mcu.registeredHint": "A un compte Resto237 — ses commandes sont regroupées automatiquement.",
     "mcu.guest": "Invité",
     "mcu.guestHint": "A commandé sans compte. Ses commandes sont regroupées par numéro de téléphone.",
 
@@ -82,7 +82,7 @@ export const customersDict = defineDict({
 
     /* ── Registered or guest ─────────────────────────────────────────── */
     "mcu.registered": "Registered",
-    "mcu.registeredHint": "Has a RestoLink account — their orders are grouped automatically.",
+    "mcu.registeredHint": "Has a Resto237 account — their orders are grouped automatically.",
     "mcu.guest": "Guest",
     "mcu.guestHint": "Ordered without an account. Their orders are grouped by phone number.",
 

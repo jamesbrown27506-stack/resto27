@@ -72,7 +72,7 @@ export const custReservationsDict = defineDict({
     "crs.payPendingBody":
       "Validez la demande sur votre téléphone. La page se met à jour automatiquement.",
     "crs.payPendingHint":
-      "Vous pouvez fermer cet écran sans interrompre le paiement. CamerPay et RestoLink continuent de le suivre en arrière-plan.",
+      "Vous pouvez fermer cet écran sans interrompre le paiement. CamerPay et Resto237 continuent de le suivre en arrière-plan.",
     "crs.pendingBanner":
       "Votre paiement Mobile Money attend toujours sa confirmation. Ne lancez pas un deuxième paiement.",
     "crs.viewPayment": "Voir le paiement en cours",
@@ -157,7 +157,7 @@ export const custReservationsDict = defineDict({
     "crs.payPendingBody":
       "Approve the request on your phone. This page updates automatically.",
     "crs.payPendingHint":
-      "You may close this screen without interrupting payment. CamerPay and RestoLink will keep tracking it in the background.",
+      "You may close this screen without interrupting payment. CamerPay and Resto237 will keep tracking it in the background.",
     "crs.pendingBanner":
       "Your Mobile Money payment is still awaiting confirmation. Do not start a second payment.",
     "crs.viewPayment": "View pending payment",

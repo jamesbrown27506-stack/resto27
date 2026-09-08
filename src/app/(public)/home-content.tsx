@@ -2,14 +2,13 @@
 
 import Link from "@/components/layout/public-link";
 import Image from "next/image";
-import { Bike, ChefHat, CreditCard, Search, ShoppingBag, Star, Store } from "lucide-react";
+import { ArrowRight, Bike, ChefHat, CreditCard, Search, ShoppingBag, Star, Store } from "lucide-react";
 import { Hero } from "@/components/marketing/hero";
 import { Faq } from "@/components/marketing/faq";
 import { PricingGrid } from "@/components/marketing/pricing-grid";
 import type { PublicPlan } from "@/lib/data/plans";
 import {
   CtaBanner,
-  FeatureRow,
   SectionHeader,
   StatStrip,
   StepList,
@@ -95,9 +94,7 @@ export function HomeContent({
         </div>
       )}
       <Hero
-        cuisines={cuisines}
         quartiers={quartiers}
-        stats={stats}
         statsVisible={statsVisible}
         appearance={appearance}
       />
@@ -108,7 +105,6 @@ export function HomeContent({
         band is worse than no band, and StatStrip refuses an empty list anyway
         so no future caller can paint one either.
       */}
-      <div className="container-page py-4"><Link href="/explore" className="text-sm font-semibold text-primary">{locale === "fr" ? "Explorer les plats et quartiers de Douala →" : "Explore food and neighbourhoods in Douala →"}</Link></div>
       <StatStrip
         items={[
           ...(statsVisible.restaurants
@@ -149,6 +145,27 @@ export function HomeContent({
             : []),
         ]}
       />
+
+      <nav
+        aria-label={locale === "fr" ? "Découvrir par cuisine" : "Discover by cuisine"}
+        className="container-page flex flex-col gap-4 py-8 sm:flex-row sm:items-center sm:justify-between"
+      >
+        <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
+          {cuisines.slice(0, 6).map((cuisine) => (
+            <Link
+              key={cuisine}
+              href={`/restaurants?cuisine=${encodeURIComponent(cuisine)}`}
+              className="shrink-0 rounded-full border border-border bg-surface px-4 py-2 text-sm font-semibold transition-colors hover:border-primary hover:text-primary"
+            >
+              {cuisine}
+            </Link>
+          ))}
+        </div>
+        <Link href="/explore" className="inline-flex shrink-0 items-center gap-2 text-sm font-semibold text-primary">
+          {locale === "fr" ? "Tout explorer" : "Explore everything"}
+          <ArrowRight className="size-4" aria-hidden />
+        </Link>
+      </nav>
 
       {/* ── Popular dishes ─────────────────────────────────────────────── */}
       <section className="bg-primary-light py-20">
@@ -238,69 +255,68 @@ export function HomeContent({
       <section className="bg-surface-2 py-20">
         <div className="container-page">
           <SectionHeader
+            align="left"
             tag={t("home.owners.tag")}
             title={t("home.owners.title")}
             subtitle={t("home.owners.subtitle")}
           />
 
-          <div className="flex flex-col gap-20">
-            <FeatureRow
-              icon={<ChefHat />}
-              title={t("home.kitchen.title")}
-              description={t("home.kitchen.body")}
-              bullets={[t("home.kitchen.b1"), t("home.kitchen.b2"), t("home.kitchen.b3")]}
-              cta={{ href: planCtaHref(userArea), label: t("home.kitchen.cta") }}
-              visual={
-                <div className="relative size-full">
-                  <Image
-                    src={appearance.homeKitchen}
-                    alt={t("home.alt.kitchen")}
-                    fill
-                    sizes="(min-width: 1024px) 50vw, 100vw"
-                    className="object-cover"
-                  />
-                </div>
-              }
-            />
+          <div className="grid gap-6 lg:grid-cols-[1.08fr_.92fr]">
+            <div className="relative min-h-[28rem] overflow-hidden rounded-xl border border-border">
+              <Image
+                src={appearance.homeKitchen}
+                alt={t("home.alt.kitchen")}
+                fill
+                sizes="(min-width: 1024px) 54vw, 100vw"
+                className="object-cover"
+              />
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-6 pt-24 text-white sm:p-8">
+                <p className="max-w-md font-display text-2xl font-bold sm:text-3xl">
+                  {t("home.kitchen.title")}
+                </p>
+                <p className="mt-2 max-w-lg text-sm leading-relaxed text-white/80">
+                  {t("home.kitchen.body")}
+                </p>
+              </div>
+            </div>
 
-            <FeatureRow
-              reverse
-              icon={<Store />}
-              title={t("home.branches.title")}
-              description={t("home.branches.body")}
-              bullets={[t("home.branches.b1"), t("home.branches.b2"), t("home.branches.b3")]}
-              cta={{ href: "/pricing", label: t("home.branches.cta") }}
-              visual={
-                <div className="relative size-full">
-                  <Image
-                    src={appearance.homeBranches}
-                    alt={t("home.alt.branches")}
-                    fill
-                    sizes="(min-width: 1024px) 50vw, 100vw"
-                    className="object-cover"
-                  />
-                </div>
-              }
-            />
-
-            <FeatureRow
-              icon={<CreditCard />}
-              title={t("home.payment.title")}
-              description={t("home.payment.body")}
-              bullets={[t("home.payment.b1"), t("home.payment.b2"), t("home.payment.b3")]}
-              cta={{ href: "/pricing", label: t("home.payment.cta") }}
-              visual={
-                <div className="relative size-full">
-                  <Image
-                    src={appearance.homePayment}
-                    alt={t("home.alt.payment")}
-                    fill
-                    sizes="(min-width: 1024px) 50vw, 100vw"
-                    className="object-cover"
-                  />
-                </div>
-              }
-            />
+            <div className="grid gap-4">
+              {[
+                {
+                  Icon: ChefHat,
+                  title: t("home.kitchen.title"),
+                  body: t("home.kitchen.b1"),
+                },
+                {
+                  Icon: Store,
+                  title: t("home.branches.title"),
+                  body: t("home.branches.body"),
+                },
+                {
+                  Icon: CreditCard,
+                  title: t("home.payment.title"),
+                  body: t("home.payment.body"),
+                },
+              ].map(({ Icon, title, body }) => (
+                <article key={title} className="flex gap-4 rounded-lg border border-border bg-surface p-5">
+                  <span className="grid size-11 shrink-0 place-items-center rounded-md bg-primary-light text-primary">
+                    <Icon className="size-5" aria-hidden />
+                  </span>
+                  <div>
+                    <h3 className="font-display text-lg font-bold">{title}</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-text-secondary">{body}</p>
+                  </div>
+                </article>
+              ))}
+              <div className="flex flex-wrap gap-3 pt-2">
+                <Link href={planCtaHref(userArea)} className={buttonClasses()}>
+                  {t("home.kitchen.cta")}
+                </Link>
+                <Link href="/pricing" className={buttonClasses({ variant: "outline" })}>
+                  {t("home.branches.cta")}
+                </Link>
+              </div>
+            </div>
           </div>
         </div>
       </section>

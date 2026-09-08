@@ -29,7 +29,7 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
  * The messaging screen, shared by every side.
  *
  *  · customer — /messages   : their threads + a "new conversation" form
- *    (pick a restaurant, or write to the RestoLink team);
+ *    (pick a restaurant, or write to the Resto237 team);
  *  · staff    — /m/messages : the ACTIVE branch's threads (branch-scoped);
  *  · platform — /m/messages : the RESTAURANT'S OWN thread with the platform.
  *    Same screen, other direction: here the manager is the one writing, and
@@ -77,7 +77,7 @@ export function ChatInbox({
    */
   initialConversationId?: string | null;
   /**
-   * THE PLATFORM'S OWN NAME, from /a/settings — not the string "RestoLink".
+   * THE PLATFORM'S OWN NAME, from /a/settings — not the string "Resto237".
    *
    * Half this screen is about writing to "the team", and every one of those
    * sentences had the default brand name baked into the translation. Renaming

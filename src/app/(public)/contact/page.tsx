@@ -9,6 +9,9 @@ import { getTranslator } from "@/lib/i18n/locale-server";
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { planCtaHref } from "@/lib/nav";
 import { ContactForm } from "./contact-form";
+import { getBranding } from "@/lib/branding";
+import { getSocialLinks } from "@/lib/social-links";
+import { SocialIcon } from "@/components/icons/social-icon";
 
 const baseMetadata: Metadata = {
   title: "Contact et assistance",
@@ -18,8 +21,13 @@ const baseMetadata: Metadata = {
 };
 
 export default async function ContactPage() {
-  const t = await getTranslator();
-  const user = await getHeaderUser();
+  const [t, user, brand, socialLinks, locale] = await Promise.all([
+    getTranslator(),
+    getHeaderUser(),
+    getBranding(),
+    getSocialLinks(),
+    seoLocale(),
+  ]);
 
   return (
     <div className="container-page py-14 lg:py-20">
@@ -47,20 +55,20 @@ export default async function ContactPage() {
                   {
                     Icon: Mail,
                     label: t("mk.contact.emailLabel"),
-                    value: "contact@restolink.cm",
-                    href: "mailto:contact@restolink.cm",
+                    value: brand.supportEmail,
+                    href: `mailto:${brand.supportEmail}`,
                   },
-                  {
+                  ...(brand.supportPhone ? [{
                     Icon: Phone,
                     label: t("mk.contact.phoneLabel"),
-                    value: "+237 6 99 00 00 00",
-                    href: "tel:+237699000000",
-                  },
-                  {
+                    value: brand.supportPhone,
+                    href: `tel:${brand.supportPhone.replace(/[^+\\d]/g, "")}`,
+                  }] : []),
+                  ...(brand.supportAddress ? [{
                     Icon: MapPin,
                     label: t("mk.contact.addressLabel"),
-                    value: "Akwa, Douala, Cameroun",
-                  },
+                    value: brand.supportAddress,
+                  }] : []),
                   { Icon: Clock, label: t("mk.contact.hoursLabel"), value: t("mk.contact.hoursValue") },
                 ].map(({ Icon, label, value, href }) => (
                   <li key={label} className="flex items-start gap-3">
@@ -84,6 +92,36 @@ export default async function ContactPage() {
               </ul>
             </CardBody>
           </Card>
+
+          {socialLinks.length > 0 && (
+            <Card>
+              <CardBody>
+                <h2 className="font-display text-lg font-bold">
+                  {locale === "fr" ? "Suivez-nous" : "Follow us"}
+                </h2>
+                <p className="mt-1 text-sm text-text-secondary">
+                  {locale === "fr"
+                    ? "Retrouvez nos actualités et nos nouveaux restaurants."
+                    : "See our latest updates and newly added restaurants."}
+                </p>
+                <ul className="mt-4 flex flex-wrap gap-2">
+                  {socialLinks.map((link) => (
+                    <li key={link.platform}>
+                      <a
+                        href={link.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex min-h-11 items-center gap-2 rounded-full border border-border bg-surface-2 px-4 text-sm font-semibold transition-colors hover:border-primary hover:text-primary"
+                      >
+                        <SocialIcon platform={link.platform} className="size-4" />
+                        {link.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </CardBody>
+            </Card>
+          )}
 
           <Card className="bg-primary-light">
             <CardBody>

@@ -27,14 +27,14 @@
   /* Text */
   --text: #1c1c1c;
   --text-secondary: #5a5a52;
-  --text-light: #9a9488;
+  --text-light: #756f64;
 
   /* Brand */
   --primary: #5f7257;
   --primary-hover: #3d4f38;
   --primary-light: #eff5ee;
   --primary-fg: #ffffff;
-  --accent: #d4a373;
+  --accent: #9a6234;
   --accent-hover: #b07d4e;
   --accent-fg: #ffffff;
 
@@ -45,8 +45,12 @@
   --warning-light: #fbf1e3;
   --info: #4a6e8a;
   --info-light: #eaf1f6;
-  --error: #e04848;
+  --error: #bd2f39;
   --error-light: #fdecec;
+
+  /* A stable brand surface for the footer and large calls to action. */
+  --brand-solid: #33462f;
+  --brand-on-solid: #f7f4ed;
 
   /* Radii — raw tokens are --r-*; @theme maps them onto rounded-* utilities.
      They must not share a name with the Tailwind namespace or the mapping
@@ -95,6 +99,9 @@
   --error: #f07a7a;
   --error-light: #2b1a1a;
 
+  --brand-solid: #263622;
+  --brand-on-solid: #f7f4ed;
+
   --sh-sm: 0 2px 8px rgb(0 0 0 / 0.4);
   --sh-md: 0 6px 24px rgb(0 0 0 / 0.5);
   --sh-lg: 0 16px 48px rgb(0 0 0 / 0.6);
@@ -136,6 +143,8 @@
   --color-info-light: var(--info-light);
   --color-error: var(--error);
   --color-error-light: var(--error-light);
+  --color-brand-solid: var(--brand-solid);
+  --color-brand-on-solid: var(--brand-on-solid);
 
   --font-display: var(--font-playfair), Georgia, serif;
   --font-sans: var(--font-inter), system-ui, sans-serif;

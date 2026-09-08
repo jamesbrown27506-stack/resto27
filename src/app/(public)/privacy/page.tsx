@@ -8,7 +8,7 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
 const baseMetadata: Metadata = {
   title: "Politique de confidentialité",
   description:
-    "Comment RestoLink collecte, utilise et protège vos données personnelles au Cameroun.",
+    "Comment Resto237 collecte, utilise et protège vos données personnelles au Cameroun.",
   alternates: { canonical: "/privacy" },
   robots: { index: true, follow: true },
 };

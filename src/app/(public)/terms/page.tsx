@@ -8,7 +8,7 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
 const baseMetadata: Metadata = {
   title: "Conditions d'utilisation",
   description:
-    "Les conditions d'utilisation de RestoLink pour les clients et pour les restaurants partenaires.",
+    "Les conditions d'utilisation de Resto237 pour les clients et pour les restaurants partenaires.",
   alternates: { canonical: "/terms" },
 };
 

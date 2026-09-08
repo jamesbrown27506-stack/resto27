@@ -8,7 +8,7 @@ import { getSettingsMap } from "@/lib/settings-map";
  * ─────────────────────────────────────────────────────────────────────────
  *  ONE READ, ONE SOURCE, EVERY SURFACE.
  *
- *  Before this existed, "RestoLink" was a string literal in the header, the
+ *  Before this existed, "Resto237" was a string literal in the header, the
  *  footer, the auth shell, the sidebar and four `metadata` blocks. Changing
  *  the platform name in /a/settings wrote a row nothing ever read, so the
  *  setting appeared to do nothing — which is worse than not offering it.
@@ -28,6 +28,8 @@ export interface Branding {
   /** The PWA/home-screen icon (migration 0021), or null for the default. */
   iconUrl: string | null;
   supportEmail: string;
+  supportPhone: string | null;
+  supportAddress: string | null;
 }
 
 /**
@@ -37,12 +39,14 @@ export interface Branding {
  * install should look finished, not broken.
  */
 export const DEFAULT_BRANDING: Branding = {
-  name: "RestoLink",
+  name: "Resto237",
   tagline: "Commandez vos plats préférés au Cameroun",
   logoUrl: null,
   faviconUrl: null,
   iconUrl: null,
-  supportEmail: "contact@restolink.cm",
+  supportEmail: "contact@resto237.online",
+  supportPhone: null,
+  supportAddress: "Douala, Cameroun",
 };
 
 /**
@@ -70,5 +74,7 @@ export const getBranding = cache(async (): Promise<Branding> => {
     faviconUrl: map.get("brand_favicon_url")?.trim() || null,
     iconUrl: map.get("brand_icon_url")?.trim() || null,
     supportEmail: map.get("support_email")?.trim() || DEFAULT_BRANDING.supportEmail,
+    supportPhone: map.get("support_phone")?.trim() || null,
+    supportAddress: map.get("support_address")?.trim() || null,
   };
 });

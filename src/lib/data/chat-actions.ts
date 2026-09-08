@@ -402,7 +402,7 @@ export async function sendMessage(input: {
     /*
       The reply is signed by whoever actually answered: the restaurant by
       its name on a restaurant thread, the platform by its own on a
-      platform thread. "Réponse de RestoLink" from Chez Pauline read as a
+      platform thread. "Réponse de Resto237" from Chez Pauline read as a
       glitch at the exact moment the feature was proving itself.
     */
     let restaurantName: string | undefined;

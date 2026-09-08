@@ -813,15 +813,15 @@ export async function inviteStaff(input: {
 
   const mail = await trySendMail({
     to: email,
-    subject: `Rejoignez ${active.restaurantName} sur RestoLink`,
+    subject: `Rejoignez ${active.restaurantName} sur Resto237`,
     body: [
       `Bonjour${input.name ? ` ${input.name}` : ""},`,
       "",
-      `${profile.name} vous invite à rejoindre l'équipe de ${active.restaurantName} sur RestoLink.`,
+      `${profile.name} vous invite à rejoindre l'équipe de ${active.restaurantName} sur Resto237.`,
       "",
       `Créez votre compte avec cette adresse (${email}) pour accéder au tableau de bord.`,
       "",
-      "— RestoLink",
+      "— Resto237",
     ].join("\n"),
   });
 

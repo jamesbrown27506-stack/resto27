@@ -70,7 +70,7 @@ export const staffDict = defineDict({
     /* Invitation */
     "mst.invite.title": "Inviter un membre",
     "mst.invite.email": "Adresse email",
-    "mst.invite.emailHint": "Si elle a déjà un compte RestoLink, l'accès est immédiat.",
+    "mst.invite.emailHint": "Si elle a déjà un compte Resto237, l'accès est immédiat.",
     "mst.invite.emailPh": "collegue@restaurant.cm",
     "mst.invite.emailInvalid": "Cette adresse email n'est pas valide.",
     "mst.invite.name": "Nom",
@@ -167,7 +167,7 @@ export const staffDict = defineDict({
 
     "mst.invite.title": "Invite a team member",
     "mst.invite.email": "Email address",
-    "mst.invite.emailHint": "If they already have a RestoLink account, access is immediate.",
+    "mst.invite.emailHint": "If they already have a Resto237 account, access is immediate.",
     "mst.invite.emailPh": "colleague@restaurant.cm",
     "mst.invite.emailInvalid": "That email address is not valid.",
     "mst.invite.name": "Name",

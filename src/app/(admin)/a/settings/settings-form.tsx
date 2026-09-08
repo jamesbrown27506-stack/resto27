@@ -12,8 +12,10 @@ import {
   Palette,
   ReceiptText,
   Save,
+  Share2,
   Settings as Cog,
 } from "lucide-react";
+import { SocialIcon } from "@/components/icons/social-icon";
 import { Button } from "@/components/ui/button";
 import { CardBody, Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -25,6 +27,11 @@ import { clearBrandingAsset, uploadBrandingAsset } from "@/lib/data/profile-acti
 import { SoundPicker } from "./sound-picker";
 import type { SettingRow } from "@/lib/data/platform";
 import { cn } from "@/lib/utils";
+import {
+  SOCIAL_PLATFORMS,
+  socialEnabledKey,
+  socialUrlKey,
+} from "@/lib/social-platforms";
 
 /**
  * Tabbed settings.
@@ -52,6 +59,7 @@ import { cn } from "@/lib/utils";
  */
 const TABS = [
   { id: "branding", label: "Branding", icon: Palette, hint: "Read by every page, tab, email and share card." },
+  { id: "social", label: "Social presence", icon: Share2, hint: "Choose the profiles shown publicly. A platform appears only when it is enabled and has a valid URL." },
   { id: "homepage", label: "Home page", icon: LayoutDashboard, hint: "Which figures the landing page advertises. Hide the ones that measure how small the platform is; keep the ones that measure how good it is. All four off removes the band entirely." },
   { id: "money", label: "Money", icon: Banknote, hint: "XAF is zero-decimal — every amount is whole francs." },
   { id: "billing", label: "Billing", icon: ReceiptText, hint: "Grace exists because mobile money renewal is not instant." },
@@ -317,8 +325,74 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
           </Panel>
         )}
 
+        {active === "social" && (
+          <Panel
+            title="Social profiles"
+            description="Keep each link in one place. Disabled profiles stay saved here but disappear from the public site."
+          >
+            <CardBody className="grid gap-4 sm:grid-cols-2">
+              {SOCIAL_PLATFORMS.map((platform) => {
+                const enabledKey = socialEnabledKey(platform.id);
+                const urlKey = socialUrlKey(platform.id);
+                const enabled = draft[enabledKey] === "true";
+
+                return (
+                  <section
+                    key={platform.id}
+                    className={cn(
+                      "rounded-lg border p-4 transition-colors",
+                      enabled ? "border-primary/35 bg-primary-light/55" : "border-border bg-surface-2",
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="grid size-10 place-items-center rounded-full bg-surface text-text shadow-sm">
+                        <SocialIcon platform={platform.id} className="size-4.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold">{platform.label}</p>
+                        <p className="text-xs text-text-light">
+                          {enabled ? "Visible on the public site" : "Hidden from the public site"}
+                        </p>
+                      </div>
+                      <Switch
+                        label={`Show ${platform.label}`}
+                        className="shrink-0 [&>span:last-child]:sr-only"
+                        checked={enabled}
+                        onChange={(event) =>
+                          setDraft((previous) => ({
+                            ...previous,
+                            [enabledKey]: event.target.checked ? "true" : "false",
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <Field
+                      className="mt-4"
+                      label={`${platform.label} profile URL`}
+                      htmlFor={`set-${urlKey}`}
+                      hint={enabled && !draft[urlKey]?.trim() ? "Add the URL before this profile can appear." : undefined}
+                    >
+                      <Input
+                        id={`set-${urlKey}`}
+                        type="url"
+                        value={draft[urlKey] ?? ""}
+                        placeholder={platform.placeholder}
+                        autoComplete="url"
+                        onChange={(event) =>
+                          setDraft((previous) => ({ ...previous, [urlKey]: event.target.value }))
+                        }
+                      />
+                    </Field>
+                  </section>
+                );
+              })}
+            </CardBody>
+          </Panel>
+        )}
+
         {/* ── The category's own settings ────────────────────────────── */}
-        {rows.length > 0 && (
+        {rows.length > 0 && active !== "social" && (
           <Panel title={activeTab?.label ?? "Settings"}>
             <CardBody className="flex flex-col gap-5">
               {rows.map((setting) => {

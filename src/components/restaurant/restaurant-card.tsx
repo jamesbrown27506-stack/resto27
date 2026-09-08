@@ -43,31 +43,7 @@ export function RestaurantCard({
   return (
     <article className="group relative overflow-hidden rounded-lg border border-border bg-surface transition-all duration-200 hover:-translate-y-1 hover:shadow-md">
       <div className="relative aspect-[4/3] overflow-hidden">
-        {/*
-          THE LOGO IS THE RESTAURANT'S FACE IN A LIST.
-
-          A directory is a row of restaurants being told apart, and the mark is
-          what does that — it is designed to be recognised at thumbnail size,
-          which a photograph of a dining room is not. The cover photo has its
-          own place: the full-width banner on the restaurant's own page, where
-          it is large enough to be atmosphere rather than a smudge.
-
-          CONTAINED, NEVER CROPPED. `object-cover` on a square mark inside a
-          4:3 tile throws away the top and bottom — tiles came out as the
-          middle third of a wordmark with the words cut in half. A cover
-          photograph is made to be cropped; a logo is not. So it sits whole on
-          a neutral ground, and only a restaurant with no logo at all falls
-          back to its cover photo, which IS croppable.
-        */}
-        {restaurant.logoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={restaurant.logoUrl}
-            alt=""
-            loading="lazy"
-            className="size-full bg-surface-2 object-contain p-6 transition-transform duration-500 group-hover:scale-105"
-          />
-        ) : restaurant.coverUrl ? (
+        {restaurant.coverUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={restaurant.coverUrl}
@@ -87,6 +63,12 @@ export function RestaurantCard({
             acceptingOrders={restaurant.isAcceptingOrders}
           />
         </div>
+        {restaurant.logoUrl && (
+          <span className="absolute bottom-3 left-3 grid size-12 place-items-center overflow-hidden rounded-md border border-white/70 bg-white p-1 shadow-md">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={restaurant.logoUrl} alt="" loading="lazy" className="size-full object-contain" />
+          </span>
+        )}
         {action && <div className="absolute top-3 right-3">{action}</div>}
       </div>
 
@@ -118,14 +100,18 @@ export function RestaurantCard({
         <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{restaurant.description}</p>
 
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-text-secondary">
-          <RatingStars value={restaurant.rating} size="sm" showValue count={restaurant.reviewCount} />
+          {restaurant.reviewCount > 0 ? (
+            <RatingStars value={restaurant.rating} size="sm" showValue count={restaurant.reviewCount} />
+          ) : (
+            <span className="font-medium text-text-light">{t("cbr.noReviews")}</span>
+          )}
           <span className="inline-flex items-center gap-1">
             <MapPin className="size-3 text-primary" aria-hidden />
             {restaurant.quartier}
           </span>
           {/* The estimate is a DELIVERY time; a pickup-only restaurant must not
               promise one. The mode badges below carry its real offer. */}
-          {restaurant.acceptsDelivery && (
+          {restaurant.acceptsDelivery && restaurant.minimumOrder > 0 && (
             <span className="inline-flex items-center gap-1">
               <Clock className="size-3 text-primary" aria-hidden />
               {restaurant.deliveryEstimateMin} min

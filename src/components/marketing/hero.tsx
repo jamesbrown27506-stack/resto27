@@ -5,20 +5,16 @@ import { publicHref } from "@/lib/seo-config";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
-  Bike,
   CalendarCheck,
   Compass,
   MapPin,
   Search,
   ShoppingBag,
-  Star,
   Users,
-  UtensilsCrossed,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
-import type { PublicStats } from "@/lib/data/public";
 import type { Appearance } from "@/lib/appearance";
 import { allHomeStatsHidden, type HomeStatsVisibility } from "@/lib/home-stats";
 
@@ -100,15 +96,11 @@ const SLIDES: Slide[] = [
 ];
 
 export function Hero({
-  cuisines,
   quartiers,
-  stats,
   statsVisible,
   appearance,
 }: {
-  cuisines: string[];
   quartiers: string[];
-  stats: PublicStats;
   /** Which figures may be shown. Same four switches as the strip below. */
   statsVisible: HomeStatsVisibility;
   appearance: Appearance;
@@ -122,7 +114,6 @@ export function Hero({
   const [guests, setGuests] = useState("2");
   const [date, setDate] = useState("");
   const slide = SLIDES[index];
-  const numberFormat = new Intl.NumberFormat("fr-FR");
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -149,26 +140,16 @@ export function Hero({
   return (
     <section className="relative isolate overflow-hidden">
       {/* ── The photograph, full bleed ─────────────────────────────────── */}
-      {SLIDES.map((s, i) => (
-        <div
-          key={s.mode}
-          aria-hidden={i !== index}
-          className={cn(
-            "absolute inset-0 transition-opacity duration-700",
-            i === index ? "opacity-100" : "pointer-events-none opacity-0",
-          )}
-        >
-          <Image
-            src={appearance[s.art]}
-            alt={i === index ? t(s.artAlt) : ""}
-            fill
-            sizes="100vw"
-            className="object-cover"
-            // The first slide's photo IS the LCP element of the whole site.
-            priority={i === 0}
-          />
-        </div>
-      ))}
+      <div key={slide.mode} className="absolute inset-0 animate-fade">
+        <Image
+          src={appearance[slide.art]}
+          alt={t(slide.artAlt)}
+          fill
+          sizes="100vw"
+          className="object-cover"
+          priority={index === 0}
+        />
+      </div>
 
       {/*
         The scrim. Two gradients rather than one flat wash: the left column is
@@ -330,64 +311,7 @@ export function Hero({
           </div>
         )}
 
-        {/* ── One-tap paths: the cuisines people actually search ─────────── */}
-        {cuisines.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="mr-1 text-sm font-medium text-white/70">{t("hero.popular")}</span>
-            {cuisines.slice(0, 6).map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => router.push(publicHref(`/restaurants?cuisine=${encodeURIComponent(c)}`, locale))}
-                className="rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium text-white ring-1 ring-white/25 backdrop-blur-md transition-colors hover:bg-white hover:text-neutral-900"
-              >
-                <span>{c}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/*
-          ── Trust, quietly ───────────────────────────────────────────────
-
-          The SAME four switches as the strip below the fold. Gating one place
-          and not the other is how a platform ends up hiding "1 restaurant"
-          from the band and announcing it in the hero, forty pixels higher and
-          in larger type. "No account needed" is not a statistic and always
-          stays.
-        */}
-        <ul className="flex flex-wrap items-center gap-x-7 gap-y-2 text-sm text-white/80">
-          {statsVisible.rating && (
-            <li className="inline-flex items-center gap-2">
-              <Star className="size-4 fill-accent text-accent" aria-hidden />
-              <strong className="tnum font-semibold text-white">
-                {stats.averageRating > 0
-                  ? `${stats.averageRating.toFixed(1).replace(".", ",")}/5`
-                  : "—"}
-              </strong>
-              <span>{stats.reviewCount ? `${stats.reviewCount} ${locale === "fr" ? "avis" : "reviews"}` : (locale === "fr" ? "Aucun avis" : "No reviews yet")}</span>
-            </li>
-          )}
-          {statsVisible.restaurants && (
-            <li className="inline-flex items-center gap-2">
-              <UtensilsCrossed className="size-4 text-accent" aria-hidden />
-              <strong className="tnum font-semibold text-white">
-                {numberFormat.format(stats.restaurantCount)}
-              </strong>
-              <span>{t("hero.trust.restaurants")}</span>
-            </li>
-          )}
-          {statsVisible.delivery && (
-            <li className="inline-flex items-center gap-2">
-              <Bike className="size-4 text-accent" aria-hidden />
-              <strong className="tnum font-semibold text-white">
-                {Math.round(stats.averageDeliveryMinutes)} min
-              </strong>
-              <span>{t("home.stats.delivery")}</span>
-            </li>
-          )}
-          <li className="text-white/60">{t("hero.search.noAccount")}</li>
-        </ul>
+        <p className="text-sm text-white/70">{t("hero.search.noAccount")}</p>
       </div>
     </section>
   );

@@ -1107,7 +1107,7 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
       siteUrl().catch(() => ""),
       getBranding().catch(() => null),
     ]);
-    const brandName = branding?.name?.trim() || "RestoLink";
+    const brandName = branding?.name?.trim() || "Resto237";
 
     // ── Deliver per recipient, each channel fenced ──────────────────────
     const inAppRows: { profile_id: string; title: string; body: string; tone: NotifyTone; href: string | null }[] = [];

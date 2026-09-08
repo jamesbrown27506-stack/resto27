@@ -47,7 +47,7 @@ export async function sendTestEmail(): Promise<MailTestResult> {
 
   const result = await sendMail({
     to: admin.email,
-    subject: "RestoLink — test email",
+    subject: "Resto237 — test email",
     body: [
       `Hello ${admin.name.split(" ")[0]},`,
       "",

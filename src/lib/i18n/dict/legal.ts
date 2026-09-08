@@ -23,7 +23,7 @@ export const legalDict = defineDict({
 
     "leg.terms.objet": "Objet",
     "leg.terms.objet.p1":
-      "RestoLink met en relation des clients et des restaurants au Cameroun. La plateforme permet de commander des repas en livraison ou à emporter, de réserver une table, et donne aux restaurants les outils de gestion de leur service.",
+      "Resto237 met en relation des clients et des restaurants au Cameroun. La plateforme permet de commander des repas en livraison ou à emporter, de réserver une table, et donne aux restaurants les outils de gestion de leur service.",
     "leg.terms.objet.p2": "L'utilisation de la plateforme implique l'acceptation pleine et entière des présentes conditions.",
 
     "leg.terms.comptes": "Comptes",
@@ -104,13 +104,13 @@ export const legalDict = defineDict({
 
     "leg.privacy.droits": "Vos droits",
     "leg.privacy.droits.p1":
-      "Vous pouvez consulter, corriger ou faire supprimer vos données personnelles à tout moment depuis votre compte, ou en nous écrivant à contact@restolink.cm.",
+      "Vous pouvez consulter, corriger ou faire supprimer vos données personnelles à tout moment depuis votre compte, ou en nous écrivant à contact@resto237.online.",
     "leg.privacy.droits.p2":
       "Vous pouvez également refuser les emails non essentiels depuis vos paramètres de notification, sans perdre les messages liés à vos commandes en cours.",
 
     "leg.privacy.contact": "Nous contacter",
     "leg.privacy.contact.p1":
-      "Pour toute question relative à cette politique, écrivez-nous à contact@restolink.cm ou utilisez le formulaire de contact.",
+      "Pour toute question relative à cette politique, écrivez-nous à contact@resto237.online ou utilisez le formulaire de contact.",
   },
   en: {
     /* ── LegalPage shell ─────────────────────────────────────────────── */
@@ -125,7 +125,7 @@ export const legalDict = defineDict({
 
     "leg.terms.objet": "Purpose",
     "leg.terms.objet.p1":
-      "RestoLink connects customers and restaurants in Cameroon. The platform allows ordering meals for delivery or pickup, booking a table, and gives restaurants the tools to manage their service.",
+      "Resto237 connects customers and restaurants in Cameroon. The platform allows ordering meals for delivery or pickup, booking a table, and gives restaurants the tools to manage their service.",
     "leg.terms.objet.p2":
       "Using the platform means fully accepting these terms.",
 
@@ -207,12 +207,12 @@ export const legalDict = defineDict({
 
     "leg.privacy.droits": "Your rights",
     "leg.privacy.droits.p1":
-      "You can view, correct or delete your personal data at any time from your account, or by writing to contact@restolink.cm.",
+      "You can view, correct or delete your personal data at any time from your account, or by writing to contact@resto237.online.",
     "leg.privacy.droits.p2":
       "You can also opt out of non-essential emails from your notification settings, without losing messages about your current orders.",
 
     "leg.privacy.contact": "Contact us",
     "leg.privacy.contact.p1":
-      "For any question about this policy, write to contact@restolink.cm or use the contact form.",
+      "For any question about this policy, write to contact@resto237.online or use the contact form.",
   },
 });

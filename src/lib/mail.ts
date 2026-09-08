@@ -82,14 +82,14 @@ function config(): { ok: true; smtp: SmtpConfig } | { ok: false; reason: string 
    * nobody reads. Caught here, before the send, because the symptom otherwise
    * appears in the recipient's inbox rather than in any log of ours.
    *
-   * A display name is fine: "RestoLink <you@gmail.com>" works.
+   * A display name is fine: "Resto237 <you@gmail.com>" works.
    */
   if (host!.includes("gmail") || host!.includes("googlemail")) {
     const address = from!.match(/<([^>]+)>/)?.[1] ?? from!;
     if (address.trim().toLowerCase() !== user!.trim().toLowerCase()) {
       return {
         ok: false,
-        reason: `Gmail only sends as the account itself. MAIL_FROM must use ${user} — a display name like "RestoLink <${user}>" is fine.`,
+        reason: `Gmail only sends as the account itself. MAIL_FROM must use ${user} — a display name like "Resto237 <${user}>" is fine.`,
       };
     }
   }
