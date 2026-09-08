@@ -16,19 +16,22 @@ export function firebaseMessagingConfigured(): boolean {
 async function activeRegistration(registration: ServiceWorkerRegistration): Promise<ServiceWorkerRegistration> {
   if (registration.active) return registration;
   const worker = registration.installing ?? registration.waiting;
-  if (!worker) return registration;
-  await new Promise<void>((resolve) => {
-    const done = () => {
-      worker.removeEventListener("statechange", done);
-      resolve();
+  if (!worker) throw new Error("Firebase worker is unavailable");
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => { clearTimeout(timer); worker.removeEventListener("statechange", changed); };
+    const changed = () => {
+      if (worker.state === "activated") { cleanup(); resolve(); }
+      else if (worker.state === "redundant") { cleanup(); reject(new Error("Firebase worker failed")); }
     };
-    worker.addEventListener("statechange", done);
+    const timer = setTimeout(() => { cleanup(); reject(new Error("Firebase worker activation timed out")); }, 15000);
+    worker.addEventListener("statechange", changed);
+    changed();
   });
   return registration;
 }
 
 /** Request from a user gesture and return the Firebase Console test token. */
-export async function requestFirebaseMessagingToken(): Promise<FirebaseMessagingResult> {
+export async function requestFirebaseMessagingToken(requestPermission = true): Promise<FirebaseMessagingResult> {
   if (typeof window === "undefined") return { ok: false, reason: "unsupported" };
   if (!window.isSecureContext) return { ok: false, reason: "insecure" };
   if (!("serviceWorker" in navigator) || !("Notification" in window)) {
@@ -37,10 +40,9 @@ export async function requestFirebaseMessagingToken(): Promise<FirebaseMessaging
   const vapidKey = firebaseMessagingVapidKey();
   if (!vapidKey) return { ok: false, reason: "missingVapid" };
 
-  const permission = await Notification.requestPermission();
-  if (permission !== "granted") return { ok: false, reason: "denied" };
-
   try {
+    const permission = Notification.permission === "granted" ? "granted" : requestPermission ? await Notification.requestPermission() : Notification.permission;
+    if (permission !== "granted") return { ok: false, reason: "denied" };
     const { getMessaging, getToken, isSupported } = await import("firebase/messaging");
     if (!(await isSupported())) return { ok: false, reason: "unsupported" };
     const registration = await activeRegistration(

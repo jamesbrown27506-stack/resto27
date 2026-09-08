@@ -1,3 +1,5 @@
+import { NotificationProviderPanel } from "./notification-provider-panel";
+import { getNotificationProviderStatus } from "@/lib/data/notification-provider-actions";
 import { AdminPage } from "@/components/layout/admin-shell";
 import { SettingsForm } from "./settings-form";
 import { listSettings } from "@/lib/data/platform";
@@ -12,7 +14,8 @@ export default async function SettingsPage() {
       title="Platform settings"
       description="Branding, money, billing and payments. Read across the whole application."
     >
-      <SettingsForm settings={settings} />
+      <NotificationProviderPanel initial={await getNotificationProviderStatus()} />
+      <SettingsForm settings={settings.filter(s => s.key !== "push_provider")} />
     </AdminPage>
   );
 }

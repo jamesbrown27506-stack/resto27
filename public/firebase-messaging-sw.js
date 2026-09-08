@@ -1,5 +1,26 @@
-/* Firebase Cloud Messaging worker. It has a narrow scope and never replaces
-   the existing /sw.js worker used by Resto237 order notifications. */
+/* Separate worker scope keeps both delivery providers registered. */
+function safeUrl(value) {
+  try { const url = new URL(value || "/", self.location.origin); return url.origin === self.location.origin ? url.href : self.location.origin + "/"; }
+  catch { return self.location.origin + "/"; }
+}
+// Register before the SDK; Firebase handles its own console campaign clicks.
+self.addEventListener("notificationclick", (event) => {
+  if (!event.notification.data?.restoFirebase) return;
+  event.stopImmediatePropagation();
+  event.notification.close();
+  const data = event.notification.data;
+  const url = safeUrl(data.actionUrls?.[event.action] || data.url);
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of windows) {
+      if (new URL(client.url).origin !== self.location.origin) continue;
+      const navigated = await client.navigate(url);
+      if (navigated) { await navigated.focus(); return; }
+    }
+    await self.clients.openWindow(url);
+  })());
+});
+self.addEventListener("install", () => self.skipWaiting());
 importScripts("https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js");
 importScripts("https://www.gstatic.com/firebasejs/12.18.0/firebase-messaging-compat.js");
 
@@ -12,33 +33,19 @@ firebase.initializeApp({
   appId: "1:1052805248703:web:c3aebfb283c313cc3ab80a",
 });
 
-const messaging = firebase.messaging();
-
-messaging.onBackgroundMessage((payload) => {
-  const notification = payload.notification || {};
-  const data = payload.data || {};
-  const url = payload.fcmOptions?.link || data.href || data.url || "/";
-  return self.registration.showNotification(notification.title || data.title || "Resto237", {
-    body: notification.body || data.body || "",
-    icon: notification.image || "/app-icon-192.png",
-    badge: "/app-icon-192.png",
-    tag: data.tag || "resto237-firebase",
-    data: { url },
+firebase.messaging().onBackgroundMessage((message) => {
+  // Console notification payloads are displayed automatically by the SDK.
+  if (message.notification) return;
+  let payload;
+  try { payload = JSON.parse(message.data?.payload || "{}"); } catch { return; }
+  if (!payload.title) return;
+  const actions = Array.isArray(payload.actions) ? payload.actions.slice(0, 2) : [];
+  return self.registration.showNotification(payload.title, {
+    body: payload.body || "", icon: "/app-icon-192.png", badge: "/app-icon-192.png",
+    tag: payload.tag || message.messageId,
+    lang: payload.lang, requireInteraction: Boolean(payload.requireInteraction),
+    actions: actions.map(a => ({ action: a.action, title: a.title })),
+    data: { restoFirebase: true, url: safeUrl(payload.href),
+      actionUrls: Object.fromEntries(actions.map(a => [a.action, safeUrl(a.href)])) },
   });
-});
-
-self.addEventListener("notificationclick", (event) => {
-  event.notification.close();
-  const url = event.notification.data?.url || "/";
-  event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
-      for (const client of clients) {
-        if (!("focus" in client)) continue;
-        await client.focus();
-        if ("navigate" in client) await client.navigate(url);
-        return;
-      }
-      await self.clients.openWindow(url);
-    }),
-  );
 });

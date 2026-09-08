@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { removeFirebaseDevice } from "@/lib/data/firebase-actions";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -12,6 +13,7 @@ import { createClient } from "@/lib/supabase/server";
  */
 async function handle(request: NextRequest) {
   const supabase = await createClient();
+  await removeFirebaseDevice();
   await supabase.auth.signOut();
   return NextResponse.redirect(new URL("/login", request.url), { status: 303 });
 }

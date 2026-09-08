@@ -493,6 +493,7 @@ export async function updateSettings(changes: Record<string, string>): Promise<A
   const admin = await requireRole("admin");
   const supabase = createAdminClient();
 
+  if ("push_provider" in changes) return { ok: false, error: "Use the Notification delivery panel to change providers." };
   const entries = Object.entries(changes);
   if (entries.length === 0) return { ok: true };
 

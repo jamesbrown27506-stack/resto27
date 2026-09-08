@@ -1,6 +1,8 @@
 import "server-only";
 import webpush from "web-push";
 import { createAdminClient } from "@/lib/supabase/server";
+import { sendFirebasePush, firebaseDeliveryConfigured } from "@/lib/firebase/server";
+import { notificationProvider } from "@/lib/notification-provider";
 
 /**
  * Web push delivery — the closed-tab / closed-app layer.
@@ -241,7 +243,7 @@ export interface PushDeviceResult {
  *  path, with the answers kept.
  * ─────────────────────────────────────────────────────────────────────────
  */
-export async function sendPushWithReport(
+export async function sendWebPushWithReport(
   profileId: string,
   payload: PushPayload,
   /** The caller's own endpoint, so its row can be marked in the report. */
@@ -449,6 +451,18 @@ export async function capProfileSubscriptions(profileId: string): Promise<void> 
  * away the answer: same encryption, same urgency, same expiry handling,
  * one place to fix.
  */
+export async function sendPushWithReport(
+  profileId: string, payload: PushPayload, currentEndpoint?: string,
+  providerOverride?: "web_push" | "firebase",
+): Promise<Awaited<ReturnType<typeof sendWebPushWithReport>>> {
+  const provider = providerOverride ?? await notificationProvider();
+  if (provider === "web_push") return sendWebPushWithReport(profileId, payload, currentEndpoint);
+  const configured = firebaseDeliveryConfigured();
+  const platformEnabled = await platformPushEnabled();
+  if (!configured || !platformEnabled) return { configured, platformEnabled, devices: [] };
+  return { configured, platformEnabled, ...await sendFirebasePush(profileId, payload, currentEndpoint) };
+}
+
 export async function sendPush(profileId: string, payload: PushPayload): Promise<void> {
   try {
     await sendPushWithReport(profileId, payload);

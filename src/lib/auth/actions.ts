@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import type { z } from "zod";
+import { removeFirebaseDevice } from "@/lib/data/firebase-actions";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { siteUrl } from "@/lib/site-url";
 import { rateLimit } from "@/lib/rate-limit";
@@ -449,6 +450,7 @@ export async function signUpRestaurant(
 
 export async function signOut(): Promise<never> {
   const supabase = await createClient();
+  await removeFirebaseDevice();
   await supabase.auth.signOut();
   revalidatePath("/", "layout");
   redirect("/login");

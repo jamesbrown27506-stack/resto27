@@ -1,5 +1,7 @@
 "use client";
 
+import { syncFirebaseDevice } from "@/lib/firebase/device";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { getPushSyncState, savePushSubscription } from "@/lib/data/notify-actions";
 import { pushDeviceOptedOut } from "@/components/notifications/notification-settings";
@@ -67,6 +69,7 @@ import {
 const MIN_INTERVAL_MS = 60_000;
 
 export function PushSync() {
+  const pathname = usePathname();
   const lastRunAt = useRef(0);
   const running = useRef(false);
 
@@ -98,7 +101,7 @@ export function PushSync() {
     if (pushDeviceOptedOut()) return;
 
     const key = configuredVapidKey();
-    if (!key) return;
+
 
     running.current = true;
     lastRunAt.current = Date.now();
@@ -106,6 +109,9 @@ export function PushSync() {
     try {
       const state = await getPushSyncState().catch(() => null);
       if (!state?.signedIn || !state.wantsPush) return;
+
+      await syncFirebaseDevice().catch(() => undefined);
+      if (!key) return;
 
       // `register` rather than `getRegistration`: if the worker was evicted,
       // this is what brings it back. It is idempotent when one is already
@@ -136,6 +142,7 @@ export function PushSync() {
         },
         (error) => console.warn("[push] endpoint not stored", error),
       );
+      await syncFirebaseDevice().catch(() => undefined);
     } catch (error) {
       // A failed repair is invisible on purpose: nothing was asked for, so
       // there is nothing to report. The next app open tries again.
@@ -146,6 +153,7 @@ export function PushSync() {
   }, []);
 
   useEffect(() => {
+    lastRunAt.current = 0;
     void sync();
 
     // Returning to the app is the other moment worth repairing at: a phone
@@ -155,7 +163,7 @@ export function PushSync() {
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [sync]);
+  }, [sync, pathname]);
 
   return null;
 }

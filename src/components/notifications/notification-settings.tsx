@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
 import { Switch } from "@/components/ui/input";
+import { syncFirebaseDevice, disconnectFirebaseDevice } from "@/lib/firebase/device";
 import { useToast } from "@/components/ui/toast";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
@@ -425,6 +426,8 @@ export function NotificationSettings({ className }: { className?: string }) {
         return;
       }
 
+      await syncFirebaseDevice().catch(() => undefined);
+
       // The receipt: a real notification, through the real writer, over the
       // channel that was just switched on.
       const announced = await announcePushEnabled().catch(() => ({ ok: false as const }));
@@ -470,6 +473,7 @@ export function NotificationSettings({ className }: { className?: string }) {
     const previous = channels;
 
     try {
+      await disconnectFirebaseDevice();
       let remaining = 0;
       if ("serviceWorker" in navigator) {
         const registration = await navigator.serviceWorker.getRegistration("/sw.js");

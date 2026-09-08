@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { useLocale } from "@/lib/i18n/use-locale";
 import {
   firebaseMessagingConfigured,
-  requestFirebaseMessagingToken,
   type FirebaseMessagingResult,
 } from "@/lib/firebase/messaging";
+
+import { syncFirebaseDevice } from "@/lib/firebase/device";
 
 function messageFor(result: Exclude<FirebaseMessagingResult, { ok: true }>, fr: boolean): string {
   const messages = {
@@ -32,13 +33,13 @@ export function FirebaseMessagingSettings() {
   async function enable() {
     setBusy(true);
     setMessage(null);
-    const result = await requestFirebaseMessagingToken();
+    const result = await syncFirebaseDevice(true).catch(() => ({ ok: false as const, reason: "failed" as const }));
     setBusy(false);
     if (result.ok) {
       setToken(result.token);
       setMessage(fr ? "Cet appareil est enregistré auprès de Firebase." : "This device is registered with Firebase.");
     } else {
-      setMessage(messageFor(result, fr));
+      setMessage(result.reason === "storage" ? result.error ?? "Device storage unavailable" : messageFor(result, fr));
     }
   }
 
@@ -56,12 +57,12 @@ export function FirebaseMessagingSettings() {
     <div className="flex flex-col gap-2 border-t border-border pt-3">
       <p className="flex items-center gap-2 text-xs font-semibold text-text-secondary">
         <BellRing className="size-4" aria-hidden />
-        {fr ? "Tests Firebase Cloud Messaging" : "Firebase Cloud Messaging tests"}
+        {fr ? "Firebase Cloud Messaging" : "Firebase Cloud Messaging"}
       </p>
       <p className="text-xs leading-relaxed text-text-light">
         {fr
-          ? "Utilisez ce contrôle pour enregistrer cet appareil et tester une campagne Firebase. Les notifications de commandes continuent d’utiliser le service de notifications Resto237."
-          : "Use this control to register this device and test a Firebase campaign. Order notifications continue to use the Resto237 notification service."}
+          ? "Enregistrez cet appareil pour recevoir les alertes lorsque l’administrateur sélectionne Firebase. Activez aussi les notifications push ci-dessus."
+          : "Register this device to receive alerts when the administrator selects Firebase. Also enable push notifications above."}
       </p>
       {!configured && (
         <p role="status" className="text-xs text-warning">
@@ -71,7 +72,7 @@ export function FirebaseMessagingSettings() {
         </p>
       )}
       <Button variant="outline" size="sm" className="self-start" disabled={!configured} loading={busy} onClick={() => void enable()}>
-        {token ? (fr ? "Actualiser le jeton Firebase" : "Refresh Firebase token") : (fr ? "Activer les tests Firebase" : "Enable Firebase tests")}
+        {token ? (fr ? "Actualiser le jeton Firebase" : "Refresh Firebase token") : (fr ? "Enregistrer cet appareil" : "Register this device")}
       </Button>
       {token && (
         <div className="flex items-center gap-2 rounded-md border border-border bg-surface p-2">

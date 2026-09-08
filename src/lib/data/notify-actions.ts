@@ -316,6 +316,8 @@ export async function removePushSubscription(
   const profile = await requireUser();
   const supabase = createAdminClient();
 
+  const fcmRemoved = await supabase.from("fcm_subscriptions").delete().eq("profile_id", profile.id).eq("web_endpoint", endpoint);
+  if (fcmRemoved.error && !["PGRST205", "42P01"].includes(fcmRemoved.error.code)) return { ok: false, remaining: 1 };
   const { error: deleteError } = await supabase
     .from("push_subscriptions")
     .delete()
@@ -349,7 +351,9 @@ export async function removePushSubscription(
     return { ok: true, remaining: 1 };
   }
 
-  return { ok: true, remaining: count ?? 0 };
+  const firebase = await supabase.from("fcm_subscriptions").select("id", { count: "exact", head: true }).eq("profile_id", profile.id);
+  const firebaseUnknown = firebase.error && !["PGRST205", "42P01"].includes(firebase.error.code);
+  return { ok: true, remaining: (count ?? 0) + (firebaseUnknown ? 1 : firebase.count ?? 0) };
 }
 
 /* ── Master channel switches (migration 0027) ──────────────────────────── */
@@ -537,6 +541,12 @@ export async function listPushDevices(): Promise<{
 export async function removePushDevice(id: string): Promise<{ ok: boolean; error?: string }> {
   const profile = await requireUser();
   const supabase = createAdminClient();
+  const { data: device, error: readError } = await supabase.from("push_subscriptions").select("endpoint").eq("id", id).eq("profile_id", profile.id).maybeSingle();
+  if (readError) return { ok: false, error: "Could not read the device." };
+  if (device) {
+    const removed = await removePushSubscription(device.endpoint);
+    return removed.ok ? { ok: true } : { ok: false, error: "Could not remove the device." };
+  }
 
   const { error } = await supabase
     .from("push_subscriptions")
@@ -623,6 +633,8 @@ export async function resetPushSubscriptions(): Promise<{
   const profile = await requireUser();
   const supabase = createAdminClient();
 
+  const fcm = await supabase.from("fcm_subscriptions").delete().eq("profile_id", profile.id);
+  if (fcm.error && !["PGRST205", "42P01"].includes(fcm.error.code)) return { ok: false, removed: 0, error: "Could not clear Firebase devices." };
   const { data, error } = await supabase
     .from("push_subscriptions")
     .delete()
