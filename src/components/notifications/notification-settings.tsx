@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { AlertTriangle, Bell, BellRing, Mail, Moon, Pause, RotateCcw, Smartphone } from "lucide-react";
+import { BackgroundSettings } from "./background-settings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
@@ -597,6 +598,8 @@ export function NotificationSettings({ className }: { className?: string }) {
                 <span>{t("nset.push.deviceOff")}</span>
               </Badge>
             )}
+
+            <BackgroundSettings />
 
             {pushElsewhere && (
               <p className="text-xs text-text-light">
