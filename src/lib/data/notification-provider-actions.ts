@@ -13,7 +13,7 @@ export async function getNotificationProviderStatus() {
   await requireRole("admin");
   const db = createAdminClient();
   const [firebase, web] = await Promise.all([
-    db.from("fcm_subscriptions").select("id", { count: "exact", head: true }),
+    db.from("fcm_subscriptions").select("id, device_id, web_endpoint", { count: "exact" }).limit(1),
     db.from("push_subscriptions").select("id", { count: "exact", head: true }),
   ]);
   return { provider: await notificationProvider(), firebaseConfigured: firebaseDeliveryConfigured(),
