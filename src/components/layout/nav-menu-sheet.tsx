@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Fragment } from "react";
 import { usePathname } from "next/navigation";
 import { NavIcon, type IconName } from "./icon";
 import { LogoutButton } from "./logout-button";
@@ -42,6 +43,7 @@ export interface NavMenuItem {
   /** Highlight on child routes too. */
   matchPrefix?: boolean;
   badge?: number;
+  group?: string;
 }
 
 export function NavMenuSheet({
@@ -78,10 +80,12 @@ export function NavMenuSheet({
         }}
       >
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {items.map((item) => {
+          {items.map((item, index) => {
             const active = isActive(item);
             return (
-              <li key={item.href}>
+              <Fragment key={item.href}>
+                {item.group && items[index - 1]?.group !== item.group && <li className="col-span-full pt-3 text-xs font-semibold text-text-secondary">{item.group}</li>}
+              <li>
                 <Link
                   href={item.href}
                   aria-current={active ? "page" : undefined}
@@ -110,6 +114,7 @@ export function NavMenuSheet({
                   </span>
                 </Link>
               </li>
+              </Fragment>
             );
           })}
         </ul>

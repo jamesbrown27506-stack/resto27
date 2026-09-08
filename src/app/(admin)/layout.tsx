@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+export const metadata: Metadata = { robots: { index: false, follow: false } };
 import { AdminShell } from "@/components/layout/admin-shell";
 import { requireRole } from "@/lib/auth/session";
 import { getImpersonation } from "@/lib/auth/impersonation";

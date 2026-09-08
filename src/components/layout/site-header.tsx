@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/components/layout/public-link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { LogOut, Menu, ShoppingBag } from "lucide-react";
@@ -21,7 +21,6 @@ import { NotificationBell } from "@/components/notifications/notification-bell";
 
 const NAV: { href: string; label: TranslationKey }[] = [
   { href: "/restaurants", label: "nav.restaurants" },
-  { href: "/pricing", label: "nav.pricing" },
   { href: "/contact", label: "nav.contact" },
 ];
 
@@ -73,7 +72,7 @@ export function SiteHeader({
 
   // A signed-in client should not be offered "Pricing" — they already pay. The
   // pricing page stays, but only as a link anonymous visitors see.
-  const nav = user ? NAV.filter((item) => item.href !== "/pricing") : NAV;
+  const nav = user?.area === "customer" ? [...NAV, { href: "/orders", label: "cor.title" as TranslationKey }, { href: "/messages", label: "cmsg.title" as TranslationKey }] : NAV;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -189,7 +188,7 @@ export function SiteHeader({
                   href="/login"
                   className={cn(
                     buttonClasses({ variant: "ghost", size: "sm" }),
-                    "hidden sm:inline-flex",
+                    "inline-flex",
                   )}
                 >
                   {t("nav.login")}

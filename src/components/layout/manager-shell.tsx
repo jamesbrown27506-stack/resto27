@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Menu, PauseCircle } from "lucide-react";
+import { PageBackLink } from "./page-back-link";
 import { ManagerSidebar } from "./manager-sidebar";
+import { MANAGER_NAV } from "@/lib/nav";
+import type { IconName } from "./icon";
 import { MobileTabBar, type TabItem } from "./mobile-tabbar";
 import { ImpersonationBanner } from "./impersonation-banner";
 import { LocaleToggle } from "./locale-toggle";
@@ -71,7 +74,6 @@ export function ManagerShell({
   // The manager's own "back to the public site" is the FIRST bottom tab, and
   // the sidebar's way out is the brand mark. Dashboard home for the phone bar.
   const tabItems: TabItem[] = [
-    { href: "/", icon: "Home", labelKey: "nav.site" },
     { href: "/m", icon: "LayoutDashboard", labelKey: "nav.m.dashboard" },
     ...(can(active.role, "orders.view")
       ? [
@@ -87,7 +89,7 @@ export function ManagerShell({
     ...(can(active.role, "menu.view")
       ? [{ href: "/m/menu", icon: "UtensilsCrossed", labelKey: "nav.m.menu", matchPrefix: true } as TabItem]
       : []),
-    ...(can(active.role, "kitchen.display")
+    ...(!can(active.role, "menu.view") && can(active.role, "kitchen.display")
       ? [{ href: "/m/kitchen", icon: "ChefHat", labelKey: "nav.m.kitchen" } as TabItem]
       : []),
     { href: "/m/messages", icon: "MessageSquare", labelKey: "nav.m.messages", badge: navCounts.messages },
@@ -252,7 +254,14 @@ export function ManagerShell({
       </div>
 
       {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
-        <MobileTabBar items={tabItems} />
+        <MobileTabBar items={tabItems} more={{ labelKey: "nav.more", titleKey: "nav.menu", withAccountActions: true,
+          items: [
+            ...MANAGER_NAV.flatMap(group => group.items.filter(item => !tabItems.some(tab => tab.href === item.href) && (!item.capability || can(active.role, item.capability))).map(item => ({
+              href: item.href, labelKey: item.labelKey, label: item.label, icon: item.icon as IconName, matchPrefix: item.matchPrefix, group: group.labelKey ? t(group.labelKey) : group.label,
+            }))),
+            { href: "/", icon: "Store", label: t("nav.site") },
+          ],
+        }} />
       </div>
     </NotificationProvider>
   );
@@ -296,6 +305,7 @@ export function ManagerPage({
 
   return (
     <div className="p-4 sm:p-6 lg:p-8">
+      <PageBackLink home="/m" />
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold sm:text-3xl">{heading}</h1>

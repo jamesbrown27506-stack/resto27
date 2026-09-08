@@ -1,3 +1,6 @@
+import { publicMetadata } from "@/lib/seo";
+import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
+import Link from "@/components/layout/public-link";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { SkeletonCard } from "@/components/ui/skeleton";
@@ -10,7 +13,7 @@ import {
 } from "@/lib/data/public";
 import { getTranslator } from "@/lib/i18n/locale-server";
 
-export const metadata: Metadata = {
+const baseMetadata: Metadata = {
   title: "Restaurants à Douala — livraison et à emporter",
   description:
     "Parcourez tous les restaurants de Douala : cuisine camerounaise, grillades, poisson braisé. Filtrez par quartier, cuisine et note.",
@@ -31,6 +34,7 @@ export default async function RestaurantsPage() {
       <header className="mb-8">
         <h1 className="font-display text-4xl font-bold">{t("restaurants.title")}</h1>
         <p className="mt-2 text-text-secondary">{t("restaurants.subtitle")}</p>
+        <Link href="/explore" className="mt-4 inline-block font-semibold text-primary">{(await seoLocale()) === "fr" ? "Explorer par plat, cuisine ou quartier →" : "Explore by dish, cuisine or neighbourhood →"}</Link>
       </header>
 
       {/* useSearchParams needs a Suspense boundary to keep the page static. */}
@@ -52,4 +56,8 @@ export default async function RestaurantsPage() {
       </Suspense>
     </div>
   );
+}
+export async function generateMetadata(): Promise<Metadata> {
+  const fr = await seoLocale() === "fr";
+  return publicMetadata("/restaurants", fr ? String(baseMetadata.title) : "Restaurants in Douala — delivery and pickup", fr ? String(baseMetadata.description) : "Browse restaurants in Douala by neighbourhood, cuisine and dish. Compare menus, prices and customer reviews.");
 }

@@ -82,6 +82,11 @@ function contentSecurityPolicy(production: boolean): string {
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  async redirects() {
+    return ["www.resto237.online", "resto237.vercel.app", "resto237-emmanuel-legrands-projects.vercel.app"].map(host => ({
+      source: "/:path*", has: [{ type: "host" as const, value: host }], destination: "https://resto237.online/:path*", permanent: true,
+    }));
+  },
 
   /**
    * Security headers on every response, including /sw.js and other public

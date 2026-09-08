@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/components/layout/public-link";
 import Image from "next/image";
 import { Bike, ChefHat, CreditCard, Search, ShoppingBag, Star, Store } from "lucide-react";
 import { Hero } from "@/components/marketing/hero";
@@ -68,7 +68,7 @@ export function HomeContent({
    */
   freeModeInfo?: { active: boolean; days: number; endsAt: string | null };
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const dates = useDates();
   const featured = restaurants.slice(0, 6);
   const numberFormat = new Intl.NumberFormat("fr-FR");
@@ -76,7 +76,7 @@ export function HomeContent({
   return (
     <>
       {freeModeInfo.active && (
-        <div className="border-b border-primary/20 bg-primary/5 px-4 py-2.5 text-center text-sm">
+        <div className="hidden border-b border-primary/20 bg-primary/5 px-4 py-2.5 text-center text-sm sm:block">
           <span className="font-semibold text-primary">{t("home.freeBanner.title")}</span>{" "}
           <span className="opacity-70">
             {t(
@@ -108,6 +108,7 @@ export function HomeContent({
         band is worse than no band, and StatStrip refuses an empty list anyway
         so no future caller can paint one either.
       */}
+      <div className="container-page py-4"><Link href="/explore" className="text-sm font-semibold text-primary">{locale === "fr" ? "Explorer les plats et quartiers de Douala →" : "Explore food and neighbourhoods in Douala →"}</Link></div>
       <StatStrip
         items={[
           ...(statsVisible.restaurants
@@ -131,7 +132,7 @@ export function HomeContent({
           ...(statsVisible.rating
             ? [
                 {
-                  value: stats.averageRating.toFixed(1).replace(".", ","),
+                  value: stats.reviewCount ? stats.averageRating.toFixed(1).replace(".", ",") : "—",
                   label: t("home.stats.rating"),
                   icon: <Star />,
                 },

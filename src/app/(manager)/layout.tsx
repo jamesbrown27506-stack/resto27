@@ -1,3 +1,5 @@
+import type { Metadata } from "next";
+export const metadata: Metadata = { robots: { index: false, follow: false } };
 import { ManagerShell } from "@/components/layout/manager-shell";
 import { requireRole } from "@/lib/auth/session";
 import { getBranchContext } from "@/lib/auth/branch";

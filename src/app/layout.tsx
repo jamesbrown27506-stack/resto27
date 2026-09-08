@@ -59,7 +59,8 @@ export async function generateMetadata(): Promise<Metadata> {
   const brand = await getBranding();
 
   return {
-    metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
+    metadataBase: new URL("https://resto237.online"),
+    verification: process.env.GOOGLE_SITE_VERIFICATION ? { google: process.env.GOOGLE_SITE_VERIFICATION } : undefined,
     title: {
       default: `${brand.tagline} | ${brand.name}`,
       template: `%s | ${brand.name}`,

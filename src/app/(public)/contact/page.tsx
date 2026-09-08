@@ -1,3 +1,5 @@
+import { publicMetadata } from "@/lib/seo";
+import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Clock, Mail, MapPin, MessageSquare, Phone } from "lucide-react";
@@ -8,7 +10,7 @@ import { getHeaderUser } from "@/lib/auth/header-user";
 import { planCtaHref } from "@/lib/nav";
 import { ContactForm } from "./contact-form";
 
-export const metadata: Metadata = {
+const baseMetadata: Metadata = {
   title: "Contact et assistance",
   description:
     "Une question sur une commande, un abonnement ou l'inscription de votre restaurant ? Écrivez-nous, nous répondons sous 24 heures.",
@@ -100,4 +102,9 @@ export default async function ContactPage() {
       </div>
     </div>
   );
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const fr = await seoLocale() === "fr";
+  return publicMetadata("/contact", fr ? String(baseMetadata.title) : "Contact Resto237", fr ? String(baseMetadata.description) : "Contact Resto237 for customer help or restaurant support in Cameroon.");
 }

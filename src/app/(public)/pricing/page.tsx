@@ -1,3 +1,5 @@
+import { publicMetadata } from "@/lib/seo";
+import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Check, Minus } from "lucide-react";
@@ -13,7 +15,7 @@ import { getTranslator } from "@/lib/i18n/locale-server";
 import { planCtaHref } from "@/lib/nav";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
-export const metadata: Metadata = {
+const baseMetadata: Metadata = {
   title: "Tarifs et commissions pour les restaurants",
   description:
     "Trois formules d'abonnement pour les restaurants au Cameroun, payables par MTN Mobile Money ou Orange Money. Sans engagement.",
@@ -165,4 +167,9 @@ export default async function PricingPage() {
       />
     </>
   );
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const fr = await seoLocale() === "fr";
+  return publicMetadata("/pricing", fr ? String(baseMetadata.title) : "Restaurant plans and pricing", fr ? String(baseMetadata.description) : "Explore Resto237 plans for restaurant menus, orders and reservations.");
 }

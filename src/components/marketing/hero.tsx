@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { publicHref } from "@/lib/seo-config";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
@@ -113,32 +114,13 @@ export function Hero({
   appearance: Appearance;
 }) {
   const router = useRouter();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
 
   const [index, setIndex] = useState(0);
   const [query, setQuery] = useState("");
   const [city, setCity] = useState("");
   const [guests, setGuests] = useState("2");
   const [date, setDate] = useState("");
-  const [userStopped, setUserStopped] = useState(false);
-
-  // Auto-rotate order → book → explore → order every 5 seconds — but only
-  // until the visitor actually engages. A press on a tab, a focus into a field
-  // or a tap on a popular cuisine pauses the carousel for good: once someone
-  // is choosing, moving the copy under their thumb reads as the page fighting
-  // them. Reduced-motion visitors never see it spin at all.
-  useEffect(() => {
-    if (userStopped) return;
-    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (motion.matches) return;
-    const id = window.setInterval(() => setIndex((i) => (i + 1) % SLIDES.length), 5000);
-    return () => window.clearInterval(id);
-  }, [userStopped]);
-
-  function pauseRotation() {
-    setUserStopped(true);
-  }
-
   const slide = SLIDES[index];
   const numberFormat = new Intl.NumberFormat("fr-FR");
 
@@ -156,12 +138,12 @@ export function Hero({
       // The reservation form reads them back and pre-fills its fields.
       if (guests) params.set("guests", guests);
       if (date) params.set("date", date);
-      router.push(`/reservations?${params.toString()}`);
+      router.push(publicHref(`/reservations?${params.toString()}`, locale));
       return;
     }
 
     if (slide.mode === "explore") params.set("sort", "rating");
-    router.push(`/restaurants?${params.toString()}`);
+    router.push(publicHref(`/restaurants?${params.toString()}`, locale));
   }
 
   return (
@@ -206,7 +188,7 @@ export function Hero({
       {/* ── Content ────────────────────────────────────────────────────── */}
       <div
         className={cn(
-          "container-page relative flex flex-col gap-8 pt-14 sm:pt-16 lg:min-h-[86vh] lg:justify-center lg:pt-20",
+          "container-page relative flex flex-col gap-5 pt-6 sm:gap-8 sm:pt-16 lg:min-h-[86vh] lg:justify-center lg:pt-20",
           /*
             The stat strip overlaps this section by -mt-14 / -lg:mt-20, and
             this padding is the room reserved for it. With every figure hidden
@@ -220,7 +202,7 @@ export function Hero({
         <div
           role="tablist"
           aria-label={t("hero.modeGroup")}
-          className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-full bg-white/10 p-1 ring-1 ring-white/25 backdrop-blur-md"
+          className="grid w-full max-w-md grid-cols-3 gap-1 rounded-full bg-white/10 p-1 ring-1 ring-white/25 backdrop-blur-md"
         >
           {SLIDES.map((s, i) => (
             <button
@@ -229,12 +211,10 @@ export function Hero({
               type="button"
               aria-selected={i === index}
               onClick={() => {
-                pauseRotation();
                 setIndex(i);
               }}
-              onFocus={pauseRotation}
               className={cn(
-                "inline-flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-colors",
+                "inline-flex min-w-0 items-center justify-center gap-1 rounded-full px-2 py-2.5 text-xs sm:gap-2 sm:text-sm font-semibold transition-colors",
                 i === index ? "bg-white text-neutral-900 shadow-sm" : "text-white/80 hover:text-white",
               )}
             >
@@ -258,13 +238,13 @@ export function Hero({
 
           {/* Each fragment in its own element — loose text siblings are what
               the translator merges and reorders. */}
-          <h1 className="mt-5 font-display text-[2.6rem] leading-[1.05] font-bold text-white sm:text-6xl lg:text-7xl">
+          <h1 className="mt-4 font-display text-[2rem] leading-[1.05] font-bold text-white sm:text-6xl lg:text-7xl">
             <span>{t(slide.titleLead)} </span>
             <em className="text-accent italic">{t(slide.titleAccent)}</em>
             <span>.</span>
           </h1>
 
-          <p className="mt-5 max-w-xl text-lg leading-relaxed text-white/85">
+          <p className="mt-3 max-w-xl text-sm sm:text-lg leading-relaxed text-white/85">
             {t(slide.subtitle)}
           </p>
         </div>
@@ -272,7 +252,6 @@ export function Hero({
         {/* ── The search pill ────────────────────────────────────────────── */}
         <form
           onSubmit={onSubmit}
-          onFocusCapture={pauseRotation}
           className="flex w-full max-w-3xl flex-col gap-2 rounded-3xl bg-white p-2 shadow-2xl sm:flex-row sm:items-center sm:rounded-full"
         >
           <label className="flex min-w-0 flex-1 items-center gap-3 rounded-full px-4 py-3">
@@ -324,8 +303,7 @@ export function Hero({
         {slide.mode === "book" && (
           <div
             key="book-extras"
-            onFocusCapture={pauseRotation}
-            className="flex w-full max-w-3xl flex-col gap-2 rounded-3xl bg-white/10 p-2 ring-1 ring-white/25 backdrop-blur-md sm:flex-row sm:rounded-full"
+              className="flex w-full max-w-3xl flex-col gap-2 rounded-3xl bg-white/10 p-2 ring-1 ring-white/25 backdrop-blur-md sm:flex-row sm:rounded-full"
           >
             <label className="flex flex-1 items-center gap-2.5 rounded-full px-4 py-2.5 text-white">
               <Users className="size-4 shrink-0 text-white/60" aria-hidden />
@@ -354,13 +332,13 @@ export function Hero({
 
         {/* ── One-tap paths: the cuisines people actually search ─────────── */}
         {cuisines.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2" onFocusCapture={pauseRotation}>
+          <div className="flex flex-wrap items-center gap-2">
             <span className="mr-1 text-sm font-medium text-white/70">{t("hero.popular")}</span>
             {cuisines.slice(0, 6).map((c) => (
               <button
                 key={c}
                 type="button"
-                onClick={() => router.push(`/restaurants?cuisine=${encodeURIComponent(c)}`)}
+                onClick={() => router.push(publicHref(`/restaurants?cuisine=${encodeURIComponent(c)}`, locale))}
                 className="rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium text-white ring-1 ring-white/25 backdrop-blur-md transition-colors hover:bg-white hover:text-neutral-900"
               >
                 <span>{c}</span>
@@ -387,7 +365,7 @@ export function Hero({
                   ? `${stats.averageRating.toFixed(1).replace(".", ",")}/5`
                   : "—"}
               </strong>
-              <span>{t("hero.trust.rating")}</span>
+              <span>{stats.reviewCount ? `${stats.reviewCount} ${locale === "fr" ? "avis" : "reviews"}` : (locale === "fr" ? "Aucun avis" : "No reviews yet")}</span>
             </li>
           )}
           {statsVisible.restaurants && (

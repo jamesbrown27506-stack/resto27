@@ -1,7 +1,7 @@
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
-import { MobileTabBar, type MoreTab, type TabItem } from "@/components/layout/mobile-tabbar";
-import { CUSTOMER_MORE } from "@/components/layout/more-tabs";
+import { CustomerNavigation } from "@/components/layout/customer-navigation";
+
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getBranding } from "@/lib/branding";
 
@@ -27,47 +27,8 @@ import { getBranding } from "@/lib/branding";
  * ─────────────────────────────────────────────────────────────────────────
  */
 
-const HOME: TabItem = { href: "/", icon: "Home", labelKey: "nav.home" };
-const RESTAURANTS: TabItem = { href: "/restaurants", icon: "Store", labelKey: "nav.restaurants" };
-const CONTACT: TabItem = { href: "/contact", icon: "LifeBuoy", labelKey: "nav.contact" };
-
 export default async function PublicLayout({ children }: { children: React.ReactNode }) {
   const [user, brand] = await Promise.all([getHeaderUser(), getBranding()]);
-
-  let tabs: TabItem[];
-  let more: MoreTab | undefined;
-
-  if (!user) {
-    tabs = [
-      HOME,
-      RESTAURANTS,
-      { href: "/pricing", icon: "Percent", labelKey: "nav.pricing" },
-      CONTACT,
-    ];
-  } else if (user.area === "admin") {
-    // The admin area is English by design (see ADMIN_NAV), so these carry
-    // plain labels rather than translation keys.
-    tabs = [
-      HOME,
-      RESTAURANTS,
-      { href: "/a", icon: "LayoutDashboard", label: "Dashboard" },
-      { href: "/a/settings", icon: "Settings", label: "Settings" },
-    ];
-  } else if (user.area === "manager") {
-    tabs = [
-      HOME,
-      RESTAURANTS,
-      { href: "/m", icon: "LayoutDashboard", labelKey: "nav.m.dashboard" },
-      { href: "/m/orders", icon: "ReceiptText", labelKey: "nav.m.orders", matchPrefix: true },
-    ];
-  } else {
-    tabs = [
-      HOME,
-      RESTAURANTS,
-      { href: "/account", icon: "LayoutDashboard", labelKey: "cac.title" },
-    ];
-    more = CUSTOMER_MORE;
-  }
 
   return (
     <div className="flex min-h-dvh flex-col pb-20 lg:pb-0">
@@ -77,7 +38,7 @@ export default async function PublicLayout({ children }: { children: React.React
         {children}
       </div>
       <SiteFooter brand={brand} />
-      <MobileTabBar items={tabs} more={more} />
+      <CustomerNavigation accountHref={user?.homeHref ?? "/login?next=/account"} />
     </div>
   );
 }

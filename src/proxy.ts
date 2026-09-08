@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { isPublicPage } from "@/lib/seo-config";
 import { updateSession } from "@/lib/supabase/middleware";
 
 /**
@@ -30,6 +31,7 @@ import { updateSession } from "@/lib/supabase/middleware";
  * account becomes necessary, and that is protected.
  */
 const PROTECTED = [
+  "/messages",
   "/account",
   "/orders",
   "/checkout",
@@ -52,7 +54,13 @@ function matches(pathname: string, prefixes: string[]): boolean {
 }
 
 export async function proxy(request: NextRequest) {
+  request.headers.delete("x-resto-public-locale");
+  if (isPublicPage(request.nextUrl.pathname)) {
+    request.headers.set("x-resto-public-locale", request.nextUrl.searchParams.get("lang") === "en" ? "en" : "fr");
+  }
   const { supabaseResponse, user } = await updateSession(request);
+  const publicLocale = request.headers.get("x-resto-public-locale");
+  if (publicLocale) supabaseResponse.cookies.set("restolink-locale", publicLocale, { path: "/", sameSite: "lax", maxAge: 31536000 });
   const { pathname, search } = request.nextUrl;
 
   // /a/health is a machine endpoint for uptime monitoring — it must answer

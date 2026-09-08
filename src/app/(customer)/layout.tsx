@@ -1,7 +1,9 @@
+import type { Metadata } from "next";
+export const metadata: Metadata = { robots: { index: false, follow: false } };
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
-import { MobileTabBar, type TabItem } from "@/components/layout/mobile-tabbar";
-import { CUSTOMER_MORE } from "@/components/layout/more-tabs";
+import { CustomerNavigation } from "@/components/layout/customer-navigation";
+
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getBranding } from "@/lib/branding";
 
@@ -25,12 +27,6 @@ import { getBranding } from "@/lib/branding";
  *  a grid where all nine are visible at once.
  * ─────────────────────────────────────────────────────────────────────────
  */
-const TABS: TabItem[] = [
-  { href: "/", icon: "Home", labelKey: "nav.site" },
-  { href: "/restaurants", icon: "Store", labelKey: "nav.restaurants" },
-  { href: "/account", icon: "LayoutDashboard", labelKey: "cac.title" },
-];
-
 export default async function CustomerLayout({ children }: { children: React.ReactNode }) {
   const [user, brand] = await Promise.all([getHeaderUser(), getBranding()]);
 
@@ -42,7 +38,7 @@ export default async function CustomerLayout({ children }: { children: React.Rea
         {children}
       </div>
       <SiteFooter brand={brand} />
-      <MobileTabBar items={TABS} more={CUSTOMER_MORE} />
+      <CustomerNavigation accountHref={user?.homeHref ?? "/login?next=/account"} />
     </div>
   );
 }

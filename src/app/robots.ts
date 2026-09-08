@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { siteUrl } from "@/lib/site-url";
+import { PUBLIC_SITE_URL } from "@/lib/seo-config";
 
 /**
  * Generated, not a static file (§14.1).
@@ -9,7 +9,7 @@ import { siteUrl } from "@/lib/site-url";
  * and a robots.txt pointing at the wrong host de-indexes the real one.
  */
 export default async function robots(): Promise<MetadataRoute.Robots> {
-  const base = await siteUrl();
+  const base = PUBLIC_SITE_URL;
 
   return {
     rules: [

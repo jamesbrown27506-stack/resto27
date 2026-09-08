@@ -13,7 +13,7 @@
   restaurant that filled them in keeps its data and this is reversible by
   putting the markup back. What is gone is the UI.
 */
-import Link from "next/link";
+import Link from "@/components/layout/public-link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Plus, ShoppingBag, SlidersHorizontal } from "lucide-react";
 import { ModifierSheet } from "@/components/menu/modifier-sheet";
@@ -60,14 +60,16 @@ export function MenuOrderer({
   menu,
   restaurant,
   acceptingOrders = true,
+  showDetailLinks = true,
 }: {
   menu: MenuGroup[];
   restaurant: { id: string; name: string; slug: string };
   /** False when the restaurant paused orders — browse is fine, adding is not. */
   acceptingOrders?: boolean;
+  showDetailLinks?: boolean;
 }) {
   const { addLine, itemCount, totals, restaurantId: cartRestaurantId } = useCart();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [active, setActive] = useState<MenuItem | null>(null);
   /*
     ─────────────────────────────────────────────────────────────────────────
@@ -199,6 +201,7 @@ export function MenuOrderer({
 
                 return (
                   <li key={item.id} className="relative">
+                    {showDetailLinks && <Link href={`/restaurants/${restaurant.slug}/menu/${item.id}`} className="mb-1 inline-block min-h-8 text-xs text-primary">{locale === "fr" ? "Voir le plat" : "View dish"} · {item.name}</Link>}
                     <button
                       type="button"
                       disabled={notOrderable}

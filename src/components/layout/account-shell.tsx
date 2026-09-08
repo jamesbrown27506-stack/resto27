@@ -1,3 +1,4 @@
+import { PageBackLink } from "./page-back-link";
 import { AccountSidebar } from "./account-sidebar";
 import type { SessionUser } from "@/lib/session";
 
@@ -25,6 +26,7 @@ export function AccountShell({
         <AccountSidebar user={user} />
 
         <main className="min-w-0 flex-1">
+          <PageBackLink />
           <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
             <div>
               <h1 className="font-display text-3xl font-bold">{title}</h1>

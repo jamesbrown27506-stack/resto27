@@ -11,7 +11,7 @@
   restaurant that filled them in keeps its data and this is reversible by
   putting the markup back. What is gone is the UI.
 */
-import Link from "next/link";
+import Link from "@/components/layout/public-link";
 import { useState } from "react";
 import { MapPin, Plus, UtensilsCrossed } from "lucide-react";
 import { Avatar } from "@/components/ui/avatar";
@@ -130,7 +130,7 @@ export function DishCard({
 
       <div className="p-4">
         <h3 className="truncate font-semibold">
-          <Link href={`/restaurants/${restaurantSlug}`} className="after:absolute after:inset-0">
+          <Link href={`/restaurants/${restaurantSlug}/menu/${item.id}`} className="after:absolute after:inset-0">
             {item.name}
           </Link>
         </h3>

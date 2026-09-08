@@ -1,5 +1,6 @@
 "use client";
 
+import { isPublicPage, publicHref } from "@/lib/seo-config";
 import { Languages } from "lucide-react";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { LOCALES, LOCALE_LABEL, LOCALE_SHORT } from "@/lib/i18n/dictionaries";
@@ -35,7 +36,10 @@ export function LocaleToggle({ className }: { className?: string }) {
             aria-checked={active}
             aria-label={LOCALE_LABEL[value]}
             title={LOCALE_LABEL[value]}
-            onClick={() => setLocale(value)}
+            onClick={() => {
+              setLocale(value);
+              if (isPublicPage(window.location.pathname)) window.location.assign(publicHref(window.location.pathname + window.location.search + window.location.hash, value));
+            }}
             className={cn(
               "rounded-full px-2 py-1 text-[11px] font-bold transition-colors",
               active

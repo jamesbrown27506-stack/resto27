@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/components/layout/public-link";
 import { BadgeCheck, Bike, Clock, MapPin, ShoppingBag } from "lucide-react";
 import { OpenBadge } from "@/components/restaurant/open-badge";
 import { RatingStars } from "@/components/ui/rating-stars";

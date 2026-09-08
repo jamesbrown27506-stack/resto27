@@ -1,9 +1,11 @@
+import { publicMetadata } from "@/lib/seo";
+import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import { LegalPage, type LegalSection } from "@/components/marketing/legal-page";
 import { getTranslator } from "@/lib/i18n/locale-server";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
-export const metadata: Metadata = {
+const baseMetadata: Metadata = {
   title: "Politique de confidentialité",
   description:
     "Comment RestoLink collecte, utilise et protège vos données personnelles au Cameroun.",
@@ -41,4 +43,9 @@ export default async function PrivacyPage() {
       sections={sections}
     />
   );
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const fr = await seoLocale() === "fr";
+  return publicMetadata("/privacy", fr ? String(baseMetadata.title) : "Privacy policy", fr ? String(baseMetadata.description) : "Read how Resto237 handles your personal information.");
 }

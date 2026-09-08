@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/components/layout/public-link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { NavIcon, type IconName } from "./icon";
@@ -53,6 +53,7 @@ export interface TabItem {
   matchPrefix?: boolean;
   /** Right-aligned count bubble — the cart, mostly. */
   badge?: number;
+  activePaths?: string[];
 }
 
 /**
@@ -90,7 +91,8 @@ export function MobileTabBar({
   const [menuOpen, setMenuOpen] = useState(false);
 
   function isActive(item: TabItem): boolean {
-    if (item.matchPrefix) return pathname.startsWith(item.href);
+    if (item.activePaths?.some(path => pathname === path || pathname.startsWith(path + "/"))) return true;
+    if (item.matchPrefix) return pathname === item.href || pathname.startsWith(item.href + "/");
     return pathname === item.href;
   }
 

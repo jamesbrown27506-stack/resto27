@@ -1,3 +1,6 @@
+import { PUBLIC_SITE_URL } from "@/lib/seo-config";
+import { publicMetadata } from "@/lib/seo";
+import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import { HomeContent } from "./home-content";
 import { getBranding } from "@/lib/branding";
@@ -16,7 +19,7 @@ import { getFreeModeInfo } from "@/lib/data/billing";
  * Server Component export while translation needs a Client Component. The
  * readable page lives in home-content.tsx.
  */
-export const metadata: Metadata = {
+const baseMetadata: Metadata = {
   // Keywords first, brand last — nobody searches for the brand yet.
   title: "Commander un repas et réserver une table au Cameroun",
   description:
@@ -36,25 +39,25 @@ function jsonLd(brand: { name: string; logoUrl: string | null }) {
     "@graph": [
       {
         "@type": "WebSite",
-        "@id": "/#website",
-        url: "/",
+        "@id": PUBLIC_SITE_URL + "/#website",
+        url: PUBLIC_SITE_URL + "/",
         name: brand.name,
         inLanguage: ["fr-CM", "en-CM"],
-        publisher: { "@id": "/#organization" },
+        publisher: { "@id": PUBLIC_SITE_URL + "/#organization" },
         potentialAction: {
           "@type": "SearchAction",
           target: {
             "@type": "EntryPoint",
-            urlTemplate: "/restaurants?q={search_term_string}",
+            urlTemplate: PUBLIC_SITE_URL + "/restaurants?q={search_term_string}",
           },
           "query-input": "required name=search_term_string",
         },
       },
       {
         "@type": "Organization",
-        "@id": "/#organization",
+        "@id": PUBLIC_SITE_URL + "/#organization",
         name: brand.name,
-        url: "/",
+        url: PUBLIC_SITE_URL + "/",
         // Omitted rather than sent empty when no logo is set: a blank `logo`
         // is a schema validation error, an absent one is simply silence.
         ...(brand.logoUrl ? { logo: brand.logoUrl } : {}),
@@ -117,4 +120,9 @@ export default async function HomePage() {
       />
     </>
   );
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const fr = await seoLocale() === "fr";
+  return publicMetadata("/", fr ? String(baseMetadata.title) : "Order food and book a table in Cameroon", fr ? String(baseMetadata.description) : "Discover restaurants in Douala, browse dishes and prices, order delivery or pickup, and reserve a table.");
 }

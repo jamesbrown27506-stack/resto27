@@ -1,9 +1,11 @@
+import { publicMetadata } from "@/lib/seo";
+import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import { LegalPage, type LegalSection } from "@/components/marketing/legal-page";
 import { getTranslator } from "@/lib/i18n/locale-server";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
-export const metadata: Metadata = {
+const baseMetadata: Metadata = {
   title: "Conditions d'utilisation",
   description:
     "Les conditions d'utilisation de RestoLink pour les clients et pour les restaurants partenaires.",
@@ -41,4 +43,9 @@ export default async function TermsPage() {
       sections={sections}
     />
   );
+}
+
+export async function generateMetadata(): Promise<Metadata> {
+  const fr = await seoLocale() === "fr";
+  return publicMetadata("/terms", fr ? String(baseMetadata.title) : "Terms of service", fr ? String(baseMetadata.description) : "Read the terms for using Resto237 and placing orders.");
 }

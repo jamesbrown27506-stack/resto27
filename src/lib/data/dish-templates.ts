@@ -29,9 +29,14 @@ export interface DishTemplate {
    * restaurant's menu.
    */
   image: string;
+  category?: "Boissons" | "Plats principaux";
 }
 
 export const POPULAR_DISHES: DishTemplate[] = [
+  { id: "folere-bissap", name: "Foléré — Jus de bissap", description: "Boisson à base de fleurs d’hibiscus, servie fraîche. Adaptez la description à votre recette.", price: 2500, image: "/default/folere-bissap.jpg", category: "Boissons" },
+  { id: "bhb", name: "BHB", description: "Beignets, haricots et bouillie. Précisez les accompagnements et portions proposés par votre restaurant.", price: 2500, image: "/default/bhb.jpg" },
+  { id: "rice-and-stew", name: "Riz sauce tomate — Rice and stew", description: "Riz accompagné d’une sauce tomate. Précisez la viande, le poisson ou les accompagnements disponibles.", price: 2500, image: "/default/rice-and-stew.jpg" },
+  { id: "jollof-fried-rice", name: "Jollof / Fried rice", description: "Un plat de riz préparé selon votre recette. Choisissez le nom, les ingrédients et les accompagnements de votre version.", price: 2500, image: "/default/jollof-fried-rice.jpg" },
   {
     id: "ndole",
     name: "Ndolé",

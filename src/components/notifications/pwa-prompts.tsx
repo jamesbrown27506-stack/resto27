@@ -85,6 +85,7 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
   const { toast } = useToast();
 
   const [ready, setReady] = useState(false);
+  const [engaged, setEngaged] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [installed, setInstalled] = useState(false);
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
@@ -144,6 +145,14 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
       window.removeEventListener("appinstalled", onInstalled);
       window.removeEventListener("visibilitychange", onVisible);
     };
+  }, []);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onInteraction = () => { if (!timer) timer = setTimeout(() => setEngaged(true), 30_000); };
+    window.addEventListener("pointerdown", onInteraction, { once: true });
+    window.addEventListener("keydown", onInteraction, { once: true });
+    return () => { window.removeEventListener("pointerdown", onInteraction); window.removeEventListener("keydown", onInteraction); if (timer) clearTimeout(timer); };
   }, []);
 
   const ios = isIOSDevice();
@@ -259,9 +268,10 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
   }
 
   const showInstall =
-    ready && !installed && (deferred !== null || ios) && !withinCooldown(installDismissedAt);
+    ready && engaged && !installed && (deferred !== null || ios) && !withinCooldown(installDismissedAt);
   const showNotif =
     ready &&
+    engaged &&
     signedIn &&
     permission !== null &&
     permission !== "granted" &&
@@ -273,7 +283,7 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
   if (!showInstall && !showNotif) return null;
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-3 p-3 sm:p-4">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-50 lg:bottom-0 flex flex-col items-center gap-3 p-3 sm:p-4">
       {showInstall && (
         <BannerCard
           icon={<Download className="size-4.5" aria-hidden />}

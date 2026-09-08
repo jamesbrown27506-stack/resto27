@@ -1,5 +1,6 @@
 import "server-only";
 import { cache } from "react";
+import { relationOne } from "@/lib/public-utils";
 import { normaliseDepositType, type DepositType } from "@/lib/reservations/deposit";
 import { createAdminClient } from "@/lib/supabase/server";
 import { UNCATEGORIZED_SECTION_ID } from "@/lib/menu/constants";
@@ -210,9 +211,9 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
     isPrimary: r.is_primary,
     status: r.status as PublicRestaurant["status"],
     isVerified: r.is_verified,
-    cuisine: r.cuisines?.[0]?.name ?? "",
+    cuisine: relationOne(r.cuisines)?.name ?? "",
     description: r.description,
-    quartier: r.quartiers?.[0]?.name ?? "",
+    quartier: relationOne(r.quartiers)?.name ?? "",
     addressLine: r.address_line ?? "",
     phone: r.phone,
     logoUrl: r.logo_url,
@@ -443,15 +444,15 @@ export async function fetchPopularDishes(limit = 6): Promise<PopularDish[]> {
       const bPhoto = b.image_url ? 0 : 1;
       if (aPhoto !== bPhoto) return aPhoto - bPhoto;
       if (a.is_featured !== b.is_featured) return a.is_featured ? -1 : 1;
-      return (b.restaurants[0]?.rating ?? 0) - (a.restaurants[0]?.rating ?? 0);
+      return (relationOne(b.restaurants)?.rating ?? 0) - (relationOne(a.restaurants)?.rating ?? 0);
     })
     .slice(0, limit)
     .map((i) => ({
-      restaurantSlug: i.restaurants[0]?.slug ?? "",
-      restaurantName: i.restaurants[0]?.name ?? "",
-      restaurantLogo: i.restaurants[0]?.logo_url ?? null,
-      restaurantRating: Number(i.restaurants[0]?.rating ?? 0),
-      restaurantQuartier: i.restaurants[0]?.quartiers?.[0]?.name ?? "",
+      restaurantSlug: relationOne(i.restaurants)?.slug ?? "",
+      restaurantName: relationOne(i.restaurants)?.name ?? "",
+      restaurantLogo: relationOne(i.restaurants)?.logo_url ?? null,
+      restaurantRating: Number(relationOne(i.restaurants)?.rating ?? 0),
+      restaurantQuartier: relationOne(relationOne(i.restaurants)?.quartiers)?.name ?? "",
     item: {
       id: i.id,
       restaurantId: i.restaurant_id,
@@ -522,6 +523,7 @@ export interface PublicStats {
   deliveredOrderCount: number;
   /** Mean rating across active restaurants (their public ratings). */
   averageRating: number;
+  reviewCount: number;
   /** Mean delivery estimate across active restaurants that deliver. */
   averageDeliveryMinutes: number;
 }
@@ -533,6 +535,19 @@ export interface PublicStats {
  * never happened from a diner's point of view, and counting them on the
  * marketing page would be a lie the first time it matters.
  */
+async function fetchPublicReviewStats() {
+  const db = createAdminClient();
+  let total = 0, count = 0;
+  for (let start = 0; ; start += 1000) {
+    const { data, error } = await db.from("reviews").select("id, rating, restaurants!inner(status)")
+      .is("removed_at", null).eq("restaurants.status", "active").order("id").range(start, start + 999);
+    if (error) { console.error("[public:reviews]", error.code); return { averageRating: 0, reviewCount: 0 }; }
+    for (const row of data ?? []) { const n = Number(row.rating); if (n >= 1 && n <= 5) { total += n; count++; } }
+    if (!data || data.length < 1000) break;
+  }
+  return { averageRating: count ? total / count : 0, reviewCount: count };
+}
+
 export async function fetchPublicStats(): Promise<PublicStats> {
   const supabase = createAdminClient();
 
@@ -552,7 +567,8 @@ export async function fetchPublicStats(): Promise<PublicStats> {
     The orders count stays a separate query because it is a different table,
     and `head: true` means it transfers a count rather than the rows.
   */
-  const [restaurantRows, delivered] = await Promise.all([
+  const [reviews, restaurantRows, delivered] = await Promise.all([
+    fetchPublicReviewStats(),
     supabase
       .from("restaurants")
       .select("rating, delivery_estimate_min, accepts_delivery")
@@ -569,7 +585,7 @@ export async function fetchPublicStats(): Promise<PublicStats> {
     accepts_delivery: boolean | null;
   }[];
 
-  const ratings = rows.map((r) => Number(r.rating) || 0);
+
   // Only restaurants that actually deliver have a meaningful estimate, which
   // is the filter the separate query used to apply in SQL.
   const estimates = rows
@@ -582,7 +598,8 @@ export async function fetchPublicStats(): Promise<PublicStats> {
   return {
     restaurantCount: rows.length,
     deliveredOrderCount: delivered.count ?? 0,
-    averageRating: mean(ratings),
+    averageRating: reviews.averageRating,
+    reviewCount: reviews.reviewCount,
     averageDeliveryMinutes: mean(estimates),
   };
 }
@@ -629,7 +646,7 @@ export async function fetchFeaturedReviews(limit = 3): Promise<FeaturedReview[]>
   }[]).map((r) => ({
     body: r.body,
     name: r.customer_name,
-    meta: r.restaurants[0]?.name ?? "",
+    meta: relationOne(r.restaurants)?.name ?? "",
     rating: r.rating,
   }));
 }

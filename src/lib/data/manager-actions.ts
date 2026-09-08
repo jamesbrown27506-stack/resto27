@@ -340,7 +340,7 @@ export async function seedPopularDishes(selections: SeededDish[]): Promise<Actio
     .filter((d) => !taken.has(d.name))
     .map((d) => ({
       restaurant_id: active.restaurantId,
-      category_id: mainCategory?.id ?? null,
+      category_id: (categories ?? []).find(c => c.name === d.category)?.id ?? mainCategory?.id ?? null,
       name: d.name,
       description: d.description,
       price: d.price,

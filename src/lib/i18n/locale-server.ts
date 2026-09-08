@@ -26,6 +26,8 @@ export const LOCALE_COOKIE = "restolink-locale";
  * ─────────────────────────────────────────────────────────────────────────
  */
 export async function getLocale(): Promise<Locale> {
+  const publicLocale = (await headers()).get("x-resto-public-locale");
+  if (publicLocale === "fr" || publicLocale === "en") return publicLocale;
   const store = await cookies();
   const chosen = store.get(LOCALE_COOKIE)?.value;
   if (chosen && (LOCALES as readonly string[]).includes(chosen)) {

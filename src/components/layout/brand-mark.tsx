@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/components/layout/public-link";
 import { UtensilsCrossed } from "lucide-react";
 import { cn } from "@/lib/utils";
 

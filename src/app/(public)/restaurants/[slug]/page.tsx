@@ -1,5 +1,8 @@
+import { publicMetadata } from "@/lib/seo";
+import { absolutePublicUrl } from "@/lib/seo-config";
+import { getLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
-import Link from "next/link";
+import Link from "@/components/layout/public-link";
 import { notFound } from "next/navigation";
 import { BadgeCheck, Bike, CalendarCheck, Clock, MapPin, Phone, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -23,11 +26,10 @@ export async function generateMetadata({
   const restaurant = await fetchPublicRestaurantBySlug(slug);
   if (!restaurant) return { title: "Restaurant introuvable" };
 
-  return {
-    title: `${restaurant.name} — ${restaurant.quartier}, Douala`,
-    description: restaurant.description,
-    alternates: { canonical: `/restaurants/${restaurant.slug}` },
-  };
+  const locale = await getLocale();
+  const place = [restaurant.quartier, "Douala"].filter(Boolean).join(", ");
+  const description = restaurant.description.length >= 30 ? restaurant.description : (locale === "fr" ? "Consultez le menu, les prix et les horaires de " + restaurant.name + " à " + place + ". Commandez sur Resto237." : "Browse the menu, prices and opening hours for " + restaurant.name + " in " + place + ". Order on Resto237.");
+  return publicMetadata("/restaurants/" + restaurant.slug, restaurant.name + " — " + place, description, restaurant.coverUrl ?? restaurant.logoUrl);
 }
 
 export default async function RestaurantDetailPage({
@@ -39,6 +41,8 @@ export default async function RestaurantDetailPage({
   const restaurant = await fetchPublicRestaurantBySlug(slug);
   if (!restaurant) notFound();
   const t = await getTranslator();
+  const locale = await getLocale();
+  const pageUrl = absolutePublicUrl("/restaurants/" + restaurant.slug, locale);
 
   const [menu, reviews] = await Promise.all([
     fetchMenuSections(restaurant.id),
@@ -49,12 +53,18 @@ export default async function RestaurantDetailPage({
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "Restaurant",
+    "@id": pageUrl + "#restaurant",
+    url: pageUrl,
+    image: restaurant.coverUrl ? new URL(restaurant.coverUrl, pageUrl).href : undefined,
+    hasMenu: pageUrl,
+    openingHoursSpecification: restaurant.hours.filter(h => h.opensAt && h.closesAt).map(h => ({ "@type": "OpeningHoursSpecification", dayOfWeek: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][h.weekday], opens: h.opensAt, closes: h.closesAt })),
     name: `${restaurant.name}${restaurant.isPrimary ? "" : ` — ${restaurant.branchLabel}`}`,
     description: restaurant.description,
     servesCuisine: restaurant.cuisine,
     telephone: restaurant.phone,
     address: {
       "@type": "PostalAddress",
+      streetAddress: restaurant.addressLine || undefined,
       addressLocality: "Douala",
       addressRegion: restaurant.quartier,
       addressCountry: "CM",

@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/components/layout/public-link";
 import { Mail, MapPin, Phone } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 import { useLocale } from "@/lib/i18n/use-locale";
