@@ -60,6 +60,16 @@
   --r-lg: 20px;
   --r-xl: 32px;
 
+  /* Soft-UI light source, for the mobile press treatment (.soft-press).
+     One highlight and one shadow, both theme-owned, so a single utility can
+     read correctly in both themes without duplicating its geometry. The light
+     is top-left, which is where every physical control in this app is lit
+     from — consistency is what makes the effect read as material rather than
+     as a stray glow. */
+  --soft-hi: rgb(255 255 255 / 0.9);
+  --soft-lo: rgb(120 108 86 / 0.22);
+  --soft-edge: rgb(28 28 28 / 0.1);
+
   /* Shadows — same naming rule as radii. */
   --sh-sm: 0 2px 8px rgb(0 0 0 / 0.06);
   --sh-md: 0 6px 24px rgb(0 0 0 / 0.1);
@@ -69,6 +79,14 @@
 }
 
 [data-theme="dark"] {
+  /* Dark neumorphism is where the style usually falls apart: a white
+     highlight on a near-black surface reads as a smudge. The highlight is
+     therefore barely there and the shadow does nearly all the work, which is
+     also how a dim room actually behaves. */
+  --soft-hi: rgb(255 255 255 / 0.045);
+  --soft-lo: rgb(0 0 0 / 0.55);
+  --soft-edge: rgb(255 255 255 / 0.12);
+
   --bg: #131410;
   --surface: #1c1e17;
   --surface-2: #23261d;
@@ -390,6 +408,68 @@
      into place on a slow phone is indistinguishable from a page jump. */
   dialog[open].sheet-bottom {
     animation: rl-sheet-up 0.24s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+}
+
+/* ── Soft press: a tactile control surface, PHONES ONLY ─────────────────
+
+   What this is. Neumorphism, adapted rather than copied. The classic version
+   gives an element the same colour as its background and separates it from
+   the page with nothing but two shadows — which is exactly why it has a
+   reputation: at low contrast, or on a cheap screen in daylight, the control
+   stops being visibly a control. Half of Douala is using this outdoors.
+
+   So the border stays. The extrusion is decoration on top of an edge that
+   was already legible, not a replacement for it — the element is findable
+   with the shadows stripped out, which is the test the pure style fails.
+
+   Why only below `sm`. This is a touch affordance. A press has no hover to
+   precede it and no cursor to confirm it, so the surface itself has to
+   answer — and it answers by going genuinely concave under the thumb, with
+   the light source flipping to the far side. On a pointer device the same
+   treatment is just noise around a control that already has hover, focus and
+   a cursor doing the work.
+
+   The transition is 110ms because a press response that can be perceived as
+   an animation is too slow to feel like contact. */
+@media (max-width: 39.999rem) {
+  .soft-press {
+    border: 1px solid var(--soft-edge);
+    box-shadow:
+      -2px -2px 5px var(--soft-hi),
+      3px 3px 7px var(--soft-lo);
+    transition:
+      box-shadow 110ms ease-out,
+      transform 110ms ease-out;
+  }
+
+  /* Concave, and moved a pixel into the page. Both halves matter: the inset
+     shadows alone read as a colour change, the translate alone as a jump.
+
+     The scale is written out rather than left to Tailwind's `active:scale-*`
+     on the same elements: this selector is more specific, so it would have
+     silently won and dropped the shrink. Better to own both here than to
+     have the two fight where nobody can see it. */
+  .soft-press:active:not(:disabled):not([aria-disabled="true"]) {
+    transform: translateY(1px) scale(0.985);
+    box-shadow:
+      inset 3px 3px 6px var(--soft-lo),
+      inset -2px -2px 5px var(--soft-hi);
+  }
+
+  /* A control that is off does not offer to be pressed. */
+  .soft-press:disabled,
+  .soft-press[aria-disabled="true"] {
+    box-shadow: none;
+  }
+
+  /* Already pressed, in the latching sense — a selected chip is held down,
+     so it wears the concave face permanently rather than the raised one. */
+  .soft-press[aria-pressed="true"],
+  .soft-press[aria-selected="true"] {
+    box-shadow:
+      inset 2px 2px 5px var(--soft-lo),
+      inset -1px -1px 4px var(--soft-hi);
   }
 }
 

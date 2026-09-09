@@ -73,6 +73,12 @@ export function Button({
       className={cn(
         "inline-flex shrink-0 items-center justify-center rounded-full font-semibold whitespace-nowrap",
         "transition-all duration-200 active:scale-[.98]",
+        /*
+          The tactile press treatment, which is a no-op above `sm` — see
+          `.soft-press` in globals.css for why it is phone-only. `link` opts
+          out: it is text, and extruding a sentence is nonsense.
+        */
+        variant !== "link" && "soft-press",
         "disabled:pointer-events-none disabled:opacity-50 disabled:active:scale-100",
         VARIANTS[variant],
         SIZES[size],

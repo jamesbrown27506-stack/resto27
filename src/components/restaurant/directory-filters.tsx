@@ -85,6 +85,7 @@ export function DirectoryFilters({
             onClick={() => setSheetOpen(true)}
             aria-haspopup="dialog"
             className={cn(
+              "soft-press",
               "inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full border px-4",
               "text-sm font-semibold whitespace-nowrap",
               "transition-[background-color,border-color,color,transform] duration-150 active:scale-[.97]",
@@ -113,6 +114,7 @@ export function DirectoryFilters({
                 aria-pressed={active}
                 onClick={() => sort.onChange(option.value)}
                 className={cn(
+                  "soft-press",
                   "inline-flex min-h-10 shrink-0 items-center rounded-full border px-4",
                   "text-sm font-medium whitespace-nowrap",
                   "transition-[background-color,border-color,color,transform] duration-150 active:scale-[.97]",

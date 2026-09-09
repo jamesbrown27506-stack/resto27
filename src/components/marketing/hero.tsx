@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { publicHref } from "@/lib/seo-config";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { Appearance } from "@/lib/appearance";
 import { allHomeStatsHidden, type HomeStatsVisibility } from "@/lib/home-stats";
+import { usePrefersReducedMotion } from "@/lib/hooks/use-prefers-reduced-motion";
 
 /**
  * The hero — full-bleed photography, editorial type, one search pill.
@@ -58,6 +59,15 @@ interface Slide {
   art: keyof Pick<Appearance, "heroOrder" | "heroBook" | "heroExplore">;
   artAlt: TranslationKey;
 }
+
+/**
+ * How long each mode holds before the lap moves on.
+ *
+ * Long enough to read a three-word tag and a headline, short enough that the
+ * whole demonstration is over in twelve seconds — before a visitor who is
+ * scrolling has left, and well before it could become something to wait out.
+ */
+const DWELL_MS = 4000;
 
 const SLIDES: Slide[] = [
   {
@@ -115,6 +125,107 @@ export function Hero({
   const [date, setDate] = useState("");
   const slide = SLIDES[index];
 
+  /*
+    ──────────────────────────────────────────────────────────────────────
+     ONE LAP, THEN IT STOPS FOR GOOD.
+
+     A carousel used to live here and was removed on purpose — see the note
+     at the top of this file. This is not that. The objection to the old one
+     was motion that never ended and had to be managed: arrows, dots, a pause
+     button, a progress bar, all of it chrome spent fighting an animation
+     nobody asked for.
+
+     This runs the three modes once — order, book, explore, back to order —
+     and then never moves again. It exists to answer "what is this site for"
+     for a first-time visitor who would otherwise never learn that the hero
+     has two other modes behind it. Ending on `order` is deliberate: the lap
+     is a demonstration, and it puts the primary action back before it stops.
+
+     It yields to intent immediately. Any pointer, touch, key or focus inside
+     the hero cancels the rest of the lap — a visitor who has started reading
+     or reaching for a tab has told us what they want, and moving the page
+     under them at that moment is the actual sin the old carousel committed.
+
+     `prefers-reduced-motion` skips the whole thing: the tabs still work, the
+     hero simply never moves on its own.
+    ──────────────────────────────────────────────────────────────────────
+  */
+  const reducedMotion = usePrefersReducedMotion();
+  const heroRef = useRef<HTMLElement>(null);
+  const rotationDone = useRef(false);
+
+  useEffect(() => {
+    if (reducedMotion || rotationDone.current) return;
+
+    const hero = heroRef.current;
+    let step = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    function stop() {
+      rotationDone.current = true;
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      timer = null;
+    }
+
+    function tick() {
+      step += 1;
+      // 1, 2, then 0 — three moves, ending where it began.
+      setIndex(step % SLIDES.length);
+      if (step >= SLIDES.length) {
+        stop();
+        return;
+      }
+      timer = setTimeout(tick, DWELL_MS);
+    }
+
+    /*
+      THE LAP WAITS FOR ITS PHOTOGRAPHS.
+
+      Only the active slide is mounted, so advancing is what triggers the next
+      image's download. On a fast connection that is invisible. On the mobile
+      connections this platform actually runs on, it means rotating into a
+      black rectangle and holding it there — turning a flourish into a fault.
+
+      So the other two are fetched quietly after first paint and the lap only
+      begins once they are decoded. If they never arrive, the hero simply
+      never rotates: the tabs still work and nobody sees an empty frame. A
+      nice-to-have must degrade to nothing, not to something broken.
+    */
+    // Every slide, not "the other two": the visible one is already in cache so
+    // it resolves immediately, and asking for all three keeps this independent
+    // of which slide is current — which in turn keeps `index` out of the
+    // dependency list, where it would restart the lap on every advance.
+    Promise.all(
+      SLIDES.map(s2 => appearance[s2.art]).map(
+        src =>
+          new Promise<void>(resolve => {
+            const img = new window.Image();
+            img.onload = img.onerror = () => resolve();
+            img.src = src;
+          }),
+      ),
+    ).then(() => {
+      if (cancelled) return;
+      timer = setTimeout(tick, DWELL_MS);
+    });
+
+    // `capture` so a tab's own onClick does not have to remember to cancel.
+    const events = ["pointerdown", "touchstart", "keydown", "focusin"] as const;
+    for (const type of events) hero?.addEventListener(type, stop, { capture: true, passive: true });
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      for (const type of events) hero?.removeEventListener(type, stop, { capture: true });
+    };
+    /*
+      `appearance` is a server-provided prop and stable for the session. Were
+      it ever to change identity, the `rotationDone` guard above means a
+      completed lap is not restarted — so listing it is safe either way.
+    */
+  }, [reducedMotion, appearance]);
+
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     // The homepage search must actually search (§14.1) — the PHP hero's form
@@ -138,7 +249,7 @@ export function Hero({
   }
 
   return (
-    <section className="relative isolate overflow-hidden">
+    <section ref={heroRef} className="relative isolate overflow-hidden">
       {/* ── The photograph, full bleed ─────────────────────────────────── */}
       <div key={slide.mode} className="absolute inset-0 animate-fade">
         <Image
