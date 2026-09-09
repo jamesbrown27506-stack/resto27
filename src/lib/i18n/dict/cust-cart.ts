@@ -165,6 +165,11 @@ export const custCartDict = defineDict({
     "cct.co.terms1": "En commandant, vous acceptez nos",
     "cct.co.termsLink": "conditions d'utilisation",
     "cct.co.sent": "Commande {ref} envoyée au restaurant.",
+    // Deliberately does not say the order failed: when the connection drops we
+    // do not know whether it reached the restaurant. Retrying is safe — the
+    // same attempt returns the same order rather than creating a second.
+    "cct.co.networkFailed":
+      "Connexion interrompue. Nous ne savons pas si la commande est passée — réessayez, elle ne sera pas envoyée deux fois. Vérifiez aussi « Mes commandes ».",
     "cct.co.redirecting": "Nous vous emmenons à votre commande…",
 
     /* ── Why an order was refused (checkout-actions reason codes) ───── */
@@ -345,6 +350,8 @@ export const custCartDict = defineDict({
     "cct.co.terms1": "By ordering, you accept our",
     "cct.co.termsLink": "terms of use",
     "cct.co.sent": "Order {ref} sent to the restaurant.",
+    "cct.co.networkFailed":
+      "Connection lost. We cannot tell whether the order went through — try again, it will not be sent twice. You can also check “My orders”.",
     "cct.co.redirecting": "Taking you to your order…",
 
     /* ── Why an order was refused (checkout-actions reason codes) ───── */

@@ -63,7 +63,7 @@ export function CartLineRow({ line }: { line: CartLine }) {
 /* ── Promo code ────────────────────────────────────────────────────────── */
 
 export function PromoInput() {
-  const { promoCode, promoError, applyPromo, removePromo } = useCart();
+  const { promoCode, promoError, promoPending, applyPromo, removePromo } = useCart();
   const { t } = useLocale();
   const [value, setValue] = useState("");
 
@@ -102,7 +102,18 @@ export function PromoInput() {
           invalid={Boolean(promoError)}
           className="flex-1"
         />
-        <Button type="submit" variant="outline" disabled={!value.trim()}>
+        {/*
+          `promoPending` was already on the cart context and simply not read
+          here, so applying a code looked like nothing happened while the
+          server validated it — and on a slow connection that is exactly when
+          someone taps again.
+        */}
+        <Button
+          type="submit"
+          variant="outline"
+          loading={promoPending}
+          disabled={promoPending || !value.trim()}
+        >
           {t("cct.promo.apply")}
         </Button>
       </div>

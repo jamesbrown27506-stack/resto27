@@ -14,6 +14,7 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import { useCart } from "@/components/cart/cart-provider";
+import { clearIdempotencyKey, currentIdempotencyKey } from "@/lib/orders/idempotency";
 import { CartSummary } from "@/components/cart/cart-parts";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
@@ -179,18 +180,52 @@ export function CheckoutClient({
         schedule === "later"
           ? new Date(`${scheduleDate}T${scheduleTime}:00+01:00`).toISOString()
           : null,
+      // Survives a reload, so a retry after a lost response returns the order
+      // that already exists instead of placing a second one.
+      idempotencyKey: currentIdempotencyKey(),
     };
 
-    const result = await placeOrder(input);
-    setPlacing(false);
+    /*
+      THE BUTTON STAYS DISABLED UNTIL THIS PAGE IS GONE.
+
+      This used to call setPlacing(false) the moment placeOrder resolved, and
+      only then router.push(). On a slow connection the push takes seconds, and
+      for all of them the button was live again and showed no spinner — over an
+      order that had already been placed. A second tap was a second real order.
+
+      On success we therefore never re-enable: the navigation unmounts this
+      component, which is the only correct end state. `placing` is cleared only
+      on a path where the customer is still here and must be able to try again.
+    */
+    let result: Awaited<ReturnType<typeof placeOrder>>;
+    try {
+      result = await placeOrder(input);
+    } catch {
+      /*
+        The request threw rather than returning — a dropped connection, which
+        is routine here. Without this the promise rejected, setPlacing(false)
+        never ran, and the button stayed disabled and spinning forever with no
+        message at all.
+
+        We cannot know whether the order was created, so the copy must not
+        claim either way. Retrying is safe: the same key comes back and the
+        server returns the original order rather than a duplicate.
+      */
+      setPlacing(false);
+      toast(t("cct.co.networkFailed"), "error");
+      return;
+    }
 
     if (result.ok) {
+      clearIdempotencyKey();
       clear();
       toast(t("cct.co.sent", { ref: result.reference }), "success");
       router.push(`/orders/${result.orderId}`);
-    } else {
-      toast(reasonText(result.reason, result.detail), "error");
+      return;
     }
+
+    setPlacing(false);
+    toast(reasonText(result.reason, result.detail), "error");
   }
 
   return (

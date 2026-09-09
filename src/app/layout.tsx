@@ -13,6 +13,7 @@ import { PwaPrompts } from "@/components/notifications/pwa-prompts";
 import { FirebaseInit } from "@/components/firebase/firebase-init";
 import { PushSync } from "@/components/notifications/push-sync";
 import { SkipLink } from "@/components/layout/skip-link";
+import { NavigationProgress } from "@/components/layout/navigation-progress";
 import { TranslationSafeBoundary } from "@/components/layout/translation-safe";
 import "./globals.css";
 
@@ -233,6 +234,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           {/* Outside SkipLink would be a bug: SkipLink is the first thing that
               renders translated text, and it is what the mismatch surfaced on. */}
           <LocaleProvider initial={locale}>
+            {/*
+              Above everything, and outside the toast/cart providers, because it
+              must acknowledge a tap on ANY link on ANY page — including the
+              ones that navigate away from a provider's subtree.
+            */}
+            <NavigationProgress />
             <SkipLink />
             <ToastProvider>
               {/*

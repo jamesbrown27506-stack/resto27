@@ -324,6 +324,32 @@
   animation: rl-fade 0.2s ease both;
 }
 
+/* Navigation feedback (components/layout/navigation-progress).
+
+   Never reaches 100%: the bar is a promise that something is happening, not a
+   measurement of how far along it is. Finishing it early would be a lie, and
+   the real end is the new route rendering, which unmounts this. The easing is
+   deliberately front-loaded — most of the travel happens in the first second,
+   so a tap feels acknowledged immediately even when the route takes seconds. */
+@keyframes rl-nav-progress {
+  0% {
+    width: 0%;
+  }
+  30% {
+    width: 52%;
+  }
+  65% {
+    width: 76%;
+  }
+  100% {
+    width: 92%;
+  }
+}
+
+@utility animate-nav-progress {
+  animation: rl-nav-progress 8s cubic-bezier(0.15, 0.75, 0.3, 1) forwards;
+}
+
 /* Hide scrollbars on horizontal chip rows without losing scrollability. */
 @utility no-scrollbar {
   scrollbar-width: none;

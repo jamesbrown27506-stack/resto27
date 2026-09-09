@@ -297,7 +297,7 @@ export function AreasList({ areas }: { areas: AdminServiceArea[] }) {
             >
               Cancel
             </Button>
-            <Button fullWidth disabled={city.trim().length < 2} onClick={submit}>
+            <Button fullWidth loading={pending} disabled={pending || city.trim().length < 2} onClick={submit}>
               {editing ? "Save changes" : "Create area"}
             </Button>
           </div>
