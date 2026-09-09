@@ -129,6 +129,7 @@ export function BroadcastComposer({
 
               <div className="mt-4 flex flex-wrap gap-1.5 border-t border-border pt-4">
                 <Badge tone="primary">In-app</Badge>
+                <Badge tone="success">Push when enabled</Badge>
                 {sendEmail && <Badge tone="info">Email</Badge>}
               </div>
 
@@ -158,8 +159,8 @@ export function BroadcastComposer({
             <CardBody>
               <Megaphone className="size-4 text-text-light" aria-hidden />
               <p className="mt-2 text-xs leading-relaxed text-text-secondary">
-                A broadcast cannot be recalled once sent. Read the subject back — it is what most
-                people will see.
+                Restaurant owners can reopen broadcasts under Messages → Announcements. A push alert
+                is also sent to every recipient who has push enabled.
               </p>
             </CardBody>
           </Card>

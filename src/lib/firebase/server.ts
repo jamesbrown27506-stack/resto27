@@ -29,8 +29,8 @@ function base64url(value: string): string {
 
 let accessToken: { value: string; expiresAt: number } | null = null;
 
-async function firebaseAccessToken(current: FirebaseServiceConfig): Promise<string> {
-  if (accessToken && accessToken.expiresAt > Date.now() + 60_000) return accessToken.value;
+async function firebaseAccessToken(current: FirebaseServiceConfig, forceRefresh = false): Promise<string> {
+  if (!forceRefresh && accessToken && accessToken.expiresAt > Date.now() + 60_000) return accessToken.value;
   const now = Math.floor(Date.now() / 1000);
   const signingInput = `${base64url(JSON.stringify({ alg: "RS256", typ: "JWT" }))}.${base64url(
     JSON.stringify({
@@ -60,6 +60,50 @@ async function firebaseAccessToken(current: FirebaseServiceConfig): Promise<stri
   return accessToken.value;
 }
 
+const FIREBASE_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
+
+async function firebaseMessageRequest(
+  current: FirebaseServiceConfig,
+  initialBearer: string,
+  token: string,
+  payload: PushPayload,
+): Promise<Response> {
+  let bearer = initialBearer;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(
+        "https://fcm.googleapis.com/v1/projects/" + encodeURIComponent(current.projectId) + "/messages:send",
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(10_000),
+          headers: { Authorization: "Bearer " + bearer, "Content-Type": "application/json" },
+          body: JSON.stringify({ message: {
+            token,
+            data: { payload: JSON.stringify(payload) },
+            webpush: { headers: { Urgency: "high", TTL: "86400" } },
+          } }),
+        },
+      );
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      continue;
+    }
+
+    if (response.status === 401 && attempt === 0) {
+      bearer = await firebaseAccessToken(current, true);
+      continue;
+    }
+    if (FIREBASE_RETRY_STATUSES.has(response.status) && attempt < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      continue;
+    }
+    return response;
+  }
+  throw new Error("Firebase retry limit reached");
+}
+
 export async function sendFirebasePush(
   profileId: string, payload: PushPayload, currentEndpoint?: string,
 ): Promise<{ devices: PushDeviceResult[]; queryFailed?: boolean }> {
@@ -79,15 +123,7 @@ export async function sendFirebasePush(
     devices.push(...await Promise.all(tokens.slice(start, start + 10).map(async ({ id, token, web_endpoint }): Promise<PushDeviceResult> => {
       const base = { service: "Firebase", endpointTail: token.slice(-12), isThisDevice: currentEndpoint ? web_endpoint === currentEndpoint || token === currentEndpoint : undefined };
       try {
-        const response = await fetch(
-          "https://fcm.googleapis.com/v1/projects/" + encodeURIComponent(current.projectId) + "/messages:send", {
-            method: "POST", signal: AbortSignal.timeout(10_000),
-            headers: { Authorization: "Bearer " + bearer, "Content-Type": "application/json" },
-            body: JSON.stringify({ message: { token,
-              data: { payload: JSON.stringify(payload) },
-              webpush: { headers: { Urgency: "high", TTL: "86400" } },
-            } }),
-          });
+        const response = await firebaseMessageRequest(current, bearer, token, payload);
         if (response.ok) return { ...base, status: "sent" };
         const body = await response.json().catch(() => ({})) as { error?: { details?: { errorCode?: string }[] } };
         const code = body.error?.details?.find(d => d.errorCode)?.errorCode;
@@ -95,8 +131,12 @@ export async function sendFirebasePush(
           await supabase.from("fcm_subscriptions").delete().eq("id", id).eq("token", token);
           return { ...base, status: "expired", code: response.status };
         }
+        console.error("[firebase] delivery rejected", { status: response.status, code: code ?? "unknown", endpointTail: token.slice(-12) });
         return { ...base, status: "failed", code: response.status, detail: code ?? "Firebase rejected the message" };
-      } catch { return { ...base, status: "failed", detail: "Firebase request failed or timed out" }; }
+      } catch (error) {
+        console.error("[firebase] delivery request failed", { endpointTail: token.slice(-12), error: error instanceof Error ? error.message : "unknown" });
+        return { ...base, status: "failed", detail: "Firebase request failed or timed out" };
+      }
     })));
   }
   return { devices };

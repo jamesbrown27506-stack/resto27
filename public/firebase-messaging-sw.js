@@ -41,7 +41,8 @@ firebase.messaging().onBackgroundMessage((message) => {
   if (!payload.title) return;
   const actions = Array.isArray(payload.actions) ? payload.actions.slice(0, 2) : [];
   return self.registration.showNotification(payload.title, {
-    body: payload.body || "", icon: "/app-icon-192.png", badge: "/app-icon-192.png",
+    body: payload.body || "", icon: payload.icon || "/app-icon-192.png",
+    badge: payload.badge || "/notification-badge.png",
     tag: payload.tag || message.messageId,
     lang: payload.lang, requireInteraction: Boolean(payload.requireInteraction),
     actions: actions.map(a => ({ action: a.action, title: a.title })),

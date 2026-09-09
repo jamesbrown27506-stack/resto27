@@ -53,6 +53,10 @@ export interface PushPayload {
    * the ceiling every Chromium platform actually renders.
    */
   actions?: { action: string; title: string; href: string }[];
+  /** Branded full-colour artwork shown beside the notification. */
+  icon?: string;
+  /** Monochrome Android status-bar glyph. */
+  badge?: string;
 }
 
 /**
@@ -73,6 +77,8 @@ function payloadBody(payload: PushPayload): string {
     ...(payload.lang ? { lang: payload.lang } : {}),
     ...(payload.requireInteraction ? { requireInteraction: true } : {}),
     ...(payload.actions?.length ? { actions: payload.actions.slice(0, 2) } : {}),
+    ...(payload.icon ? { icon: payload.icon } : {}),
+    ...(payload.badge ? { badge: payload.badge } : {}),
   });
 }
 

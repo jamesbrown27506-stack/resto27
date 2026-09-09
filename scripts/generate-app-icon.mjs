@@ -1,88 +1,121 @@
-// Generates public/app-icon-{180,192,512}.png — the PWA/app icon.
-//
-// Web Push on iOS requires the site to be installed to the home screen, which
-// needs a web app manifest, which needs icons. Rather than shipping a binary
-// PNG in the repo, this draws one from the brand color (#5f7257) with a
-// white notification disc — a stand-in until a real logo is designed.
-//
-// A minimal PNG encoder (zlib is built into Node; CRC32 is ~10 lines) — no
-// image library dependency.
-//
-//   node scripts/generate-app-icon.mjs
+// Generates the Resto237 PWA icon and monochrome notification badge.
+// Run with: node scripts/generate-app-icon.mjs
 
 import { deflateSync } from "node:zlib";
 import { writeFileSync } from "node:fs";
 
-const PRIMARY = [0x5f, 0x72, 0x57]; // --primary from globals.css
-const WHITE = [0xff, 0xff, 0xff];
+const PRIMARY = [0x5f, 0x72, 0x57];
+const PRIMARY_DARK = [0x43, 0x54, 0x3d];
+const CREAM = [0xff, 0xfc, 0xf5];
+const ORANGE = [0xf2, 0x8a, 0x2e];
 
-// ── CRC32 (PNG chunk checksums) ─────────────────────────────────────────
 const CRC_TABLE = new Int32Array(256);
-for (let n = 0; n < 256; n++) {
+for (let n = 0; n < 256; n += 1) {
   let c = n;
-  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
   CRC_TABLE[n] = c;
 }
-function crc32(buf) {
+
+function crc32(buffer) {
   let c = 0xffffffff;
-  for (const byte of buf) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  for (const byte of buffer) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
   return (c ^ 0xffffffff) >>> 0;
 }
 
 function chunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length);
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
   const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
   const crc = Buffer.alloc(4);
   crc.writeUInt32BE(crc32(body));
-  return Buffer.concat([len, body, crc]);
+  return Buffer.concat([length, body, crc]);
 }
 
 function encodePng(size, pixelAt) {
-  const raw = Buffer.alloc(size * (size * 3 + 1));
-  let o = 0;
-  for (let y = 0; y < size; y++) {
-    raw[o++] = 0; // filter: none
-    for (let x = 0; x < size; x++) {
-      const [r, g, b] = pixelAt(x, y, size);
-      raw[o++] = r;
-      raw[o++] = g;
-      raw[o++] = b;
+  const raw = Buffer.alloc(size * (size * 4 + 1));
+  let offset = 0;
+  for (let y = 0; y < size; y += 1) {
+    raw[offset++] = 0;
+    for (let x = 0; x < size; x += 1) {
+      const pixel = pixelAt(x, y, size);
+      raw[offset++] = pixel[0];
+      raw[offset++] = pixel[1];
+      raw[offset++] = pixel[2];
+      raw[offset++] = pixel[3];
     }
   }
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 2; // color type: truecolor RGB
+
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(size, 0);
+  header.writeUInt32BE(size, 4);
+  header[8] = 8;
+  header[9] = 6;
+
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk("IHDR", ihdr),
+    chunk("IHDR", header),
     chunk("IDAT", deflateSync(raw, { level: 9 })),
     chunk("IEND", Buffer.alloc(0)),
   ]);
 }
 
-// A white disc in the middle of the brand colour — reads as a notification
-// badge at 16px and at 512px.
-function pixelAt(x, y, size) {
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = size * 0.36;
-  const dx = x + 0.5 - cx;
-  const dy = y + 0.5 - cy;
-  // 1px anti-aliasing: blend the ring edge instead of hard-clipping it.
-  const dist = Math.sqrt(dx * dx + dy * dy);
-  const t = Math.min(1, Math.max(0, r - dist + 1));
-  if (t <= 0) return PRIMARY;
+function clamp(value) {
+  return Math.min(1, Math.max(0, value));
+}
+
+function circle(x, y, cx, cy, radius, size) {
+  return clamp((radius - Math.hypot(x - cx, y - cy)) * size + 0.5);
+}
+
+function roundedRect(x, y, left, top, right, bottom, radius, size) {
+  const cx = Math.max(left + radius, Math.min(x, right - radius));
+  const cy = Math.max(top + radius, Math.min(y, bottom - radius));
+  return clamp((radius - Math.hypot(x - cx, y - cy)) * size + 0.5);
+}
+
+function mix(base, overlay, amount) {
   return [
-    Math.round(PRIMARY[0] + (WHITE[0] - PRIMARY[0]) * t),
-    Math.round(PRIMARY[1] + (WHITE[1] - PRIMARY[1]) * t),
-    Math.round(PRIMARY[2] + (WHITE[2] - PRIMARY[2]) * t),
+    Math.round(base[0] + (overlay[0] - base[0]) * amount),
+    Math.round(base[1] + (overlay[1] - base[1]) * amount),
+    Math.round(base[2] + (overlay[2] - base[2]) * amount),
+    255,
   ];
 }
 
-for (const size of [180, 192, 512]) {
-  writeFileSync(`public/app-icon-${size}.png`, encodePng(size, pixelAt));
-  console.log(`public/app-icon-${size}.png`);
+function markMask(x, y, size) {
+  const dome = y <= 0.63 && y >= 0.34 ? circle(x, y, 0.5, 0.63, 0.285, size) : 0;
+  const base = roundedRect(x, y, 0.16, 0.65, 0.84, 0.73, 0.04, size);
+  const knob = circle(x, y, 0.5, 0.29, 0.055, size);
+  return Math.max(dome, base, knob);
 }
+
+function appPixel(xi, yi, size) {
+  const x = (xi + 0.5) / size;
+  const y = (yi + 0.5) / size;
+  const vignette = clamp((Math.hypot(x - 0.5, y - 0.5) - 0.27) * 1.7);
+  let pixel = mix(PRIMARY, PRIMARY_DARK, vignette);
+  pixel = mix(pixel, CREAM, markMask(x, y, size));
+
+  const knob = circle(x, y, 0.5, 0.29, 0.055, size);
+  pixel = mix(pixel, ORANGE, knob);
+
+  const accent = roundedRect(x, y, 0.27, 0.648, 0.73, 0.686, 0.019, size);
+  pixel = mix(pixel, ORANGE, accent);
+  return pixel;
+}
+
+function badgePixel(xi, yi, size) {
+  const x = (xi + 0.5) / size;
+  const y = (yi + 0.5) / size;
+  const alpha = Math.round(markMask(x, y, size) * 255);
+  return [255, 255, 255, alpha];
+}
+
+for (const size of [180, 192, 512]) {
+  const path = "public/app-icon-" + size + ".png";
+  writeFileSync(path, encodePng(size, appPixel));
+  console.log(path);
+}
+
+writeFileSync("public/notification-badge.png", encodePng(96, badgePixel));
+console.log("public/notification-badge.png");

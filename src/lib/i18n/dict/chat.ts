@@ -73,6 +73,11 @@ export const chatDict = defineDict({
     "mchat.tab.customers": "Clients",
     "mchat.peer.restaurant": "Restaurant",
     "mchat.tab.platform": "Assistance",
+    "mchat.tab.announcements": "Annonces",
+    "mchat.announcements.title": "Annonces de la plateforme",
+    "mchat.announcements.subtitle": "Les informations envoyées par l’équipe {name} restent disponibles ici.",
+    "mchat.announcements.empty": "Aucune annonce",
+    "mchat.announcements.emptyBody": "Les messages diffusés par l’administrateur apparaîtront ici.",
 
     "msup.title": "Assistance {name}",
     "msup.subtitle": "Écrivez à l'équipe de la plateforme — facturation, compte, incident technique.",
@@ -159,6 +164,11 @@ export const chatDict = defineDict({
     "mchat.tab.customers": "Customers",
     "mchat.peer.restaurant": "Restaurant",
     "mchat.tab.platform": "Support",
+    "mchat.tab.announcements": "Announcements",
+    "mchat.announcements.title": "Platform announcements",
+    "mchat.announcements.subtitle": "Messages sent by the {name} team remain available here.",
+    "mchat.announcements.empty": "No announcements",
+    "mchat.announcements.emptyBody": "Messages broadcast by the administrator will appear here.",
 
     "msup.title": "{name} support",
     "msup.subtitle": "Write to the platform team — billing, account, technical incident.",

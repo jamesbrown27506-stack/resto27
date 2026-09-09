@@ -1141,6 +1141,15 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
       const locale: Locale =
         stored ?? (recipient.kind === "admin" ? "en" : "fr");
       const text = copy(input.event, params, locale);
+      const recipientHref =
+        href ??
+        (input.event === "broadcast"
+          ? recipient.kind === "manager"
+            ? "/m/messages?tab=announcements"
+            : recipient.kind === "customer"
+              ? "/messages"
+              : "/a/notifications"
+          : null);
       const prefs = channelsFor(
         recipient,
         input.event,
@@ -1168,7 +1177,7 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
           title: text.title,
           body: text.body,
           tone,
-          href,
+          href: recipientHref,
         });
       }
       if (email && recipient.email) {
@@ -1183,7 +1192,7 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
           profileId: recipient.profileId,
           title: text.title,
           body: text.body,
-          href,
+          href: recipientHref,
           // Tone and language travel WITH the push now: when the banner is
           // announced by the service worker's postMessage (tab open, app
           // hidden), the toast used to always read as "info" because the
@@ -1240,6 +1249,8 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
       lang: p.locale,
       requireInteraction: REQUIRE_INTERACTION_EVENTS.has(input.event),
       actions: pushActionsFor(input.event, params, p.href, p.locale),
+      icon: branding?.iconUrl ?? "/app-icon-192.png",
+      badge: "/notification-badge.png",
     });
 
     /*

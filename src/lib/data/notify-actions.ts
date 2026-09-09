@@ -142,6 +142,20 @@ export async function markNotificationRead(id: string): Promise<{ ok: boolean; e
   return { ok: true };
 }
 
+export async function markBroadcastNotificationsRead(): Promise<{ ok: boolean; error?: string }> {
+  const profile = await requireUser();
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("notifications")
+    .update({ read_at: new Date().toISOString() })
+    .eq("profile_id", profile.id)
+    .eq("href", "/m/messages?tab=announcements")
+    .is("read_at", null);
+  if (error) return { ok: false, error: "Could not mark announcements as read." };
+  revalidatePath("/m/messages");
+  return { ok: true };
+}
+
 export async function markAllNotificationsRead(): Promise<{ ok: boolean; error?: string }> {
   const profile = await requireUser();
   const supabase = createAdminClient();
@@ -180,7 +194,7 @@ export async function getManagerNavCounts(restaurantId: string): Promise<{
 
   if (!staff) return { orders: 0, reservations: 0, messages: 0 };
 
-  const [orders, reservations, messages, support] = await Promise.all([
+  const [orders, reservations, messages, support, announcements] = await Promise.all([
     supabase
       .from("orders")
       .select("*", { count: "exact", head: true })
@@ -198,9 +212,7 @@ export async function getManagerNavCounts(restaurantId: string): Promise<{
       .eq("status", "open")
       .gt("staff_unread", 0),
     // The other inbox on the same screen: this person's own thread with the
-    // platform, where an admin's reply is unread on the CUSTOMER counter
-    // because the manager is the one who opened it. Without this the support
-    // tab could hold an answer while the Messages badge stayed quiet.
+    // platform, where an admin's reply is unread on the CUSTOMER counter.
     supabase
       .from("conversations")
       .select("*", { count: "exact", head: true })
@@ -208,12 +220,20 @@ export async function getManagerNavCounts(restaurantId: string): Promise<{
       .eq("customer_id", profile.id)
       .eq("status", "open")
       .gt("customer_unread", 0),
+    // Broadcasts now live under Messages too, so its nav badge includes unread
+    // announcements instead of leaving discovery solely to the bell.
+    supabase
+      .from("notifications")
+      .select("*", { count: "exact", head: true })
+      .eq("profile_id", profile.id)
+      .eq("href", "/m/messages?tab=announcements")
+      .is("read_at", null),
   ]);
 
   return {
     orders: orders.count ?? 0,
     reservations: reservations.count ?? 0,
-    messages: (messages.count ?? 0) + (support.count ?? 0),
+    messages: (messages.count ?? 0) + (support.count ?? 0) + (announcements.count ?? 0),
   };
 }
 

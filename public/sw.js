@@ -67,7 +67,7 @@ self.addEventListener("push", (event) => {
       console.error("[sw] deliver failed", error);
       return self.registration.showNotification(data.title, {
         body: data.body || "",
-        icon: "/app-icon-192.png",
+        icon: data.icon || "/app-icon-192.png",
         data: { url: data.href || "/" },
       });
     }),
@@ -202,8 +202,8 @@ async function deliver(data) {
       default globe when the decode failed outright. app-icon-192.png is the
       same file the installed app uses, so the banner matches the home screen.
     */
-    icon: "/app-icon-192.png",
-    badge: "/app-icon-192.png",
+    icon: data.icon || "/app-icon-192.png",
+    badge: data.badge || "/notification-badge.png",
     tag,
     renotify: true,
     // Survive a device that wakes, shows, and sleeps again before it is read.

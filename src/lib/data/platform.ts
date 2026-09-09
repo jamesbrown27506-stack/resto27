@@ -758,3 +758,32 @@ export async function runHealthChecks(): Promise<HealthGroup[]> {
     },
   ];
 }
+
+
+/** Broadcast history visible to one public role. Used by the messaging inbox
+ * so a push is still readable after its transient OS banner disappears. */
+export async function listBroadcastsForAudience(
+  audience: "managers" | "customers",
+  limit = 100,
+): Promise<BroadcastRow[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("broadcasts")
+    .select("*")
+    .in("audience", ["everyone", audience])
+    .order("sent_at", { ascending: false })
+    .limit(limit);
+
+  if (error) return soft("broadcasts", error);
+
+  return (data ?? []).map((b) => ({
+    id: b.id,
+    subject: b.subject,
+    body: b.body,
+    audience: b.audience,
+    channels: b.channels,
+    recipientCount: b.recipient_count,
+    sentByEmail: b.sent_by_email,
+    sentAt: b.sent_at,
+  }));
+}

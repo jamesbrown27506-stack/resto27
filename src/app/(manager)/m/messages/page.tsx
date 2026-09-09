@@ -3,11 +3,10 @@ import { ManagerPage } from "@/components/layout/manager-shell";
 import { ManagerMessagesView } from "./messages-view";
 import { requireBranch } from "@/lib/auth/branch";
 import { getBranding } from "@/lib/branding";
+import { listBroadcastsForAudience } from "@/lib/data/platform";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
-// A new conversation lands while this page is open; a cached copy would hide
-// it until someone reloads.
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -18,12 +17,13 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function ManagerMessagesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ c?: string }>;
+  searchParams: Promise<{ c?: string; tab?: string }>;
 }) {
-  const [{ active, profile }, brand, params] = await Promise.all([
-    requireBranch(),
+  const { active, profile } = await requireBranch();
+  const [brand, params, announcements] = await Promise.all([
     getBranding(),
     searchParams,
+    listBroadcastsForAudience("managers"),
   ]);
 
   return (
@@ -33,6 +33,8 @@ export default async function ManagerMessagesPage({
         restaurantId={active.restaurantId}
         platformName={brand.name}
         initialConversationId={params.c ?? null}
+        initialTab={params.tab === "announcements" ? "announcements" : undefined}
+        announcements={announcements}
       />
     </ManagerPage>
   );

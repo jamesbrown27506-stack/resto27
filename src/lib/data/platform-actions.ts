@@ -162,7 +162,7 @@ export async function sendBroadcast(input: {
     subject: input.subject.trim(),
     body: input.body.trim(),
     audience: input.audience,
-    channels: input.sendEmail ? "in_app,email" : "in_app",
+    channels: input.sendEmail ? "in_app,push,email" : "in_app,push",
     recipient_count: result.delivered,
     sent_by_email: admin.email,
   });
