@@ -150,7 +150,7 @@ export function HomeContent({
         aria-label={locale === "fr" ? "Découvrir par cuisine" : "Discover by cuisine"}
         className="container-page flex flex-col gap-4 py-8 sm:flex-row sm:items-center sm:justify-between"
       >
-        <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1">
+        <div className="stagger-in no-scrollbar flex gap-2 overflow-x-auto pb-1">
           {cuisines.slice(0, 6).map((cuisine) => (
             <Link
               key={cuisine}
@@ -184,7 +184,7 @@ export function HomeContent({
               className="object-cover"
             />
           </div>
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="stagger-in grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {dishes.map(
               ({ item, restaurantSlug, restaurantName, restaurantLogo, restaurantRating, restaurantQuartier }) => (
                 <DishCard
@@ -280,7 +280,7 @@ export function HomeContent({
               </div>
             </div>
 
-            <div className="grid gap-4">
+            <div className="stagger-in grid gap-4">
               {[
                 {
                   Icon: ChefHat,

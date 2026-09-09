@@ -41,7 +41,9 @@ export function LocaleToggle({ className }: { className?: string }) {
               if (isPublicPage(window.location.pathname)) window.location.assign(publicHref(window.location.pathname + window.location.search + window.location.hash, value));
             }}
             className={cn(
-              "rounded-full px-2 py-1 text-[11px] font-bold transition-colors",
+              // `.soft-press` + `[aria-checked]` latch (globals.css): the
+              // active language wears the concave face, like a held-down key.
+              "soft-press rounded-full px-2 py-1 text-[11px] font-bold transition-colors",
               active
                 ? "bg-primary text-primary-fg"
                 : "text-text-light hover:bg-border/40 hover:text-text",

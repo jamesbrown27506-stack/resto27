@@ -47,8 +47,15 @@ export function Field({ label, htmlFor, hint, error, required, className, childr
 
 /* ── Shared control chrome ─────────────────────────────────────────────── */
 
+/*
+  `.soft-field` is the mobile-only concave well (globals.css): below `sm`
+  every input, textarea and select is a place things are typed INTO, the
+  physical opposite of the raised buttons beside them. Focus and error
+  states sit above it — see the note in globals.css for why there is no
+  `.soft-field:focus` rule.
+*/
 const CONTROL = [
-  "w-full rounded-md border bg-surface-2 text-sm text-text",
+  "soft-field w-full rounded-md border bg-surface-2 text-sm text-text",
   "placeholder:text-text-light",
   "transition-colors duration-200",
   "focus:outline-none focus-visible:outline-none",
@@ -201,6 +208,16 @@ function ToggleControl({
         "transition-colors hover:border-border-strong",
         "has-checked:border-primary has-checked:bg-primary-light",
         "has-disabled:cursor-not-allowed has-disabled:opacity-55",
+        /*
+          The soft material, phone-only like `.soft-press`: raised at rest,
+          concave while checked — a checked box is a held-down one. The
+          shadows are written as utilities rather than plain CSS so they sit
+          in the same cascade as the checked and disabled states, and
+          `has-disabled` wins over both without an arms race.
+        */
+        "max-sm:shadow-[-2px_-2px_5px_var(--soft-hi),3px_3px_7px_var(--soft-lo)]",
+        "has-checked:max-sm:shadow-[inset_2px_2px_5px_var(--soft-lo),inset_-1px_-1px_4px_var(--soft-hi)]",
+        "has-disabled:max-sm:shadow-none",
         className,
       )}
     >
@@ -256,7 +273,8 @@ export function Switch({
     <label htmlFor={inputId} className={cn("flex cursor-pointer items-center gap-3", className)}>
       <span className="relative inline-flex shrink-0">
         <input id={inputId} type="checkbox" className="peer sr-only" {...props} />
-        <span className="block h-6 w-11 rounded-full bg-border transition-colors peer-checked:bg-primary peer-disabled:opacity-50" />
+        {/* The track is a shallow well on phones — the knob is the one raised thing. */}
+        <span className="block h-6 w-11 rounded-full bg-border transition-colors peer-checked:bg-primary peer-disabled:opacity-50 max-sm:shadow-[inset_1px_2px_3px_var(--soft-lo)]" />
         <span className="pointer-events-none absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5" />
       </span>
       <span className={cn("flex-1", props.disabled && "opacity-60")}>

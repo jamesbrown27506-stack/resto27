@@ -64,10 +64,11 @@ interface Slide {
  * How long each mode holds before the lap moves on.
  *
  * Long enough to read a three-word tag and a headline, short enough that the
- * whole demonstration is over in twelve seconds — before a visitor who is
- * scrolling has left, and well before it could become something to wait out.
+ * whole demonstration is over in under fourteen seconds — before a visitor
+ * who is scrolling has left, and well before it could become something to
+ * wait out.
  */
-const DWELL_MS = 4000;
+const DWELL_MS = 4500;
 
 const SLIDES: Slide[] = [
   {
@@ -209,6 +210,20 @@ export function Hero({
     */
   }, [reducedMotion, allLoaded]);
 
+  /*
+    Deadlock breaker. The lap starts only when all three photographs have
+    reported in, and `onLoad`/`onError` below are the only reporters. If
+    neither ever fires — a request stalled mid-flight, a service worker
+    gone odd — the hero would sit still forever, which is the exact bug
+    that was reported against the preload attempt. Ten seconds in we stop
+    waiting and run the lap with whatever is actually on screen.
+  */
+  useEffect(() => {
+    if (allLoaded || rotationDone.current) return;
+    const bail = setTimeout(() => setLoaded(new Set(SLIDES.map(s2 => s2.mode))), 10_000);
+    return () => clearTimeout(bail);
+  }, [allLoaded]);
+
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     // The homepage search must actually search (§14.1) — the PHP hero's form
@@ -263,7 +278,9 @@ export function Hero({
           aria-hidden={i !== index}
           className={cn(
             "absolute inset-0 transition-opacity duration-700 ease-out",
-            i === index ? "opacity-100" : "opacity-0",
+            // `.hero-slide-active` drives the Ken Burns breath (globals.css);
+            // class toggling is what restarts the zoom on re-activation.
+            i === index ? "hero-slide-active opacity-100" : "opacity-0",
           )}
         >
           <Image
@@ -276,6 +293,10 @@ export function Hero({
             // that resolve in the background while the visitor reads.
             priority={i === 0}
             onLoad={() => setLoaded(prev => (prev.has(s.mode) ? prev : new Set(prev).add(s.mode)))}
+            // A photograph that fails — 404, offline, expired URL — must not
+            // hold the gate shut forever. A rotation over a possibly-bare
+            // frame is recoverable; a hero that never moves is not.
+            onError={() => setLoaded(prev => (prev.has(s.mode) ? prev : new Set(prev).add(s.mode)))}
           />
         </div>
       ))}
@@ -340,7 +361,7 @@ export function Hero({
           rather than patch nodes the translator may have moved. This block is
           the highest-churn text on the site.
         */}
-        <div key={slide.mode} aria-live="polite" aria-atomic="true" className="max-w-3xl">
+        <div key={slide.mode} aria-live="polite" aria-atomic="true" className="animate-copy-in max-w-3xl">
           <p className="flex items-center gap-3 text-[12px] font-bold tracking-[0.22em] text-accent uppercase">
             <span aria-hidden className="h-px w-10 bg-accent" />
             <span>{t(slide.tag)}</span>

@@ -61,7 +61,7 @@ export function StatStrip({
 
   return (
     <section className="container-page relative z-10 -mt-14 lg:-mt-20">
-      <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border shadow-lg lg:grid-cols-4">
+      <dl className="stagger-in grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border shadow-lg lg:grid-cols-4">
         {items.map((item) => (
           <div
             key={item.label}
@@ -159,7 +159,7 @@ export function StepList({
   stepLabel?: string;
 }) {
   return (
-    <ol className="relative grid gap-10 sm:grid-cols-3">
+    <ol className="stagger-in relative grid gap-10 sm:grid-cols-3">
       {/* Connector line, desktop only. Hidden below sm where the steps stack. */}
       <div
         aria-hidden
@@ -195,7 +195,7 @@ export function TestimonialGrid({
   items: { body: string; name: string; meta: string; rating: number }[];
 }) {
   return (
-    <div className="grid gap-6 md:grid-cols-3">
+    <div className="stagger-in grid gap-6 md:grid-cols-3">
       {items.map((t) => (
         <figure
           key={t.name}

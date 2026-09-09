@@ -533,15 +533,155 @@
     box-shadow: none;
   }
 
-  /* Already pressed, in the latching sense — a selected chip is held down,
-     so it wears the concave face permanently rather than the raised one. */
+  /* Already pressed, in the latching sense — a selected chip, a checked
+     radio or the current page in a nav menu is held down, so it wears the
+     concave face permanently rather than the raised one. */
   .soft-press[aria-pressed="true"],
-  .soft-press[aria-selected="true"] {
+  .soft-press[aria-selected="true"],
+  .soft-press[aria-checked="true"],
+  .soft-press[aria-current="page"] {
+    box-shadow:
+      inset 2px 2px 5px var(--soft-lo),
+      inset -1px -1px 4px var(--soft-hi);
+  }
+
+  /* ── Fields: the concave half of the material ──────────────────────────
+     A field is a well the visitor types INTO, so it wears the inset face —
+     the physical opposite of the raised buttons beside it. That contrast of
+     direction is the clearest "this receives, that acts" signal soft-UI has.
+
+     Deliberately NO :focus rule here. The focus ring is Tailwind's
+     `focus:ring-[3px] focus:ring-primary/15`; this file is unlayered, so a
+     `.soft-field:focus` rule would tie on specificity, win on source order,
+     and erase the ring exactly when it matters most. Focus therefore
+     replaces the well with the ring; blurring hands the well back.
+
+     A disabled field keeps its well. It is still the place input would go —
+     only the affordance of pressability is ever removed, and that rule
+     belongs to .soft-press above. */
+  .soft-field {
     box-shadow:
       inset 2px 2px 5px var(--soft-lo),
       inset -1px -1px 4px var(--soft-hi);
   }
 }
+
+/* ── Neumorphic bottom tab bar, PHONES ONLY ────────────────────────────
+
+   The bar itself only mounts below `lg` (mobile-tabbar.tsx); these styles
+   live inside the matching media query, so the treatment can never leak
+   onto desktop even if that visibility rule ever moves.
+
+   Neumorphism has one hard requirement this bar can meet: the element and
+   the page must share a colour, with the extrusion carried entirely by
+   light and shadow. So the bar wears `--bg`, not `--surface`. As with
+   .soft-press above, the hairline edge stays — the control must remain
+   findable with the shadows stripped out, on cheap screens in daylight.
+
+   The light source is the same top-left one the soft tokens were cut for:
+   a lit bevel along the bar's top edge and an ambient shadow lifting it
+   off the page. The active tab's icon sits in a raised key; a press takes
+   the whole cell concave — the same physics as .soft-press, one scale up. */
+@media (max-width: 63.999rem) {
+  .neu-bar {
+    background: var(--bg);
+    box-shadow:
+      inset 0 1px 0 var(--soft-edge),
+      inset 0 2px 0 var(--soft-hi),
+      0 -12px 28px var(--soft-lo);
+  }
+
+  .neu-tab {
+    transition: box-shadow 110ms ease-out;
+  }
+
+  /* Pressed: concave, light flipping to the far side — no colour wash. */
+  .neu-tab:active:not(:disabled) {
+    box-shadow:
+      inset 3px 3px 8px var(--soft-lo),
+      inset -2px -2px 6px var(--soft-hi);
+  }
+
+  /* The raised key the active tab's icon sits in. The padding and radius
+     are NOT here — the component carries them at rest, so activating a tab
+     changes only the paint, never the layout. */
+  .neu-key {
+    background: var(--bg);
+    box-shadow:
+      -2px -2px 5px var(--soft-hi),
+      3px 3px 7px var(--soft-lo),
+      inset 0 0 0 1px var(--soft-edge);
+    transition: box-shadow 150ms ease-out;
+  }
+}
+
+/* ── Neumorphic site header, PHONES ONLY ───────────────────────────────
+
+   The header stays frosted glass on desktop: above `lg` there is no touch
+   press to answer, and the translucency earns its paint cost by keeping the
+   full-bleed hero present while you scroll. On a phone the bar joins the
+   bottom tab bar's material — opaque page colour, the same top-left light
+   source: a lit bevel along its top edge, an ambient shadow below lifting
+   it off the page, and a hairline edge for daylight legibility.
+
+   `border-bottom: 0` retires the utility border the component carries; the
+   hairline is now part of the treatment, so the two cannot disagree. This
+   also shadows out the scrolled `shadow-sm` on mobile — the ambient shadow
+   below IS the header's depth, and one shadow must own that job. */
+@media (max-width: 63.999rem) {
+  .neu-header {
+    background: var(--bg);
+    border-bottom: 0;
+    box-shadow:
+      inset 0 1px 0 var(--soft-hi),
+      inset 0 -1px 0 var(--soft-edge),
+      0 10px 24px var(--soft-lo);
+  }
+}
+
+/* ── Hero motion ────────────────────────────────────────────────────────
+
+   COPY-IN. The hero's tag/headline/subtitle block is keyed by mode (see
+   hero.tsx), so every rotation or tab press remounts it — this animation
+   is how the new copy arrives instead of snapping in. It travels further
+   than rl-rise because it moves a large headline over a photograph, where
+   8px reads as a twitch rather than a step.
+
+   KEN BURNS. The active photograph breathes — a slow scale from 1 to 1.08
+   across a dwell. CSS-only: the class lands on the active slide's wrapper,
+   so the animation restarts on every activation and the two sleeping
+   photographs sit still beneath the scrim. Explicitly guarded here, and
+   the global reduced-motion collapse covers it a second time. */
+@keyframes rl-copy-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility animate-copy-in {
+  animation: rl-copy-in 0.5s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+@keyframes rl-kenburns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.08);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero-slide-active img {
+    animation: rl-kenburns 8s ease-out both;
+  }
+}
+
 
 /* A soft right edge on a horizontally scrolling row.
 

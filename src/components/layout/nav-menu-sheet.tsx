@@ -90,7 +90,10 @@ export function NavMenuSheet({
                   href={item.href}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex h-full items-center gap-3 rounded-lg border p-3.5 transition-colors",
+                    // `.soft-press` + the `aria-current` below: raised tile,
+                    // and the current destination latches concave — the same
+                    // "you are here" physics as the tab bar's active key.
+                    "soft-press flex h-full items-center gap-3 rounded-lg border p-3.5 transition-colors",
                     active
                       ? "border-primary bg-primary-light/50 text-primary"
                       : "border-border bg-surface text-text-secondary hover:bg-surface-2 hover:text-text",

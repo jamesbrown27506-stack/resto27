@@ -99,7 +99,9 @@ export function SiteHeader({
     <>
       <header
         className={cn(
-          "fixed inset-x-0 top-0 z-50 h-20 border-b transition-shadow lg:h-16",
+          // `.neu-header` re-skins the bar as the soft material on phones
+          // only (globals.css); desktop keeps the frosted glass below.
+          "neu-header fixed inset-x-0 top-0 z-50 h-20 border-b transition-shadow lg:h-16",
           scrolled ? "border-border shadow-sm" : "border-border/60",
         )}
       >
@@ -140,7 +142,9 @@ export function SiteHeader({
             <Link
               href="/cart"
               aria-label={cartCount > 0 ? `${t("nav.cart")} — ${cartCount}` : t("nav.cartEmpty")}
-              className="relative grid size-9 shrink-0 place-items-center rounded-full text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
+              /* `.soft-press` raises the icon buttons on phones, same material
+                  as the tab bar's keys and every Button in the app. */
+              className="soft-press relative grid size-9 shrink-0 place-items-center rounded-full text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
             >
               <ShoppingBag className="size-4.5" aria-hidden />
               {cartCount > 0 && (
@@ -158,7 +162,7 @@ export function SiteHeader({
 
                 <Link
                   href={user.homeHref}
-                  className="inline-flex items-center gap-2 rounded-full py-1 pr-3 pl-1 transition-colors hover:bg-surface-2 sm:pr-3"
+                  className="soft-press inline-flex items-center gap-2 rounded-full py-1 pr-3 pl-1 transition-colors hover:bg-surface-2 sm:pr-3"
                 >
                   <Avatar name={user.name} src={user.avatarUrl} size="sm" />
                   <span className="hidden max-w-28 truncate text-sm font-medium sm:block">
@@ -229,8 +233,11 @@ export function SiteHeader({
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={pathname.startsWith(item.href) ? "page" : undefined}
                 className={cn(
-                  "rounded-md px-4 py-3 text-base font-medium transition-colors",
+                  // `aria-current` latches the concave face on phones — the
+                  // same "you are here" physics as the bottom tab bar.
+                  "soft-press rounded-md px-4 py-3 text-base font-medium transition-colors",
                   pathname.startsWith(item.href)
                     ? "bg-primary-light text-primary"
                     : "text-text hover:bg-surface-2",
@@ -257,7 +264,7 @@ export function SiteHeader({
                 */}
                 <Link
                   href={user.homeHref}
-                  className="flex items-center gap-3 rounded-lg border border-border bg-surface-2 p-3 transition-colors hover:bg-surface"
+                  className="soft-press flex items-center gap-3 rounded-lg border border-border bg-surface-2 p-3 transition-colors hover:bg-surface"
                 >
                   <Avatar name={user.name} src={user.avatarUrl} size="md" />
                   <span className="min-w-0">
@@ -272,8 +279,9 @@ export function SiteHeader({
                       <li key={item.href}>
                         <Link
                           href={item.href}
+                          aria-current={pathname === item.href ? "page" : undefined}
                           className={cn(
-                            "flex h-full items-center gap-2.5 rounded-lg border p-3 text-sm font-medium transition-colors",
+                            "soft-press flex h-full items-center gap-2.5 rounded-lg border p-3 text-sm font-medium transition-colors",
                             pathname === item.href
                               ? "border-primary bg-primary-light/50 text-primary"
                               : "border-border text-text-secondary hover:bg-surface-2 hover:text-text",

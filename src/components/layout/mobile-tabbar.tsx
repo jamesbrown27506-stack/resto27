@@ -108,9 +108,9 @@ export function MobileTabBar({
     <>
       <nav
         aria-label={ariaLabel ?? t("nav.menu")}
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur-md lg:hidden"
+        className="neu-bar fixed inset-x-0 bottom-0 z-40 lg:hidden"
         // The gesture bar on phones that have one. Padding, not margin, so the
-        // frosted surface still reaches the physical bottom edge.
+        // neumorphic surface still reaches the physical bottom edge.
         style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       >
         <ul className="grid auto-cols-fr grid-flow-col">
@@ -122,12 +122,13 @@ export function MobileTabBar({
                   href={item.href}
                   aria-current={active ? "page" : undefined}
                   /*
-                    The press wash lives on the anchor because :active only
-                    holds while the finger is down — it is the instant half of
-                    the feedback, and `pending` inside takes over the moment
-                    the finger lifts.
+                    The neumorphic press lives on the anchor because :active
+                    only holds while the finger is down — it is the instant
+                    half of the feedback, and `pending` inside takes over the
+                    moment the finger lifts. Pressed, the whole cell goes
+                    concave (globals.css), the same physics as .soft-press.
                   */
-                  className="block transition-colors duration-100 active:bg-primary-light"
+                  className="neu-tab block"
                 >
                   <TabBody
                     item={item}
@@ -148,7 +149,7 @@ export function MobileTabBar({
                 onClick={() => setMenuOpen(true)}
                 className={cn(
                   tabClasses(moreActive || menuOpen),
-                  "w-full transition-colors duration-100 active:bg-primary-light",
+                  "neu-tab w-full",
                 )}
               >
                 <Lit active={moreActive || menuOpen} />
@@ -221,7 +222,15 @@ function TabBody({
   return (
     <span className={cn(tabClasses(active || pending), "w-full")}>
       <Lit active={active} pending={pending} />
-      <span className={cn("relative transition-transform duration-150", pending && "scale-110")}>
+      {/* Padding and radius live here at rest, so the raised key (.neu-key,
+          mobile only) changes paint only — no layout jump on activation. */}
+      <span
+        className={cn(
+          "relative rounded-full px-3.5 py-1.5 transition-transform duration-150",
+          pending && "scale-110",
+          (active || pending) && "neu-key",
+        )}
+      >
         <NavIcon name={item.icon} className="size-5" />
         {item.badge !== undefined && item.badge > 0 && <Bubble count={item.badge} />}
       </span>
