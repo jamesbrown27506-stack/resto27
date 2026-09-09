@@ -138,5 +138,12 @@ export function RestaurantCard({
 }
 
 export function RestaurantGrid({ children }: { children: React.ReactNode }) {
-  return <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">{children}</div>;
+  /*
+    gap-4 on a phone, gap-6 from `sm`. At 24px between full-width cards a
+    360px screen showed roughly one and a half restaurants; the tighter gap
+    buys most of a second card without the list feeling cramped.
+
+    `stagger-in` is a CSS-only entrance — see globals.css for why it is capped.
+  */
+  return <div className="stagger-in grid gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-3">{children}</div>;
 }

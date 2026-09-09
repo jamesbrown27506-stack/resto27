@@ -342,6 +342,12 @@ const baseFr = {
   "restaurants.emptyBody":
     "Essayez un autre quartier, ou élargissez la recherche à toutes les cuisines.",
   "restaurants.reset": "Réinitialiser les filtres",
+  "restaurants.filters": "Filtres",
+  "restaurants.filtersTitle": "Affiner la recherche",
+  "restaurants.filtersDone": "Voir {count} restaurants",
+  "restaurants.filtersDoneOne": "Voir 1 restaurant",
+  "restaurants.filtersNone": "Aucun résultat",
+  "restaurants.sortLabel": "Trier par",
 
   /* ── Auth ──────────────────────────────────────────────────────────── */
   "auth.login.title": "Connexion",
@@ -1123,6 +1129,12 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "restaurants.emptyTitle": "No restaurant matches",
   "restaurants.emptyBody": "Try another neighbourhood, or widen the search to all cuisines.",
   "restaurants.reset": "Reset filters",
+  "restaurants.filters": "Filters",
+  "restaurants.filtersTitle": "Refine your search",
+  "restaurants.filtersDone": "Show {count} restaurants",
+  "restaurants.filtersDoneOne": "Show 1 restaurant",
+  "restaurants.filtersNone": "No results",
+  "restaurants.sortLabel": "Sort by",
 
   /* ── Auth ──────────────────────────────────────────────────────────── */
   "auth.login.title": "Sign in",

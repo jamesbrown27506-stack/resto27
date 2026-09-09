@@ -19,8 +19,11 @@ export type SheetSide = "left" | "right" | "bottom";
 const SIDE_CLASSES: Record<SheetSide, string> = {
   left: "mr-auto ml-0 h-dvh max-h-none w-[min(22rem,85vw)] rounded-none border-y-0 border-l-0",
   right: "ml-auto mr-0 h-dvh max-h-none w-[min(28rem,90vw)] rounded-none border-y-0 border-r-0",
+  // `sheet-bottom` is the hook globals.css animates the rise from — a class
+  // rather than a utility because it targets `dialog[open]`, which Tailwind
+  // cannot express.
   bottom:
-    "mt-auto mb-0 mx-auto w-full max-w-2xl max-h-[88dvh] rounded-t-xl rounded-b-none border-b-0",
+    "sheet-bottom mt-auto mb-0 mx-auto w-full max-w-2xl max-h-[88dvh] rounded-t-xl rounded-b-none border-b-0",
 };
 
 export interface SheetProps {

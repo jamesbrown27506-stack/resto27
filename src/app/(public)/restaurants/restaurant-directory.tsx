@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Search, Store } from "lucide-react";
 import { RestaurantCard, RestaurantGrid } from "@/components/restaurant/restaurant-card";
-import { FilterBar } from "@/components/data/filter-bar";
+import { DirectoryFilters } from "@/components/restaurant/directory-filters";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { useLocale } from "@/lib/i18n/use-locale";
@@ -127,12 +127,26 @@ export function RestaurantDirectory({
 
   return (
     <>
-      <FilterBar
+      <DirectoryFilters
         query={query}
         onQueryChange={setQuery}
         placeholder={t("restaurants.searchPlaceholder")}
         onClear={clear}
-        selects={[
+        resultCount={results.length}
+        sort={{
+          key: "sort",
+          label: t("restaurants.sortLabel"),
+          value: sort,
+          onChange: setSort,
+          options: [
+            // Only offered when we can actually honour it.
+            ...(homeQuartier ? [{ value: "nearMe", label: t("restaurants.sortNearMe") }] : []),
+            { value: "rating", label: t("restaurants.sortRating") },
+            { value: "delivery", label: t("restaurants.sortDelivery") },
+            { value: "name", label: t("restaurants.sortName") },
+          ],
+        }}
+        filters={[
           {
             key: "quartier",
             label: t("cbr.quartier"),
@@ -185,21 +199,6 @@ export function RestaurantDirectory({
               { value: "15", label: t("restaurants.delay15") },
               { value: "30", label: t("restaurants.delay30") },
               { value: "45", label: t("restaurants.delay45") },
-            ],
-          },
-          {
-            key: "sort",
-            label: t("restaurants.sort"),
-            value: sort,
-            onChange: setSort,
-            options: [
-              // Only offered when we can actually honour it.
-              ...(homeQuartier
-                ? [{ value: "nearMe", label: t("restaurants.sortNearMe") }]
-                : []),
-              { value: "rating", label: t("restaurants.sortRating") },
-              { value: "delivery", label: t("restaurants.sortDelivery") },
-              { value: "name", label: t("restaurants.sortName") },
             ],
           },
         ]}

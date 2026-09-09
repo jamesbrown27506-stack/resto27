@@ -350,6 +350,79 @@
   animation: rl-nav-progress 8s cubic-bezier(0.15, 0.75, 0.3, 1) forwards;
 }
 
+/* ── Staggered entrance for a results grid ──────────────────────────────
+   Pure CSS so nothing is animated from JavaScript: no per-element inline
+   style, no re-render, and the browser can skip the whole block when the
+   visitor has asked it to.
+
+   The delay is CAPPED at the seventh child. This runs on the phones this
+   platform is actually used on, and a twenty-card ladder of delays turns a
+   list into a slideshow — the last card would arrive most of a second after
+   the first for no benefit. Six steps is enough to read as "these arrived",
+   which is the only thing the motion is for.
+
+   Guarded by prefers-reduced-motion rather than Tailwind's motion-safe
+   variant so the delays and the animation stay in one place. */
+@media (prefers-reduced-motion: no-preference) {
+  .stagger-in > * {
+    animation: rl-rise 0.28s ease both;
+  }
+  .stagger-in > *:nth-child(2) {
+    animation-delay: 40ms;
+  }
+  .stagger-in > *:nth-child(3) {
+    animation-delay: 80ms;
+  }
+  .stagger-in > *:nth-child(4) {
+    animation-delay: 120ms;
+  }
+  .stagger-in > *:nth-child(5) {
+    animation-delay: 160ms;
+  }
+  .stagger-in > *:nth-child(6) {
+    animation-delay: 200ms;
+  }
+  .stagger-in > *:nth-child(n + 7) {
+    animation-delay: 240ms;
+  }
+
+  /* The bottom sheet rises rather than appearing. A filter panel that snaps
+     into place on a slow phone is indistinguishable from a page jump. */
+  dialog[open].sheet-bottom {
+    animation: rl-sheet-up 0.24s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+}
+
+/* A soft right edge on a horizontally scrolling row.
+
+   Without it the row is cut dead at the viewport edge, and a half-chip
+   sliced by a hard line reads as a layout bug rather than as "there is more
+   this way". The fade is only applied below `sm`, where the row actually
+   overflows — above that the chips wrap and a fade would dim a last chip
+   that has nothing after it. */
+.scroll-fade-x {
+  mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent 100%);
+}
+
+/* Tailwind's `sm`. Written as a plain media query rather than an @variant
+   inside @utility, which did not compile the override. */
+@media (min-width: 40rem) {
+  .scroll-fade-x {
+    mask-image: none;
+  }
+}
+
+@keyframes rl-sheet-up {
+  from {
+    transform: translateY(6%);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
 /* Hide scrollbars on horizontal chip rows without losing scrollability. */
 @utility no-scrollbar {
   scrollbar-width: none;
