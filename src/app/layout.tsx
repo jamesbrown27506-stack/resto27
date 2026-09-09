@@ -71,9 +71,21 @@ export async function generateMetadata(): Promise<Metadata> {
     robots: { index: true, follow: true, "max-image-preview": "large" },
     openGraph: { type: "website", siteName: brand.name, locale: "fr_CM" },
     twitter: { card: "summary_large_image" },
-    // Uploaded files get server-generated UUID names, so a new favicon is a
-    // new URL — no cache-busting query string needed, and no stale tab icon.
-    icons: { icon: brand.faviconUrl ?? "/favicon.ico" },
+    /*
+      Both point at /brand-icon, which renders whatever the administrator
+      uploaded down to 192px PNG on our own origin — see that route for why.
+      The raw uploaded asset was 1254x1254 and 847 KB, shipped to every tab on
+      every page and to Google's favicon crawler.
+
+      `sizes: "any"` because one square serves every slot Google and the
+      browsers ask for, and apple-touch-icon keeps its own larger asset in
+      <head> for the home-screen tile.
+    */
+    icons: {
+      icon: brand.faviconUrl || brand.iconUrl || brand.logoUrl
+        ? [{ url: "/brand-icon", sizes: "any", type: "image/png" }]
+        : "/favicon.ico",
+    },
   };
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "@/components/layout/public-link";
+import { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { NavIcon, type IconName } from "./icon";
@@ -120,16 +121,19 @@ export function MobileTabBar({
                 <Link
                   href={item.href}
                   aria-current={active ? "page" : undefined}
-                  className={tabClasses(active)}
+                  /*
+                    The press wash lives on the anchor because :active only
+                    holds while the finger is down — it is the instant half of
+                    the feedback, and `pending` inside takes over the moment
+                    the finger lifts.
+                  */
+                  className="block transition-colors duration-100 active:bg-primary-light"
                 >
-                  <Lit active={active} />
-                  <span className="relative">
-                    <NavIcon name={item.icon} className="size-5" />
-                    {item.badge !== undefined && item.badge > 0 && <Bubble count={item.badge} />}
-                  </span>
-                  <span className="max-w-full truncate">
-                    {item.labelKey ? t(item.labelKey) : item.label}
-                  </span>
+                  <TabBody
+                    item={item}
+                    active={active}
+                    label={item.labelKey ? t(item.labelKey) : (item.label ?? "")}
+                  />
                 </Link>
               </li>
             );
@@ -142,7 +146,10 @@ export function MobileTabBar({
                 aria-haspopup="dialog"
                 aria-expanded={menuOpen}
                 onClick={() => setMenuOpen(true)}
-                className={cn(tabClasses(moreActive || menuOpen), "w-full")}
+                className={cn(
+                  tabClasses(moreActive || menuOpen),
+                  "w-full transition-colors duration-100 active:bg-primary-light",
+                )}
               >
                 <Lit active={moreActive || menuOpen} />
                 <span className="relative">
@@ -171,6 +178,58 @@ export function MobileTabBar({
   );
 }
 
+/**
+ * The inside of a tab, and the reason a tab has an inside at all.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  WHY THIS IS A SEPARATE COMPONENT.
+ *
+ *  Every visual cue on this bar — the lit pill, the primary colour — was
+ *  derived from `pathname`, and `pathname` only changes once the destination
+ *  has rendered. On a fast connection that is imperceptible. On the ones this
+ *  platform runs on it means tapping "Commandes" and watching the bar sit
+ *  there, unchanged, for a second or more.
+ *
+ *  A tab that does not react has not been pressed, as far as anyone can tell.
+ *  So people press it again. And again — which is the report that produced
+ *  this change.
+ *
+ *  `useLinkStatus` reports the navigation this specific link started, and it
+ *  can only be called beneath the <Link> it belongs to. Hence a child
+ *  component: the styling moved in here with it, because the state it depends
+ *  on is not knowable on the outside.
+ *
+ *  Three states now, not two:
+ *    idle      — quiet
+ *    pending   — pressed, and the destination is being fetched. Lights up
+ *                immediately and pulses, so the wait reads as progress
+ *                rather than as nothing having happened.
+ *    active    — you are here. Steady.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+function TabBody({
+  item,
+  active,
+  label,
+}: {
+  item: TabItem;
+  active: boolean;
+  label: string;
+}) {
+  const { pending } = useLinkStatus();
+
+  return (
+    <span className={cn(tabClasses(active || pending), "w-full")}>
+      <Lit active={active} pending={pending} />
+      <span className={cn("relative transition-transform duration-150", pending && "scale-110")}>
+        <NavIcon name={item.icon} className="size-5" />
+        {item.badge !== undefined && item.badge > 0 && <Bubble count={item.badge} />}
+      </span>
+      <span className="max-w-full truncate">{label}</span>
+    </span>
+  );
+}
+
 function tabClasses(active: boolean): string {
   return cn(
     "relative flex min-h-16 flex-col items-center justify-center gap-1 px-1 pt-2 pb-1.5",
@@ -179,15 +238,22 @@ function tabClasses(active: boolean): string {
   );
 }
 
-/** The lit indicator — a pill above the active icon, so state reads at a
-    glance without recolouring the whole tab. */
-function Lit({ active }: { active: boolean }) {
+/**
+ * The lit indicator — a pill above the icon, so state reads at a glance
+ * without recolouring the whole tab.
+ *
+ * `pending` paints the same pill and pulses it. Same shape, same place, so
+ * arriving at the destination is a pulse settling rather than one indicator
+ * being swapped for another.
+ */
+function Lit({ active, pending = false }: { active: boolean; pending?: boolean }) {
   return (
     <span
       aria-hidden
       className={cn(
         "absolute top-0 h-0.5 w-8 rounded-full transition-colors",
-        active ? "bg-primary" : "bg-transparent",
+        active || pending ? "bg-primary" : "bg-transparent",
+        pending && !active && "animate-tab-pending",
       )}
     />
   );

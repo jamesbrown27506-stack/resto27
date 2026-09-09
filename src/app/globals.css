@@ -411,6 +411,36 @@
   }
 }
 
+/* The bottom tab bar's "I heard you, I am fetching it" pulse.
+
+   Deliberately the SAME pill, in the same place, as the settled active
+   indicator — so arriving is a pulse coming to rest rather than one marker
+   being swapped for a different one. It scales on the x axis from the centre,
+   which reads as a thing loading rather than as a thing blinking.
+
+   Not gated on prefers-reduced-motion here, and that is the right outcome
+   rather than an oversight. The global rule above collapses every animation
+   to 0.01ms with one iteration, which removes the PULSE but leaves the pill
+   painted solid — because `bg-primary` is the element's base style and the
+   animation only modulated it. So a visitor who has asked for less motion
+   still gets the indicator, just still. That matters: this is not decoration,
+   it is the only signal that a tap on a slow connection did anything at all. */
+@keyframes rl-tab-pending {
+  0%,
+  100% {
+    opacity: 0.5;
+    transform: scaleX(0.55);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+@utility animate-tab-pending {
+  animation: rl-tab-pending 0.9s ease-in-out infinite;
+}
+
 /* ── Soft press: a tactile control surface, PHONES ONLY ─────────────────
 
    What this is. Neumorphism, adapted rather than copied. The classic version
