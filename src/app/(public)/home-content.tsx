@@ -161,27 +161,27 @@ export function HomeContent({
             </Link>
           ))}
         </div>
-        <Link href="/explore" className="inline-flex shrink-0 items-center gap-2 text-sm font-semibold text-primary">
+        <Link href="/explore" className="group inline-flex shrink-0 items-center gap-2 text-sm font-semibold text-primary transition-all hover:text-primary-hover">
           {locale === "fr" ? "Tout explorer" : "Explore everything"}
-          <ArrowRight className="size-4" aria-hidden />
+          <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" aria-hidden />
         </Link>
       </nav>
 
       {/* ── Popular dishes ─────────────────────────────────────────────── */}
-      <section className="reveal bg-primary-light py-20">
+      <section className="reveal bg-gradient-to-br from-primary/10 via-primary-light to-surface py-20">
         <div className="container-page">
           <SectionHeader
             tag={t("home.popular.tag")}
             title={t("home.popular.title")}
             subtitle={t("home.popular.subtitle")}
           />
-          <div className="relative mb-12 h-56 overflow-hidden rounded-xl sm:h-72 lg:h-80">
+          <div className="relative mb-12 h-56 overflow-hidden rounded-2xl shadow-xl sm:h-72 lg:h-80 transition-transform duration-500 hover:scale-[1.02]">
             <Image
               src={appearance.homeDishes}
               alt={t("home.alt.dishes")}
               fill
               sizes="100vw"
-              className="object-cover"
+              className="object-cover transition-transform duration-700 hover:scale-105"
             />
           </div>
           <div className="stagger-in grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
@@ -252,8 +252,9 @@ export function HomeContent({
       </section>
 
       {/* ── For restaurants ────────────────────────────────────────────── */}
-      <section className="reveal bg-surface-2 py-20">
-        <div className="container-page">
+      <section className="reveal bg-gradient-to-tr from-surface-2 via-surface to-accent/5 py-20 relative overflow-hidden">
+        <div className="absolute top-0 right-0 -mr-20 -mt-20 w-96 h-96 rounded-full bg-primary/5 blur-3xl" aria-hidden="true" />
+        <div className="container-page relative z-10">
           <SectionHeader
             align="left"
             tag={t("home.owners.tag")}
@@ -262,19 +263,19 @@ export function HomeContent({
           />
 
           <div className="grid gap-6 lg:grid-cols-[1.08fr_.92fr]">
-            <div className="relative min-h-[28rem] overflow-hidden rounded-xl border border-border">
+            <div className="relative min-h-[28rem] overflow-hidden rounded-2xl border border-border shadow-2xl transition-all duration-500 hover:shadow-primary/20">
               <Image
                 src={appearance.homeKitchen}
                 alt={t("home.alt.kitchen")}
                 fill
                 sizes="(min-width: 1024px) 54vw, 100vw"
-                className="object-cover"
+                className="object-cover transition-transform duration-700 hover:scale-105"
               />
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-6 pt-24 text-white sm:p-8">
-                <p className="max-w-md font-display text-2xl font-bold sm:text-3xl">
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-6 pt-32 text-white sm:p-8 backdrop-blur-[2px]">
+                <p className="max-w-md font-display text-2xl font-bold sm:text-3xl drop-shadow-md">
                   {t("home.kitchen.title")}
                 </p>
-                <p className="mt-2 max-w-lg text-sm leading-relaxed text-white/80">
+                <p className="mt-2 max-w-lg text-sm leading-relaxed text-white/90 drop-shadow">
                   {t("home.kitchen.body")}
                 </p>
               </div>
@@ -298,12 +299,12 @@ export function HomeContent({
                   body: t("home.payment.body"),
                 },
               ].map(({ Icon, title, body }) => (
-                <article key={title} className="flex gap-4 rounded-lg border border-border bg-surface p-5">
-                  <span className="grid size-11 shrink-0 place-items-center rounded-md bg-primary-light text-primary">
+                <article key={title} className="group flex gap-4 rounded-xl border border-border bg-white/60 p-5 backdrop-blur-md shadow-sm transition-all duration-300 hover:shadow-md hover:bg-white hover:-translate-y-1 dark:bg-surface-2/60 dark:hover:bg-surface-2">
+                  <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-primary-light text-primary transition-transform duration-300 group-hover:scale-110 group-hover:bg-primary group-hover:text-white">
                     <Icon className="size-5" aria-hidden />
                   </span>
                   <div>
-                    <h3 className="font-display text-lg font-bold">{title}</h3>
+                    <h3 className="font-display text-lg font-bold group-hover:text-primary transition-colors">{title}</h3>
                     <p className="mt-1 text-sm leading-relaxed text-text-secondary">{body}</p>
                   </div>
                 </article>
@@ -337,8 +338,9 @@ export function HomeContent({
       )}
 
       {/* ── Pricing ────────────────────────────────────────────────────── */}
-      <section className="reveal bg-surface-2 py-20">
-        <div className="container-page">
+      <section className="reveal bg-gradient-to-br from-surface to-surface-2 py-20 relative">
+        <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-96 h-96 rounded-full bg-accent/5 blur-3xl" aria-hidden="true" />
+        <div className="container-page relative z-10">
           <SectionHeader
             tag={t("home.pricing.tag")}
             title={t("home.pricing.title")}

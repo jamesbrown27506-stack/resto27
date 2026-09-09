@@ -173,12 +173,7 @@ export function Hero({
 
     function tick() {
       step += 1;
-      // 1, 2, then 0 — three moves, ending where it began.
       setIndex(step % SLIDES.length);
-      if (step >= SLIDES.length) {
-        stop();
-        return;
-      }
       timer = setTimeout(tick, DWELL_MS);
     }
 
@@ -195,13 +190,8 @@ export function Hero({
     */
     timer = setTimeout(tick, DWELL_MS);
 
-    // `capture` so a tab's own onClick does not have to remember to cancel.
-    const events = ["pointerdown", "touchstart", "keydown", "focusin"] as const;
-    for (const type of events) hero?.addEventListener(type, stop, { capture: true, passive: true });
-
     return () => {
       if (timer) clearTimeout(timer);
-      for (const type of events) hero?.removeEventListener(type, stop, { capture: true });
     };
     /*
       `allLoaded` flips false -> true exactly once, so this effect runs a
