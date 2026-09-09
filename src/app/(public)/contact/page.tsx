@@ -1,4 +1,4 @@
-import { publicMetadata } from "@/lib/seo";
+import { jsonLdString, publicMetadata } from "@/lib/seo";
 import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -12,6 +12,9 @@ import { ContactForm } from "./contact-form";
 import { getBranding } from "@/lib/branding";
 import { getSocialLinks } from "@/lib/social-links";
 import { SocialIcon } from "@/components/icons/social-icon";
+import { formatPhoneDisplay, telHref } from "@/lib/phone";
+import { absolutePublicUrl } from "@/lib/seo-config";
+import { breadcrumbJsonLd } from "@/lib/breadcrumbs";
 
 const baseMetadata: Metadata = {
   title: "Contact et assistance",
@@ -29,8 +32,51 @@ export default async function ContactPage() {
     seoLocale(),
   ]);
 
+  /*
+    `ContactPage` plus a machine-readable ContactPoint. The NAP was rendered
+    as plain text only, so anything reading this page had to scrape the
+    address block rather than read a declared contact channel. `mainEntity`
+    points back at the homepage Organization so both describe one entity.
+  */
+  const contactJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "ContactPage",
+    "@id": absolutePublicUrl("/contact", locale) + "#contact",
+    url: absolutePublicUrl("/contact", locale),
+    name: t("mk.contact.title"),
+    description: t("mk.contact.subtitle"),
+    mainEntity: {
+      "@type": "Organization",
+      "@id": absolutePublicUrl("/") + "#organization",
+      name: brand.name,
+      email: brand.supportEmail,
+      ...(telHref(brand.supportPhone) ? { telephone: telHref(brand.supportPhone)!.replace("tel:", "") } : {}),
+      contactPoint: [
+        {
+          "@type": "ContactPoint",
+          contactType: "customer service",
+          email: brand.supportEmail,
+          ...(telHref(brand.supportPhone) ? { telephone: telHref(brand.supportPhone)!.replace("tel:", "") } : {}),
+          areaServed: "CM",
+          availableLanguage: ["French", "English"],
+        },
+      ],
+      ...(socialLinks.length ? { sameAs: socialLinks.map(link => link.url) } : {}),
+    },
+  };
+
+  const crumbs = breadcrumbJsonLd(
+    [
+      { name: locale === "fr" ? "Accueil" : "Home", path: "/" },
+      { name: t("mk.contact.title"), path: "/contact" },
+    ],
+    locale,
+  );
+
   return (
     <div className="container-page py-14 lg:py-20">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(contactJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(crumbs) }} />
       <header className="max-w-2xl">
         <SectionTag>{t("mk.contact.tag")}</SectionTag>
         <h1 className="mt-4 font-display text-4xl font-bold sm:text-5xl">
@@ -61,8 +107,8 @@ export default async function ContactPage() {
                   ...(brand.supportPhone ? [{
                     Icon: Phone,
                     label: t("mk.contact.phoneLabel"),
-                    value: brand.supportPhone,
-                    href: `tel:${brand.supportPhone.replace(/[^+\\d]/g, "")}`,
+                    value: formatPhoneDisplay(brand.supportPhone),
+                    href: telHref(brand.supportPhone) ?? undefined,
                   }] : []),
                   ...(brand.supportAddress ? [{
                     Icon: MapPin,

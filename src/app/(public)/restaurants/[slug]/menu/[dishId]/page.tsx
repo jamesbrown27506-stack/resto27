@@ -1,22 +1,44 @@
 import Image from "next/image";
 import Link from "@/components/layout/public-link";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { fetchPublicRestaurantBySlug, fetchMenuSections } from "@/lib/data/public";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { publicMetadata, jsonLdString } from "@/lib/seo";
-import { absolutePublicUrl } from "@/lib/seo-config";
+import { absolutePublicUrl, dishPath, dishSlug } from "@/lib/seo-config";
 import { MenuOrderer } from "@/components/menu/menu-orderer";
 
 type Props = { params: Promise<{ slug: string; dishId: string }> };
+/**
+ * Resolves `[dishId]` as a NAME SLUG first, then as a legacy UUID.
+ *
+ * Every dish URL used to be a bare UUID. Those are in Google's index and in
+ * whatever links already exist, so they cannot simply stop working — a UUID
+ * that still resolves is permanently redirected to its slug, which moves the
+ * ranking signal across instead of dropping it. See `dishSlug`.
+ */
 async function content(params: Props["params"]) {
   const { slug, dishId } = await params;
   const restaurant = await fetchPublicRestaurantBySlug(slug);
   if (!restaurant) notFound();
   const sections = await fetchMenuSections(restaurant.id);
-  const section = sections.find(s => s.items.some(i => i.id === dishId));
-  const dish = section?.items.find(i => i.id === dishId);
-  if (!dish || !section) notFound();
-  return { restaurant, dish, section, path: `/restaurants/${slug}/menu/${dishId}` };
+
+  const bySlug = sections
+    .flatMap(section => section.items.map(item => ({ section, item })))
+    .find(({ item }) => dishSlug(item.name, item.id) === dishId);
+
+  if (!bySlug) {
+    // Legacy UUID URL — send it to the slug, once and permanently.
+    const legacy = sections.flatMap(section => section.items).find(item => item.id === dishId);
+    if (legacy) permanentRedirect(dishPath(slug, legacy));
+    notFound();
+  }
+
+  return {
+    restaurant,
+    dish: bySlug.item,
+    section: bySlug.section,
+    path: dishPath(slug, bySlug.item),
+  };
 }
 export async function generateMetadata({ params }: Props) {
   const c = await content(params);

@@ -94,6 +94,37 @@ export const marketingDict = defineDict({
     "mk.contact.form.sendAnother": "Envoyer un autre message",
     "mk.contact.form.sentToast": "Message envoyé. Nous répondons sous 24 heures.",
     "mk.contact.form.failedToast": "Impossible d'envoyer le message.",
+
+    /* ── /about ─────────────────────────────────────────────────────── */
+    "mk.about.tag": "À propos",
+    "mk.about.title": "Resto237, en clair",
+    "mk.about.subtitle":
+      "Une place de marché pour commander un repas et réserver une table auprès des restaurants de Douala.",
+    "mk.about.what.title": "Ce que fait Resto237",
+    "mk.about.what.p1":
+      "Resto237 réunit sur un même site les menus, les prix et les horaires des restaurants de Douala. Vous cherchez par plat, par quartier ou par cuisine, vous comparez, puis vous commandez en livraison ou à emporter — ou vous réservez une table.",
+    "mk.about.what.p2":
+      "Nous ne sommes pas un restaurant. Nous ne cuisinons rien : chaque plat est préparé par l'établissement chez qui vous commandez, qui reste responsable de sa carte, de ses prix et de sa cuisine.",
+    "mk.about.coverage.title": "Où nous opérons",
+    "mk.about.coverage.p1":
+      "Resto237 couvre aujourd'hui Douala. Les quartiers desservis dépendent des restaurants inscrits : chaque fiche indique le quartier de l'établissement et les modes de commande qu'il propose.",
+    "mk.about.coverage.p2":
+      "D'autres villes du Cameroun suivront à mesure que des restaurants s'y inscrivent. Nous préférons annoncer une couverture réelle plutôt qu'une ambition.",
+    "mk.about.how.title": "Comment ça marche",
+    "mk.about.how.s1": "Cherchez un plat, un quartier ou un restaurant. Aucun compte n'est nécessaire pour parcourir les menus et remplir votre panier.",
+    "mk.about.how.s2": "Passez commande en livraison ou à emporter, ou réservez une table. Vous recevez une confirmation et suivez l'avancement en direct.",
+    "mk.about.how.s3": "Le restaurant prépare, puis livre ou vous accueille. Les frais de livraison sont fixés par l'établissement selon le quartier et confirmés avant validation.",
+    "mk.about.payment.title": "Paiement",
+    "mk.about.payment.p1":
+      "Les commandes se règlent à la livraison ou au restaurant. Les abonnements des restaurants partenaires se paient par MTN Mobile Money ou Orange Money.",
+    "mk.about.trust.title": "Restaurants vérifiés",
+    "mk.about.trust.p1":
+      "Chaque restaurant est validé avant d'apparaître sur le site, et le badge vérifié signale les établissements dont nous avons confirmé l'identité et les coordonnées. Les notes et les avis proviennent de clients ayant réellement commandé.",
+    "mk.about.owner.title": "Vous tenez un restaurant à Douala ?",
+    "mk.about.owner.p1":
+      "L'inscription est gratuite et la validation prend en général moins de 48 heures. Vous gérez votre carte, vos horaires et vos commandes depuis votre espace.",
+    "mk.about.owner.cta": "Inscrire mon restaurant →",
+    "mk.about.contact.cta": "Nous contacter",
   },
   en: {
     /* ── /pricing ────────────────────────────────────────────────────── */
@@ -177,5 +208,36 @@ export const marketingDict = defineDict({
     "mk.contact.form.sendAnother": "Send another message",
     "mk.contact.form.sentToast": "Message sent. We reply within 24 hours.",
     "mk.contact.form.failedToast": "The message could not be sent.",
+
+    /* ── /about ─────────────────────────────────────────────────────── */
+    "mk.about.tag": "About",
+    "mk.about.title": "Resto237, plainly",
+    "mk.about.subtitle":
+      "A marketplace for ordering food and booking a table with restaurants in Douala.",
+    "mk.about.what.title": "What Resto237 does",
+    "mk.about.what.p1":
+      "Resto237 brings the menus, prices and opening hours of Douala's restaurants together in one place. Search by dish, by neighbourhood or by cuisine, compare, then order for delivery or pickup — or book a table.",
+    "mk.about.what.p2":
+      "We are not a restaurant. We cook nothing: every dish is prepared by the establishment you order from, which remains responsible for its menu, its prices and its kitchen.",
+    "mk.about.coverage.title": "Where we operate",
+    "mk.about.coverage.p1":
+      "Resto237 currently covers Douala. Which neighbourhoods are served depends on the restaurants signed up: each listing states the establishment's quarter and the ordering options it offers.",
+    "mk.about.coverage.p2":
+      "Other Cameroonian cities will follow as restaurants there join. We would rather state the coverage we actually have than the one we intend.",
+    "mk.about.how.title": "How it works",
+    "mk.about.how.s1": "Search for a dish, a neighbourhood or a restaurant. No account is needed to browse menus and fill your basket.",
+    "mk.about.how.s2": "Order for delivery or pickup, or book a table. You get a confirmation and follow progress live.",
+    "mk.about.how.s3": "The restaurant prepares your order, then delivers it or welcomes you. Delivery fees are set by the establishment according to the neighbourhood and confirmed before you commit.",
+    "mk.about.payment.title": "Payment",
+    "mk.about.payment.p1":
+      "Orders are paid on delivery or at the restaurant. Partner restaurants pay their subscription by MTN Mobile Money or Orange Money.",
+    "mk.about.trust.title": "Verified restaurants",
+    "mk.about.trust.p1":
+      "Every restaurant is checked before it appears on the site, and the verified badge marks those whose identity and contact details we have confirmed. Ratings and reviews come from customers who actually ordered.",
+    "mk.about.owner.title": "Do you run a restaurant in Douala?",
+    "mk.about.owner.p1":
+      "Listing is free and approval usually takes under 48 hours. You manage your menu, your hours and your orders from your own dashboard.",
+    "mk.about.owner.cta": "List my restaurant →",
+    "mk.about.contact.cta": "Contact us",
   },
 });

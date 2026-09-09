@@ -7,6 +7,7 @@ import { BrandMark } from "./brand-mark";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SocialLink } from "@/lib/social-platforms";
+import { formatPhoneDisplay, telHref } from "@/lib/phone";
 
 const GROUPS: { heading: TranslationKey; links: { href: string; label: TranslationKey }[] }[] = [
   {
@@ -28,6 +29,7 @@ const GROUPS: { heading: TranslationKey; links: { href: string; label: Translati
   {
     heading: "footer.support",
     links: [
+      { href: "/about", label: "footer.about" },
       { href: "/contact", label: "footer.contactUs" },
       { href: "/privacy", label: "footer.privacy" },
       { href: "/terms", label: "footer.terms" },
@@ -88,13 +90,13 @@ export function SiteFooter({
                   {brand.supportAddress}
                 </span>
               )}
-              {brand.supportPhone && (
+              {brand.supportPhone && telHref(brand.supportPhone) && (
                 <a
-                  href={`tel:${brand.supportPhone.replace(/[^+\\d]/g, "")}`}
+                  href={telHref(brand.supportPhone)!}
                   className="flex items-center gap-2 hover:text-brand-on-solid"
                 >
                   <Phone className="size-3.5 shrink-0" aria-hidden />
-                  {brand.supportPhone}
+                  {formatPhoneDisplay(brand.supportPhone)}
                 </a>
               )}
               <a

@@ -114,7 +114,7 @@ const baseFr = {
 
   /* ── Footer ────────────────────────────────────────────────────────── */
   "footer.tagline":
-    "Commandez vos plats préférés et réservez votre table dans les meilleurs restaurants du Cameroun.",
+    "Commandez vos plats préférés et réservez votre table dans les meilleurs restaurants de Douala.",
   "footer.discover": "Découvrir",
   "footer.allRestaurants": "Tous les restaurants",
   "footer.douala": "Douala",
@@ -123,6 +123,7 @@ const baseFr = {
   "footer.pricing": "Tarifs",
   "footer.managerArea": "Espace gérant",
   "footer.support": "Assistance",
+  "footer.about": "À propos",
   "footer.contactUs": "Nous contacter",
   "footer.privacy": "Confidentialité",
   "footer.terms": "Conditions",
@@ -896,7 +897,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
 
   /* ── Footer ────────────────────────────────────────────────────────── */
   "footer.tagline":
-    "Order your favourite dishes and book a table at the best restaurants in Cameroon.",
+    "Order your favourite dishes and book a table at the best restaurants in Douala.",
   "footer.discover": "Discover",
   "footer.allRestaurants": "All restaurants",
   "footer.douala": "Douala",
@@ -905,6 +906,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "footer.pricing": "Pricing",
   "footer.managerArea": "Manager sign-in",
   "footer.support": "Support",
+  "footer.about": "About",
   "footer.contactUs": "Contact us",
   "footer.privacy": "Privacy",
   "footer.terms": "Terms",

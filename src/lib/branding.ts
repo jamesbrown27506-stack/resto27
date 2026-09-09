@@ -40,7 +40,7 @@ export interface Branding {
  */
 export const DEFAULT_BRANDING: Branding = {
   name: "Resto237",
-  tagline: "Commandez vos plats préférés au Cameroun",
+  tagline: "Commandez vos plats préférés à Douala",
   logoUrl: null,
   faviconUrl: null,
   iconUrl: null,

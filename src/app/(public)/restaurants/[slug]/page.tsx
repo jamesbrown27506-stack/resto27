@@ -1,5 +1,5 @@
 import { publicMetadata } from "@/lib/seo";
-import { absolutePublicUrl } from "@/lib/seo-config";
+import { absolutePublicUrl, isUsableDescription } from "@/lib/seo-config";
 import { getLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import Link from "@/components/layout/public-link";
@@ -16,6 +16,7 @@ import { fetchMenuSections, fetchPublicRestaurantBySlug } from "@/lib/data/publi
 import { fetchReviews } from "@/lib/data/reviews";
 import { formatMoney } from "@/lib/format/currency";
 import { getTranslator } from "@/lib/i18n/locale-server";
+import { composeStreetAddress, formatQuartier, regionForCity } from "@/lib/geo-cm";
 
 export async function generateMetadata({
   params,
@@ -27,8 +28,15 @@ export async function generateMetadata({
   if (!restaurant) return { title: "Restaurant introuvable" };
 
   const locale = await getLocale();
-  const place = [restaurant.quartier, "Douala"].filter(Boolean).join(", ");
-  const description = restaurant.description.length >= 30 ? restaurant.description : (locale === "fr" ? "Consultez le menu, les prix et les horaires de " + restaurant.name + " à " + place + ". Commandez sur Resto237." : "Browse the menu, prices and opening hours for " + restaurant.name + " in " + place + ". Order on Resto237.");
+  const place = [formatQuartier(restaurant.quartier), "Douala"].filter(Boolean).join(", ");
+  // A partner description is used only when it is actually usable prose in
+  // this page's language — see `isUsableDescription`. Otherwise the composed
+  // sentence wins, which is always correct if less characterful.
+  const description = isUsableDescription(restaurant.description, locale)
+    ? restaurant.description
+    : locale === "fr"
+      ? `Consultez le menu, les prix et les horaires de ${restaurant.name} à ${place}. Commandez en livraison ou à emporter sur Resto237.`
+      : `Browse the menu, prices and opening hours for ${restaurant.name} in ${place}. Order for delivery or pickup on Resto237.`;
   return publicMetadata("/restaurants/" + restaurant.slug, restaurant.name + " — " + place, description, restaurant.coverUrl ?? restaurant.logoUrl);
 }
 
@@ -43,30 +51,63 @@ export default async function RestaurantDetailPage({
   const t = await getTranslator();
   const locale = await getLocale();
   const pageUrl = absolutePublicUrl("/restaurants/" + restaurant.slug, locale);
+  const place = [formatQuartier(restaurant.quartier), "Douala"].filter(Boolean).join(", ");
 
   const [menu, reviews] = await Promise.all([
     fetchMenuSections(restaurant.id),
     fetchReviews(restaurant.id),
   ]);
 
-  /** `Restaurant` JSON-LD (§14.1) — feeds the rich result for the listing. */
+  /**
+   * `Restaurant` JSON-LD (§14.1) — feeds the rich result for the listing.
+   *
+   * Empty values are OMITTED, never emitted. This used to ship
+   * `"openingHoursSpecification": []` and `"servesCuisine": ""` for any
+   * restaurant that had not filled those in during onboarding. Neither breaks
+   * validation, but an empty array does not read as "unspecified" — it reads
+   * as "explicitly never open", which is worse than saying nothing. Cameroon
+   * has thin Google Business Profile coverage, so this page's own schema is
+   * often the only structured source for these facts; getting it wrong costs
+   * more here than it would in a GBP-saturated market.
+   */
+  const openingHours = restaurant.hours
+    .filter(h => h.opensAt && h.closesAt)
+    .map(h => ({
+      "@type": "OpeningHoursSpecification",
+      dayOfWeek: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][h.weekday],
+      opens: h.opensAt,
+      closes: h.closesAt,
+    }));
+
+  const menuPrices = menu.flatMap(section => section.items.map(item => item.price)).filter(p => p > 0);
+  const priceRange = menuPrices.length
+    ? `${Math.min(...menuPrices)}–${Math.max(...menuPrices)} XAF`
+    : undefined;
+
   const jsonLd = {
     "@context": "https://schema.org",
     "@type": "Restaurant",
     "@id": pageUrl + "#restaurant",
     url: pageUrl,
     image: restaurant.coverUrl ? new URL(restaurant.coverUrl, pageUrl).href : undefined,
-    hasMenu: pageUrl,
-    openingHoursSpecification: restaurant.hours.filter(h => h.opensAt && h.closesAt).map(h => ({ "@type": "OpeningHoursSpecification", dayOfWeek: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][h.weekday], opens: h.opensAt, closes: h.closesAt })),
+    // Point at the menu section of this page rather than the page itself, so
+    // `hasMenu` resolves somewhere that actually is a menu.
+    hasMenu: menu.length ? pageUrl + "#menu" : undefined,
+    openingHoursSpecification: openingHours.length ? openingHours : undefined,
     name: `${restaurant.name}${restaurant.isPrimary ? "" : ` — ${restaurant.branchLabel}`}`,
-    description: restaurant.description,
-    servesCuisine: restaurant.cuisine,
+    // Same gate as the meta description: a partner sentence that is neither
+    // long enough nor in this page's language is worse than no description.
+    description: isUsableDescription(restaurant.description, locale) ? restaurant.description : undefined,
+    servesCuisine: restaurant.cuisine || undefined,
+    priceRange,
     telephone: restaurant.phone,
     address: {
       "@type": "PostalAddress",
-      streetAddress: restaurant.addressLine || undefined,
+      // The quartier belongs in the street address; `addressRegion` is the
+      // administrative region (Littoral for Douala), not the neighbourhood.
+      streetAddress: composeStreetAddress(restaurant.addressLine, restaurant.quartier),
       addressLocality: "Douala",
-      addressRegion: restaurant.quartier,
+      addressRegion: regionForCity("Douala") ?? undefined,
       addressCountry: "CM",
     },
     aggregateRating:
@@ -111,7 +152,7 @@ export default async function RestaurantDetailPage({
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={restaurant.coverUrl}
-          alt=""
+          alt={`${restaurant.name} — ${place}`}
           className="h-48 w-full object-cover sm:h-64"
         />
       ) : (
@@ -132,6 +173,9 @@ export default async function RestaurantDetailPage({
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={restaurant.logoUrl}
+                // Decorative on purpose: the restaurant name is the <h1>
+                // immediately below, so describing the mark would make a
+                // screen reader announce the same name twice.
                 alt=""
                 className="size-24 rounded-lg border-4 border-bg bg-surface object-cover shadow-md"
               />
@@ -163,7 +207,7 @@ export default async function RestaurantDetailPage({
               <RatingStars value={restaurant.rating} showValue count={restaurant.reviewCount} />
               <span className="inline-flex items-center gap-1.5">
                 <MapPin className="size-3.5 text-primary" aria-hidden />
-                {restaurant.quartier}, Douala
+                {formatQuartier(restaurant.quartier)}, Douala
                 {restaurant.addressLine && ` — ${restaurant.addressLine}`}
               </span>
               {/* The estimate is a DELIVERY time; pickup-only restaurants
@@ -249,11 +293,13 @@ export default async function RestaurantDetailPage({
               `acceptingOrders` is the restaurant's own pause switch — the menu
               still reads, but nothing can be added while it is off.
             */}
-            <MenuOrderer
-              menu={menu}
-              restaurant={{ id: restaurant.id, name: restaurant.name, slug: restaurant.slug }}
-              acceptingOrders={restaurant.isAcceptingOrders}
-            />
+            <div id="menu" className="scroll-mt-24">
+              <MenuOrderer
+                menu={menu}
+                restaurant={{ id: restaurant.id, name: restaurant.name, slug: restaurant.slug }}
+                acceptingOrders={restaurant.isAcceptingOrders}
+              />
+            </div>
 
             <section className="mt-12">
               <h2 className="font-display text-2xl font-bold">

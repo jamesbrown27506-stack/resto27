@@ -1,4 +1,6 @@
-import { publicMetadata } from "@/lib/seo";
+import { jsonLdString, publicMetadata } from "@/lib/seo";
+import { absolutePublicUrl } from "@/lib/seo-config";
+import { breadcrumbJsonLd } from "@/lib/breadcrumbs";
 import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -64,12 +66,55 @@ function faqItems(t: (key: TranslationKey, vars?: Record<string, string | number
 
 export default async function PricingPage() {
   const t = await getTranslator();
-  const [plans, user] = await Promise.all([listPublicPlans(), getHeaderUser()]);
+  const [plans, user, locale] = await Promise.all([listPublicPlans(), getHeaderUser(), seoLocale()]);
   const rows = planRows(t);
   const area = user?.area ?? null;
 
+  /*
+    The subscription plans are a real, priced product and shipped with no
+    structured data. Each plan becomes an `Offer` under one `Product`, priced
+    in XAF — the currency the plans are actually billed in.
+
+    Deliberately NOT `aggregateRating`: nobody rates a subscription tier here,
+    and inventing one would be exactly the kind of unearned rich-result markup
+    that gets a site's structured data distrusted wholesale.
+  */
+  const pricingJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "@id": absolutePublicUrl("/pricing", locale) + "#plans",
+    name: t("mk.pricing.title"),
+    description: t("mk.pricing.subtitle"),
+    brand: { "@id": absolutePublicUrl("/") + "#organization" },
+    offers: plans.map(plan => ({
+      "@type": "Offer",
+      name: plan.name,
+      price: plan.monthlyPrice,
+      priceCurrency: "XAF",
+      url: absolutePublicUrl("/pricing", locale),
+      availability: "https://schema.org/InStock",
+      priceSpecification: {
+        "@type": "UnitPriceSpecification",
+        price: plan.monthlyPrice,
+        priceCurrency: "XAF",
+        billingIncrement: 1,
+        unitCode: "MON",
+      },
+    })),
+  };
+
+  const crumbs = breadcrumbJsonLd(
+    [
+      { name: locale === "fr" ? "Accueil" : "Home", path: "/" },
+      { name: t("mk.pricing.tag"), path: "/pricing" },
+    ],
+    locale,
+  );
+
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(pricingJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(crumbs) }} />
       <section className="container-page py-14 text-center lg:py-20">
         <SectionTag>{t("mk.pricing.tag")}</SectionTag>
         <h1 className="mx-auto mt-4 max-w-2xl font-display text-4xl font-bold sm:text-5xl">

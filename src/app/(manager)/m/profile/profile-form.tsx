@@ -269,6 +269,26 @@ export function ProfileForm({
       return toast(t("mpf.hours.incomplete", { day: weekdayNames[incomplete.weekday] }), "error");
     }
 
+    /*
+      Cuisine and at least one opening day are now required to save.
+
+      Both were optional, and the result reached the public site: the
+      `Restaurant` JSON-LD shipped `"servesCuisine": ""` and
+      `"openingHoursSpecification": []` for restaurants that had skipped them.
+      The schema builder no longer emits empty values, but omitting a field is
+      only the second-best outcome — a restaurant with no declared cuisine
+      cannot appear on its own /explore/cuisine page, and one with no hours
+      cannot show an accurate open/closed badge to a customer deciding whether
+      to order right now.
+
+      Enforced here rather than in the database because this is the screen
+      where a manager can actually see what is missing and fix it.
+    */
+    if (!draft.cuisineId) return toast(t("mpf.cuisineRequired"), "error");
+
+    const hasAnyOpenDay = hours.some((day) => day.opensAt && day.closesAt);
+    if (!hasAnyOpenDay) return toast(t("mpf.hours.required"), "error");
+
     startTransition(async () => {
       const logoResult = await resolveImage(logo, profile.logoUrl);
       if (!logoResult.ok) return toast(logoResult.error, "error");
@@ -363,7 +383,7 @@ export function ProfileForm({
                 />
               </Field>
 
-              <Field label={t("mpf.cuisine")} htmlFor="rp-cuisine" hint={t("mpf.cuisineHint")}>
+              <Field label={t("mpf.cuisine")} htmlFor="rp-cuisine" hint={t("mpf.cuisineHint")} required>
                 <Select
                   id="rp-cuisine"
                   value={draft.cuisineId}

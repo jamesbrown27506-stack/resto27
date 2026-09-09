@@ -11,6 +11,9 @@ import { fetchPopularDishes, fetchActiveRestaurants, fetchCuisineNames, fetchQua
 import { listPublicPlans } from "@/lib/data/plans";
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getFreeModeInfo } from "@/lib/data/billing";
+import { getSocialLinks } from "@/lib/social-links";
+import { telHref } from "@/lib/phone";
+import { getTranslator } from "@/lib/i18n/locale-server";
 
 /**
  * The homepage — server shell.
@@ -21,7 +24,7 @@ import { getFreeModeInfo } from "@/lib/data/billing";
  */
 const baseMetadata: Metadata = {
   // Keywords first, brand last — nobody searches for the brand yet.
-  title: "Commander un repas et réserver une table au Cameroun",
+  title: "Commander un repas et réserver une table à Douala",
   description:
     "Commandez vos plats préférés en livraison ou à emporter et réservez votre table dans les meilleurs restaurants de Douala. Suivi en direct, paiement à la livraison.",
   alternates: { canonical: "/" },
@@ -33,7 +36,25 @@ const baseMetadata: Metadata = {
  * explicit signal that this is a Cameroon service, which a .com domain does
  * not convey on its own.
  */
-function jsonLd(brand: { name: string; logoUrl: string | null }) {
+/**
+ * `sameAs` and `contactPoint` are what make this Organization node an
+ * identifiable entity rather than a name with a logo.
+ *
+ * `sameAs` is the only cross-reference a knowledge graph or an LLM has to
+ * confirm that "Resto237" is this Resto237 — it is fed from the social links
+ * an administrator has actually enabled in settings, never from placeholders,
+ * so an unset account simply omits the field rather than pointing at a URL
+ * that does not exist.
+ *
+ * `contactPoint` makes the support number machine-readable. It was previously
+ * plain text in the footer only, which meant the NAP had to be scraped rather
+ * than read.
+ */
+function jsonLd(
+  brand: { name: string; logoUrl: string | null; supportPhone: string | null; supportEmail: string },
+  socialUrls: string[],
+  description: string,
+) {
   return {
     "@context": "https://schema.org",
     "@graph": [
@@ -61,12 +82,25 @@ function jsonLd(brand: { name: string; logoUrl: string | null }) {
         // Omitted rather than sent empty when no logo is set: a blank `logo`
         // is a schema validation error, an absent one is simply silence.
         ...(brand.logoUrl ? { logo: brand.logoUrl } : {}),
+        description,
         areaServed: { "@type": "Country", name: "Cameroon" },
         address: {
           "@type": "PostalAddress",
           addressCountry: "CM",
           addressLocality: "Douala",
+          addressRegion: "Littoral",
         },
+        ...(socialUrls.length ? { sameAs: socialUrls } : {}),
+        contactPoint: [
+          {
+            "@type": "ContactPoint",
+            contactType: "customer service",
+            ...(telHref(brand.supportPhone) ? { telephone: telHref(brand.supportPhone)!.replace("tel:", "") } : {}),
+            email: brand.supportEmail,
+            areaServed: "CM",
+            availableLanguage: ["French", "English"],
+          },
+        ],
       },
     ],
   };
@@ -88,7 +122,8 @@ export default async function HomePage() {
       getFreeModeInfo(),
       getSettingsMap(),
     ]);
-  const JSON_LD = jsonLd(brand);
+  const [socialLinks, t] = await Promise.all([getSocialLinks(), getTranslator()]);
+  const JSON_LD = jsonLd(brand, socialLinks.map(link => link.url), t("mk.about.subtitle"));
   /*
     Which of the four figures this platform is willing to advertise. Resolved
     on the server and handed down, because the hero renders three of the same
@@ -124,5 +159,5 @@ export default async function HomePage() {
 
 export async function generateMetadata(): Promise<Metadata> {
   const fr = await seoLocale() === "fr";
-  return publicMetadata("/", fr ? String(baseMetadata.title) : "Order food and book a table in Cameroon", fr ? String(baseMetadata.description) : "Discover restaurants in Douala, browse dishes and prices, order delivery or pickup, and reserve a table.");
+  return publicMetadata("/", fr ? String(baseMetadata.title) : "Order food and book a table in Douala", fr ? String(baseMetadata.description) : "Discover restaurants in Douala, browse dishes and prices, order delivery or pickup, and reserve a table.");
 }

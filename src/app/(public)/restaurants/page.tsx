@@ -12,6 +12,10 @@ import {
   fetchQuartierNames,
 } from "@/lib/data/public";
 import { getTranslator } from "@/lib/i18n/locale-server";
+import { jsonLdString } from "@/lib/seo";
+import { absolutePublicUrl } from "@/lib/seo-config";
+import { breadcrumbJsonLd } from "@/lib/breadcrumbs";
+import { formatQuartier } from "@/lib/geo-cm";
 
 const baseMetadata: Metadata = {
   title: "Restaurants à Douala — livraison et à emporter",
@@ -28,13 +32,44 @@ export default async function RestaurantsPage() {
     fetchQuartierNames(),
     fetchDishSearchIndex(),
   ]);
+  const locale = await seoLocale();
+  const fr = locale === "fr";
+
+  /*
+    This page listed every restaurant on the platform and shipped no
+    structured data at all. `ItemList` is what tells Google the page IS a
+    directory and what is in it, in order — the same treatment the
+    /explore/* pages already had.
+  */
+  const listJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    name: fr ? "Restaurants à Douala" : "Restaurants in Douala",
+    numberOfItems: restaurants.length,
+    itemListElement: restaurants.map((restaurant, index) => ({
+      "@type": "ListItem",
+      position: index + 1,
+      name: `${restaurant.name} — ${formatQuartier(restaurant.quartier)}, Douala`,
+      url: absolutePublicUrl("/restaurants/" + restaurant.slug, locale),
+    })),
+  };
+
+  const crumbs = breadcrumbJsonLd(
+    [
+      { name: fr ? "Accueil" : "Home", path: "/" },
+      { name: fr ? "Restaurants" : "Restaurants", path: "/restaurants" },
+    ],
+    locale,
+  );
 
   return (
     <div className="container-page py-10 lg:py-14">
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(listJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(crumbs) }} />
       <header className="mb-8">
         <h1 className="font-display text-4xl font-bold">{t("restaurants.title")}</h1>
         <p className="mt-2 text-text-secondary">{t("restaurants.subtitle")}</p>
-        <Link href="/explore" className="mt-4 inline-block font-semibold text-primary">{(await seoLocale()) === "fr" ? "Explorer par plat, cuisine ou quartier →" : "Explore by dish, cuisine or neighbourhood →"}</Link>
+        <Link href="/explore" className="mt-4 inline-block font-semibold text-primary">{fr ? "Explorer par plat, cuisine ou quartier →" : "Explore by dish, cuisine or neighbourhood →"}</Link>
       </header>
 
       {/* useSearchParams needs a Suspense boundary to keep the page static. */}

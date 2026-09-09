@@ -32,6 +32,8 @@ export const profileDict = defineDict({
     "mpf.cuisine": "Type de cuisine",
     "mpf.cuisineHint": "Détermine où votre fiche apparaît dans l'annuaire public.",
     "mpf.cuisineNone": "Non précisé",
+    "mpf.cuisineRequired":
+      "Choisissez une cuisine : sans elle, votre restaurant n'apparaît sur aucune page de cuisine.",
     "mpf.phone": "Téléphone",
     "mpf.phonePlaceholder": "+237 6 99 11 22 33",
     "mpf.phoneHint": "Le numéro affiché à vos clients.",
@@ -61,6 +63,8 @@ export const profileDict = defineDict({
     "mpf.hours.overnight": "Service jusqu'au lendemain",
     "mpf.hours.incomplete":
       "{day} : indiquez l'ouverture et la fermeture, ou marquez le jour fermé.",
+    "mpf.hours.required":
+      "Indiquez vos horaires pour au moins un jour : ils décident du badge « ouvert » vu par vos clients.",
 
     /* Livraison */
     "mpf.delivery": "Livraison",
@@ -123,6 +127,8 @@ export const profileDict = defineDict({
     "mpf.cuisine": "Cuisine",
     "mpf.cuisineHint": "Decides where you appear in the public directory.",
     "mpf.cuisineNone": "Not set",
+    "mpf.cuisineRequired":
+      "Pick a cuisine: without one, your restaurant appears on no cuisine page.",
     "mpf.phone": "Phone",
     "mpf.phonePlaceholder": "+237 6 99 11 22 33",
     "mpf.phoneHint": "The number shown to your customers.",
@@ -148,6 +154,8 @@ export const profileDict = defineDict({
     "mpf.hours.to": "to",
     "mpf.hours.overnight": "Runs past midnight",
     "mpf.hours.incomplete": "{day}: set both an opening and a closing time, or mark the day closed.",
+    "mpf.hours.required":
+      "Set opening hours for at least one day: they decide the “open now” badge your customers see.",
 
     "mpf.delivery": "Delivery",
     "mpf.deliveryDesc": "The fee itself is quoted order by order, when you confirm.",

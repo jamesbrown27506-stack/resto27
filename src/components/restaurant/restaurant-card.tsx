@@ -7,6 +7,7 @@ import { RatingStars } from "@/components/ui/rating-stars";
 import { formatMoney } from "@/lib/format/currency";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
+import { formatQuartier } from "@/lib/geo-cm";
 import type { PublicRestaurant as Restaurant } from "@/lib/data/public";
 
 /** Deterministic gradient placeholder until real photography exists. */
@@ -47,7 +48,7 @@ export function RestaurantCard({
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={restaurant.coverUrl}
-            alt=""
+            alt={`${restaurant.name} — ${[formatQuartier(restaurant.quartier), "Douala"].filter(Boolean).join(", ")}`}
             loading="lazy"
             className="size-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
@@ -65,6 +66,7 @@ export function RestaurantCard({
         </div>
         {restaurant.logoUrl && (
           <span className="absolute bottom-3 left-3 grid size-12 place-items-center overflow-hidden rounded-md border border-white/70 bg-white p-1 shadow-md">
+            {/* Decorative: the restaurant name is the card heading below. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={restaurant.logoUrl} alt="" loading="lazy" className="size-full object-contain" />
           </span>

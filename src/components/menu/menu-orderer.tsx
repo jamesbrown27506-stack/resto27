@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { formatMoney } from "@/lib/format/currency";
 import { UNCATEGORIZED_SECTION_ID } from "@/lib/menu/constants";
+import { dishPath } from "@/lib/seo-config";
 import type { MenuItem } from "@/lib/data/manager";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
@@ -201,7 +202,7 @@ export function MenuOrderer({
 
                 return (
                   <li key={item.id} className="relative">
-                    {showDetailLinks && <Link href={`/restaurants/${restaurant.slug}/menu/${item.id}`} className="mb-1 inline-block min-h-8 text-xs text-primary">{locale === "fr" ? "Voir le plat" : "View dish"} · {item.name}</Link>}
+                    {showDetailLinks && <Link href={dishPath(restaurant.slug, item)} className="mb-1 inline-block min-h-8 text-xs text-primary">{locale === "fr" ? "Voir le plat" : "View dish"} · {item.name}</Link>}
                     <button
                       type="button"
                       disabled={notOrderable}

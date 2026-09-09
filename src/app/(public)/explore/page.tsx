@@ -1,7 +1,9 @@
 import Link from "@/components/layout/public-link";
 import { ArrowRight, MapPin, Soup, UtensilsCrossed } from "lucide-react";
 import { fetchDiscoveryCatalog } from "@/lib/data/discovery";
-import { publicMetadata } from "@/lib/seo";
+import { jsonLdString, publicMetadata } from "@/lib/seo";
+import { absolutePublicUrl } from "@/lib/seo-config";
+import { breadcrumbJsonLd } from "@/lib/breadcrumbs";
 import { discoverySlug } from "@/lib/seo-config";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -42,8 +44,35 @@ export default async function ExplorePage() {
       return { ...group, count: matches.length, imageUrl: matches.find((dish) => dish.image_url)?.image_url ?? null };
     });
 
+  /*
+    The hub for the whole discovery taxonomy shipped with no structured data.
+    One `ItemList` covering the three collections it links to gives Google the
+    shape of the section rather than leaving it to infer it from anchors.
+  */
+  const hubJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "ItemList",
+    name: fr ? "Explorer Douala" : "Explore Douala",
+    itemListElement: [...neighbourhoods, ...cuisines, ...foods].map((group, index) => ({
+      "@type": "ListItem",
+      position: index + 1,
+      name: group.name,
+      url: absolutePublicUrl(`/explore/${group.kind}/${group.slug}`, locale),
+    })),
+  };
+
+  const crumbs = breadcrumbJsonLd(
+    [
+      { name: fr ? "Accueil" : "Home", path: "/" },
+      { name: fr ? "Explorer" : "Explore", path: "/explore" },
+    ],
+    locale,
+  );
+
   return (
     <main>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(hubJsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(crumbs) }} />
       <header className="border-b border-border bg-surface-2">
         <div className="container-page py-14 sm:py-20">
           <p className="text-xs font-bold tracking-[0.14em] text-primary uppercase">
@@ -83,7 +112,7 @@ export default async function ExplorePage() {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={food.imageUrl}
-                    alt=""
+                    alt={`${food.name} — Douala`}
                     loading="lazy"
                     className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-105"
                   />

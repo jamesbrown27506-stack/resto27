@@ -20,6 +20,8 @@ import { formatMoney } from "@/lib/format/currency";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { MenuItem } from "@/lib/data/manager";
 import { cn } from "@/lib/utils";
+import { formatQuartier } from "@/lib/geo-cm";
+import { dishPath } from "@/lib/seo-config";
 
 function DishImage({ className }: { className?: string }) {
   return (
@@ -35,7 +37,7 @@ function DishImage({ className }: { className?: string }) {
   );
 }
 
-function DishPhoto({ src, className }: { src: string; className?: string }) {
+function DishPhoto({ src, alt, className }: { src: string; alt: string; className?: string }) {
   const [failed, setFailed] = useState(false);
 
   if (failed) {
@@ -46,7 +48,7 @@ function DishPhoto({ src, className }: { src: string; className?: string }) {
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
-      alt=""
+      alt={alt}
       loading="lazy"
       onError={() => setFailed(true)}
       className={cn("size-full object-cover", className)}
@@ -91,6 +93,16 @@ export function DishCard({
         {item.imageUrl ? (
           <DishPhoto
             src={item.imageUrl}
+            /*
+              The dish name alone is not enough: a /explore/food/* page shows
+              the same dish from several restaurants, so every photo in that
+              grid would carry an identical alt. Naming the restaurant (and its
+              quartier) makes each one distinct and gives Image Search
+              something local to rank on.
+            */
+            alt={[item.name, restaurantName, restaurantQuartier ? formatQuartier(restaurantQuartier) : null]
+              .filter(Boolean)
+              .join(" — ")}
             className="transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
@@ -130,7 +142,7 @@ export function DishCard({
 
       <div className="p-4">
         <h3 className="truncate font-semibold">
-          <Link href={`/restaurants/${restaurantSlug}/menu/${item.id}`} className="after:absolute after:inset-0">
+          <Link href={dishPath(restaurantSlug, item)} className="after:absolute after:inset-0">
             {item.name}
           </Link>
         </h3>
