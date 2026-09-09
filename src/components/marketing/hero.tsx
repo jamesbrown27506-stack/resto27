@@ -153,18 +153,19 @@ export function Hero({
   const reducedMotion = usePrefersReducedMotion();
   const heroRef = useRef<HTMLElement>(null);
   const rotationDone = useRef(false);
+  /** Which photographs have actually painted — see the <Image> block below. */
+  const [loaded, setLoaded] = useState<Set<Mode>>(new Set());
+  const allLoaded = SLIDES.every(s2 => loaded.has(s2.mode));
 
   useEffect(() => {
-    if (reducedMotion || rotationDone.current) return;
+    if (reducedMotion || rotationDone.current || !allLoaded) return;
 
     const hero = heroRef.current;
     let step = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let cancelled = false;
 
     function stop() {
       rotationDone.current = true;
-      cancelled = true;
       if (timer) clearTimeout(timer);
       timer = null;
     }
@@ -181,35 +182,17 @@ export function Hero({
     }
 
     /*
-      THE LAP WAITS FOR ITS PHOTOGRAPHS.
+      The lap only starts once all three photographs have painted, which the
+      <Image> block below reports through `loaded`. Advancing onto a frame
+      that has not arrived would show the bare scrim, which is worse than not
+      moving at all.
 
-      Only the active slide is mounted, so advancing is what triggers the next
-      image's download. On a fast connection that is invisible. On the mobile
-      connections this platform actually runs on, it means rotating into a
-      black rectangle and holding it there — turning a flourish into a fault.
-
-      So the other two are fetched quietly after first paint and the lap only
-      begins once they are decoded. If they never arrive, the hero simply
-      never rotates: the tabs still work and nobody sees an empty frame. A
-      nice-to-have must degrade to nothing, not to something broken.
+      This reads the real thing: `onLoad` fires for the exact optimised file
+      next/image requested. An earlier version preloaded the raw URLs instead
+      and waited on downloads that were never going to be displayed — so on a
+      slow connection the gate never opened and the hero never moved.
     */
-    // Every slide, not "the other two": the visible one is already in cache so
-    // it resolves immediately, and asking for all three keeps this independent
-    // of which slide is current — which in turn keeps `index` out of the
-    // dependency list, where it would restart the lap on every advance.
-    Promise.all(
-      SLIDES.map(s2 => appearance[s2.art]).map(
-        src =>
-          new Promise<void>(resolve => {
-            const img = new window.Image();
-            img.onload = img.onerror = () => resolve();
-            img.src = src;
-          }),
-      ),
-    ).then(() => {
-      if (cancelled) return;
-      timer = setTimeout(tick, DWELL_MS);
-    });
+    timer = setTimeout(tick, DWELL_MS);
 
     // `capture` so a tab's own onClick does not have to remember to cancel.
     const events = ["pointerdown", "touchstart", "keydown", "focusin"] as const;
@@ -220,11 +203,11 @@ export function Hero({
       for (const type of events) hero?.removeEventListener(type, stop, { capture: true });
     };
     /*
-      `appearance` is a server-provided prop and stable for the session. Were
-      it ever to change identity, the `rotationDone` guard above means a
-      completed lap is not restarted — so listing it is safe either way.
+      `allLoaded` flips false -> true exactly once, so this effect runs a
+      second time and starts the lap. `rotationDone` keeps any later run —
+      from a re-render or a prop change — from restarting a finished lap.
     */
-  }, [reducedMotion, appearance]);
+  }, [reducedMotion, allLoaded]);
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -250,17 +233,52 @@ export function Hero({
 
   return (
     <section ref={heroRef} className="relative isolate overflow-hidden">
-      {/* ── The photograph, full bleed ─────────────────────────────────── */}
-      <div key={slide.mode} className="absolute inset-0 animate-fade">
-        <Image
-          src={appearance[slide.art]}
-          alt={t(slide.artAlt)}
-          fill
-          sizes="100vw"
-          className="object-cover"
-          priority={index === 0}
-        />
-      </div>
+      {/*
+        ── The photographs, full bleed, ALL THREE MOUNTED ────────────────
+
+        This used to mount only the active slide, keyed on its mode, so
+        advancing unmounted one <Image> and mounted another. Two problems,
+        and the second is why the lap sat still on real connections:
+
+        1. The swap could not cross-fade — there was never a moment where
+           both photographs existed — and on a slow link it showed the bare
+           scrim while the new file downloaded.
+
+        2. Trying to hide that by preloading the raw URLs was worse: next/image
+           does not request those, it requests /_next/image with its own width
+           and quality. So the preload fetched a second, much larger copy of
+           every photograph, and the lap waited on a download that had nothing
+           to do with what would actually be displayed. On a fast connection
+           this merely wasted bandwidth. On a Douala connection it meant the
+           gate never opened and the hero never moved, which is exactly what
+           was reported.
+
+        Stacking them lets next/image fetch each one once, at the size it will
+        actually paint, and reduces advancing to an opacity change — which
+        cannot show an empty frame because the image is already there.
+      */}
+      {SLIDES.map((s, i) => (
+        <div
+          key={s.mode}
+          aria-hidden={i !== index}
+          className={cn(
+            "absolute inset-0 transition-opacity duration-700 ease-out",
+            i === index ? "opacity-100" : "opacity-0",
+          )}
+        >
+          <Image
+            src={appearance[s.art]}
+            alt={i === index ? t(s.artAlt) : ""}
+            fill
+            sizes="100vw"
+            className="object-cover"
+            // Only the first is priority; the other two are ordinary loads
+            // that resolve in the background while the visitor reads.
+            priority={i === 0}
+            onLoad={() => setLoaded(prev => (prev.has(s.mode) ? prev : new Set(prev).add(s.mode)))}
+          />
+        </div>
+      ))}
 
       {/*
         The scrim. Two gradients rather than one flat wash: the left column is

@@ -168,7 +168,7 @@ export function HomeContent({
       </nav>
 
       {/* ── Popular dishes ─────────────────────────────────────────────── */}
-      <section className="bg-primary-light py-20">
+      <section className="reveal bg-primary-light py-20">
         <div className="container-page">
           <SectionHeader
             tag={t("home.popular.tag")}
@@ -203,7 +203,7 @@ export function HomeContent({
       </section>
 
       {/* ── Featured restaurants ───────────────────────────────────────── */}
-      <section className="container-page py-20">
+      <section className="reveal container-page py-20">
         <SectionHeader
           align="left"
           tag={t("home.featured.tag")}
@@ -223,7 +223,7 @@ export function HomeContent({
       </section>
 
       {/* ── How it works ───────────────────────────────────────────────── */}
-      <section className="container-page py-20">
+      <section className="reveal container-page py-20">
         <SectionHeader
           tag={t("home.how.tag")}
           title={t("home.how.title")}
@@ -252,7 +252,7 @@ export function HomeContent({
       </section>
 
       {/* ── For restaurants ────────────────────────────────────────────── */}
-      <section className="bg-surface-2 py-20">
+      <section className="reveal bg-surface-2 py-20">
         <div className="container-page">
           <SectionHeader
             align="left"
@@ -323,7 +323,7 @@ export function HomeContent({
 
       {/* ── Testimonials — the platform's best real reviews ─────────────── */}
       {testimonials.length > 0 && (
-        <section className="container-page py-20">
+        <section className="reveal container-page py-20">
           <SectionHeader tag={t("home.testimonials.tag")} title={t("home.testimonials.title")} />
           <TestimonialGrid
             items={testimonials.map((r) => ({
@@ -337,7 +337,7 @@ export function HomeContent({
       )}
 
       {/* ── Pricing ────────────────────────────────────────────────────── */}
-      <section className="bg-surface-2 py-20">
+      <section className="reveal bg-surface-2 py-20">
         <div className="container-page">
           <SectionHeader
             tag={t("home.pricing.tag")}
@@ -358,7 +358,7 @@ export function HomeContent({
       </section>
 
       {/* ── FAQ ────────────────────────────────────────────────────────── */}
-      <section className="container-page py-20">
+      <section className="reveal container-page py-20">
         <SectionHeader tag={t("home.faq.tag")} title={t("home.faq.title")} />
         <Faq
           items={[

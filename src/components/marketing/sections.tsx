@@ -232,7 +232,7 @@ export function CtaBanner({
   secondary?: { href: string; label: string };
 }) {
   return (
-    <section className="container-page py-16">
+    <section className="reveal container-page py-16">
       <div className="relative overflow-hidden rounded-xl bg-primary px-6 py-16 text-center text-primary-fg sm:px-12">
         <div
           aria-hidden

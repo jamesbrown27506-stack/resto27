@@ -171,48 +171,22 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           the sort of thing that reads as a mistake in an audit.
         */}
         {/*
-          Speculation Rules — prefetch the next document before it is asked for.
+          NO SPECULATION RULES HERE, AND THAT IS DELIBERATE.
 
-          `<Link>` already prefetches within the app, but that only covers
-          client-side navigations. These rules cover full document loads, which
-          is what a visitor arriving from a search result actually performs.
+          A <script type="speculationrules"> prefetch block lived here and has
+          been taken out. Prefetching only pays when the fetched document can
+          be reused for the navigation, and every public page on this site is
+          served `Cache-Control: no-store` — a response the browser is not
+          allowed to store, and therefore cannot hand to the click that
+          follows. So the prefetch downloaded each hovered or touched page in
+          full and then discarded it.
 
-          `prefetch`, not `prerender`, and `moderate` eagerness (fires on
-          hover): prerendering fully executes the destination, which on this
-          site would run analytics and cart state for pages nobody chose to
-          open. The exclusion list is the point — a prefetched /logout or
-          /checkout is a request with consequences, so anything that mutates
-          state or belongs to a signed-in area is left out.
+          On the connections this platform runs on that is not a neutral
+          waste: it is bandwidth taken from the navigation the visitor
+          actually asked for. Re-add it the day public pages become cacheable
+          (see the caching item in the SEO action plan) — the two changes only
+          make sense together, and in that order.
         */}
-        <script
-          type="speculationrules"
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              prefetch: [
-                {
-                  where: {
-                    and: [
-                      { href_matches: "/*" },
-                      {
-                        not: {
-                          href_matches: [
-                            "/a/*", "/m/*", "/api/*",
-                            "/cart", "/cart/*", "/checkout", "/checkout/*",
-                            "/account", "/account/*", "/orders", "/orders/*",
-                            "/settings/*", "/profile/*", "/addresses/*",
-                            "/loyalty/*", "/favorites/*",
-                            "/login", "/logout", "/register/*",
-                          ],
-                        },
-                      },
-                    ],
-                  },
-                  eagerness: "moderate",
-                },
-              ],
-            }),
-          }}
-        />
         <link rel="apple-touch-icon" href={brand.iconUrl ?? "/app-icon-180.png"} />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
