@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ShieldCheck, Store, UtensilsCrossed } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Store, UtensilsCrossed } from "lucide-react";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { LocaleToggle } from "@/components/layout/locale-toggle";
@@ -41,7 +41,18 @@ export function AuthShell({
         </header>
 
         <main id="main" className="flex flex-1 items-center justify-center px-6 py-10">
-          <div className="w-full max-w-sm">{children}</div>
+          <div className="w-full max-w-sm">
+            {/* Sign-in and sign-up have no site header, so without this the
+                only way back to the site was the browser's own back button. */}
+            <Link
+              href="/"
+              className="mb-6 inline-flex items-center gap-1.5 rounded-full border border-border px-3.5 py-1.5 text-sm font-medium text-text-secondary transition-colors hover:border-primary hover:text-primary"
+            >
+              <ArrowLeft className="size-4" aria-hidden />
+              <span>{t("auth.backToSite")}</span>
+            </Link>
+            {children}
+          </div>
         </main>
 
         <footer className="flex flex-wrap items-center gap-x-5 gap-y-2 p-6 text-xs text-text-light">

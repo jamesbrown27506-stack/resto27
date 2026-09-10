@@ -1,15 +1,13 @@
 "use client";
 import { MobileTabBar } from "./mobile-tabbar";
-import { useLocale } from "@/lib/i18n/use-locale";
+import { tabsFor, type TabArea } from "@/lib/mobile-tabs";
 
-export function CustomerNavigation({ accountHref = "/account" }: { accountHref?: string }) {
-  const { locale } = useLocale();
-  const fr = locale === "fr";
-  return <MobileTabBar items={[
-    { href: "/", icon: "Home", label: fr ? "Accueil" : "Home" },
-    { href: "/restaurants", icon: "Search", label: fr ? "Explorer" : "Explore", matchPrefix: true },
-    { href: "/orders", icon: "ReceiptText", label: fr ? "Commandes" : "Orders", matchPrefix: true },
-    { href: "/messages", icon: "MessageSquare", label: "Messages", matchPrefix: true },
-    { href: accountHref, activePaths: ["/account", "/settings", "/profile", "/addresses", "/loyalty", "/reviews", "/favorites", "/reservations"], icon: "User", label: fr ? "Compte" : "Account" },
-  ]} />;
+/**
+ * The phone bottom bar on the public site and in the customer area. Which
+ * tabs it shows depends on who is looking — see lib/mobile-tabs, the one
+ * place every bottom bar is defined.
+ */
+export function CustomerNavigation({ area }: { area: TabArea }) {
+  const { items, more } = tabsFor(area);
+  return <MobileTabBar items={items} more={more} />;
 }

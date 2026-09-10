@@ -28,8 +28,8 @@ export function LogoutButton({
   variant = "icon",
   className,
 }: {
-  /** `icon` for a toolbar, `full` for a sidebar row with a label. */
-  variant?: "icon" | "full";
+  /** `icon` for a toolbar, `full` for a sidebar row, `block` for a drawer's full-width button. */
+  variant?: "icon" | "full" | "block";
   className?: string;
 }) {
   const { t } = useLocale();
@@ -38,8 +38,13 @@ export function LogoutButton({
 
   return (
     <>
-      <form ref={formRef} action="/logout" method="post" className={variant === "full" ? "w-full" : undefined}>
-        {variant === "icon" ? (
+      <form ref={formRef} action="/logout" method="post" className={variant === "icon" ? undefined : "w-full"}>
+        {variant === "block" ? (
+          <Button type="button" variant="outline" fullWidth className={className} onClick={() => setConfirming(true)}>
+            <LogOut className="size-4" aria-hidden />
+            <span>{t("nav.logout")}</span>
+          </Button>
+        ) : variant === "icon" ? (
           <Button
             type="button"
             variant="ghost"

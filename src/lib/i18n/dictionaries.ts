@@ -74,6 +74,8 @@ const baseFr = {
   "nav.registerRestaurant": "Inscrire mon restaurant",
   "nav.menu": "Menu",
   "nav.more": "Plus",
+  "tab.explore": "Explorer",
+  "tab.account": "Compte",
   "nav.myArea": "Mon espace",
   "nav.moreTitle": "Mon compte",
   "nav.moreBody": "Toutes vos pages, au même endroit.",
@@ -130,7 +132,9 @@ const baseFr = {
   "footer.rights": "Tous droits réservés.",
   "footer.madeIn": "Fait à Douala",
   "footer.developedBy": "Développé par",
-  "footer.whatsappSupport": "Support WhatsApp",
+  "footer.contactWhatsapp": "Contacter sur WhatsApp",
+  "footer.whatsappMessage":
+    "Bonjour Mrcode27, j'ai vu le site que vous avez développé pour {name} et j'aimerais échanger avec vous.",
 
   /* ── Hero ──────────────────────────────────────────────────────────── */
   "hero.order.tag": "Livraison & à emporter",
@@ -397,6 +401,7 @@ const baseFr = {
   "auth.forgot.spam": "Rien reçu au bout de quelques minutes ? Regardez dans les indésirables.",
   "auth.forgot.send": "Envoyer le lien",
   "auth.backToLogin": "Retour à la connexion",
+  "auth.backToSite": "Retour au site",
   "auth.reset.title": "Nouveau mot de passe",
   "auth.reset.subtitle": "Choisissez un mot de passe que vous n'utilisez nulle part ailleurs.",
   "auth.reset.newPassword": "Nouveau mot de passe",
@@ -868,6 +873,8 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "nav.registerRestaurant": "List my restaurant",
   "nav.menu": "Menu",
   "nav.more": "More",
+  "tab.explore": "Explore",
+  "tab.account": "Account",
   "nav.myArea": "My area",
   "nav.moreTitle": "My account",
   "nav.moreBody": "All your pages, in one place.",
@@ -924,7 +931,9 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "footer.rights": "All rights reserved.",
   "footer.madeIn": "Made in Douala",
   "footer.developedBy": "Developed by",
-  "footer.whatsappSupport": "WhatsApp support",
+  "footer.contactWhatsapp": "Chat on WhatsApp",
+  "footer.whatsappMessage":
+    "Hello Mrcode27, I saw the website you built for {name} and would like to talk with you.",
 
   /* ── Hero ──────────────────────────────────────────────────────────── */
   "hero.order.tag": "Delivery & takeaway",
@@ -1188,6 +1197,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "auth.forgot.spam": "Nothing received after a few minutes? Check the spam folder.",
   "auth.forgot.send": "Send the link",
   "auth.backToLogin": "Back to sign in",
+  "auth.backToSite": "Back to the site",
   "auth.reset.title": "New password",
   "auth.reset.subtitle": "Choose a password you use nowhere else.",
   "auth.reset.newPassword": "New password",

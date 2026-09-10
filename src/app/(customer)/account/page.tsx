@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { AccountLinks } from "@/components/layout/account-links";
 import { CalendarCheck, Gift, Heart, ReceiptText, ShoppingBag } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { OrderCard } from "@/components/order/order-parts";
@@ -60,7 +59,9 @@ export default async function AccountPage() {
         </Link>
       }
     >
-      <AccountLinks />
+      {/* Straight to the figures, like the restaurant and admin dashboards —
+          the account menu is the sidebar on desktop and the "Compte" tab on
+          a phone, not a grid of links above the content. */}
       <div className="grid gap-4 sm:grid-cols-3">
         <StatTile
           label={t("cac.stat.active")}

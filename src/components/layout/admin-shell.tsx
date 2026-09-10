@@ -2,19 +2,18 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { createContext, useContext, useState } from "react";
-import { Menu, ShieldCheck } from "lucide-react";
+import { createContext, useContext } from "react";
+import { ShieldCheck } from "lucide-react";
 import { NavIcon } from "./icon";
 import { BrandMark } from "./brand-mark";
-import { MobileTabBar, type TabItem } from "./mobile-tabbar";
+import { MobileTabBar } from "./mobile-tabbar";
 import { ImpersonationBanner } from "./impersonation-banner";
 import { LogoutButton } from "./logout-button";
 import { LocaleToggle } from "./locale-toggle";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Avatar } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Sheet } from "@/components/ui/sheet";
 import { ADMIN_NAV, isActive } from "@/lib/nav";
+import { tabsFor } from "@/lib/mobile-tabs";
 import { cn } from "@/lib/utils";
 import { NotificationProvider } from "@/components/notifications/notification-provider";
 import { NotificationBell } from "@/components/notifications/notification-bell";
@@ -134,31 +133,15 @@ export function AdminShell({
   impersonating?: { adminName: string; targetName: string } | null;
   children: React.ReactNode;
 }) {
-  const pathname = usePathname();
-  const [drawerOpen, setDrawerOpen] = useState(false);
-
-  // The bottom app bar — the way home first, then the four desks an operator
-  // bounces between all day.
-  const tabs: TabItem[] = [
-    { href: "/", icon: "Home", labelKey: "nav.site" },
-    { href: "/a", icon: "LayoutDashboard", label: "Dashboard" },
-    { href: "/a/restaurants", icon: "Store", label: "Restaurants", matchPrefix: true },
-    { href: "/a/payments", icon: "CreditCard", label: "Payments", matchPrefix: true },
-    { href: "/a/users", icon: "Users", label: "Users", matchPrefix: true },
-  ];
-
-  // Close the drawer on navigation, like the marketing header — otherwise a
-  // tapped link leaves it open over the page you just moved to.
-  const [openedOn, setOpenedOn] = useState(pathname);
-  if (drawerOpen && openedOn !== pathname) {
-    setDrawerOpen(false);
-    setOpenedOn(pathname);
-  }
-
-  function openMenu() {
-    setOpenedOn(pathname);
-    setDrawerOpen(true);
-  }
+  /*
+    Below lg the navigation is the bottom bar and nothing else: the way home,
+    the three desks an operator bounces between all day, and "More" for the
+    whole menu. It is the SAME bar the administrator sees on the public site
+    (lib/mobile-tabs). A left-hand drawer used to sit here too, opening from
+    the opposite side to the public site's menu — two navigations, mirrored,
+    for the same person.
+  */
+  const { items: tabs, more } = tabsFor("admin");
 
   return (
     <AdminUserContext.Provider value={user}>
@@ -178,25 +161,6 @@ export function AdminShell({
         <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 border-r border-border bg-surface lg:block">
           <AdminNav brand={brand} />
         </aside>
-
-        <Sheet
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          title="Navigation"
-          side="left"
-          className="p-0"
-        >
-          {/* Any link tap closes the drawer — including a link to the page you
-              are already on, which no pathname change can ever tell us about. */}
-          <div
-            className="flex h-full flex-col"
-            onClick={(e) => {
-              if ((e.target as HTMLElement).closest("a")) setDrawerOpen(false);
-            }}
-          >
-            <AdminNav brand={brand} />
-          </div>
-        </Sheet>
 
         <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
           {impersonating && (
@@ -224,25 +188,14 @@ export function AdminShell({
             */}
             <div aria-hidden className="absolute inset-0 -z-10 bg-surface/95 backdrop-blur-md" />
 
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="lg:hidden"
-              aria-label="Open navigation"
-              aria-expanded={drawerOpen}
-              onClick={openMenu}
-            >
-              <Menu className="size-5" aria-hidden />
-            </Button>
-
-            {/* On mobile the sidebar is behind a drawer, so the top bar
-                carries the way out to the public site instead. */}
+            {/* The brand heads the page on every phone screen — the sidebar
+                that carries it on desktop does not exist below lg. */}
             <BrandMark name={brand.name} logoUrl={brand.logoUrl} size="sm" className="lg:hidden" />
 
             <div className="ml-auto flex items-center gap-2">
               <NotificationBell />
 
-              {/* Theme and language live in the sidebar drawer below lg. */}
+              {/* Theme and language live in the "More" sheet below lg. */}
               <LocaleToggle className="hidden lg:inline-flex" />
               <ThemeToggle className="hidden lg:inline-flex" />
 
@@ -277,7 +230,7 @@ export function AdminShell({
         </div>
 
           {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
-          <MobileTabBar items={tabs} />
+          <MobileTabBar items={tabs} more={more} />
         </div>
       </NotificationProvider>
     </AdminUserContext.Provider>

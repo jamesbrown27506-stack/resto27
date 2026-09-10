@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Menu, PauseCircle } from "lucide-react";
 import { PageBackLink } from "./page-back-link";
+import { BrandMark } from "./brand-mark";
 import { ManagerSidebar } from "./manager-sidebar";
 import { MANAGER_NAV } from "@/lib/nav";
 import type { IconName } from "./icon";
@@ -213,9 +214,16 @@ export function ManagerShell({
             <Menu className="size-5" aria-hidden />
           </Button>
 
-          <div className="min-w-0 lg:hidden">
-            <p className="truncate text-sm font-semibold">{active.restaurantName}</p>
-            <p className="truncate text-xs text-text-light">{active.branchLabel}</p>
+          {/* The platform first, then the restaurant: on a phone the sidebar
+              that carries the brand is hidden, and without this the platform's
+              name appeared only once the menu was opened. */}
+          <div className="flex min-w-0 items-center gap-2.5 lg:hidden">
+            <BrandMark name={brand.name} logoUrl={brand.logoUrl} size="sm" />
+            <span aria-hidden className="h-6 w-px shrink-0 bg-border" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">{active.restaurantName}</p>
+              <p className="truncate text-xs text-text-light">{active.branchLabel}</p>
+            </div>
           </div>
 
           <div className="ml-auto flex items-center gap-2">

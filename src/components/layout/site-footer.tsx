@@ -10,12 +10,11 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SocialLink } from "@/lib/social-platforms";
 import { formatPhoneDisplay, telHref } from "@/lib/phone";
 
-/** The developer's credit, which doubles as the WhatsApp support line. */
-const DEVELOPER = {
-  name: "Mrcode27",
-  phone: "+237 691 09 89 99",
-  whatsapp: "https://wa.me/237691098999",
-};
+/**
+ * The developer's credit, which doubles as the WhatsApp contact. The chat
+ * opens with a message already written, so reaching out is one tap.
+ */
+const DEVELOPER = { name: "Mrcode27", whatsappNumber: "237691098999" };
 
 const GROUPS: { heading: TranslationKey; links: { href: string; label: TranslationKey }[] }[] = [
   {
@@ -147,22 +146,23 @@ export function SiteFooter({
           <p>
             © {new Date().getFullYear()} {brand.name}. {t("footer.rights")}
           </p>
-          <p className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1">
-            <span>{t("footer.developedBy")}</span>
-            <a
-              href={DEVELOPER.whatsapp}
-              target="_blank"
-              rel="noreferrer"
-              title={t("footer.whatsappSupport")}
-              className="inline-flex items-center gap-1.5 font-semibold text-brand-on-solid/80 transition-colors hover:text-brand-on-solid"
-            >
-              <span>{DEVELOPER.name}</span>
-              <span aria-hidden>·</span>
-              <SocialIcon platform="whatsapp" className="size-3.5" />
-              <span className="sr-only">{t("footer.whatsappSupport")}</span>
-              <span className="font-normal">{DEVELOPER.phone}</span>
-            </a>
-          </p>
+          {/* The one accent-coloured element in the footer, on purpose. */}
+          <a
+            href={`https://wa.me/${DEVELOPER.whatsappNumber}?text=${encodeURIComponent(
+              t("footer.whatsappMessage", { name: brand.name }),
+            )}`}
+            target="_blank"
+            rel="noreferrer"
+            className="group inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 rounded-full bg-accent/15 px-4 py-1.5 text-brand-on-solid ring-1 ring-accent/40 transition-colors hover:bg-accent hover:text-accent-fg"
+          >
+            <SocialIcon platform="whatsapp" className="size-4 text-accent transition-colors group-hover:text-accent-fg" />
+            <span>
+              <span>{t("footer.developedBy")} </span>
+              <strong className="font-semibold">{DEVELOPER.name}</strong>
+            </span>
+            <span aria-hidden className="text-brand-on-solid/40 group-hover:text-accent-fg/60">·</span>
+            <span className="font-medium text-accent group-hover:text-accent-fg">{t("footer.contactWhatsapp")}</span>
+          </a>
           <p>{t("footer.madeIn")} 🇨🇲</p>
         </div>
       </div>

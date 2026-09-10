@@ -23,10 +23,11 @@ import { getMobileAppVisibility } from "@/lib/mobile-app-settings";
  *  would be offered a contact form addressed to themselves, and a manager one
  *  addressed to their own support queue.
  *
- *  So the last tab follows the area you work in: administration for an admin,
- *  the order queue for a manager, and the whole account menu for a customer —
- *  the same "More" sheet the customer area itself uses, so the bar does not
- *  change shape when they cross between the two.
+ *  So the whole bar follows the person, not the page: a visitor gets
+ *  discovery and sign-in, a customer their orders and account, a manager
+ *  their desks, and an administrator the same bar as inside /a — so it never
+ *  changes shape when they cross between the site and their area. Every bar
+ *  is defined in lib/mobile-tabs.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
@@ -47,7 +48,7 @@ export default async function PublicLayout({ children }: { children: React.React
       </div>
       {mobileApp.appDownload && <AppDownloadBand brandName={brand.name} />}
       <SiteFooter brand={brand} socialLinks={socialLinks} showAppLinks={mobileApp.appDownload} />
-      <CustomerNavigation accountHref={user?.homeHref ?? "/login?next=/account"} />
+      <CustomerNavigation area={user?.area ?? "visitor"} />
     </div>
   );
 }

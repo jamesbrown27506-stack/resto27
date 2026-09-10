@@ -45,7 +45,7 @@ export default async function CustomerLayout({ children }: { children: React.Rea
         {children}
       </div>
       <SiteFooter brand={brand} socialLinks={socialLinks} showAppLinks={mobileApp.appDownload} />
-      <CustomerNavigation accountHref={user?.homeHref ?? "/login?next=/account"} />
+      <CustomerNavigation area={user?.area ?? "visitor"} />
     </div>
   );
 }

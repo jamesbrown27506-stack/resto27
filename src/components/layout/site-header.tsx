@@ -3,8 +3,9 @@
 import Link from "@/components/layout/public-link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { LogOut, Menu, ShoppingBag } from "lucide-react";
+import { Menu, ShoppingBag } from "lucide-react";
 import { BrandMark } from "./brand-mark";
+import { LogoutButton } from "./logout-button";
 import { NavIcon } from "./icon";
 import { Avatar } from "@/components/ui/avatar";
 import { Button, buttonClasses } from "@/components/ui/button";
@@ -21,6 +22,15 @@ import { NotificationBell } from "@/components/notifications/notification-bell";
 
 const NAV: { href: string; label: TranslationKey }[] = [
   { href: "/restaurants", label: "nav.restaurants" },
+  { href: "/pricing", label: "nav.pricing" },
+  { href: "/contact", label: "nav.contact" },
+];
+
+/** A signed-in customer's links: their orders and messages instead of the plans. */
+const CUSTOMER_LINKS: { href: string; label: TranslationKey }[] = [
+  { href: "/restaurants", label: "nav.restaurants" },
+  { href: "/orders", label: "cor.title" },
+  { href: "/messages", label: "cmsg.title" },
   { href: "/contact", label: "nav.contact" },
 ];
 
@@ -70,9 +80,10 @@ export function SiteHeader({
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
-  // A signed-in client should not be offered "Pricing" — they already pay. The
-  // pricing page stays, but only as a link anonymous visitors see.
-  const nav = user?.area === "customer" ? [...NAV, { href: "/orders", label: "cor.title" as TranslationKey }, { href: "/messages", label: "cmsg.title" as TranslationKey }] : NAV;
+  // "Tarifs" is how a restaurant decides to join, so every visitor sees it,
+  // on desktop and in the phone menu. A signed-in customer is not a
+  // restaurant: they get their orders and messages instead.
+  const nav = user?.area === "customer" ? CUSTOMER_LINKS : NAV;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -170,21 +181,13 @@ export function SiteHeader({
                   </span>
                 </Link>
                 {/*
-                  A form POST, not a link. Sign-out is a state change, and a
-                  GET route can be fired by any <img src="/logout"> on a page
-                  the user happens to visit.
+                  The same confirmed POST as every dashboard. These two buttons
+                  were bare forms, so signing out from the public site was the
+                  one place it happened without being asked.
                 */}
-                <form action="/logout" method="post" className="hidden sm:block">
-                  <Button
-                    type="submit"
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={t("nav.logout")}
-                    title={t("nav.logout")}
-                  >
-                    <LogOut className="size-4" aria-hidden />
-                  </Button>
-                </form>
+                <div className="hidden sm:block">
+                  <LogoutButton />
+                </div>
               </>
             ) : (
               <>
@@ -301,12 +304,7 @@ export function SiteHeader({
                   </Link>
                 )}
 
-                <form action="/logout" method="post">
-                  <Button type="submit" variant="outline" fullWidth>
-                    <LogOut className="size-4" aria-hidden />
-                    {t("nav.logout")}
-                  </Button>
-                </form>
+                <LogoutButton variant="block" />
               </>
             ) : (
               <>
