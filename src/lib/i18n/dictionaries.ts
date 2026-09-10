@@ -129,6 +129,8 @@ const baseFr = {
   "footer.terms": "Conditions",
   "footer.rights": "Tous droits réservés.",
   "footer.madeIn": "Fait à Douala",
+  "footer.developedBy": "Développé par",
+  "footer.whatsappSupport": "Support WhatsApp",
 
   /* ── Hero ──────────────────────────────────────────────────────────── */
   "hero.order.tag": "Livraison & à emporter",
@@ -921,6 +923,8 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "footer.terms": "Terms",
   "footer.rights": "All rights reserved.",
   "footer.madeIn": "Made in Douala",
+  "footer.developedBy": "Developed by",
+  "footer.whatsappSupport": "WhatsApp support",
 
   /* ── Hero ──────────────────────────────────────────────────────────── */
   "hero.order.tag": "Delivery & takeaway",

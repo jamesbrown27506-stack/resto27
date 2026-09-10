@@ -138,6 +138,10 @@ export const commonDict = defineDict({
     "pwa.notif.failed": "Impossible d'activer les notifications.",
     "pwa.notif.denied":
       "Les notifications sont bloquées par le navigateur. Autorisez-les dans les réglages du site pour recevoir les alertes.",
+    "pwa.native.body":
+      "Suivez vos commandes et réservations en temps réel, même quand l'application est fermée.",
+    "pwa.native.blocked":
+      "Les notifications sont bloquées pour {name}. Activez-les dans Paramètres › Applications › {name} › Notifications.",
     "pwa.later": "Plus tard",
 
     /* "Download our app" — the band above the footer and the footer links. */
@@ -261,6 +265,9 @@ export const commonDict = defineDict({
     "pwa.notif.failed": "Could not enable notifications.",
     "pwa.notif.denied":
       "Notifications are blocked by your browser. Allow them in the site settings to receive alerts.",
+    "pwa.native.body": "Follow your orders and bookings live, even when the app is closed.",
+    "pwa.native.blocked":
+      "Notifications are blocked for {name}. Turn them on in Settings › Apps › {name} › Notifications.",
     "pwa.later": "Later",
 
     /* "Download our app" — the band above the footer and the footer links. */

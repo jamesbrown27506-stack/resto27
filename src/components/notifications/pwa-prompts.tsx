@@ -349,8 +349,8 @@ export function PwaPrompts({
   );
 }
 
-/** One bottom card: icon, title, body/actions, and a dismiss X. */
-function BannerCard({
+/** One bottom card: icon, title, body/actions, and a dismiss X. Shared with the native push offer. */
+export function BannerCard({
   icon,
   title,
   onClose,

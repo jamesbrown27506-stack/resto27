@@ -11,6 +11,7 @@ import { getCartConfig } from "@/lib/orders/cart-config";
 import { ToastProvider } from "@/components/ui/toast";
 import { CartProvider } from "@/components/cart/cart-provider";
 import { PwaPrompts } from "@/components/notifications/pwa-prompts";
+import { NativePushPrompt } from "@/components/capacitor/native-push-prompt";
 import { FirebaseInit } from "@/components/firebase/firebase-init";
 import { PushSync } from "@/components/notifications/push-sync";
 import { SkipLink } from "@/components/layout/skip-link";
@@ -246,6 +247,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 one hour before asking again.
               */}
               <PwaPrompts brandName={brand.name} installEnabled={mobileApp.pwaInstall} />
+              {/* Its counterpart inside the installed app, where PwaPrompts stands down. */}
+              <NativePushPrompt brandName={brand.name} />
               {/*
                 Push self-repair. Renders nothing; it re-registers the service
                 worker and re-stores this browser's subscription on every app
