@@ -139,6 +139,21 @@ export const commonDict = defineDict({
     "pwa.notif.denied":
       "Les notifications sont bloquées par le navigateur. Autorisez-les dans les réglages du site pour recevoir les alertes.",
     "pwa.later": "Plus tard",
+
+    /* "Download our app" — the band above the footer and the footer links. */
+    "appdl.tag": "Application mobile",
+    "appdl.title": "Téléchargez l'application {name}",
+    "appdl.body":
+      "Commandez, suivez votre livraison en direct et recevez les alertes de vos commandes et réservations, directement sur votre téléphone.",
+    "appdl.android.kicker": "Télécharger pour",
+    "appdl.ios.kicker": "Installer sur",
+    "appdl.android.meta": "Android 7.0 ou plus · version {version} · {size} Mo",
+    "appdl.android.hint":
+      "Hors Play Store, Android peut vous demander d'autoriser l'installation depuis votre navigateur : acceptez, puis ouvrez le fichier téléchargé.",
+    "appdl.ios.title": "Sur iPhone et iPad",
+    "appdl.ios.body":
+      "L'application arrive bientôt sur l'App Store. En attendant, ouvrez ce site dans Safari, touchez Partager puis « Sur l'écran d'accueil » : vous obtenez la même application, en plein écran.",
+    "appdl.footer": "Application mobile",
     "pwa.dismiss": "Fermer",
   },
   en: {
@@ -247,6 +262,21 @@ export const commonDict = defineDict({
     "pwa.notif.denied":
       "Notifications are blocked by your browser. Allow them in the site settings to receive alerts.",
     "pwa.later": "Later",
+
+    /* "Download our app" — the band above the footer and the footer links. */
+    "appdl.tag": "Mobile app",
+    "appdl.title": "Get the {name} app",
+    "appdl.body":
+      "Order, follow your delivery live and get alerts about your orders and bookings, right on your phone.",
+    "appdl.android.kicker": "Download for",
+    "appdl.ios.kicker": "Install on",
+    "appdl.android.meta": "Android 7.0 or later · version {version} · {size} MB",
+    "appdl.android.hint":
+      "Outside the Play Store, Android may ask you to allow installs from your browser. Accept, then open the downloaded file.",
+    "appdl.ios.title": "On iPhone and iPad",
+    "appdl.ios.body":
+      "The app is coming to the App Store soon. Meanwhile, open this site in Safari, tap Share, then “Add to Home Screen” to get the same app, full screen.",
+    "appdl.footer": "Get the app",
     "pwa.dismiss": "Close",
   },
 });

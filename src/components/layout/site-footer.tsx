@@ -4,6 +4,7 @@ import Link from "@/components/layout/public-link";
 import { Mail, MapPin, Phone } from "lucide-react";
 import { SocialIcon } from "@/components/icons/social-icon";
 import { BrandMark } from "./brand-mark";
+import { AppDownloadFooterLinks } from "./app-download";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SocialLink } from "@/lib/social-platforms";
@@ -107,6 +108,8 @@ export function SiteFooter({
                 {brand.supportEmail}
               </a>
             </address>
+
+            <AppDownloadFooterLinks />
           </div>
 
           {GROUPS.map((group) => (

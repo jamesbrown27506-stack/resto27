@@ -1,6 +1,7 @@
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { CustomerNavigation } from "@/components/layout/customer-navigation";
+import { AppDownloadBand } from "@/components/layout/app-download";
 
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getBranding } from "@/lib/branding";
@@ -42,6 +43,7 @@ export default async function PublicLayout({ children }: { children: React.React
       <div id="main" className="flex flex-1 flex-col pt-20 lg:pt-16">
         {children}
       </div>
+      <AppDownloadBand brandName={brand.name} />
       <SiteFooter brand={brand} socialLinks={socialLinks} />
       <CustomerNavigation accountHref={user?.homeHref ?? "/login?next=/account"} />
     </div>

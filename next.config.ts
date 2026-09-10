@@ -105,6 +105,17 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        // The sideloaded Android build. The explicit type is what makes Android
+        // offer "Install" instead of an unknown-file prompt; revalidation means
+        // a new release replaces the old file on the CDN at once.
+        source: "/downloads/:file*.apk",
+        headers: [
+          { key: "Content-Type", value: "application/vnd.android.package-archive" },
+          { key: "Content-Disposition", value: 'attachment; filename="Resto237.apk"' },
+          { key: "Cache-Control", value: "public, max-age=0, must-revalidate" },
+        ],
+      },
+      {
         source: "/(.*)",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
