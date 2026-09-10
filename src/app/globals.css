@@ -370,41 +370,36 @@
 
 /* ── Reveal on scroll ───────────────────────────────────────────────────
 
-   A section lifts and fades as it comes into view, so a long marketing page
+   A section fades and lifts as it comes into view, so a long marketing page
    reads as something arriving rather than as one tall static image.
 
-   Done with a SCROLL-DRIVEN animation — `animation-timeline: view()` — which
-   means no JavaScript, no IntersectionObserver, no scroll listener, and no
-   work on the main thread while scrolling. That is the whole reason to
-   prefer it here: the devices this runs on cannot afford a scroll handler
-   that recalculates layout, and a reveal that stutters is worse than none.
+   Driven by components/marketing/reveal-on-scroll, which marks each section
+   `.is-visible` as it crosses into view. It replaced a scroll-driven CSS
+   animation that only Chromium ran and that was too subtle to notice — see
+   that file.
 
-   Everything is inside @supports, and the base state is fully visible. A
-   browser without scroll-driven animations (Safari, at time of writing) shows
-   the page exactly as it is today rather than a blank column — the failure
-   mode of every JS reveal that has ever shipped broken.
+   HIDDEN ONLY UNDER `html[data-reveal="on"]`, which that script sets. With
+   no script the base state is fully visible: a blank column is the failure
+   mode of every reveal that ever shipped broken, and this one cannot have it.
 
-   `animation-range` ends at 40% of the entry so the section is settled well
-   before it reaches the middle of the screen; running it to completion means
-   reading text that is still moving. */
+   The grids inside a section (`.stagger-in`) wait for it: their entrance used
+   to play on page load, while they were still far below the fold, so by the
+   time anyone scrolled down it had long finished. Paused until the section
+   arrives, the cards now come in one after another as it does. */
 @media (prefers-reduced-motion: no-preference) {
-  @supports (animation-timeline: view()) {
-    .reveal {
-      animation: rl-reveal linear both;
-      animation-timeline: view();
-      animation-range: entry 0% entry 40%;
-    }
-  }
-}
-
-@keyframes rl-reveal {
-  from {
+  [data-reveal="on"] .reveal {
     opacity: 0;
-    transform: translateY(18px);
+    transform: translateY(28px);
+    transition:
+      opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1),
+      transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
   }
-  to {
+  [data-reveal="on"] .reveal.is-visible {
     opacity: 1;
     transform: none;
+  }
+  [data-reveal="on"] .reveal:not(.is-visible) .stagger-in > * {
+    animation-play-state: paused;
   }
 }
 

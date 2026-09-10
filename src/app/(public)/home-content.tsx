@@ -2,7 +2,7 @@
 
 import Link from "@/components/layout/public-link";
 import Image from "next/image";
-import { ArrowRight, Bike, ChefHat, CreditCard, Search, ShoppingBag, Star, Store } from "lucide-react";
+import { ArrowRight, Bike, ChefHat, Compass, CreditCard, Search, ShoppingBag, Star, Store } from "lucide-react";
 import { Hero } from "@/components/marketing/hero";
 import { Faq } from "@/components/marketing/faq";
 import { PricingGrid } from "@/components/marketing/pricing-grid";
@@ -163,8 +163,11 @@ export function HomeContent({
             </Link>
           ))}
         </div>
-        <Link href="/explore" className="group inline-flex shrink-0 items-center gap-2 text-sm font-semibold text-primary transition-all hover:text-primary-hover">
-          {locale === "fr" ? "Tout explorer" : "Explore everything"}
+        {/* A real button, not a text link: as a link it sat unnoticed at the
+            end of the cuisine chips. */}
+        <Link href="/explore" className={buttonClasses({ className: "group self-start sm:self-auto" })}>
+          <Compass className="size-4" aria-hidden />
+          <span>{locale === "fr" ? "Tout explorer" : "Explore everything"}</span>
           <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" aria-hidden />
         </Link>
       </nav>
@@ -226,6 +229,12 @@ export function HomeContent({
                 </span>
               </Link>
             ))}
+          </div>
+          <div className="mt-10 flex justify-center">
+            <Link href="/explore" className={buttonClasses({ size: "lg", className: "group" })}>
+              <span>{t("home.popular.all")}</span>
+              <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" aria-hidden />
+            </Link>
           </div>
         </div>
       </section>

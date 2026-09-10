@@ -2,6 +2,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { CustomerNavigation } from "@/components/layout/customer-navigation";
 import { AppDownloadBand } from "@/components/layout/app-download";
+import { RevealOnScroll } from "@/components/marketing/reveal-on-scroll";
 
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getBranding } from "@/lib/branding";
@@ -49,6 +50,7 @@ export default async function PublicLayout({ children }: { children: React.React
       {mobileApp.appDownload && <AppDownloadBand brandName={brand.name} />}
       <SiteFooter brand={brand} socialLinks={socialLinks} showAppLinks={mobileApp.appDownload} />
       <CustomerNavigation area={user?.area ?? "visitor"} />
+      <RevealOnScroll />
     </div>
   );
 }

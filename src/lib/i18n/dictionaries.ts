@@ -210,6 +210,7 @@ const baseFr = {
   "home.popular.oneRestaurant": "1 restaurant",
   "home.popular.restaurants": "{count} restaurants",
   "home.popular.from": "dès {price}",
+  "home.popular.all": "Voir tous les plats",
 
   "home.how.tag": "Comment ça marche",
   "home.how.title": "Trois étapes, c'est tout",
@@ -1009,6 +1010,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "home.popular.oneRestaurant": "1 restaurant",
   "home.popular.restaurants": "{count} restaurants",
   "home.popular.from": "from {price}",
+  "home.popular.all": "See all dishes",
 
   "home.how.tag": "How it works",
   "home.how.title": "Three steps, that's it",
