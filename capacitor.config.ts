@@ -23,7 +23,8 @@ const config: CapacitorConfig = {
     SplashScreen: {
       launchAutoHide: true,
       launchShowDuration: 1200,
-      backgroundColor: "#F7F4ED",
+      // Matches the launch images, which put the logo on white.
+      backgroundColor: "#FFFFFF",
       showSpinner: false,
     },
     StatusBar: {

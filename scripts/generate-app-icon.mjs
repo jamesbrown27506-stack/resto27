@@ -1,141 +1,168 @@
-// Generates the Resto237 PWA icon and monochrome notification badge.
-// Run with: node scripts/generate-app-icon.mjs
+// Generates every app icon and launch screen from the brand logo.
+// Run with: node scripts/generate-app-icon.mjs [path/to/logo.png]
+//
+// The source (default resources/logo.png) is the full logo — the symbol above
+// the name — on a white ground: the same file uploaded in /a/settings.
+// Icons use only the symbol, because at launcher size the name and tagline
+// are unreadable; launch screens show the whole logo.
+//
+// Not generated here: public/notification-badge.png and the Android
+// status-bar icon (drawable/ic_stat_resto237.xml). Both must be flat
+// single-colour silhouettes, which a full-colour logo cannot be turned into.
 
-import { deflateSync } from "node:zlib";
-import { mkdirSync, writeFileSync } from "node:fs";
+import sharp from "sharp";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const PRIMARY = [0x5f, 0x72, 0x57];
-const PRIMARY_DARK = [0x43, 0x54, 0x3d];
-const CREAM = [0xff, 0xfc, 0xf5];
-const ORANGE = [0xf2, 0x8a, 0x2e];
+// Files are regenerated in place; a cached handle blocks that on Windows.
+sharp.cache(false);
 
-const CRC_TABLE = new Int32Array(256);
-for (let n = 0; n < 256; n += 1) {
-  let c = n;
-  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-  CRC_TABLE[n] = c;
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const at = (...parts) => path.join(root, ...parts);
+const source = path.resolve(root, process.argv[2] ?? "resources/logo.png");
+if (!existsSync(source)) throw new Error(`Put the logo at ${path.relative(root, source)}, or pass its path.`);
+
+const WHITE = { r: 255, g: 255, b: 255, alpha: 1 };
+const CLEAR = { r: 0, g: 0, b: 0, alpha: 0 };
+/** How far from white a pixel must be to count as artwork, not antialiasing. */
+const INK = 60;
+
+/**
+ * Splits the logo into horizontal bands of artwork separated by blank rows.
+ * The symbol is every band until the first one much wider than all above it,
+ * which is the name.
+ */
+function findRegions({ data, width, height }) {
+  const ink = (x, y) => {
+    const i = (y * width + x) * 3;
+    return 765 - data[i] - data[i + 1] - data[i + 2] > INK;
+  };
+  const bands = [];
+  let band = null;
+  for (let y = 0; y < height; y++) {
+    let left = -1;
+    let right = -1;
+    for (let x = 0; x < width; x++) if (ink(x, y)) { if (left < 0) left = x; right = x; }
+    if (left < 0) { if (band) bands.push(band); band = null; continue; }
+    if (!band) band = { top: y, bottom: y, left, right };
+    else Object.assign(band, { bottom: y, left: Math.min(band.left, left), right: Math.max(band.right, right) });
+  }
+  if (band) bands.push(band);
+  if (!bands.length) throw new Error("The logo is blank.");
+
+  const merge = (a, b) => ({ top: a.top, bottom: b.bottom, left: Math.min(a.left, b.left), right: Math.max(a.right, b.right) });
+  let symbol = bands[0];
+  for (const next of bands.slice(1)) {
+    if (next.right - next.left > 1.5 * (symbol.right - symbol.left)) break;
+    symbol = merge(symbol, next);
+  }
+  return { symbol, artwork: bands.reduce(merge) };
 }
 
-function crc32(buffer) {
-  let c = 0xffffffff;
-  for (const byte of buffer) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
+async function crop(box) {
+  return sharp(source).flatten({ background: WHITE })
+    .extract({ left: box.left, top: box.top, width: box.right - box.left + 1, height: box.bottom - box.top + 1 })
+    .png().toBuffer();
 }
 
-function chunk(type, data) {
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length);
-  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body));
-  return Buffer.concat([length, body, crc]);
+/** Makes the white ground transparent without dulling antialiased edges. */
+async function whiteToAlpha(png) {
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const out = Buffer.alloc(info.width * info.height * 4);
+  for (let i = 0, o = 0; i < data.length; i += 3, o += 4) {
+    let alpha = Math.max(255 - data[i], 255 - data[i + 1], 255 - data[i + 2]) / 255;
+    if (alpha < 4 / 255) alpha = 0;
+    for (let c = 0; c < 3; c++) out[o + c] = alpha ? Math.round(255 - (255 - data[i + c]) / alpha) : 0;
+    out[o + 3] = Math.round(alpha * 255);
+  }
+  return sharp(out, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
 }
 
-function encodePng(size, pixelAt) {
-  const raw = Buffer.alloc(size * (size * 4 + 1));
-  let offset = 0;
-  for (let y = 0; y < size; y += 1) {
-    raw[offset++] = 0;
-    for (let x = 0; x < size; x += 1) {
-      const pixel = pixelAt(x, y, size);
-      raw[offset++] = pixel[0];
-      raw[offset++] = pixel[1];
-      raw[offset++] = pixel[2];
-      raw[offset++] = pixel[3];
+/** The same shape in white, for Android 13+ themed icons. */
+async function silhouette(png) {
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  for (let i = 0; i < data.length; i += 4) data[i] = data[i + 1] = data[i + 2] = 255;
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+}
+
+/** `art` fitted into a centred square of `fraction` of the shorter side. */
+async function place(art, width, height, fraction, background) {
+  const box = Math.max(1, Math.round(Math.min(width, height) * fraction));
+  const scaled = await sharp(art).resize(box, box, { fit: "inside" }).png().toBuffer();
+  return sharp({ create: { width, height, channels: 4, background } })
+    .composite([{ input: scaled, gravity: "centre" }]).png().toBuffer();
+}
+
+/**
+ * Encoded in memory and written by Node, retrying briefly: on Windows an
+ * antivirus scan or an editor's file watcher can hold a file for a moment
+ * after it changes, and dozens of images are rewritten here in a row.
+ */
+async function save(file, bytes) {
+  for (let attempt = 1; ; attempt++) {
+    try { writeFileSync(file, bytes); return; }
+    catch (error) {
+      if (attempt >= 10) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
     }
   }
+}
+const write = async (png, file) => save(file, await sharp(png).png({ compressionLevel: 9 }).toBuffer());
+// App Store icons and launch images must not carry an alpha channel.
+const writeOpaque = async (png, file) =>
+  save(file, await sharp(png).flatten({ background: WHITE }).removeAlpha().png({ compressionLevel: 9 }).toBuffer());
+const circleMask = (size) =>
+  Buffer.from(`<svg width="${size}" height="${size}"><circle cx="${size / 2}" cy="${size / 2}" r="${size / 2}"/></svg>`);
 
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(size, 0);
-  header.writeUInt32BE(size, 4);
-  header[8] = 8;
-  header[9] = 6;
+const pixels = await sharp(source).flatten({ background: WHITE }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+const regions = findRegions({ data: pixels.data, width: pixels.info.width, height: pixels.info.height });
+console.log("symbol", regions.symbol, "whole logo", regions.artwork);
 
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk("IHDR", header),
-    chunk("IDAT", deflateSync(raw, { level: 9 })),
-    chunk("IEND", Buffer.alloc(0)),
-  ]);
+// Everything is placed from the transparent cut-outs: the logo's ground is
+// only nearly white (254), which shows as a faint box on a pure-white canvas.
+const symbol = await whiteToAlpha(await crop(regions.symbol));
+const artwork = await whiteToAlpha(await crop(regions.artwork));
+const symbolMono = await silhouette(symbol);
+let count = 0;
+
+// Android launcher icons. Adaptive layers are 108dp, of which launchers show
+// the central 66dp circle-to-square, so the symbol stays inside that.
+const res = at("android/app/src/main/res");
+const DENSITIES = { ldpi: 0.75, mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 };
+for (const [name, scale] of Object.entries(DENSITIES)) {
+  const dir = path.join(res, `mipmap-${name}`);
+  const launcher = Math.round(48 * scale);
+  const layer = Math.round(108 * scale);
+  await write(await place(symbol, launcher, launcher, 0.72, WHITE), path.join(dir, "ic_launcher.png"));
+  const round = await place(symbol, launcher, launcher, 0.62, WHITE);
+  await write(await sharp(round).composite([{ input: circleMask(launcher), blend: "dest-in" }]).png().toBuffer(),
+    path.join(dir, "ic_launcher_round.png"));
+  await write(await place(symbol, layer, layer, 0.52, CLEAR), path.join(dir, "ic_launcher_foreground.png"));
+  await write(await place(symbolMono, layer, layer, 0.52, CLEAR), path.join(dir, "ic_launcher_monochrome.png"));
+  // The adaptive background is @color/ic_launcher_background now.
+  rmSync(path.join(dir, "ic_launcher_background.png"), { force: true });
+  count += 4;
 }
 
-function clamp(value) {
-  return Math.min(1, Math.max(0, value));
+// Launch screens, every existing size. Dark-mode variants stay white: the
+// logo's black outlines would vanish on a dark ground.
+const iosSplash = at("ios/App/App/Assets.xcassets/Splash.imageset");
+const splashes = [
+  ...readdirSync(res).filter((dir) => dir.startsWith("drawable")).map((dir) => path.join(res, dir, "splash.png")),
+  ...readdirSync(iosSplash).filter((file) => file.endsWith(".png")).map((file) => path.join(iosSplash, file)),
+].filter((file) => existsSync(file));
+for (const file of splashes) {
+  const { width, height } = await sharp(readFileSync(file)).metadata();
+  await writeOpaque(await place(artwork, width, height, 0.5, WHITE), file);
+  count += 1;
 }
 
-function circle(x, y, cx, cy, radius, size) {
-  return clamp((radius - Math.hypot(x - cx, y - cy)) * size + 0.5);
-}
+// iOS, the web app's Home Screen icons, and the reference copies.
+await writeOpaque(await place(symbol, 1024, 1024, 0.66, WHITE), at("ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"));
+for (const size of [180, 192, 512]) await writeOpaque(await place(symbol, size, size, 0.62, WHITE), at(`public/app-icon-${size}.png`));
+await writeOpaque(await place(symbol, 1024, 1024, 0.66, WHITE), at("resources/icon.png"));
+await writeOpaque(await place(artwork, 2732, 2732, 0.5, WHITE), at("resources/splash.png"));
+count += 6;
 
-function roundedRect(x, y, left, top, right, bottom, radius, size) {
-  const cx = Math.max(left + radius, Math.min(x, right - radius));
-  const cy = Math.max(top + radius, Math.min(y, bottom - radius));
-  return clamp((radius - Math.hypot(x - cx, y - cy)) * size + 0.5);
-}
-
-function mix(base, overlay, amount) {
-  return [
-    Math.round(base[0] + (overlay[0] - base[0]) * amount),
-    Math.round(base[1] + (overlay[1] - base[1]) * amount),
-    Math.round(base[2] + (overlay[2] - base[2]) * amount),
-    255,
-  ];
-}
-
-function markMask(x, y, size) {
-  const dome = y <= 0.63 && y >= 0.34 ? circle(x, y, 0.5, 0.63, 0.285, size) : 0;
-  const base = roundedRect(x, y, 0.16, 0.65, 0.84, 0.73, 0.04, size);
-  const knob = circle(x, y, 0.5, 0.29, 0.055, size);
-  return Math.max(dome, base, knob);
-}
-
-function appPixel(xi, yi, size) {
-  const x = (xi + 0.5) / size;
-  const y = (yi + 0.5) / size;
-  const vignette = clamp((Math.hypot(x - 0.5, y - 0.5) - 0.27) * 1.7);
-  let pixel = mix(PRIMARY, PRIMARY_DARK, vignette);
-  pixel = mix(pixel, CREAM, markMask(x, y, size));
-
-  const knob = circle(x, y, 0.5, 0.29, 0.055, size);
-  pixel = mix(pixel, ORANGE, knob);
-
-  const accent = roundedRect(x, y, 0.27, 0.648, 0.73, 0.686, 0.019, size);
-  pixel = mix(pixel, ORANGE, accent);
-  return pixel;
-}
-
-function badgePixel(xi, yi, size) {
-  const x = (xi + 0.5) / size;
-  const y = (yi + 0.5) / size;
-  const alpha = Math.round(markMask(x, y, size) * 255);
-  return [255, 255, 255, alpha];
-}
-
-function splashPixel(xi, yi, size) {
-  const x = (xi + 0.5) / size;
-  const y = (yi + 0.5) / size;
-  const scaledX = 0.5 + (x - 0.5) / 0.3;
-  const scaledY = 0.5 + (y - 0.5) / 0.3;
-  const vignette = clamp((Math.hypot(x - 0.5, y - 0.5) - 0.3) * 0.8);
-  let pixel = mix(PRIMARY, PRIMARY_DARK, vignette);
-  pixel = mix(pixel, CREAM, markMask(scaledX, scaledY, size * 0.3));
-  const knob = circle(scaledX, scaledY, 0.5, 0.29, 0.055, size * 0.3);
-  pixel = mix(pixel, ORANGE, knob);
-  const accent = roundedRect(scaledX, scaledY, 0.27, 0.648, 0.73, 0.686, 0.019, size * 0.3);
-  return mix(pixel, ORANGE, accent);
-}
-
-for (const size of [180, 192, 512]) {
-  const path = "public/app-icon-" + size + ".png";
-  writeFileSync(path, encodePng(size, appPixel));
-  console.log(path);
-}
-
-writeFileSync("public/notification-badge.png", encodePng(96, badgePixel));
-console.log("public/notification-badge.png");
-
-mkdirSync("resources", { recursive: true });
-writeFileSync("resources/icon.png", encodePng(1024, appPixel));
-writeFileSync("resources/splash.png", encodePng(2732, splashPixel));
-console.log("resources/icon.png");
-console.log("resources/splash.png");
+console.log(`Wrote ${count} images. Rebuild the app (npm run mobile:apk) to ship them.`);

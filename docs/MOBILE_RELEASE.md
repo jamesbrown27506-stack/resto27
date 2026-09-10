@@ -85,6 +85,15 @@ values are configured.
 
 ## Android / Google Play
 
+Before any upload: a Google Play developer account (25 USD, one time, with
+identity verification). A new *personal* account must run a closed test with
+at least 12 testers for 14 consecutive days before it can publish to
+production; an *organization* account (requires a D-U-N-S number) is exempt.
+Play accepts only an Android App Bundle: build it with
+`android\gradlew.bat -p android bundleRelease` (signed by the same release
+key) and upload `android/app/build/outputs/bundle/release/app-release.aab`.
+Reviewers need a test account, because the app requires sign-in.
+
 1. Install Android Studio, its current Android SDK (the generated project
    targets API 36), and the JDK required by that Android Studio/Gradle version.
 2. Add `android/app/google-services.json`.
@@ -194,8 +203,15 @@ macOS/Xcode. No AAB/IPA or physical-device push test has been produced here.
 The npm audit also reports existing application dependency advisories (including
 Next.js) and an upstream Capacitor CLI dependency advisory. Resolve and regression
 test those before public release; this integration does not automatically apply
-unrelated framework upgrades. The one-time native asset generator was removed
-after producing the committed icons to avoid retaining its legacy dependencies.
+unrelated framework upgrades.
+
+## Icons and launch screens
+
+Every app icon (Android launcher, round and themed icons, iOS, the web app's
+Home Screen icons) and every launch screen is generated from the brand logo
+in `resources/logo.png`: icons use the symbol above the name, launch screens
+the whole logo. After changing the logo, run
+`node scripts/generate-app-icon.mjs`, then publish a new build.
 
 ## Routine development workflow
 

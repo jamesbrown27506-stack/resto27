@@ -47,7 +47,10 @@ if (!process.argv.includes("--skip-build")) {
   const studioJdk = "C:\\Program Files\\Android\\Android Studio\\jbr";
   if (!env.JAVA_HOME && existsSync(studioJdk)) env.JAVA_HOME = studioJdk;
   run("npx", ["cap", "sync", "android"], root, env);
-  run(process.platform === "win32" ? "gradlew.bat" : "./gradlew", ["assembleRelease", "--console=plain"], android, env);
+  // Absolute path: Windows shells can be told not to search the current
+  // directory (NoDefaultCurrentDirectoryInExePath), which hides gradlew.bat.
+  const gradlew = path.join(android, process.platform === "win32" ? "gradlew.bat" : "gradlew");
+  run(`"${gradlew}"`, ["assembleRelease", "--console=plain"], android, env);
 }
 
 if (!existsSync(built)) fail(`No signed APK at ${path.relative(root, built)}. Build it first.`);
