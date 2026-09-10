@@ -6,6 +6,7 @@ import { THEME_COOKIE, themeScript } from "@/components/theme/theme-provider";
 import { LocaleProvider } from "@/lib/i18n/locale-provider";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { getBranding } from "@/lib/branding";
+import { getMobileAppVisibility } from "@/lib/mobile-app-settings";
 import { getCartConfig } from "@/lib/orders/cart-config";
 import { ToastProvider } from "@/components/ui/toast";
 import { CartProvider } from "@/components/cart/cart-provider";
@@ -108,7 +109,7 @@ export const viewport: Viewport = {
  * give up is close to zero.
  */
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const [locale, cookieStore, cartConfig, brand] = await Promise.all([
+  const [locale, cookieStore, cartConfig, brand, mobileApp] = await Promise.all([
     getLocale(),
     cookies(),
     // The service charge and loyalty rates are settings, not constants. Read
@@ -117,6 +118,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     getCartConfig(),
     // The install banner greets the visitor by the platform's own name.
     getBranding(),
+    // ...and the admin can switch it off (/a/settings → Mobile app).
+    getMobileAppVisibility(),
   ]);
 
   const stored = cookieStore.get(THEME_COOKIE)?.value;
@@ -242,7 +245,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                 permission on load, and a dismissed banner stays quiet for
                 one hour before asking again.
               */}
-              <PwaPrompts brandName={brand.name} />
+              <PwaPrompts brandName={brand.name} installEnabled={mobileApp.pwaInstall} />
               {/*
                 Push self-repair. Renders nothing; it re-registers the service
                 worker and re-stores this browser's subscription on every app

@@ -15,12 +15,13 @@ import {
   TestimonialGrid,
 } from "@/components/marketing/sections";
 import { RestaurantCard, RestaurantGrid } from "@/components/restaurant/restaurant-card";
-import { DishCard } from "@/components/menu/dish-card";
 import { buttonClasses } from "@/components/ui/button";
+import { formatMoney } from "@/lib/format/currency";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { useDates } from "@/lib/format/use-dates";
 import { planCtaHref } from "@/lib/nav";
-import type { PopularDish, PublicRestaurant, PublicStats, FeaturedReview } from "@/lib/data/public";
+import type { PublicRestaurant, PublicStats, FeaturedReview } from "@/lib/data/public";
+import type { DishGroup } from "@/lib/menu-summary";
 import type { Appearance } from "@/lib/appearance";
 import type { HomeStatsVisibility } from "@/lib/home-stats";
 
@@ -50,7 +51,8 @@ export function HomeContent({
 }: {
   plans: PublicPlan[];
   restaurants: PublicRestaurant[];
-  dishes: PopularDish[];
+  /** One tile per dish, not per restaurant — see lib/menu-summary. */
+  dishes: DishGroup[];
   cuisines: string[];
   quartiers: string[];
   stats: PublicStats;
@@ -184,20 +186,46 @@ export function HomeContent({
               className="object-cover transition-transform duration-700 hover:scale-105"
             />
           </div>
-          <div className="stagger-in grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {dishes.map(
-              ({ item, restaurantSlug, restaurantName, restaurantLogo, restaurantRating, restaurantQuartier }) => (
-                <DishCard
-                  key={item.id}
-                  item={item}
-                  restaurantSlug={restaurantSlug}
-                  restaurantName={restaurantName}
-                  restaurantLogo={restaurantLogo}
-                  restaurantRating={restaurantRating}
-                  restaurantQuartier={restaurantQuartier}
-                />
-              ),
-            )}
+          {/*
+            The dish, not the restaurant: each tile opens the dish's explore
+            page, which lists every restaurant serving it with its price and
+            neighbourhood — so the visitor picks the nearest or the cheapest.
+          */}
+          <div className="stagger-in grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {dishes.map((dish) => (
+              <Link
+                key={dish.slug}
+                href={`/explore/food/${dish.slug}`}
+                className="group relative min-h-52 overflow-hidden rounded-xl border border-border bg-brand-solid text-white shadow-sm transition-shadow hover:shadow-lg"
+              >
+                {dish.imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={dish.imageUrl}
+                    alt={`${dish.name} — Douala`}
+                    loading="lazy"
+                    className="absolute inset-0 size-full object-cover transition-transform duration-500 group-hover:scale-105"
+                  />
+                )}
+                <span aria-hidden className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/25 to-black/5" />
+                <span className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-4 p-5">
+                  <span className="min-w-0">
+                    <span className="block font-display text-xl font-bold">{dish.name}</span>
+                    <span className="mt-1 block text-xs text-white/75">
+                      <span>
+                        {dish.restaurantCount === 1
+                          ? t("home.popular.oneRestaurant")
+                          : t("home.popular.restaurants", { count: dish.restaurantCount })}
+                      </span>
+                      {dish.minPrice !== null && (
+                        <span> · {t("home.popular.from", { price: formatMoney(dish.minPrice) })}</span>
+                      )}
+                    </span>
+                  </span>
+                  <ArrowRight className="size-5 shrink-0 transition-transform group-hover:translate-x-1" aria-hidden />
+                </span>
+              </Link>
+            ))}
           </div>
         </div>
       </section>

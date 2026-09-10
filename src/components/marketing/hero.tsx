@@ -154,27 +154,51 @@ export function Hero({
   const reducedMotion = usePrefersReducedMotion();
   const heroRef = useRef<HTMLElement>(null);
   const rotationDone = useRef(false);
+  const lapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Which photographs have actually painted — see the <Image> block below. */
   const [loaded, setLoaded] = useState<Set<Mode>>(new Set());
   const allLoaded = SLIDES.every(s2 => loaded.has(s2.mode));
 
+  /*
+    Any touch, click, key press or focus inside the hero ends the lap for good,
+    whether it is running or still waiting for its photographs.
+
+    The note above always promised this, but nothing was listening — and the
+    lap never ended on its own either: it went round every 4.5 s for as long
+    as the page stayed open. Typing a party size in "book" mode then lost the
+    field mid-number when the lap moved on to "explore", which is what was
+    reported.
+  */
+  useEffect(() => {
+    const hero = heroRef.current;
+    if (!hero) return;
+    const stop = () => {
+      rotationDone.current = true;
+      if (lapTimer.current) clearTimeout(lapTimer.current);
+      lapTimer.current = null;
+    };
+    const events = ["pointerdown", "keydown", "focusin"] as const;
+    for (const type of events) hero.addEventListener(type, stop, { passive: true });
+    return () => {
+      for (const type of events) hero.removeEventListener(type, stop);
+    };
+  }, []);
+
   useEffect(() => {
     if (reducedMotion || rotationDone.current || !allLoaded) return;
 
-    const hero = heroRef.current;
     let step = 0;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-
-    function stop() {
-      rotationDone.current = true;
-      if (timer) clearTimeout(timer);
-      timer = null;
-    }
 
     function tick() {
       step += 1;
       setIndex(step % SLIDES.length);
-      timer = setTimeout(tick, DWELL_MS);
+      // Order, book, explore, back to order — and there it stays.
+      if (step >= SLIDES.length) {
+        rotationDone.current = true;
+        lapTimer.current = null;
+        return;
+      }
+      lapTimer.current = setTimeout(tick, DWELL_MS);
     }
 
     /*
@@ -188,10 +212,11 @@ export function Hero({
       and waited on downloads that were never going to be displayed — so on a
       slow connection the gate never opened and the hero never moved.
     */
-    timer = setTimeout(tick, DWELL_MS);
+    lapTimer.current = setTimeout(tick, DWELL_MS);
 
     return () => {
-      if (timer) clearTimeout(timer);
+      if (lapTimer.current) clearTimeout(lapTimer.current);
+      lapTimer.current = null;
     };
     /*
       `allLoaded` flips false -> true exactly once, so this effect runs a

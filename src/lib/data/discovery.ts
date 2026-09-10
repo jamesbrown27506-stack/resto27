@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { fetchActiveRestaurants } from "./public";
 import { relationOne } from "@/lib/public-utils";
 import { discoverySlug } from "@/lib/seo-config";
+import { groupDishes, type DishGroup } from "@/lib/menu-summary";
 
 export const fetchDiscoveryCatalog = cache(async () => {
   const restaurants = await fetchActiveRestaurants();
@@ -29,3 +30,26 @@ export const fetchDiscoveryCatalog = cache(async () => {
   const uniqueGroups = [...new Map(groups.map(group => [group.kind + ":" + group.slug, group])).values()];
   return { restaurants, dishes, groups: uniqueGroups };
 });
+
+/**
+ * The homepage's dish tiles: one per dish, each leading to its
+ * /explore/food page. Never throws — the catalog does, and a menu read that
+ * fails must cost the homepage one section, not the whole page.
+ */
+export async function fetchHomeDishGroups(limit = 6): Promise<DishGroup[]> {
+  try {
+    const { dishes } = await fetchDiscoveryCatalog();
+    return groupDishes(
+      dishes.map((dish) => ({
+        name: dish.name,
+        price: Number(dish.price),
+        imageUrl: dish.image_url,
+        restaurantId: dish.restaurant_id,
+      })),
+      limit,
+    );
+  } catch (error) {
+    console.error("[discovery:fetchHomeDishGroups]", (error as Error).message);
+    return [];
+  }
+}

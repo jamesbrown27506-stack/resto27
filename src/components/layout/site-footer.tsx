@@ -41,6 +41,7 @@ const GROUPS: { heading: TranslationKey; links: { href: string; label: Translati
 export function SiteFooter({
   brand,
   socialLinks,
+  showAppLinks = true,
 }: {
   brand: {
     name: string;
@@ -50,6 +51,8 @@ export function SiteFooter({
     supportAddress: string | null;
   };
   socialLinks: SocialLink[];
+  /** The admin's "Download our app" switch (/a/settings → Mobile app). */
+  showAppLinks?: boolean;
 }) {
   const { t } = useLocale();
 
@@ -109,7 +112,7 @@ export function SiteFooter({
               </a>
             </address>
 
-            <AppDownloadFooterLinks />
+            {showAppLinks && <AppDownloadFooterLinks />}
           </div>
 
           {GROUPS.map((group) => (

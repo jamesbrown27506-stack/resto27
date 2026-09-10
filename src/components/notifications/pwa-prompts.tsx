@@ -81,7 +81,14 @@ function withinCooldown(stored: string | null): boolean {
   return Date.now() - t < COOLDOWN_MS;
 }
 
-export function PwaPrompts({ brandName }: { brandName: string }) {
+export function PwaPrompts({
+  brandName,
+  installEnabled = true,
+}: {
+  brandName: string;
+  /** The admin's install-popup switch (/a/settings → Mobile app). Notifications are unaffected. */
+  installEnabled?: boolean;
+}) {
   const { t } = useLocale();
   const { toast } = useToast();
 
@@ -270,7 +277,7 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
   }
 
   const showInstall =
-    ready && engaged && !installed && (deferred !== null || ios) && !withinCooldown(installDismissedAt);
+    installEnabled && ready && engaged && !installed && (deferred !== null || ios) && !withinCooldown(installDismissedAt);
   const showNotif =
     ready &&
     engaged &&

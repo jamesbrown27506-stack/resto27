@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "@/components/layout/public-link";
-import { BadgeCheck, Bike, Clock, MapPin, ShoppingBag } from "lucide-react";
+import { BadgeCheck, Banknote, Bike, Clock, MapPin, ShoppingBag } from "lucide-react";
 import { OpenBadge } from "@/components/restaurant/open-badge";
 import { RatingStars } from "@/components/ui/rating-stars";
 import { formatMoney } from "@/lib/format/currency";
@@ -111,6 +111,19 @@ export function RestaurantCard({
             <MapPin className="size-3 text-primary" aria-hidden />
             {restaurant.quartier}
           </span>
+          {/* What a meal costs here — the budget question, answered from the
+              menu itself. Only the listing read fills it. */}
+          {restaurant.priceRange && (
+            <span className="inline-flex items-center gap-1">
+              <Banknote className="size-3 text-primary" aria-hidden />
+              {restaurant.priceRange.min === restaurant.priceRange.max
+                ? t("cbr.priceSingle", { price: formatMoney(restaurant.priceRange.min) })
+                : t("cbr.priceRange", {
+                    min: formatMoney(restaurant.priceRange.min, { showSymbol: false }),
+                    max: formatMoney(restaurant.priceRange.max),
+                  })}
+            </span>
+          )}
           {/* The estimate is a DELIVERY time; a pickup-only restaurant must not
               promise one. The mode badges below carry its real offer. */}
           {restaurant.acceptsDelivery && restaurant.minimumOrder > 0 && (

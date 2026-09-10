@@ -200,7 +200,10 @@ const baseFr = {
 
   "home.popular.tag": "Populaire",
   "home.popular.title": "Les plats que Douala commande",
-  "home.popular.subtitle": "Les valeurs sûres, chez les restaurants qui les font le mieux.",
+  "home.popular.subtitle": "Choisissez un plat : voyez quels restaurants le proposent, où ils se trouvent et à quel prix.",
+  "home.popular.oneRestaurant": "1 restaurant",
+  "home.popular.restaurants": "{count} restaurants",
+  "home.popular.from": "dès {price}",
 
   "home.how.tag": "Comment ça marche",
   "home.how.title": "Trois étapes, c'est tout",
@@ -989,7 +992,10 @@ const baseEn: Record<keyof typeof baseFr, string> = {
 
   "home.popular.tag": "Popular",
   "home.popular.title": "What Douala is ordering",
-  "home.popular.subtitle": "The reliable favourites, from the places that do them best.",
+  "home.popular.subtitle": "Pick a dish to see which restaurants serve it, where they are and what they charge.",
+  "home.popular.oneRestaurant": "1 restaurant",
+  "home.popular.restaurants": "{count} restaurants",
+  "home.popular.from": "from {price}",
 
   "home.how.tag": "How it works",
   "home.how.title": "Three steps, that's it",

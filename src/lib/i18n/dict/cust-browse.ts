@@ -53,6 +53,8 @@ export const custBrowseDict = defineDict({
 
     /* ── Reviews ─────────────────────────────────────────────────────── */
     "cbr.noReviews": "Pas encore d'avis",
+    "cbr.priceRange": "Plats de {min} à {max}",
+    "cbr.priceSingle": "Plats à {price}",
     "cbr.noReviewsBody": "Soyez le premier à donner votre avis après votre commande.",
     "cbr.reply": "Réponse du restaurant",
     "cbr.photoAttached": "Photo jointe à l'avis",
@@ -147,6 +149,8 @@ export const custBrowseDict = defineDict({
 
     /* ── Reviews ─────────────────────────────────────────────────────── */
     "cbr.noReviews": "No reviews yet",
+    "cbr.priceRange": "Dishes {min}–{max}",
+    "cbr.priceSingle": "Dishes at {price}",
     "cbr.noReviewsBody": "Be the first to leave a review after your order.",
     "cbr.reply": "Restaurant's reply",
     "cbr.photoAttached": "Photo attached to the review",

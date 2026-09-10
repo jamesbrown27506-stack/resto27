@@ -5,6 +5,7 @@ import { normaliseDepositType, type DepositType } from "@/lib/reservations/depos
 import { createAdminClient } from "@/lib/supabase/server";
 import { UNCATEGORIZED_SECTION_ID } from "@/lib/menu/constants";
 import { fetchCategories, fetchMenu, type MenuItem } from "./manager";
+import { priceRangesByRestaurant, type PriceRange } from "@/lib/menu-summary";
 
 export { UNCATEGORIZED_SECTION_ID };
 
@@ -69,6 +70,12 @@ export interface PublicRestaurant {
   depositType: DepositType;
   hours: RestaurantHours[];
   createdAt: string;
+  /**
+   * The cheapest and dearest available dish, for listing cards — null when
+   * nothing on the menu is priced. Only `fetchActiveRestaurants` fills it; a
+   * restaurant's own page shows the menu itself.
+   */
+  priceRange?: PriceRange | null;
 }
 
 interface DbRestaurant {
@@ -202,6 +209,41 @@ async function attachHours(
   return hoursByRestaurant;
 }
 
+/**
+ * Each restaurant's cheapest and dearest available dish, from items in active
+ * categories — the same menu a customer can actually order from. Paged like
+ * the discovery catalog, because PostgREST caps one response at 1 000 rows.
+ * A failure costs the cards their price line, never the listing.
+ */
+async function attachPriceRanges(rows: DbRestaurant[]): Promise<Map<string, PriceRange>> {
+  if (rows.length === 0) return new Map();
+
+  const supabase = createAdminClient();
+  type Row = { restaurant_id: string; price: number; menu_categories: { is_active: boolean } | { is_active: boolean }[] | null };
+  const items: Row[] = [];
+  for (let start = 0; ; start += 1000) {
+    const { data, error } = await supabase
+      .from("menu_items")
+      .select("restaurant_id, price, menu_categories ( is_active )")
+      .eq("is_available", true)
+      .in("restaurant_id", rows.map((r) => r.id))
+      .order("id")
+      .range(start, start + 999);
+    if (error) {
+      console.error("[public:attachPriceRanges]", error.message);
+      return new Map();
+    }
+    items.push(...((data ?? []) as unknown as Row[]));
+    if (!data || data.length < 1000) break;
+  }
+
+  return priceRangesByRestaurant(
+    items
+      .filter((item) => relationOne(item.menu_categories)?.is_active !== false)
+      .map((item) => ({ restaurantId: item.restaurant_id, price: Number(item.price) })),
+  );
+}
+
 function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
   return {
     id: r.id,
@@ -238,7 +280,7 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
  * Every restaurant the public can order from, for the directory, the
  * homepage and the sitemap. Pending and suspended tenants are excluded.
  */
-export async function fetchActiveRestaurants(): Promise<PublicRestaurant[]> {
+export const fetchActiveRestaurants = cache(async (): Promise<PublicRestaurant[]> => {
   const supabase = createAdminClient();
 
   const { data, error } = await selectRestaurants((columns) =>
@@ -254,9 +296,9 @@ export async function fetchActiveRestaurants(): Promise<PublicRestaurant[]> {
   // literal-type inference has nothing to work from and types the rows as its
   // error shape. The runtime value is the row set either way.
   const rows = (data ?? []) as unknown as DbRestaurant[];
-  const hours = await attachHours(rows);
-  return rows.map((r) => shape(r, hours.get(r.id) ?? []));
-}
+  const [hours, prices] = await Promise.all([attachHours(rows), attachPriceRanges(rows)]);
+  return rows.map((r) => ({ ...shape(r, hours.get(r.id) ?? []), priceRange: prices.get(r.id) ?? null }));
+});
 
 /**
  * One active restaurant, or null — the slug lives in the URL.
@@ -365,117 +407,6 @@ export async function fetchDishSearchIndex(): Promise<Record<string, string>> {
   return index;
 }
 
-/* ── Homepage ──────────────────────────────────────────────────────────── */
-
-export interface PopularDish {
-  item: MenuItem;
-  restaurantSlug: string;
-  restaurantName: string;
-  restaurantLogo: string | null;
-  restaurantRating: number;
-  /**
-   * Where the restaurant is.
-   *
-   * A dish card is a decision about WHERE TO EAT as much as what to eat, and
-   * it was the one card in the app that never said. Someone in Bonapriso
-   * tapping a plate of Ndolé had no way to know they were being sent to
-   * Bonabéri until two pages later.
-   */
-  restaurantQuartier: string;
-}
-
-/**
- * The dishes shown on the homepage. Featured items first, then by rating —
- * the approximation of "what Douala orders tonight" that a small city
- * dataset supports honestly.
- *
- * A dish WITHOUT A PHOTO can never lead the homepage. This is a food
- * ordering site; the strip sells with its eyes, and a dish whose card is a
- * grey icon is a wasted slot that a photogenic one could have filled. So
- * dishes with an image are sorted ahead, then featured, then by rating —
- * the pool is fetched wider than the slot count so the sort has something
- * to choose from.
- */
-export async function fetchPopularDishes(limit = 6): Promise<PopularDish[]> {
-  const supabase = createAdminClient();
-
-  const { data, error } = await supabase
-    .from("menu_items")
-    .select(
-      "id, restaurant_id, category_id, name, description, price, image_url, is_available, is_featured, prep_minutes, track_stock, stock_quantity, low_stock_threshold, dietary_tags, allergens, sort_order, restaurants!inner ( slug, name, rating, logo_url, quartiers ( name ) )",
-    )
-    .eq("is_available", true)
-    .eq("restaurants.status", "active")
-    .order("is_featured", { ascending: false })
-    .limit(Math.min(limit * 4, 48));
-
-  if (error) {
-    console.error("[public:fetchPopularDishes]", error.message);
-    return [];
-  }
-
-  const rows = ((data ?? []) as unknown as {
-    id: string;
-    restaurant_id: string;
-    category_id: string | null;
-    name: string;
-    description: string;
-    price: number;
-    image_url: string | null;
-    is_available: boolean;
-    is_featured: boolean;
-    prep_minutes: number;
-    track_stock: boolean;
-    stock_quantity: number | null;
-    low_stock_threshold: number | null;
-    dietary_tags: string;
-    allergens: string;
-    sort_order: number;
-    restaurants: {
-      slug: string;
-      name: string;
-      rating: number;
-      logo_url: string | null;
-      quartiers: { name: string }[] | null;
-    }[];
-  }[])
-    .sort((a, b) => {
-      const aPhoto = a.image_url ? 0 : 1;
-      const bPhoto = b.image_url ? 0 : 1;
-      if (aPhoto !== bPhoto) return aPhoto - bPhoto;
-      if (a.is_featured !== b.is_featured) return a.is_featured ? -1 : 1;
-      return (relationOne(b.restaurants)?.rating ?? 0) - (relationOne(a.restaurants)?.rating ?? 0);
-    })
-    .slice(0, limit)
-    .map((i) => ({
-      restaurantSlug: relationOne(i.restaurants)?.slug ?? "",
-      restaurantName: relationOne(i.restaurants)?.name ?? "",
-      restaurantLogo: relationOne(i.restaurants)?.logo_url ?? null,
-      restaurantRating: Number(relationOne(i.restaurants)?.rating ?? 0),
-      restaurantQuartier: relationOne(relationOne(i.restaurants)?.quartiers)?.name ?? "",
-    item: {
-      id: i.id,
-      restaurantId: i.restaurant_id,
-      categoryId: i.category_id,
-      name: i.name,
-      description: i.description,
-      price: i.price,
-      imageUrl: i.image_url,
-      isAvailable: i.is_available,
-      isFeatured: i.is_featured,
-      prepMinutes: i.prep_minutes,
-      trackStock: i.track_stock,
-      stockQuantity: i.stock_quantity,
-      lowStockThreshold: i.low_stock_threshold,
-      dietaryTags: i.dietary_tags,
-      allergens: i.allergens,
-      sortOrder: i.sort_order,
-      optionGroups: [],
-    },
-  }));
-
-  return rows;
-}
 /* ── Filter lookups ────────────────────────────────────────────────────── */
 
 /** Distinct cuisine names, for the directory and hero selects. */

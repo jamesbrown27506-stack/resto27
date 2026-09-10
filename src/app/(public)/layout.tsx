@@ -6,6 +6,7 @@ import { AppDownloadBand } from "@/components/layout/app-download";
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getBranding } from "@/lib/branding";
 import { getSocialLinks } from "@/lib/social-links";
+import { getMobileAppVisibility } from "@/lib/mobile-app-settings";
 
 /**
  * Marketing shell. Every public page renders through here — including the
@@ -30,10 +31,11 @@ import { getSocialLinks } from "@/lib/social-links";
  */
 
 export default async function PublicLayout({ children }: { children: React.ReactNode }) {
-  const [user, brand, socialLinks] = await Promise.all([
+  const [user, brand, socialLinks, mobileApp] = await Promise.all([
     getHeaderUser(),
     getBranding(),
     getSocialLinks(),
+    getMobileAppVisibility(),
   ]);
 
   return (
@@ -43,8 +45,8 @@ export default async function PublicLayout({ children }: { children: React.React
       <div id="main" className="flex flex-1 flex-col pt-20 lg:pt-16">
         {children}
       </div>
-      <AppDownloadBand brandName={brand.name} />
-      <SiteFooter brand={brand} socialLinks={socialLinks} />
+      {mobileApp.appDownload && <AppDownloadBand brandName={brand.name} />}
+      <SiteFooter brand={brand} socialLinks={socialLinks} showAppLinks={mobileApp.appDownload} />
       <CustomerNavigation accountHref={user?.homeHref ?? "/login?next=/account"} />
     </div>
   );

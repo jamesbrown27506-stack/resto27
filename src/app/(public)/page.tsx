@@ -7,7 +7,8 @@ import { getBranding } from "@/lib/branding";
 import { getSettingsMap } from "@/lib/settings-map";
 import { readHomeStats } from "@/lib/home-stats";
 import { getAppearance } from "@/lib/appearance";
-import { fetchPopularDishes, fetchActiveRestaurants, fetchCuisineNames, fetchQuartierNames, fetchPublicStats, fetchFeaturedReviews } from "@/lib/data/public";
+import { fetchHomeDishGroups } from "@/lib/data/discovery";
+import { fetchActiveRestaurants, fetchCuisineNames, fetchQuartierNames, fetchPublicStats, fetchFeaturedReviews } from "@/lib/data/public";
 import { listPublicPlans } from "@/lib/data/plans";
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getFreeModeInfo } from "@/lib/data/billing";
@@ -112,7 +113,7 @@ export default async function HomePage() {
       getBranding(),
       listPublicPlans(),
       fetchActiveRestaurants(),
-      fetchPopularDishes(),
+      fetchHomeDishGroups(),
       fetchCuisineNames(),
       fetchQuartierNames(),
       fetchPublicStats(),

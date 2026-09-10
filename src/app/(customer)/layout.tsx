@@ -7,6 +7,7 @@ import { CustomerNavigation } from "@/components/layout/customer-navigation";
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getBranding } from "@/lib/branding";
 import { getSocialLinks } from "@/lib/social-links";
+import { getMobileAppVisibility } from "@/lib/mobile-app-settings";
 
 /**
  * Customer shell.
@@ -29,10 +30,11 @@ import { getSocialLinks } from "@/lib/social-links";
  * ─────────────────────────────────────────────────────────────────────────
  */
 export default async function CustomerLayout({ children }: { children: React.ReactNode }) {
-  const [user, brand, socialLinks] = await Promise.all([
+  const [user, brand, socialLinks, mobileApp] = await Promise.all([
     getHeaderUser(),
     getBranding(),
     getSocialLinks(),
+    getMobileAppVisibility(),
   ]);
 
   return (
@@ -42,7 +44,7 @@ export default async function CustomerLayout({ children }: { children: React.Rea
       <div id="main" className="flex flex-1 flex-col pt-20 lg:pt-16">
         {children}
       </div>
-      <SiteFooter brand={brand} socialLinks={socialLinks} />
+      <SiteFooter brand={brand} socialLinks={socialLinks} showAppLinks={mobileApp.appDownload} />
       <CustomerNavigation accountHref={user?.homeHref ?? "/login?next=/account"} />
     </div>
   );

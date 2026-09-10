@@ -14,6 +14,7 @@ import {
   Save,
   Share2,
   Settings as Cog,
+  Smartphone,
 } from "lucide-react";
 import { SocialIcon } from "@/components/icons/social-icon";
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,7 @@ const TABS = [
   { id: "branding", label: "Branding", icon: Palette, hint: "Read by every page, tab, email and share card." },
   { id: "social", label: "Social presence", icon: Share2, hint: "Choose the profiles shown publicly. A platform appears only when it is enabled and has a valid URL." },
   { id: "homepage", label: "Home page", icon: LayoutDashboard, hint: "Which figures the landing page advertises. Hide the ones that measure how small the platform is; keep the ones that measure how good it is. All four off removes the band entirely." },
+  { id: "mobile", label: "Mobile app", icon: Smartphone, hint: "What the public site offers about the app. Neither appears inside the installed app itself." },
   { id: "money", label: "Money", icon: Banknote, hint: "XAF is zero-decimal — every amount is whole francs." },
   { id: "billing", label: "Billing", icon: ReceiptText, hint: "Grace exists because mobile money renewal is not instant." },
   { id: "loyalty", label: "Loyalty", icon: Gift, hint: "Points are earned per 1 000 FCFA spent. The minimum is what a customer must hold before any of it can be spent." },
