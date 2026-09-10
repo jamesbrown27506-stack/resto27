@@ -5,7 +5,10 @@ import { fetchDiscoveryCatalog } from "@/lib/data/discovery";
 import { publicMetadata, jsonLdString } from "@/lib/seo";
 import { absolutePublicUrl, discoverySlug, dishPath } from "@/lib/seo-config";
 import { getLocale } from "@/lib/i18n/locale-server";
+import { MapPin, Soup } from "lucide-react";
 import { RestaurantCard } from "@/components/restaurant/restaurant-card";
+import { RestaurantLogo } from "@/components/restaurant/restaurant-logo";
+import { OpenBadge } from "@/components/restaurant/open-badge";
 import { formatMoney } from "@/lib/format/currency";
 import { discoveryAvailability, discoveryIntro } from "@/lib/discovery-content";
 import { formatQuartier } from "@/lib/geo-cm";
@@ -88,14 +91,40 @@ export default async function DiscoveryPage({ params }: Props) {
       {availability && <p>{availability}</p>}
     </div>
 
-    {c.group.kind === "food" && <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{c.dishes.map(d => <Link key={d.id} href={dishPath(d.restaurant.slug, d)} className="overflow-hidden rounded-xl border border-border bg-surface">
-      {/*
-        Alt names the restaurant, not just the dish: this grid is the SAME
-        dish from several kitchens, so `alt={d.name}` repeated identically
-        down the page and told image search nothing that distinguished them.
-      */}
-      {d.image_url && <Image src={d.image_url} alt={`${d.name} — ${d.restaurant.name}, ${formatQuartier(d.restaurant.quartier)}`} width={600} height={400} sizes="(max-width: 640px) 100vw, 33vw" className="aspect-[3/2] w-full object-cover" />}
-      <div className="space-y-2 p-4"><h2 className="font-semibold">{d.name}</h2><p className="text-sm text-text-secondary">{d.restaurant.name} · {formatQuartier(d.restaurant.quartier)}</p><p className="text-sm">{d.description}</p><p className="font-semibold">{formatMoney(d.price)}</p></div>
+    {/*
+      The SAME dish from several kitchens, so each card leads with who makes
+      it and where: the restaurant's logo, name and neighbourhood sit on the
+      photo like a label, with open/closed and the price in its corners.
+      Cheapest first, because comparing is what this page is for.
+    */}
+    {c.group.kind === "food" && <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{[...c.dishes].sort((a, b) => Number(a.price) - Number(b.price)).map(d => <Link key={d.id} href={dishPath(d.restaurant.slug, d)} className="group overflow-hidden rounded-xl border border-border bg-surface transition-shadow hover:shadow-md">
+      <div className="relative aspect-[3/2] overflow-hidden bg-surface-2">
+        {/*
+          Alt names the restaurant, not just the dish: `alt={d.name}` repeated
+          identically down the page and told image search nothing that
+          distinguished one kitchen's plate from the next.
+        */}
+        {d.image_url
+          ? <Image src={d.image_url} alt={`${d.name} — ${d.restaurant.name}, ${formatQuartier(d.restaurant.quartier)}`} width={600} height={400} sizes="(max-width: 640px) 100vw, 33vw" className="size-full object-cover transition-transform duration-500 group-hover:scale-105" />
+          : <span className="grid size-full place-items-center text-text-light"><Soup className="size-10" aria-hidden /></span>}
+        <span aria-hidden className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/80 to-transparent" />
+        <span className="absolute top-3 left-3"><OpenBadge hours={d.restaurant.hours} acceptingOrders={d.restaurant.isAcceptingOrders} /></span>
+        <span className="tnum absolute top-3 right-3 rounded-full bg-white/95 px-3 py-1 text-sm font-bold text-neutral-900 shadow-md">{formatMoney(d.price)}</span>
+        <span className="absolute inset-x-3 bottom-3 flex items-center gap-2.5 text-white">
+          <RestaurantLogo name={d.restaurant.name} logoUrl={d.restaurant.logoUrl} />
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold drop-shadow">{d.restaurant.name}</span>
+            <span className="flex items-center gap-1 text-xs text-white/85">
+              <MapPin className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{formatQuartier(d.restaurant.quartier)}</span>
+            </span>
+          </span>
+        </span>
+      </div>
+      <div className="space-y-1.5 p-4">
+        <h2 className="font-display text-lg font-bold">{d.name}</h2>
+        {d.description && <p className="line-clamp-3 text-sm text-text-secondary">{d.description}</p>}
+      </div>
     </Link>)}</div>}
     <h2 className="text-xl font-semibold">{c.fr ? "Restaurants" : "Restaurants"} ({c.restaurants.length})</h2>
     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{c.restaurants.map(r => <RestaurantCard key={r.id} restaurant={r} />)}</div>
