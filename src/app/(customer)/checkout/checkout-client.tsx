@@ -1,4 +1,5 @@
 "use client";
+import { LocationButton } from "@/components/capacitor/location-button";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -418,6 +419,7 @@ export function CheckoutClient({
                       onChange={(e) => setDeliveryLandmark(e.target.value)}
                       placeholder={t("cct.co.landmarkPh")}
                     />
+                    <LocationButton value={deliveryLandmark} onChange={setDeliveryLandmark} />
                   </Field>
                 </div>
               )}

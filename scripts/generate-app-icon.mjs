@@ -2,7 +2,7 @@
 // Run with: node scripts/generate-app-icon.mjs
 
 import { deflateSync } from "node:zlib";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 const PRIMARY = [0x5f, 0x72, 0x57];
 const PRIMARY_DARK = [0x43, 0x54, 0x3d];
@@ -111,6 +111,20 @@ function badgePixel(xi, yi, size) {
   return [255, 255, 255, alpha];
 }
 
+function splashPixel(xi, yi, size) {
+  const x = (xi + 0.5) / size;
+  const y = (yi + 0.5) / size;
+  const scaledX = 0.5 + (x - 0.5) / 0.3;
+  const scaledY = 0.5 + (y - 0.5) / 0.3;
+  const vignette = clamp((Math.hypot(x - 0.5, y - 0.5) - 0.3) * 0.8);
+  let pixel = mix(PRIMARY, PRIMARY_DARK, vignette);
+  pixel = mix(pixel, CREAM, markMask(scaledX, scaledY, size * 0.3));
+  const knob = circle(scaledX, scaledY, 0.5, 0.29, 0.055, size * 0.3);
+  pixel = mix(pixel, ORANGE, knob);
+  const accent = roundedRect(scaledX, scaledY, 0.27, 0.648, 0.73, 0.686, 0.019, size * 0.3);
+  return mix(pixel, ORANGE, accent);
+}
+
 for (const size of [180, 192, 512]) {
   const path = "public/app-icon-" + size + ".png";
   writeFileSync(path, encodePng(size, appPixel));
@@ -119,3 +133,9 @@ for (const size of [180, 192, 512]) {
 
 writeFileSync("public/notification-badge.png", encodePng(96, badgePixel));
 console.log("public/notification-badge.png");
+
+mkdirSync("resources", { recursive: true });
+writeFileSync("resources/icon.png", encodePng(1024, appPixel));
+writeFileSync("resources/splash.png", encodePng(2732, splashPixel));
+console.log("resources/icon.png");
+console.log("resources/splash.png");

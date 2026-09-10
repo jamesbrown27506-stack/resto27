@@ -26,6 +26,10 @@ Requires a `.env.local` with the Supabase project URL and anon/service-role keys
 - `npm run build` — production build
 - `npm run lint` — ESLint
 - `npm start` — serve the production build
+- `npm run mobile:sync` — copy the mobile shell and synchronize native plugins
+- `npm run mobile:doctor` — verify the local Capacitor toolchain
+- `npm run mobile:android` — open the Android project in Android Studio
+- `npm run mobile:ios` — open the iOS project in Xcode (macOS only)
 
 ## Structure
 
@@ -34,3 +38,6 @@ Requires a `.env.local` with the Supabase project URL and anon/service-role keys
 - `src/app/(manager)/` and `src/app/(admin)/` — tenant and platform consoles
 - `src/lib/data/` — server-side read layers and server actions
 - `supabase/migrations/` — database schema
+- `android/` and `ios/` — Capacitor 8 native applications
+
+See [docs/MOBILE_RELEASE.md](docs/MOBILE_RELEASE.md) before creating signed store builds.

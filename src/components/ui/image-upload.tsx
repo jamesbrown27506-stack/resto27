@@ -6,6 +6,7 @@ import { Badge } from "./badge";
 import { Button } from "./button";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
+import { isNativeApp } from "@/lib/capacitor/native";
 
 /**
  * A file picker that PREVIEWS ONLY. It never talks to the server.
@@ -128,7 +129,7 @@ export function ImageUpload({
   /** Throws away a pending choice without touching what is already saved. */
   onUndo?: () => void;
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -159,6 +160,31 @@ export function ImageUpload({
   }
 
   const busy = disabled || working;
+
+  async function chooseImage() {
+    if (!isNativeApp()) { inputRef.current?.click(); return; }
+    setWorking(true);
+    setError(null);
+    try {
+      const { Camera, CameraResultType, CameraSource } = await import("@capacitor/camera");
+      const photo = await Camera.getPhoto({
+        source: CameraSource.Prompt, resultType: CameraResultType.Base64,
+        width: MAX_EDGE, height: MAX_EDGE, quality: 82, correctOrientation: true,
+        saveToGallery: false,
+        promptLabelHeader: label,
+        promptLabelPhoto: locale === "fr" ? "Photothèque" : "Photo library",
+        promptLabelPicture: locale === "fr" ? "Prendre une photo" : "Take a photo",
+        promptLabelCancel: locale === "fr" ? "Annuler" : "Cancel",
+      });
+      if (!photo.base64String) return;
+      const bytes = Uint8Array.from(atob(photo.base64String), (char) => char.charCodeAt(0));
+      await pick(new File([bytes], `photo.${photo.format}`, { type: `image/${photo.format}` }));
+    } catch (cause) {
+      if (!/cancel/i.test(String(cause))) setError(locale === "fr"
+        ? "Impossible d'ouvrir la photo. Vérifiez l'autorisation de l'appareil photo dans les réglages."
+        : "Could not open the photo. Check camera permission in device settings.");
+    } finally { setWorking(false); }
+  }
 
   return (
     <div>
@@ -205,7 +231,7 @@ export function ImageUpload({
               variant="outline"
               size="sm"
               disabled={busy}
-              onClick={() => inputRef.current?.click()}
+              onClick={() => void chooseImage()}
             >
               {working ? (
                 <Loader2 className="size-3.5 animate-spin" aria-hidden />

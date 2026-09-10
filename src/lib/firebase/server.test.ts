@@ -13,7 +13,7 @@ beforeEach(() => {
   vi.stubEnv("FIREBASE_PROJECT_ID", "resto237-da372");
   vi.stubEnv("FIREBASE_CLIENT_EMAIL", "test@resto237-da372.iam.gserviceaccount.com");
   vi.stubEnv("FIREBASE_PRIVATE_KEY", generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString());
-  mocks.read.mockResolvedValue({ data: [{ id: "device", token: "example-device-token", web_endpoint: "https://push/device" }], error: null });
+  mocks.read.mockResolvedValue({ data: [{ id: "device", token: "example-device-token", web_endpoint: "https://push/device", platform: "web" }], error: null });
   mocks.remove.mockResolvedValue({ error: null });
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
@@ -31,6 +31,18 @@ describe("Firebase operational delivery", () => {
     expect(JSON.parse(sent.message.data.payload)).toEqual(payload);
     expect(sent.message.notification).toBeUndefined();
     expect(sent.message.webpush.headers.Urgency).toBe("high");
+  });
+  it("adds a visible, high-priority notification for native devices", async () => {
+    mocks.read.mockResolvedValue({ data: [{ id: "phone", token: "native-token", web_endpoint: null, platform: "android" }], error: null });
+    const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "bearer", expires_in: 3600 })))
+      .mockResolvedValueOnce(new Response("{}"));
+    vi.stubGlobal("fetch", fetch);
+    const { sendFirebasePush } = await import("./server");
+    await sendFirebasePush("user", { title: "New order", body: "Order R237-42", href: "/m/orders/42", tag: "order-42" });
+    const sent = JSON.parse(fetch.mock.calls[1][1].body);
+    expect(sent.message.notification).toEqual({ title: "New order", body: "Order R237-42" });
+    expect(sent.message.android).toMatchObject({ priority: "high", notification: { channelId: "resto237_operational" } });
+    expect(sent.message.webpush).toBeUndefined();
   });
   it.each([["UNREGISTERED", "expired", true], ["NOT_FOUND", "failed", false], ["INVALID_ARGUMENT", "failed", false]])(
     "handles %s without pruning valid registrations", async (code, status, removed) => {

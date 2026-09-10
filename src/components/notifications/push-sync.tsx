@@ -1,6 +1,7 @@
 "use client";
 
 import { syncFirebaseDevice } from "@/lib/firebase/device";
+import { isNativeApp } from "@/lib/capacitor/native";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { getPushSyncState, savePushSubscription } from "@/lib/data/notify-actions";
@@ -74,6 +75,7 @@ export function PushSync() {
   const running = useRef(false);
 
   const sync = useCallback(async () => {
+    if (isNativeApp()) return;
     if (running.current) return;
     if (Date.now() - lastRunAt.current < MIN_INTERVAL_MS) return;
 

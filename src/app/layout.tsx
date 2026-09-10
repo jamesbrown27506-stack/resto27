@@ -15,6 +15,7 @@ import { PushSync } from "@/components/notifications/push-sync";
 import { SkipLink } from "@/components/layout/skip-link";
 import { NavigationProgress } from "@/components/layout/navigation-progress";
 import { TranslationSafeBoundary } from "@/components/layout/translation-safe";
+import { NativeRuntime } from "@/components/capacitor/native-runtime";
 import "./globals.css";
 
 /**
@@ -226,6 +227,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               ones that navigate away from a provider's subtree.
             */}
             <NavigationProgress />
+            <NativeRuntime />
             <SkipLink />
             <ToastProvider>
               {/*

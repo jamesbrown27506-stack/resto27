@@ -1,4 +1,5 @@
 import { publicMetadata } from "@/lib/seo";
+import { ShareButton } from "@/components/capacitor/share-button";
 import { absolutePublicUrl, isUsableDescription } from "@/lib/seo-config";
 import { getLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
@@ -205,6 +206,7 @@ export default async function RestaurantDetailPage({
 
             <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-text-secondary">
               <RatingStars value={restaurant.rating} showValue count={restaurant.reviewCount} />
+              <ShareButton title={restaurant.name} url={pageUrl} />
               <span className="inline-flex items-center gap-1.5">
                 <MapPin className="size-3.5 text-primary" aria-hidden />
                 {formatQuartier(restaurant.quartier)}, Douala

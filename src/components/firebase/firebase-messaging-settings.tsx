@@ -10,6 +10,7 @@ import {
 } from "@/lib/firebase/messaging";
 
 import { syncFirebaseDevice } from "@/lib/firebase/device";
+import { useNativeApp } from "@/lib/capacitor/native";
 
 function messageFor(result: Exclude<FirebaseMessagingResult, { ok: true }>, fr: boolean): string {
   const messages = {
@@ -25,7 +26,8 @@ function messageFor(result: Exclude<FirebaseMessagingResult, { ok: true }>, fr: 
 export function FirebaseMessagingSettings() {
   const { locale } = useLocale();
   const fr = locale === "fr";
-  const configured = firebaseMessagingConfigured();
+  const native = useNativeApp();
+  const configured = native || firebaseMessagingConfigured();
   const [token, setToken] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -61,10 +63,14 @@ export function FirebaseMessagingSettings() {
       </p>
       <p className="text-xs leading-relaxed text-text-light">
         {fr
-          ? "Enregistrez cet appareil pour recevoir les alertes lorsque l’administrateur sélectionne Firebase. Activez aussi les notifications push ci-dessus."
-          : "Register this device to receive alerts when the administrator selects Firebase. Also enable push notifications above."}
+          ? native
+            ? "Enregistrez cette application auprès de Firebase pour recevoir les alertes natives."
+            : "Enregistrez cet appareil pour recevoir les alertes lorsque l’administrateur sélectionne Firebase. Activez aussi les notifications push ci-dessus."
+          : native
+            ? "Register this app with Firebase to receive native alerts."
+            : "Register this device to receive alerts when the administrator selects Firebase. Also enable push notifications above."}
       </p>
-      {!configured && (
+      {!native && !configured && (
         <p role="status" className="text-xs text-warning">
           {fr
             ? "Configuration requise : ajoutez NEXT_PUBLIC_FIREBASE_VAPID_KEY puis redéployez l’application."

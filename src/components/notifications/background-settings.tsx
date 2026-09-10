@@ -5,10 +5,12 @@ import { Battery } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { deviceSettingsAvailable, openBatterySettings } from "@/lib/notifications/device-settings";
+import { useNativeApp } from "@/lib/capacitor/native";
 
 export function BackgroundSettings() {
   const { locale } = useLocale();
   const fr = locale === "fr";
+  const nativeApp = useNativeApp();
   const device = useSyncExternalStore(subscribe, getDevice, () => "desktop");
   const native = device === "native";
   const platform = native || device === "android" ? "android" : device === "ios" ? "ios" : null;
@@ -26,6 +28,8 @@ export function BackgroundSettings() {
           ? fr
             ? "Si les alertes arrivent en retard, ouvrez Paramètres → Applications → Resto237 → Batterie, puis choisissez Sans restriction ou Autoriser l’activité en arrière-plan. Les noms varient selon le téléphone. Pour la version web, vérifiez aussi le navigateur utilisé."
             : "If alerts arrive late, open Settings → Apps → Resto237 → Battery, then choose Unrestricted or Allow background activity. Names vary by phone. For the web version, also check the browser you use."
+          : nativeApp
+            ? fr ? "Ouvrez Réglages → Notifications → Resto237. Vérifiez aussi les modes Concentration." : "Open Settings → Notifications → Resto237. Also check Focus modes."
           : fr
             ? "Sur iPhone, ajoutez le site à l’écran d’accueil, ouvrez-le depuis son icône et activez les notifications. Vérifiez aussi Réglages → Notifications et les modes Concentration."
             : "On iPhone, add the site to your Home Screen, open it from its icon and enable notifications. Also check Settings → Notifications and Focus modes."}

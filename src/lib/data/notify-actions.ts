@@ -553,6 +553,20 @@ export async function listPushDevices(): Promise<{
     };
   });
 
+  const native = await supabase.from("fcm_subscriptions")
+    .select("id, platform, app_version, created_at")
+    .eq("profile_id", profile.id).in("platform", ["android", "ios"])
+    .order("created_at", { ascending: false });
+  if (native.error && !["42703", "PGRST204", "PGRST205", "42P01"].includes(native.error.code)) {
+    console.error("[notify:listNativeDevices]", native.error.message);
+    return { ok: false, devices };
+  }
+  for (const row of native.data ?? []) devices.push({
+    id: `fcm:${row.id}`, service: "Firebase Cloud Messaging",
+    endpointTail: row.id.slice(-8),
+    label: `Resto237 · ${row.platform === "ios" ? "iOS" : "Android"}${row.app_version ? ` · ${row.app_version}` : ""}`,
+    createdAt: row.created_at, lastSuccessAt: null, failureCount: 0, lastFailureCode: null,
+  });
   return { ok: true, devices };
 }
 
@@ -561,6 +575,14 @@ export async function listPushDevices(): Promise<{
 export async function removePushDevice(id: string): Promise<{ ok: boolean; error?: string }> {
   const profile = await requireUser();
   const supabase = createAdminClient();
+  if (typeof id !== "string") return { ok: false, error: "Invalid device." };
+  if (id.startsWith("fcm:")) {
+    const uuid = id.slice(4);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid)) return { ok: false, error: "Invalid device." };
+    const { error } = await supabase.from("fcm_subscriptions").delete()
+      .eq("id", uuid).eq("profile_id", profile.id).in("platform", ["android", "ios"]);
+    return error ? { ok: false, error: "Could not remove the device." } : { ok: true };
+  }
   const { data: device, error: readError } = await supabase.from("push_subscriptions").select("endpoint").eq("id", id).eq("profile_id", profile.id).maybeSingle();
   if (readError) return { ok: false, error: "Could not read the device." };
   if (device) {

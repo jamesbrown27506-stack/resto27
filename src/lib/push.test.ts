@@ -18,6 +18,13 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe("shared push provider routing", () => {
+  it("delivers to native devices when browsers use Web Push", async () => {
+    mocks.provider.mockResolvedValue("web_push");
+    const { sendPushWithReport } = await import("./push");
+    const report = await sendPushWithReport("user", { title: "Order" });
+    expect(mocks.firebase).toHaveBeenCalledWith("user", { title: "Order" }, undefined, true);
+    expect(report.devices).toEqual([{ status: "sent" }]);
+  });
   it("routes reporting and ordinary notifications through Firebase", async () => {
     const { sendPush, sendPushWithReport } = await import("./push");
     await sendPush("customer", { title: "Order" });

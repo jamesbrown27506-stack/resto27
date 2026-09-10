@@ -94,6 +94,7 @@ export const config = {
      *   _next/static, _next/image  — build output, no session needed
      *   favicon / images / fonts   — static assets
      *   robots.txt, sitemap.xml    — crawled anonymously
+     *   .apk                       — the Android download, fetched anonymously
      *
      * Excluding assets matters: this runs per request, and each run is a
      * network call to the auth server. Matching every .svg would triple the
@@ -114,6 +115,6 @@ export const config = {
      *  installing the app and refreshing the worker independent of auth.
      * ───────────────────────────────────────────────────────────────────────
      */
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|sw\\.js$|manifest\\.webmanifest$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|woff2?)$).*)",
+    "/((?!_next/static|_next/image|\\.well-known/|favicon.ico|robots.txt|sitemap.xml|sw\\.js$|manifest\\.webmanifest$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|avif|ico|woff2?|apk)$).*)",
   ],
 };

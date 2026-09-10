@@ -8,8 +8,16 @@ import { rateLimit } from "@/lib/rate-limit";
 
 const COOKIE = "resto237_push_device";
 
-export async function saveFirebaseToken(token: string, webEndpoint?: string) {
+export async function saveFirebaseToken(
+  token: string,
+  webEndpoint?: string,
+  native?: { platform: "android" | "ios"; appVersion?: string },
+) {
   const profile = await requireUser();
+  if (native && (!['android', 'ios'].includes(native.platform) ||
+      (native.appVersion !== undefined && typeof native.appVersion !== 'string'))) {
+    return { ok: false, error: "Invalid native device." };
+  }
   if (typeof token !== "string" || token.length < 20 || token.length > 4096 || /\s/.test(token)) {
     return { ok: false, error: "Invalid Firebase registration." };
   }
@@ -27,11 +35,17 @@ export async function saveFirebaseToken(token: string, webEndpoint?: string) {
   // Remove its previous token on rotation, and transfer an existing token on login.
   const removed = await db.from("fcm_subscriptions").delete().eq("device_id", deviceId).neq("token", token);
   if (removed.error) return { ok: false, error: "Firebase device storage is not ready. Contact the administrator." };
-  const { error } = await db.from("fcm_subscriptions").upsert({
+  const row = {
     token, device_id: deviceId, profile_id: profile.id, web_endpoint: webEndpoint ?? null,
     user_agent: (await headers()).get("user-agent")?.slice(0, 512) ?? null,
     updated_at: new Date().toISOString(),
+  };
+  let { error } = await db.from("fcm_subscriptions").upsert({
+    ...row, platform: native?.platform ?? "web", app_version: native?.appVersion?.slice(0, 64) ?? null,
   }, { onConflict: "token" });
+  if (!native && error && ['42703', 'PGRST204'].includes(error.code)) {
+    ({ error } = await db.from("fcm_subscriptions").upsert(row, { onConflict: "token" }));
+  }
   if (error) return { ok: false, error: "Could not save this Firebase device. Please try again." };
   const { data: surplus } = await db.from("fcm_subscriptions").select("id").eq("profile_id", profile.id)
     .order("updated_at", { ascending: false }).range(10, 1000);
@@ -41,11 +55,21 @@ export async function saveFirebaseToken(token: string, webEndpoint?: string) {
 
 export async function removeFirebaseDevice() {
   const profile = await getCurrentProfile();
-  if (!profile) return { ok: true };
+  if (!profile) return { ok: true, remaining: 0 };
   const id = (await cookies()).get(COOKIE)?.value;
-  if (!id) return { ok: true };
-  const { error } = await createAdminClient().from("fcm_subscriptions").delete()
-    .eq("device_id", id).eq("profile_id", profile.id);
-  if (error?.code === "PGRST205" || error?.code === "42P01") return { ok: true };
-  return error ? { ok: false, error: "Could not disconnect Firebase on this device." } : { ok: true };
+  const db = createAdminClient();
+  if (id) {
+    const { error } = await db.from("fcm_subscriptions").delete()
+      .eq("device_id", id).eq("profile_id", profile.id);
+    if (error && !["PGRST205", "42P01"].includes(error.code)) return { ok: false, remaining: 0, error: "Could not disconnect Firebase on this device." };
+  }
+  const [count, browsers] = await Promise.all([
+    db.from("fcm_subscriptions").select("id", { count: "exact", head: true }).eq("profile_id", profile.id),
+    db.from("push_subscriptions").select("id", { count: "exact", head: true }).eq("profile_id", profile.id),
+  ]);
+  const missingFcmTable = count.error && ["PGRST205", "42P01"].includes(count.error.code);
+  if ((count.error && !missingFcmTable) || browsers.error || (!missingFcmTable && count.count === null) || browsers.count === null) {
+    return { ok: false, error: "Device removed, but remaining devices could not be checked. Please retry." };
+  }
+  return { ok: true, remaining: (count.count ?? 0) + browsers.count };
 }

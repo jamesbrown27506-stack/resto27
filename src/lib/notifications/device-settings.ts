@@ -8,11 +8,15 @@ declare global {
 }
 
 export function deviceSettingsAvailable(): boolean {
+  if (nativePlatform() === "android") return true;
   return typeof window !== "undefined" && typeof window.Resto237DeviceSettings?.postMessage === "function";
 }
 
 // A native acknowledgement means settings opened, never that permission was granted.
 export async function openBatterySettings(): Promise<boolean> {
+  if (nativePlatform() === "android") {
+    return BatterySettings.open().then((result) => result.opened).catch(() => false);
+  }
   const bridge = typeof window !== "undefined" ? window.Resto237DeviceSettings : undefined;
   if (!bridge || !deviceSettingsAvailable()) return false;
   return new Promise((resolve) => {
@@ -34,3 +38,11 @@ export async function openBatterySettings(): Promise<boolean> {
     catch { finish(false); }
   });
 }
+import { registerPlugin } from "@capacitor/core";
+import { nativePlatform } from "@/lib/capacitor/platform";
+
+interface BatterySettingsPlugin {
+  open(): Promise<{ opened: boolean }>;
+}
+
+const BatterySettings = registerPlugin<BatterySettingsPlugin>("BatterySettings");

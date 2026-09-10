@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
 import { Switch } from "@/components/ui/input";
 import { syncFirebaseDevice, disconnectFirebaseDevice } from "@/lib/firebase/device";
+import { isNativeApp, nativeFirebaseToken, nativePushEnabled, useNativeApp } from "@/lib/capacitor/native";
 import { useToast } from "@/components/ui/toast";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
@@ -123,6 +124,8 @@ export function NotificationSettings({ className }: { className?: string }) {
   const [, startTransition] = useTransition();
 
   const [channels, setChannels] = useState<NotificationChannels | null>(null);
+  const native = useNativeApp();
+  const [renderedAt] = useState(Date.now);
   const [deviceSubscribed, setDeviceSubscribed] = useState(false);
   const [block, setBlock] = useState<PushBlock>(null);
   // Only the push flow blocks the panel: it opens a browser dialog and talks
@@ -157,6 +160,32 @@ export function NotificationSettings({ className }: { className?: string }) {
     setResetting(true);
     setTestReport(null);
     try {
+      if (isNativeApp()) {
+        await disconnectFirebaseDevice();
+        const cleared = await resetPushSubscriptions();
+        if (!cleared.ok) {
+          toast(cleared.error ?? t("nset.saveFailed"), "error");
+          return;
+        }
+        setPushDeviceOptOut(false);
+        const result = await syncFirebaseDevice(true);
+        if (!result.ok) {
+          setBlock(result.reason === "storage" ? "failed" : result.reason === "denied" ? "denied" : "failed");
+          return;
+        }
+        setDeviceSubscribed(true);
+        setBlock(null);
+        if (channels) {
+          const next = { ...channels, push: true };
+          const stored = await saveMyNotificationChannels(next);
+          if (!stored.ok) { toast(t("nset.saveFailed"), "error"); return; }
+          setChannels(next);
+        }
+        toast(t("nset.push.resetDone", { count: cleared.removed }), "success");
+        await announcePushEnabled().catch(() => null);
+        return;
+      }
+
       const key = configuredVapidKey();
       if (!key) {
         toast(t("nset.push.notConfigured"), "warning");
@@ -217,12 +246,14 @@ export function NotificationSettings({ className }: { className?: string }) {
     setTestReport(null);
     // Hand the server this browser's own endpoint so the report can say which
     // line is this device — the only line that answers the actual question.
-    const mine = await navigator.serviceWorker
-      .getRegistration("/sw.js")
-      .then((r) => r?.pushManager.getSubscription())
-      .catch(() => null);
+    const currentEndpoint = isNativeApp()
+      ? await nativeFirebaseToken()
+      : await navigator.serviceWorker
+          .getRegistration("/sw.js")
+          .then((r) => r?.pushManager.getSubscription().then((subscription) => subscription?.endpoint))
+          .catch(() => null);
 
-    const report = await sendTestPush(mine?.endpoint).catch(() => null);
+    const report = await sendTestPush(currentEndpoint ?? undefined).catch(() => null);
     setTesting(false);
     if (!report) return toast(t("nset.saveFailed"), "error");
     setTestReport(report);
@@ -235,6 +266,7 @@ export function NotificationSettings({ className }: { className?: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    const nativeNow = isNativeApp();
 
     void (async () => {
       const stored = await getMyNotificationChannels().catch(() => null);
@@ -243,6 +275,18 @@ export function NotificationSettings({ className }: { className?: string }) {
     })();
 
     void (async () => {
+      if (nativeNow) {
+        const enabled = await nativePushEnabled();
+        if (cancelled) return;
+        setBlock(null);
+        if (!enabled || pushDeviceOptedOut()) {
+          setDeviceSubscribed(false);
+          return;
+        }
+        const result = await syncFirebaseDevice(false);
+        if (!cancelled) setDeviceSubscribed(result.ok);
+        return;
+      }
       if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
         if (!cancelled) setBlock("unsupported");
         return;
@@ -297,12 +341,14 @@ export function NotificationSettings({ className }: { className?: string }) {
       }
     })();
 
-    void refreshDevices();
+    void listPushDevices()
+      .then((result) => { if (!cancelled && result.ok) setDevices(result.devices); })
+      .catch(() => undefined);
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [native]);
 
   /**
    * Persist all three, reverting the optimistic switch if the write fails.
@@ -369,6 +415,28 @@ export function NotificationSettings({ className }: { className?: string }) {
     setBlock(null);
 
     try {
+      if (isNativeApp()) {
+        setPushDeviceOptOut(false);
+        const result = await syncFirebaseDevice(true);
+        if (!result.ok) {
+          setBlock(result.reason === "denied" ? "denied" : result.reason === "storage" ? "failed" : "failed");
+          return;
+        }
+        const previous = channels;
+        const next = { ...channels, push: true };
+        setChannels(next);
+        setDeviceSubscribed(true);
+        const stored = await saveMyNotificationChannels(next).catch(() => ({ ok: false as const }));
+        if (!stored.ok) {
+          setChannels(previous);
+          toast(t("nset.saveFailed"), "error");
+          return;
+        }
+        const announced = await announcePushEnabled().catch(() => ({ ok: false as const }));
+        toast(t(announced.ok ? "nset.push.enabled" : "nset.push.enabledNoSend"), "success");
+        return;
+      }
+
       if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
         setBlock("unsupported");
         return;
@@ -473,9 +541,9 @@ export function NotificationSettings({ className }: { className?: string }) {
     const previous = channels;
 
     try {
-      await disconnectFirebaseDevice();
-      let remaining = 0;
-      if ("serviceWorker" in navigator) {
+      const disconnected = await disconnectFirebaseDevice();
+      let remaining = disconnected?.remaining ?? 0;
+      if (!isNativeApp() && "serviceWorker" in navigator) {
         const registration = await navigator.serviceWorker.getRegistration("/sw.js");
         const subscription = await registration?.pushManager.getSubscription();
         if (subscription) {
@@ -543,7 +611,7 @@ export function NotificationSettings({ className }: { className?: string }) {
   // and a live subscription say so.
   const pushOnHere = channels.push && deviceSubscribed;
   const snoozeActive = Boolean(
-    channels.snoozedUntil && Date.parse(channels.snoozedUntil) > Date.now(),
+    channels.snoozedUntil && Date.parse(channels.snoozedUntil) > renderedAt,
   );
   const quietStartHour =
     channels.quietStart == null ? null : Math.floor(channels.quietStart / 60);
@@ -606,7 +674,7 @@ export function NotificationSettings({ className }: { className?: string }) {
 
             <BackgroundSettings />
 
-            <FirebaseMessagingSettings />
+            {!native && <FirebaseMessagingSettings />}
 
             {pushElsewhere && (
               <p className="text-xs text-text-light">
@@ -833,7 +901,7 @@ export function NotificationSettings({ className }: { className?: string }) {
             {/* Apple's rule, and the single most common "it just does not
                 work" on a phone: Safari only delivers push to an installed
                 PWA, never to a normal tab. */}
-            {!pushOnHere && typeof navigator !== "undefined" && isIOSDevice() && block !== "iosInstall" && (
+            {!native && !pushOnHere && typeof navigator !== "undefined" && isIOSDevice() && block !== "iosInstall" && (
               <p className="text-xs text-text-light">
                 <span>{t("nset.push.iosHint")}</span>
               </p>

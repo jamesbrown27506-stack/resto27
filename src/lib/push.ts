@@ -462,7 +462,19 @@ export async function sendPushWithReport(
   providerOverride?: "web_push" | "firebase",
 ): Promise<Awaited<ReturnType<typeof sendWebPushWithReport>>> {
   const provider = providerOverride ?? await notificationProvider();
-  if (provider === "web_push") return sendWebPushWithReport(profileId, payload, currentEndpoint);
+  if (provider === "web_push") {
+    const web = await sendWebPushWithReport(profileId, payload, currentEndpoint);
+    // The provider selector controls browsers. Native installations always
+    // use FCM; an explicit admin comparison remains a single-provider test.
+    if (providerOverride || !firebaseDeliveryConfigured() || !await platformPushEnabled()) return web;
+    const native = await sendFirebasePush(profileId, payload, currentEndpoint, true);
+    return {
+      configured: web.configured || firebaseDeliveryConfigured(),
+      platformEnabled: true,
+      devices: [...web.devices, ...native.devices],
+      queryFailed: web.queryFailed || native.queryFailed,
+    };
+  }
   const configured = firebaseDeliveryConfigured();
   const platformEnabled = await platformPushEnabled();
   if (!configured || !platformEnabled) return { configured, platformEnabled, devices: [] };

@@ -55,3 +55,25 @@ loadtest.mjs
 # SEO audit output — regenerable reports plus raw HTML captures and screenshots.
 # Kept local: 5 MB of crawl artefacts does not belong in application history.
 /resto237.online-audit/
+
+# Capacitor native build products and machine-local settings. Native source is committed.
+/android/.gradle/
+/android/.idea/
+/android/build/
+/android/app/build/
+/android/local.properties
+/ios/App/DerivedData/
+/ios/App/Pods/
+/ios/App/App.xcworkspace/xcuserdata/
+*.xcuserstate
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+# Signing passwords for the release key above. Back both up outside the repo:
+# losing them means installed APKs can never be updated in place.
+/android/keystore.properties
+
+# Download these native Firebase credentials per environment; never commit them.
+/android/app/google-services.json
+/ios/App/App/GoogleService-Info.plist

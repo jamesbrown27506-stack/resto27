@@ -3,9 +3,11 @@
 import { useEffect } from "react";
 import { getFirebaseApp } from "@/lib/firebase/client";
 import { initializeFirebaseAnalytics } from "@/lib/firebase/client";
+import { isNativeApp } from "@/lib/capacitor/native";
 
 export function FirebaseInit() {
   useEffect(() => {
+    if (isNativeApp()) return;
     void initializeFirebaseAnalytics();
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;

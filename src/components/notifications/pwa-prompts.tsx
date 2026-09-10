@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isNativeApp } from "@/lib/capacitor/native";
 import { BellRing, Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
@@ -97,6 +98,7 @@ export function PwaPrompts({ brandName }: { brandName: string }) {
   const tKey = (key: string) => `pwa.${key}` as TranslationKey;
 
   useEffect(() => {
+    if (isNativeApp()) return;
     let cancelled = false;
 
     const onBeforeInstall = (e: Event) => {

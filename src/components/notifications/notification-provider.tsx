@@ -11,6 +11,7 @@ import {
 } from "@/lib/notifications/sound-player";
 import type { NotifyTone } from "@/lib/notify";
 import { registerPushWorker } from "@/lib/notifications/web-push-client";
+import { isNativeApp } from "@/lib/capacitor/native";
 
 /**
  * The realtime engine behind the bell.
@@ -247,16 +248,24 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     ─────────────────────────────────────────────────────────────────────────
   */
   useEffect(() => {
-    if (!("serviceWorker" in navigator)) return;
-
     const onMessage = (event: MessageEvent) => {
       const data = event.data;
       if (!data || data.type !== "restolink:notification") return;
       announce(String(data.title ?? ""), String(data.body ?? ""), (data.tone ?? "info") as NotifyTone, "sw");
     };
 
-    navigator.serviceWorker.addEventListener("message", onMessage);
-    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+    const onNativeMessage = (event: Event) => {
+      const data = (event as CustomEvent).detail;
+      if (!data || data.type !== "restolink:notification") return;
+      announce(String(data.title ?? ""), String(data.body ?? ""), (data.tone ?? "info") as NotifyTone, "sw");
+    };
+
+    if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", onMessage);
+    window.addEventListener("resto237:native-notification", onNativeMessage);
+    return () => {
+      if ("serviceWorker" in navigator) navigator.serviceWorker.removeEventListener("message", onMessage);
+      window.removeEventListener("resto237:native-notification", onNativeMessage);
+    };
   }, [announce]);
 
   useEffect(() => {
@@ -270,7 +279,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     // someone toggles push in settings. A subscription saved on another device
     // — or a push the user never opted out of — must still wake the worker
     // when the message arrives; an unregistered worker silently drops it.
-    if ("serviceWorker" in navigator) {
+    if ("serviceWorker" in navigator && !isNativeApp()) {
       void registerPushWorker().catch(() => {});
     }
 

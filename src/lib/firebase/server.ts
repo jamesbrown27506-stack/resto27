@@ -67,6 +67,7 @@ async function firebaseMessageRequest(
   initialBearer: string,
   token: string,
   payload: PushPayload,
+  platform: "web" | "android" | "ios",
 ): Promise<Response> {
   let bearer = initialBearer;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -81,7 +82,19 @@ async function firebaseMessageRequest(
           body: JSON.stringify({ message: {
             token,
             data: { payload: JSON.stringify(payload) },
-            webpush: { headers: { Urgency: "high", TTL: "86400" } },
+            ...(platform === "web"
+              ? { webpush: { headers: { Urgency: "high", TTL: "86400" } } }
+              : {
+                  notification: { title: payload.title, body: payload.body ?? "" },
+                  android: {
+                    priority: "high",
+                    notification: { channelId: "resto237_operational", tag: payload.tag },
+                  },
+                  apns: {
+                    headers: { "apns-priority": "10" },
+                    payload: { aps: { sound: "default", "content-available": 1 } },
+                  },
+                }),
           } }),
         },
       );
@@ -105,25 +118,38 @@ async function firebaseMessageRequest(
 }
 
 export async function sendFirebasePush(
-  profileId: string, payload: PushPayload, currentEndpoint?: string,
+  profileId: string, payload: PushPayload, currentEndpoint?: string, nativeOnly = false,
 ): Promise<{ devices: PushDeviceResult[]; queryFailed?: boolean }> {
   const current = config();
   if (!current) return { devices: [], queryFailed: true };
   const supabase = createAdminClient();
-  const { data, error } = await supabase.from("fcm_subscriptions")
-    .select("id, token, web_endpoint").eq("profile_id", profileId);
+  let { data, error } = await supabase.from("fcm_subscriptions")
+    .select("id, token, web_endpoint, platform").eq("profile_id", profileId);
+  if (error && ["42703", "PGRST204"].includes(error.code)) {
+    // Keep browser delivery working while migration 0048 is being deployed.
+    if (nativeOnly) return { devices: [] };
+    const legacy = await supabase.from("fcm_subscriptions")
+      .select("id, token, web_endpoint").eq("profile_id", profileId);
+    data = legacy.data?.map((row) => ({ ...row, platform: "web" })) ?? null;
+    error = legacy.error;
+  }
   if (error) return { devices: [], queryFailed: true };
-  const tokens = (data ?? []) as { id: string; token: string; web_endpoint: string | null }[];
+  const tokens = ((data ?? []) as {
+    id: string;
+    token: string;
+    web_endpoint: string | null;
+    platform: "web" | "android" | "ios" | null;
+  }[]).filter((row) => !nativeOnly || row.platform === "android" || row.platform === "ios");
   if (!tokens.length) return { devices: [] };
   let bearer: string;
   try { bearer = await firebaseAccessToken(current); }
   catch { return { devices: tokens.map(t => ({ service: "Firebase", endpointTail: t.token.slice(-12), status: "failed", detail: "Firebase authentication failed" })) }; }
   const devices: PushDeviceResult[] = [];
   for (let start = 0; start < tokens.length; start += 10) {
-    devices.push(...await Promise.all(tokens.slice(start, start + 10).map(async ({ id, token, web_endpoint }): Promise<PushDeviceResult> => {
+    devices.push(...await Promise.all(tokens.slice(start, start + 10).map(async ({ id, token, web_endpoint, platform }): Promise<PushDeviceResult> => {
       const base = { service: "Firebase", endpointTail: token.slice(-12), isThisDevice: currentEndpoint ? web_endpoint === currentEndpoint || token === currentEndpoint : undefined };
       try {
-        const response = await firebaseMessageRequest(current, bearer, token, payload);
+        const response = await firebaseMessageRequest(current, bearer, token, payload, platform ?? "web");
         if (response.ok) return { ...base, status: "sent" };
         const body = await response.json().catch(() => ({})) as { error?: { details?: { errorCode?: string }[] } };
         const code = body.error?.details?.find(d => d.errorCode)?.errorCode;
