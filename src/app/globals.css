@@ -378,27 +378,28 @@
    animation that only Chromium ran and that was too subtle to notice — see
    that file.
 
-   HIDDEN ONLY UNDER `html[data-reveal="on"]`, which that script sets. With
-   no script the base state is fully visible: a blank column is the failure
-   mode of every reveal that ever shipped broken, and this one cannot have it.
+   HIDDEN ONLY ONCE THE SCRIPT HAS ARMED IT (`.reveal-armed`), section by
+   section. The first version hid every `.reveal` behind one page-wide flag,
+   and sections that streamed in after the loading screen were never watched
+   — the homepage went blank below the fold. A section the script has not
+   reached is now simply visible: a blank column is the failure mode of every
+   reveal that ever shipped broken, and this one cannot have it.
 
    The grids inside a section (`.stagger-in`) wait for it: their entrance used
    to play on page load, while they were still far below the fold, so by the
    time anyone scrolled down it had long finished. Paused until the section
    arrives, the cards now come in one after another as it does. */
 @media (prefers-reduced-motion: no-preference) {
-  [data-reveal="on"] .reveal {
-    opacity: 0;
-    transform: translateY(28px);
+  .reveal.reveal-armed {
     transition:
       opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1),
       transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
   }
-  [data-reveal="on"] .reveal.is-visible {
-    opacity: 1;
-    transform: none;
+  .reveal.reveal-armed:not(.is-visible) {
+    opacity: 0;
+    transform: translateY(28px);
   }
-  [data-reveal="on"] .reveal:not(.is-visible) .stagger-in > * {
+  .reveal.reveal-armed:not(.is-visible) .stagger-in > * {
     animation-play-state: paused;
   }
 }
