@@ -16,7 +16,12 @@
     </style>
 
 
+    <!-- The launch screen. Its ground had no colour, so Android painted it
+         black in dark mode. Now white by day and Resto237 green at night
+         (values-night), with the app icon on it; the website's launch screen
+         takes over with the same ground and mark (app-launch.tsx). -->
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="android:background">@color/splash_background</item>
     </style>
 </resources>

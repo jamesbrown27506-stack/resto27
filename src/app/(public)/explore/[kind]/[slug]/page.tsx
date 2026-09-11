@@ -5,7 +5,7 @@ import { fetchDiscoveryCatalog } from "@/lib/data/discovery";
 import { publicMetadata, jsonLdString } from "@/lib/seo";
 import { absolutePublicUrl, discoverySlug, dishPath } from "@/lib/seo-config";
 import { getLocale } from "@/lib/i18n/locale-server";
-import { MapPin, Soup } from "lucide-react";
+import { ChevronDown, CircleHelp, MapPin, Soup } from "lucide-react";
 import { RestaurantCard } from "@/components/restaurant/restaurant-card";
 import { RestaurantLogo } from "@/components/restaurant/restaurant-logo";
 import { OpenBadge } from "@/components/restaurant/open-badge";
@@ -57,6 +57,12 @@ export default async function DiscoveryPage({ params }: Props) {
     : c.restaurants.map(r => ({ name: r.name, path: `/restaurants/${r.slug}` }));
 
   const intro = discoveryIntro(c.group.kind, c.group.slug, c.displayName, c.fr);
+  // A restaurant's own description of the dish, the fullest one, for "what is
+  // this dish?" — the cards no longer carry it.
+  const dishStory = c.dishes
+    .map((d) => d.description?.trim())
+    .filter((text): text is string => Boolean(text))
+    .sort((a, b) => b.length - a.length)[0];
   const availability = discoveryAvailability({
     fr: c.fr,
     count: c.restaurants.length,
@@ -86,10 +92,30 @@ export default async function DiscoveryPage({ params }: Props) {
       because the word "livraison" did not previously appear anywhere on a
       neighbourhood page — the exact question it is built to rank for.
     */}
-    <div className="max-w-2xl space-y-3 text-text-secondary">
-      <p>{intro}</p>
-      {availability && <p>{availability}</p>}
-    </div>
+    {c.group.kind === "food" ? (
+      /*
+        On a dish page the restaurants come first: in Douala nobody needs
+        Ekwang explained before they can order it. The explanation is one tap
+        away, and still in the page for search engines.
+      */
+      <details className="group max-w-2xl">
+        <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-border bg-surface px-4 py-2 text-sm font-semibold text-primary transition-colors hover:border-primary [&::-webkit-details-marker]:hidden">
+          <CircleHelp className="size-4" aria-hidden />
+          <span>{c.fr ? "C'est quoi ce plat ?" : "What is this dish?"}</span>
+          <ChevronDown className="size-4 transition-transform group-open:rotate-180" aria-hidden />
+        </summary>
+        <div className="mt-3 space-y-3 rounded-xl border border-border bg-surface-2 p-4 text-text-secondary">
+          {dishStory && <p className="text-text">{dishStory}</p>}
+          <p>{intro}</p>
+          {availability && <p>{availability}</p>}
+        </div>
+      </details>
+    ) : (
+      <div className="max-w-2xl space-y-3 text-text-secondary">
+        <p>{intro}</p>
+        {availability && <p>{availability}</p>}
+      </div>
+    )}
 
     {/*
       The SAME dish from several kitchens, so each card leads with who makes
@@ -121,9 +147,8 @@ export default async function DiscoveryPage({ params }: Props) {
           </span>
         </span>
       </div>
-      <div className="space-y-1.5 p-4">
+      <div className="p-4">
         <h2 className="font-display text-lg font-bold">{d.name}</h2>
-        {d.description && <p className="line-clamp-3 text-sm text-text-secondary">{d.description}</p>}
       </div>
     </Link>)}</div>}
     <h2 className="text-xl font-semibold">{c.fr ? "Restaurants" : "Restaurants"} ({c.restaurants.length})</h2>

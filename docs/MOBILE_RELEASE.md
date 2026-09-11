@@ -135,6 +135,19 @@ To publish a new version:
    and writes the version and size to `src/lib/app-release.json`.
 3. Commit both files and deploy. The site's band shows the new version.
 
+Every installed app compares its own version with `src/lib/app-release.json`
+when it opens and offers the new APK ("Nouvelle version disponible"). It is
+optional ("Plus tard") unless an admin turns on **Require the latest app
+version** in /a/settings → Mobile app, which blocks the app until it is
+updated. Keep that for updates that fix something broken.
+
+The app's opening lives in `components/capacitor/app-launch.tsx`: a welcome
+tour on the very first launch (in the phone's language), then the animated
+mark on every launch after. Android's own launch screen is white by day and
+Resto237 green at night (`res/values(-night)/colors.xml`) and stays up until
+that component takes over. The site opens in French by URL, so the app
+remembers the chosen language itself and reopens in it.
+
 Without `android/app/google-services.json` the APK works but cannot register
 for push notifications (the plugin rejects the token request; nothing
 crashes). Add the file and publish again to enable push.

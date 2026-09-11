@@ -142,6 +142,25 @@ export const commonDict = defineDict({
       "Suivez vos commandes et réservations en temps réel, même quand l'application est fermée.",
     "pwa.native.blocked":
       "Les notifications sont bloquées pour {name}. Activez-les dans Paramètres › Applications › {name} › Notifications.",
+    /* The installed app's welcome, first launch only (app-launch.tsx). */
+    "applaunch.welcomeTitle": "Bienvenue sur {name}",
+    "applaunch.welcomeBody": "Commandez et réservez dans les meilleurs restaurants de Douala.",
+    "applaunch.compareTitle": "Choisissez un plat, puis le restaurant",
+    "applaunch.compareBody": "Voyez qui le propose, à quel prix et dans quel quartier : le plus proche ou le moins cher.",
+    "applaunch.trackTitle": "Suivez tout en direct",
+    "applaunch.trackBody": "Une notification à chaque étape de votre commande ou de votre réservation.",
+    "applaunch.next": "Suivant",
+    "applaunch.start": "Commencer",
+    "applaunch.skip": "Passer",
+    "applaunch.language": "Langue",
+
+    /* "A new version is available", installed app only (app-update-prompt.tsx). */
+    "appupd.title": "Nouvelle version disponible",
+    "appupd.body":
+      "La version {version} de l'application est prête. Téléchargez-la puis installez-la par-dessus celle-ci : votre compte et vos données sont conservés.",
+    "appupd.required": "Cette mise à jour est nécessaire pour continuer à utiliser l'application.",
+    "appupd.action": "Mettre à jour",
+    "appupd.later": "Plus tard",
     "pwa.later": "Plus tard",
 
     /* "Download our app" — the band above the footer and the footer links. */
@@ -268,6 +287,25 @@ export const commonDict = defineDict({
     "pwa.native.body": "Follow your orders and bookings live, even when the app is closed.",
     "pwa.native.blocked":
       "Notifications are blocked for {name}. Turn them on in Settings › Apps › {name} › Notifications.",
+    /* The installed app's welcome, first launch only (app-launch.tsx). */
+    "applaunch.welcomeTitle": "Welcome to {name}",
+    "applaunch.welcomeBody": "Order and book a table at the best restaurants in Douala.",
+    "applaunch.compareTitle": "Pick a dish, then the restaurant",
+    "applaunch.compareBody": "See who serves it, at what price and in which neighbourhood: the nearest or the cheapest.",
+    "applaunch.trackTitle": "Follow it all live",
+    "applaunch.trackBody": "A notification at every step of your order or booking.",
+    "applaunch.next": "Next",
+    "applaunch.start": "Get started",
+    "applaunch.skip": "Skip",
+    "applaunch.language": "Language",
+
+    /* "A new version is available", installed app only (app-update-prompt.tsx). */
+    "appupd.title": "A new version is available",
+    "appupd.body":
+      "Version {version} of the app is ready. Download it and install it over this one: your account and data are kept.",
+    "appupd.required": "This update is required to keep using the app.",
+    "appupd.action": "Update",
+    "appupd.later": "Later",
     "pwa.later": "Later",
 
     /* "Download our app" — the band above the footer and the footer links. */

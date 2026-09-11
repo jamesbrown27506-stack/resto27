@@ -12,6 +12,8 @@ import { ToastProvider } from "@/components/ui/toast";
 import { CartProvider } from "@/components/cart/cart-provider";
 import { PwaPrompts } from "@/components/notifications/pwa-prompts";
 import { NativePushPrompt } from "@/components/capacitor/native-push-prompt";
+import { AppLaunch } from "@/components/capacitor/app-launch";
+import { AppUpdatePrompt } from "@/components/capacitor/app-update-prompt";
 import { FirebaseInit } from "@/components/firebase/firebase-init";
 import { PushSync } from "@/components/notifications/push-sync";
 import { SkipLink } from "@/components/layout/skip-link";
@@ -249,6 +251,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <PwaPrompts brandName={brand.name} installEnabled={mobileApp.pwaInstall} />
               {/* Its counterpart inside the installed app, where PwaPrompts stands down. */}
               <NativePushPrompt brandName={brand.name} />
+              {/* Installed app only: the opening (welcome or animated mark),
+                  which also takes down Android's launch screen, and the
+                  "new version available" prompt beneath it. */}
+              <AppLaunch brandName={brand.name} />
+              <AppUpdatePrompt required={mobileApp.updateRequired} />
               {/*
                 Push self-repair. Renders nothing; it re-registers the service
                 worker and re-stores this browser's subscription on every app

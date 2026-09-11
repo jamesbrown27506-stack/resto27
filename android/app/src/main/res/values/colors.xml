@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="colorPrimary">#5F7257</color>
+    <!-- The launch screen's ground by day; values-night/colors.xml has the
+         night one. Matches the website's launch screen (app-launch.tsx). -->
+    <color name="splash_background">#FFFFFF</color>
 </resources>

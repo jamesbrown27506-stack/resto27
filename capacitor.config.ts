@@ -21,9 +21,14 @@ const config: CapacitorConfig = {
   },
   plugins: {
     SplashScreen: {
+      // Held until the website's launch screen is on top and calls hide()
+      // (components/capacitor/app-launch.tsx). Six seconds is only the
+      // ceiling, for a page that never loads.
       launchAutoHide: true,
-      launchShowDuration: 1200,
-      // Matches the launch images, which put the logo on white.
+      launchShowDuration: 6000,
+      launchFadeOutDuration: 200,
+      // Android 11 and older only; newer phones draw the launch screen from
+      // res/values(-night)/colors.xml.
       backgroundColor: "#FFFFFF",
       showSpinner: false,
     },

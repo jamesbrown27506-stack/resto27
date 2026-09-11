@@ -1,10 +1,10 @@
 {
   "android": {
     "url": "/downloads/resto237.apk",
-    "versionName": "1.2",
-    "versionCode": 3,
-    "sizeBytes": 9928965,
-    "sha256": "7dac6b12bb95673127cb165d82d36abc7de0dd2dd7adf5e6c9e1cfb60d1befaf",
-    "publishedAt": "2026-09-10"
+    "versionName": "1.3",
+    "versionCode": 4,
+    "sizeBytes": 9929205,
+    "sha256": "a0105b08961fbf6d34ce5074b77d7ff93f3b89357ffbc42ee613508ca359deff",
+    "publishedAt": "2026-09-11"
   }
 }

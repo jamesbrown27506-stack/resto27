@@ -3,6 +3,8 @@
 import { createContext, useCallback, useMemo, useSyncExternalStore } from "react";
 import { LOCALES, type Locale } from "./dictionaries";
 import { rememberLocale } from "./locale-actions";
+import { isNativeApp } from "@/lib/capacitor/platform";
+import { rememberAppLocale } from "@/lib/capacitor/app-prefs";
 
 export const LOCALE_COOKIE = "restolink-locale";
 
@@ -99,6 +101,10 @@ export function LocaleProvider({
       failed write costs one French email rather than a broken toggle.
     */
     void rememberLocale(next);
+
+    // The installed app opens on the plain URL, which is French: it keeps
+    // the choice itself so the next launch opens in it (app-launch.tsx).
+    if (isNativeApp()) void rememberAppLocale(next).catch(() => undefined);
   }, []);
 
   const value = useMemo(() => ({ locale, setLocale }), [locale, setLocale]);

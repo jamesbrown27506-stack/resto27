@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Resto237's dark green, so a phone in dark mode opens on the brand
+         rather than on black, and never flashes white. -->
+    <color name="splash_background">#263622</color>
+</resources>

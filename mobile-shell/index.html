@@ -18,5 +18,10 @@
       <p>The app could not reach the Resto237 service. Check your connection and try again.</p>
       <a href="https://resto237.online">Try again</a>
     </main>
+    <script>
+      // The launch screen is held until a page takes over, and this offline
+      // page is one: without this it would wait out its six-second ceiling.
+      try { window.Capacitor.Plugins.SplashScreen.hide(); } catch (e) {}
+    </script>
   </body>
 </html>
