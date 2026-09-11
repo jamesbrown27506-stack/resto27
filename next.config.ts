@@ -82,9 +82,18 @@ function contentSecurityPolicy(production: boolean): string {
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  /*
+    Every other host sends people to the canonical domain — EXCEPT the cron
+    routes. The scheduler (pg_cron + pg_net, migration 0045) calls
+    /api/cron/* with a bearer secret at whatever host it was scheduled
+    against; following a redirect to another host drops the Authorization
+    header, so every sweep answered 401. That silently stopped order
+    reminders and every other background job from the day this redirect
+    shipped until the exemption.
+  */
   async redirects() {
     return ["www.resto237.online", "resto237.vercel.app", "resto237-emmanuel-legrands-projects.vercel.app"].map(host => ({
-      source: "/:path*", has: [{ type: "host" as const, value: host }], destination: "https://resto237.online/:path*", permanent: true,
+      source: "/:path((?!api/cron/).*)", has: [{ type: "host" as const, value: host }], destination: "https://resto237.online/:path", permanent: true,
     }));
   },
 
