@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -61,12 +61,24 @@ const versionCode = Number(gradle.match(/versionCode\s+(\d+)/)?.[1]);
 if (!versionName || !versionCode) fail("Could not read versionName/versionCode from android/app/build.gradle.");
 
 const apk = readFileSync(built);
-mkdirSync(path.join(root, "public/downloads"), { recursive: true });
-copyFileSync(built, path.join(root, "public/downloads/resto237.apk"));
+/*
+  The version is in the file name. Every copy used to be "resto237.apk", so a
+  phone's Download folder filled with "Resto237 (1)", "(2)"… and people opened
+  an old one. One APK on the site at a time: older versions — and the
+  unversioned name — are removed; /downloads/resto237.apk redirects to this
+  one (next.config.ts).
+*/
+const fileName = `resto237-${versionName}.apk`;
+const downloads = path.join(root, "public/downloads");
+mkdirSync(downloads, { recursive: true });
+for (const file of readdirSync(downloads)) {
+  if (/^resto237.*\.apk$/i.test(file) && file !== fileName) rmSync(path.join(downloads, file));
+}
+copyFileSync(built, path.join(downloads, fileName));
 
 const release = {
   android: {
-    url: "/downloads/resto237.apk",
+    url: `/downloads/${fileName}`,
     versionName,
     versionCode,
     sizeBytes: apk.length,
@@ -77,4 +89,4 @@ const release = {
 writeFileSync(path.join(root, "src/lib/app-release.json"), `${JSON.stringify(release, null, 2)}\n`);
 
 console.log(`\nPublished Resto237 ${versionName} (${versionCode}), ${(apk.length / 1_048_576).toFixed(1)} MB`);
-console.log("Commit public/downloads/resto237.apk and src/lib/app-release.json, then deploy.");
+console.log(`Commit public/downloads/${fileName} (and the removed old APK) with src/lib/app-release.json, then deploy.`);

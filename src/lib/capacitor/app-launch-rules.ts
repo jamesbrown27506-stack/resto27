@@ -25,6 +25,19 @@ export function launchLocaleHref(current: string, target: Locale): string | null
 }
 
 /**
+ * From versionCode 4 (app 1.3) Android holds its launch screen until the
+ * site's launch screen takes over. Older builds hide it on a fixed timer, so
+ * by the time the site is ready the page is already showing — playing the
+ * animated mark then would cover a loaded page and hand it back again.
+ */
+export const SPLASH_HELD_FROM = 4;
+
+export function splashIsHeld(build: string | number | null | undefined): boolean {
+  const code = Number.parseInt(String(build ?? ""), 10);
+  return Number.isFinite(code) && code >= SPLASH_HELD_FROM;
+}
+
+/**
  * True when the installed app is older than the published APK.
  *
  * `installedBuild` is what Capacitor's App.getInfo() reports as `build` — on

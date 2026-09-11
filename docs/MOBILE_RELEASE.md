@@ -141,6 +141,14 @@ optional ("Plus tard") unless an admin turns on **Require the latest app
 version** in /a/settings → Mobile app, which blocks the app until it is
 updated. Keep that for updates that fix something broken.
 
+From 1.4 the update installs from inside the app: the native `AppUpdater`
+plugin downloads `resto237-<version>.apk` into the app's cache with a
+progress bar and opens Android's installer (the first time, Android asks to
+"Allow from this source"). Older builds fall back to a browser download.
+**Google Play forbids self-updating apps:** before a Play submission, remove
+`AppUpdaterPlugin`, its registration in `MainActivity` and the
+`REQUEST_INSTALL_PACKAGES` permission.
+
 The app's opening lives in `components/capacitor/app-launch.tsx`: a welcome
 tour on the very first launch (in the phone's language), then the animated
 mark on every launch after. Android's own launch screen is white by day and

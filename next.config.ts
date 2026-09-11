@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import release from "./src/lib/app-release.json";
 
 /**
  * Every upload is served from the Supabase CDN, and next/image refuses any
@@ -92,9 +93,16 @@ const nextConfig: NextConfig = {
     shipped until the exemption.
   */
   async redirects() {
-    return ["www.resto237.online", "resto237.vercel.app", "resto237-emmanuel-legrands-projects.vercel.app"].map(host => ({
+    const hosts = ["www.resto237.online", "resto237.vercel.app", "resto237-emmanuel-legrands-projects.vercel.app"].map(host => ({
       source: "/:path((?!api/cron/).*)", has: [{ type: "host" as const, value: host }], destination: "https://resto237.online/:path", permanent: true,
     }));
+    // The APK is published under its version (resto237-1.4.apk); the old
+    // unversioned link keeps working and always means "the latest". A
+    // temporary redirect, because its target changes with every release.
+    const latestApk = release.android.url !== "/downloads/resto237.apk"
+      ? [{ source: "/downloads/resto237.apk", destination: release.android.url, permanent: false }]
+      : [];
+    return [...hosts, ...latestApk];
   },
 
   /**
@@ -120,7 +128,9 @@ const nextConfig: NextConfig = {
         source: "/downloads/:file*.apk",
         headers: [
           { key: "Content-Type", value: "application/vnd.android.package-archive" },
-          { key: "Content-Disposition", value: 'attachment; filename="Resto237.apk"' },
+          // No fixed filename: the browser keeps the versioned name from the
+          // URL (resto237-1.4.apk) instead of piling up "Resto237 (1).apk".
+          { key: "Content-Disposition", value: "attachment" },
           { key: "Cache-Control", value: "public, max-age=0, must-revalidate" },
         ],
       },

@@ -28,6 +28,8 @@ import release from "@/lib/app-release.json";
 const android = release.android;
 // Changes with every release so no cache anywhere keeps serving an older build.
 const apkHref = `${android.url}?v=${android.versionCode}`;
+// The versioned name (resto237-1.4.apk), so a download says which version it is.
+const apkFileName = android.url.split("/").pop();
 
 const STORE_BUTTON =
   "soft-press inline-flex min-h-14 items-center gap-3 rounded-xl bg-text px-5 py-2 text-left text-surface transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
@@ -78,7 +80,7 @@ export function AppDownloadBand({ brandName }: { brandName: string }) {
           <p className="mt-3 text-text-secondary">{t("appdl.body")}</p>
 
           <div className="mt-7 flex flex-wrap gap-3">
-            <a href={apkHref} download="Resto237.apk" className={STORE_BUTTON}>
+            <a href={apkHref} download={apkFileName} className={STORE_BUTTON}>
               <AndroidGlyph className="size-7 shrink-0" />
               <StoreLabel kicker={t("appdl.android.kicker")} name="Android" />
             </a>
@@ -131,7 +133,7 @@ export function AppDownloadFooterLinks() {
         {t("appdl.footer")}
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <a href={apkHref} download="Resto237.apk" className={FOOTER_PILL}>
+        <a href={apkHref} download={apkFileName} className={FOOTER_PILL}>
           <AndroidGlyph className="size-4.5" />
           Android
         </a>

@@ -161,6 +161,11 @@ export const commonDict = defineDict({
     "appupd.required": "Cette mise à jour est nécessaire pour continuer à utiliser l'application.",
     "appupd.action": "Mettre à jour",
     "appupd.later": "Plus tard",
+    "appupd.downloading": "Téléchargement de la mise à jour… {percent} %",
+    "appupd.permission":
+      "Autorisez Resto237 à installer des applications (« Autoriser cette source »), puis revenez : l'installation reprend toute seule.",
+    "appupd.failed": "Le téléchargement a échoué. Vérifiez votre connexion et réessayez.",
+    "appupd.retry": "Réessayer",
     "pwa.later": "Plus tard",
 
     /* "Download our app" — the band above the footer and the footer links. */
@@ -306,6 +311,11 @@ export const commonDict = defineDict({
     "appupd.required": "This update is required to keep using the app.",
     "appupd.action": "Update",
     "appupd.later": "Later",
+    "appupd.downloading": "Downloading the update… {percent}%",
+    "appupd.permission":
+      "Allow Resto237 to install apps (\"Allow from this source\"), then come back: the install carries on by itself.",
+    "appupd.failed": "The download failed. Check your connection and try again.",
+    "appupd.retry": "Try again",
     "pwa.later": "Later",
 
     /* "Download our app" — the band above the footer and the footer links. */

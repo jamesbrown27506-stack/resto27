@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { isOutdated, launchLocaleHref, localeFromTag } from "./app-launch-rules";
+import { isOutdated, launchLocaleHref, localeFromTag, splashIsHeld } from "./app-launch-rules";
+
+describe("splashIsHeld", () => {
+  it("is true from app 1.3 (versionCode 4), which holds its launch screen", () => {
+    expect(splashIsHeld("4")).toBe(true);
+    expect(splashIsHeld("5")).toBe(true);
+  });
+
+  it("is false for older builds and anything unreadable", () => {
+    expect(splashIsHeld("3")).toBe(false);
+    expect(splashIsHeld(undefined)).toBe(false);
+    expect(splashIsHeld("web")).toBe(false);
+  });
+});
 
 describe("localeFromTag", () => {
   it("reads the phone's language", () => {

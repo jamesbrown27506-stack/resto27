@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { App } from "@capacitor/app";
 import { SplashScreen } from "@capacitor/splash-screen";
 import { BellRing, Soup } from "lucide-react";
 import { isNativeApp } from "@/lib/capacitor/platform";
 import { hasOnboarded, markOnboarded, rememberAppLocale, savedAppLocale } from "@/lib/capacitor/app-prefs";
-import { launchLocaleHref, localeFromTag } from "@/lib/capacitor/app-launch-rules";
+import { launchLocaleHref, localeFromTag, splashIsHeld } from "@/lib/capacitor/app-launch-rules";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { LOCALES, LOCALE_SHORT, type Locale } from "@/lib/i18n/dictionaries";
 import { cn } from "@/lib/utils";
@@ -73,7 +74,11 @@ export function AppLaunch({ brandName }: { brandName: string }) {
     }
 
     void (async () => {
-      const [onboarded, saved] = await Promise.all([hasOnboarded(), savedAppLocale()]);
+      const [onboarded, saved, info] = await Promise.all([
+        hasOnboarded(),
+        savedAppLocale(),
+        App.getInfo().catch(() => null),
+      ]);
       const target = saved ?? localeFromTag(navigator.language);
       if (!saved) await rememberAppLocale(target);
 
@@ -85,6 +90,19 @@ export function AppLaunch({ brandName }: { brandName: string }) {
           return;
         }
         router.refresh();
+      }
+
+      // Builds before 1.3 hid Android's launch screen on a timer, so the page
+      // is already showing: the mark would only cover it and hand it back.
+      // They still get the welcome — it is content, not a transition.
+      if (onboarded && !splashIsHeld(info?.build)) {
+        try {
+          sessionStorage.setItem(LAUNCHED_KEY, "1");
+        } catch {
+          // Storage unavailable — this check simply runs again next load.
+        }
+        hideSplash();
+        return;
       }
 
       setDark(document.documentElement.getAttribute("data-theme") === "dark");
