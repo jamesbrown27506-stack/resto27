@@ -1,5 +1,7 @@
 import type { MetadataRoute } from "next";
-import { fetchDiscoveryCatalog } from "@/lib/data/discovery";
+import { fetchDiscoveryCatalog, groupRestaurantCount } from "@/lib/data/discovery";
+import { fetchGuideCatalog } from "@/lib/data/guides";
+import { isDiscoveryIndexable } from "@/lib/discovery-content";
 import { absolutePublicUrl, dishPath } from "@/lib/seo-config";
 export const dynamic = "force-dynamic";
 
@@ -23,9 +25,14 @@ export const dynamic = "force-dynamic";
  *    · a restaurant page-> the newest updated_at across its dishes, because a
  *                          menu edit is what actually changes that page
  *    · a group page     -> the newest updated_at among the dishes behind it
+ *    · a guide page     -> the newest updated_at among its restaurants' dishes
  *    · /privacy, /terms, /pricing, /contact, /, /restaurants, /explore
  *                       -> nothing. Their content changes on deploy, and we
  *                          have no per-page record of when that last was.
+ *
+ *  Only pages that pass their quality gate are listed: a discovery page with
+ *  one restaurant and no written copy, or a guide with fewer than two
+ *  matches, is `noindex` — listing it here would contradict the page.
  * ─────────────────────────────────────────────────────────────────────────
  */
 function newest(dates: (string | null | undefined)[]): Date | undefined {
@@ -37,7 +44,8 @@ function newest(dates: (string | null | undefined)[]): Date | undefined {
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const { restaurants, dishes, groups } = await fetchDiscoveryCatalog();
+  const [catalog, { guides }] = await Promise.all([fetchDiscoveryCatalog(), fetchGuideCatalog()]);
+  const { restaurants, dishes, groups } = catalog;
 
   const dishesByRestaurant = new Map<string, string[]>();
   for (const dish of dishes) {
@@ -87,10 +95,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: newest([d.updated_at]),
     })),
 
-    ...groups.map(g => ({
-      path: "/explore/" + g.kind + "/" + g.slug,
-      lastModified: newest(groupDates.get(g.kind + ":" + g.name) ?? []),
-    })),
+    ...groups
+      .filter(g => isDiscoveryIndexable(g.kind, g.slug, groupRestaurantCount(catalog, g)))
+      .map(g => ({
+        path: "/explore/" + g.kind + "/" + g.slug,
+        lastModified: newest(groupDates.get(g.kind + ":" + g.name) ?? []),
+      })),
+
+    ...guides
+      .filter(g => g.indexable)
+      .map(g => ({
+        path: "/explore/guide/" + g.slug,
+        lastModified: newest(g.restaurants.flatMap(r => dishesByRestaurant.get(r.slug) ?? [])),
+      })),
   ];
 
   // De-duplicate by path, keeping the first occurrence — the same behaviour

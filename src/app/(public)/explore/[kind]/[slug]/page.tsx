@@ -2,7 +2,8 @@ import Link from "@/components/layout/public-link";
 import Image from "next/image";
 import { notFound } from "next/navigation";
 import { fetchDiscoveryCatalog } from "@/lib/data/discovery";
-import { publicMetadata, jsonLdString } from "@/lib/seo";
+import { faqJsonLd, publicMetadata, jsonLdString } from "@/lib/seo";
+import { Faq } from "@/components/marketing/faq";
 import { absolutePublicUrl, discoverySlug, dishPath } from "@/lib/seo-config";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { ChevronDown, CircleHelp, MapPin, Soup } from "lucide-react";
@@ -10,9 +11,11 @@ import { RestaurantCard } from "@/components/restaurant/restaurant-card";
 import { RestaurantLogo } from "@/components/restaurant/restaurant-logo";
 import { OpenBadge } from "@/components/restaurant/open-badge";
 import { formatMoney } from "@/lib/format/currency";
-import { discoveryAvailability, discoveryIntro } from "@/lib/discovery-content";
+import { cuisineTitle, discoveryAvailability, discoveryFaq, discoveryIntro, isDiscoveryIndexable } from "@/lib/discovery-content";
 import { formatQuartier } from "@/lib/geo-cm";
 import { breadcrumbJsonLd } from "@/lib/breadcrumbs";
+import { fetchGuideCatalog } from "@/lib/data/guides";
+import { guideTitle } from "@/lib/seo-guides";
 
 type Props = { params: Promise<{ kind: string; slug: string }> };
 async function content(params: Props["params"]) {
@@ -23,11 +26,19 @@ async function content(params: Props["params"]) {
   const fr = await getLocale() === "fr";
   const displayName = kind === "neighbourhood" ? formatQuartier(group.name) : group.name;
   const title = kind === "neighbourhood" ? `${fr ? "Restaurants à" : "Restaurants in"} ${displayName}, Douala`
+    : kind === "cuisine" ? cuisineTitle(slug, displayName, fr)
     : `${displayName} ${fr ? "à" : "in"} Douala`;
+  // The <title> adds what the searcher came for; the H1 stays the name of the
+  // place or dish. "ndolé douala" results are TikToks and a 2015 blog post —
+  // none says where to order it or what it costs, which is what this page does.
+  const sep = fr ? " : " : ": ";
+  const metaTitle = kind === "food" ? title + sep + (fr ? "restaurants et prix" : "restaurants and prices")
+    : kind === "neighbourhood" ? title + sep + (fr ? "menus et prix" : "menus and prices")
+    : title;
   const dishes = catalog.dishes.filter(d => discoverySlug(d.name) === slug);
   const restaurants = catalog.restaurants.filter(r => kind === "neighbourhood" ? discoverySlug(r.quartier) === slug
     : kind === "cuisine" ? discoverySlug(r.cuisine) === slug : dishes.some(d => d.restaurant.id === r.id));
-  return { group, title, displayName, dishes, restaurants, fr, path: `/explore/${kind}/${slug}` };
+  return { group, title, metaTitle, displayName, dishes, restaurants, fr, path: `/explore/${kind}/${slug}` };
 }
 
 /**
@@ -48,11 +59,29 @@ function metaDescription(count: number, title: string, fr: boolean): string {
 
 export async function generateMetadata({ params }: Props) {
   const c = await content(params);
-  return publicMetadata(c.path, c.title, metaDescription(c.restaurants.length, c.title, c.fr));
+  return publicMetadata(c.path, c.metaTitle, metaDescription(c.restaurants.length, c.title, c.fr), undefined, {
+    index: isDiscoveryIndexable(c.group.kind, c.group.slug, c.restaurants.length),
+  });
 }
 
 export default async function DiscoveryPage({ params }: Props) {
   const c = await content(params);
+  const { guides } = await fetchGuideCatalog();
+  // The intent pages for this quartier ("pas chers", "livraison"…), or the
+  // city-wide ones on a dish or cuisine page. Indexable only: a link to a
+  // noindex page spends a crawl on a page Google is told to drop.
+  const quartierGuides = c.group.kind === "neighbourhood" ? guides.filter(g => g.indexable && g.place.slug === c.group.slug) : [];
+  const guideLinks = (quartierGuides.length ? quartierGuides : guides.filter(g => g.indexable && g.place.kind === "city")).slice(0, 6);
+  // "ou manger le ndole a douala", "où manger à bonamoussadi" — answered from
+  // the listings below (see `discoveryFaq`).
+  const faq = discoveryFaq({
+    kind: c.group.kind,
+    name: c.displayName,
+    fr: c.fr,
+    restaurants: c.restaurants.map(r => ({ name: r.name, quartier: formatQuartier(r.quartier), acceptsDelivery: r.acceptsDelivery, minPrice: r.priceRange?.min ?? null })),
+    dishOffers: c.dishes.map(d => ({ restaurant: d.restaurant.name, quartier: formatQuartier(d.restaurant.quartier), price: Number(d.price) })),
+    money: amount => formatMoney(amount),
+  });
   const links = c.group.kind === "food" ? c.dishes.map(d => ({ name: d.name + " — " + d.restaurant.name, path: dishPath(d.restaurant.slug, d) }))
     : c.restaurants.map(r => ({ name: r.name, path: `/restaurants/${r.slug}` }));
 
@@ -80,6 +109,7 @@ export default async function DiscoveryPage({ params }: Props) {
       { name: c.fr ? "Explorer" : "Explore", path: "/explore" },
       { name: c.title, path: c.path },
     ], c.fr ? "fr" : "en")) }} />
+    {faq.length > 0 && <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(faqJsonLd(faq)) }} />}
     <Link href="/explore" className="text-sm text-primary">← {c.fr ? "Explorer les plats et quartiers" : "Explore food and neighbourhoods"}</Link>
     <h1 className="font-display text-3xl font-bold">{c.title}</h1>
 
@@ -153,5 +183,15 @@ export default async function DiscoveryPage({ params }: Props) {
     </Link>)}</div>}
     <h2 className="text-xl font-semibold">{c.fr ? "Restaurants" : "Restaurants"} ({c.restaurants.length})</h2>
     <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">{c.restaurants.map(r => <RestaurantCard key={r.id} restaurant={r} />)}</div>
+    {faq.length > 0 && <section aria-labelledby="discovery-faq" className="max-w-3xl">
+      <h2 id="discovery-faq" className="mb-4 font-display text-2xl font-bold">{c.fr ? "Questions fréquentes" : "Frequently asked questions"}</h2>
+      <Faq items={faq} />
+    </section>}
+    {guideLinks.length > 0 && <nav aria-labelledby="discovery-guides" className="border-t border-border pt-6">
+      <h2 id="discovery-guides" className="text-lg font-semibold">{c.fr ? "Guides pratiques" : "Handy guides"}</h2>
+      <ul className="mt-3 flex flex-wrap gap-2.5">{guideLinks.map(g => <li key={g.slug}>
+        <Link href={`/explore/guide/${g.slug}`} className="inline-flex rounded-full border border-border bg-surface px-4 py-2 text-sm font-semibold transition-colors hover:border-primary hover:text-primary">{guideTitle(g, c.fr)}</Link>
+      </li>)}</ul>
+    </nav>}
   </main>;
 }

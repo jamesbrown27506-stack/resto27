@@ -1,5 +1,6 @@
 import { PUBLIC_SITE_URL } from "@/lib/seo-config";
-import { publicMetadata } from "@/lib/seo";
+import { faqJsonLd, jsonLdString, publicMetadata } from "@/lib/seo";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import { HomeContent } from "./home-content";
@@ -51,6 +52,12 @@ const baseMetadata: Metadata = {
  * plain text in the footer only, which meant the NAP had to be scraped rather
  * than read.
  */
+/** "Resto237" → ["Resto 237", "resto237.online"]: the other ways the name is written. */
+function alternateNames(name: string): string[] {
+  const spaced = name.replace(/([a-z])(\d)/i, "$1 $2");
+  return [...new Set([spaced, new URL(PUBLIC_SITE_URL).hostname])].filter((alt) => alt !== name);
+}
+
 function jsonLd(
   brand: { name: string; logoUrl: string | null; supportPhone: string | null; supportEmail: string },
   socialUrls: string[],
@@ -64,6 +71,13 @@ function jsonLd(
         "@id": PUBLIC_SITE_URL + "/#website",
         url: PUBLIC_SITE_URL + "/",
         name: brand.name,
+        /*
+          The site does not rank for its own name: "resto237" is shared with a
+          restaurant's Facebook handle and two unrelated apps. The spellings
+          people use for this site ("Resto 237", the bare domain) tell Google
+          which of them all belong to this one.
+        */
+        alternateName: alternateNames(brand.name),
         inLanguage: ["fr-CM", "en-CM"],
         publisher: { "@id": PUBLIC_SITE_URL + "/#organization" },
         potentialAction: {
@@ -79,6 +93,7 @@ function jsonLd(
         "@type": "Organization",
         "@id": PUBLIC_SITE_URL + "/#organization",
         name: brand.name,
+        alternateName: alternateNames(brand.name),
         url: PUBLIC_SITE_URL + "/",
         // Omitted rather than sent empty when no logo is set: a blank `logo`
         // is a schema validation error, an absent one is simply silence.
@@ -125,6 +140,12 @@ export default async function HomePage() {
     ]);
   const [socialLinks, t] = await Promise.all([getSocialLinks(), getTranslator()]);
   const JSON_LD = jsonLd(brand, socialLinks.map(link => link.url), t("mk.about.subtitle"));
+  // The same six questions the FAQ section shows (home-content.tsx), marked up
+  // so search and answer engines can tell which sentence answers which.
+  const faq = [1, 2, 3, 4, 5, 6].map(n => ({
+    question: t(`home.faq.q${n}` as TranslationKey),
+    answer: t(`home.faq.a${n}` as TranslationKey),
+  }));
   /*
     Which of the four figures this platform is willing to advertise. Resolved
     on the server and handed down, because the hero renders three of the same
@@ -141,6 +162,7 @@ export default async function HomePage() {
         // from ever closing this tag.
         dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD).replace(/</g, "\\u003c") }}
       />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(faqJsonLd(faq)) }} />
       <HomeContent
         plans={plans}
         restaurants={restaurants}

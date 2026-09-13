@@ -1,6 +1,8 @@
 import Link from "@/components/layout/public-link";
-import { ArrowRight, MapPin, Soup, UtensilsCrossed } from "lucide-react";
+import { ArrowRight, Compass, MapPin, Soup, UtensilsCrossed } from "lucide-react";
 import { fetchDiscoveryCatalog } from "@/lib/data/discovery";
+import { fetchGuideCatalog } from "@/lib/data/guides";
+import { guideTitle } from "@/lib/seo-guides";
 import { jsonLdString, publicMetadata } from "@/lib/seo";
 import { absolutePublicUrl } from "@/lib/seo-config";
 import { breadcrumbJsonLd } from "@/lib/breadcrumbs";
@@ -19,11 +21,14 @@ export async function generateMetadata() {
 }
 
 export default async function ExplorePage() {
-  const [{ groups, restaurants, dishes }, locale] = await Promise.all([
+  const [{ groups, restaurants, dishes }, locale, { guides }] = await Promise.all([
     fetchDiscoveryCatalog(),
     getLocale(),
+    fetchGuideCatalog(),
   ]);
   const fr = locale === "fr";
+  // Douala-wide intent pages that pass their quality gate.
+  const cityGuides = guides.filter((guide) => guide.indexable && guide.place.kind === "city");
 
   const neighbourhoods = groups
     .filter((group) => group.kind === "neighbourhood")
@@ -122,7 +127,7 @@ export default async function ExplorePage() {
                   <span>
                     <span className="block font-display text-xl font-bold">{food.name}</span>
                     <span className="mt-1 block text-xs text-white/70">
-                      {food.count} {fr ? "option(s)" : "option(s)"}
+                      {food.count} {food.count > 1 ? "options" : "option"}
                     </span>
                   </span>
                   <ArrowRight className="size-5 transition-transform group-hover:translate-x-1" aria-hidden />
@@ -131,6 +136,34 @@ export default async function ExplorePage() {
             ))}
           </div>
         </section>
+
+        {cityGuides.length > 0 && (
+          <section aria-labelledby="explore-guides">
+            <span className="grid size-10 place-items-center rounded-md bg-primary-light text-primary">
+              <Compass className="size-5" aria-hidden />
+            </span>
+            <h2 id="explore-guides" className="mt-3 font-display text-2xl font-bold sm:text-3xl">
+              {fr ? "Selon ce que vous cherchez" : "By what you are after"}
+            </h2>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {cityGuides.map((guide) => (
+                <Link
+                  key={guide.slug}
+                  href={`/explore/guide/${guide.slug}`}
+                  className="group flex min-h-16 items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3 transition-colors hover:border-primary"
+                >
+                  <span>
+                    <span className="block font-semibold">{guideTitle(guide, fr)}</span>
+                    <span className="text-sm text-text-light">
+                      {guide.restaurants.length} {guide.restaurants.length > 1 ? "restaurants" : "restaurant"}
+                    </span>
+                  </span>
+                  <ArrowRight className="size-4 shrink-0 text-primary transition-transform group-hover:translate-x-1" aria-hidden />
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
 
         <div className="grid gap-12 lg:grid-cols-2 lg:gap-16">
           <section aria-labelledby="explore-neighbourhood">
@@ -149,7 +182,7 @@ export default async function ExplorePage() {
                 >
                   <span className="font-semibold">{group.name}</span>
                   <span className="text-sm text-text-light">
-                    {group.count} {fr ? "restaurant(s)" : "restaurant(s)"}
+                    {group.count} {group.count > 1 ? "restaurants" : "restaurant"}
                   </span>
                 </Link>
               ))}

@@ -100,6 +100,38 @@ const DISHES: Record<string, Copy> = {
     fr: "Riz sauce tomate — rice and stew côté anglophone — est le repas de tous les jours. Du riz blanc, une sauce tomate longuement réduite avec de l'oignon, de l'ail et du poivron, et une protéine au choix : poulet, bœuf, poisson ou œuf. Rien d'ostentatoire, et c'est justement l'intérêt : c'est le plat que l'on commande quand on veut manger correctement, vite et sans se ruiner. Chaque cuisine a sa sauce, plus ou moins relevée, plus ou moins riche. C'est aussi le repas le plus livré à Douala.",
     en: "Riz sauce tomate — rice and stew on the anglophone side — is the everyday meal. White rice, a tomato sauce reduced at length with onion, garlic and pepper, and a protein of your choosing: chicken, beef, fish or egg. Nothing showy, which is exactly the point: it is what you order when you want to eat properly, quickly and without spending much. Every kitchen has its own stew, more or less spiced, more or less rich. It is also the most delivered meal in Douala.",
   },
+  /*
+    Dishes Cameroon searches most (Google autocomplete, September 2026) that
+    no restaurant lists yet — ready for the day one does.
+  */
+  okok: {
+    fr: "L'okok est un plat du Centre et du Sud, cher aux Beti. Ses feuilles — les mêmes que celles de l'eru, émincées très finement — mijotent longuement avec de la pâte d'arachide. Il existe en deux versions : l'okok sucré, adouci au sucre, et l'okok salé, relevé à l'huile de palme. Il se mange avec des bâtons de manioc (bobolo) ou du manioc bouilli. Nourrissant et parfumé, c'est un plat de famille que l'on retrouve de plus en plus sur les cartes de Douala.",
+    en: "Okok is a dish of the Centre and South, dear to the Beti. Its leaves — the same as eru's, shredded very fine — simmer at length with groundnut paste. It comes in two versions: sweet okok, softened with sugar, and salted okok, lifted with palm oil. It is eaten with cassava sticks (bobolo) or boiled cassava. Filling and fragrant, it is a family dish that turns up more and more on Douala menus.",
+  },
+  "pepper-soup": {
+    fr: "La pepper soup est un bouillon très relevé, cuit avec de la viande de chèvre, du poulet ou du poisson et un mélange d'épices locales qui lui donne sa chaleur et son parfum. Venue des régions anglophones, elle est aujourd'hui partout à Douala, souvent servie le soir dans les bars et les restaurants de quartier. Elle se boit brûlante, parfois avec du plantain ou du riz, et passe pour le meilleur remède à une longue nuit.",
+    en: "Pepper soup is a fiercely spiced broth cooked with goat, chicken or fish and a blend of local spices that gives it its heat and scent. It came from the anglophone regions and is now all over Douala, usually served in the evening in bars and neighbourhood restaurants. It is drunk scalding hot, sometimes with plantain or rice, and is held to be the best cure for a long night.",
+  },
+  "taro-sauce-jaune": {
+    fr: "Le taro sauce jaune est le plat de fête de l'Ouest camerounais. Le taro est pilé jusqu'à former une pâte lisse, servie avec une sauce jaune à l'huile de palme émulsionnée au sel gemme (kanwa) et parfumée d'épices du terroir, où cuisent viande, tripes ou poisson fumé. On le mange avec les doigts, en trempant la pâte dans la sauce. Proche de l'achu du Nord-Ouest, il demande du savoir-faire, et peu de cuisines le proposent tous les jours.",
+    en: "Taro with yellow sauce is the celebration dish of western Cameroon. Taro is pounded into a smooth paste and served with a yellow sauce of palm oil emulsified with rock salt (kanwa) and scented with local spices, with meat, tripe or smoked fish cooked in it. It is eaten with the fingers, dipping the paste in the sauce. Close to the North-West's achu, it takes skill, and few kitchens offer it every day.",
+  },
+  "poulet-braise": {
+    fr: "Le poulet braisé est un classique des soirées doualaises : un poulet entier ou un demi-poulet, mariné à l'ail, au gingembre et aux épices, puis grillé lentement au charbon jusqu'à ce que la peau dore. Il se sert avec des plantains, des frites ou des bâtons de manioc, et avec le piment que l'on dose soi-même. On le commande à la pièce, souvent en fin de journée, pour manger sur place ou emporter.",
+    en: "Braised chicken is a classic of the Douala evening: a whole or half chicken, marinated in garlic, ginger and spices, then grilled slowly over charcoal until the skin browns. It comes with plantains, fries or cassava sticks, and with piment you dose yourself. It is ordered by the piece, usually late in the day, to eat on the spot or take away.",
+  },
+  "porc-braise": {
+    fr: "Le porc braisé est l'une des spécialités de braise les plus demandées à Douala. Côtes et morceaux de porc sont marinés aux épices, à l'ail et au piment, puis grillés au charbon jusqu'à être croustillants dehors et fondants dedans. Il se mange avec des plantains, des miondos ou des frites, et une bonne dose de piment. C'est un plat du soir, qui se partage à plusieurs.",
+    en: "Braised pork is one of the most requested charcoal specialities in Douala. Ribs and cuts of pork are marinated in spices, garlic and chilli, then grilled over charcoal until crisp outside and tender within. It is eaten with plantains, miondo or fries and a generous dose of piment. It is evening food, meant for sharing.",
+  },
+  chawarma: {
+    fr: "Le chawarma — ou shawarma — est venu du Liban et s'est installé partout à Douala et à Yaoundé. De la viande ou du poulet grillés à la broche, émincés et roulés dans un pain fin avec des crudités, des frites et une sauce à l'ail. Rapide, copieux et bon marché, c'est l'un des repas les plus commandés le soir, sur le pouce ou en livraison. Les restaurants ci-dessous affichent leurs prix et leurs garnitures.",
+    en: "Chawarma — or shawarma — came from Lebanon and has settled all over Douala and Yaoundé. Spit-grilled meat or chicken, sliced and rolled in thin bread with raw vegetables, fries and a garlic sauce. Quick, filling and cheap, it is one of the most ordered evening meals, eaten on the go or delivered. The restaurants below show their prices and fillings.",
+  },
+  "mets-de-pistache": {
+    fr: "Le mets de pistache se prépare avec les graines de courge que l'on appelle « pistache » au Cameroun. Moulues, mélangées à du poisson fumé, des crevettes séchées et des épices, elles sont enveloppées dans des feuilles et cuites longuement à la vapeur. Il en sort un gâteau ferme et parfumé, que l'on mange avec du plantain ou du bobolo. C'est un plat de fête, long à préparer, que l'on commande volontiers plutôt que de le faire soi-même.",
+    en: "Mets de pistache is made from the squash seeds Cameroonians call \"pistache\". Ground and mixed with smoked fish, dried shrimp and spices, they are wrapped in leaves and steamed at length. What comes out is a firm, fragrant cake, eaten with plantain or bobolo. It is a festive dish, slow to make, that people are happy to order rather than cook themselves.",
+  },
 };
 
 /**
@@ -150,6 +182,32 @@ const QUARTIERS: Record<string, Copy> = {
     fr: "Bonabéri se trouve sur l'autre rive du Wouri, relié au reste de Douala par le pont. À la fois industriel et résidentiel, le quartier fonctionne de manière assez autonome, avec ses propres marchés et ses propres adresses. La restauration y est locale et tournée vers les habitants du secteur. La traversée du pont conditionne les délais de livraison depuis le centre-ville, ce qui explique que l'offre y soit surtout de proximité.",
     en: "Bonabéri sits on the far bank of the Wouri, joined to the rest of Douala by the bridge. Both industrial and residential, it runs fairly self-sufficiently, with its own markets and its own addresses. The food is local and aimed at the people who live there. Crossing the bridge governs delivery times from the city centre, which is why the offering here is mostly close at hand.",
   },
+  /*
+    The five below are quartiers people search ("restaurant bali douala",
+    "restaurant kotto", "poisson youpwé") where the marketplace has no
+    restaurant yet — written now so their page opens with real copy the day
+    one signs up.
+  */
+  bali: {
+    fr: "Bali est un quartier central de Douala, voisin d'Akwa et tout proche du centre des affaires. Résidentiel et commerçant à la fois, il mêle habitations anciennes, bureaux et petits commerces, et vit au rythme de la journée de travail. La restauration y est de proximité : cuisine camerounaise du quotidien à midi, grillades et poisson braisé le soir, et quelques tables installées de longue date. Sa position centrale en fait un point de livraison facile depuis Akwa et Bonanjo.",
+    en: "Bali is a central quarter of Douala, next to Akwa and close to the business district. Residential and commercial at once, it mixes older housing, offices and small shops, and runs to the rhythm of the working day. The food is local: everyday Cameroonian cooking at lunch, grills and braised fish in the evening, and a few long-established tables. Its central position makes it an easy delivery point from Akwa and Bonanjo.",
+  },
+  kotto: {
+    fr: "Kotto est un quartier résidentiel du nord-est de Douala, voisin de Bonamoussadi et de Makepe. Lotissements et rues calmes y dominent, avec une population de familles et d'actifs qui travaillent en ville. La vie se concentre autour des carrefours et des axes principaux, où l'on trouve snacks, restaurants de quartier et grillades du soir. C'est un secteur où la livraison à domicile a tout son sens : on commande volontiers depuis chez soi plutôt que de redescendre vers le centre.",
+    en: "Kotto is a residential quarter in north-eastern Douala, next to Bonamoussadi and Makepe. Housing estates and quiet streets dominate, home to families and people who work in town. Life gathers around the junctions and main roads, where you find snack spots, neighbourhood restaurants and evening grills. It is an area where home delivery makes every sense: people order from home rather than head back towards the centre.",
+  },
+  logpom: {
+    fr: "Logpom est un quartier résidentiel du nord de Douala, entre Bonamoussadi et Ndogbong, qui a beaucoup grandi ces dernières années. Maisons individuelles, petits immeubles et commerces de proximité s'y côtoient. On y mange surtout la cuisine camerounaise du quotidien, servie dans des restaurants de quartier, et des grillades qui s'animent le soir. Sa proximité avec Bonamoussadi et Makepe place Logpom dans l'une des zones de livraison les plus denses de la ville.",
+    en: "Logpom is a residential quarter in northern Douala, between Bonamoussadi and Ndogbong, that has grown fast in recent years. Houses, small apartment blocks and local shops sit side by side. What you mostly eat here is everyday Cameroonian cooking in neighbourhood restaurants, and grills that come alive in the evening. Its closeness to Bonamoussadi and Makepe puts Logpom in one of the city's densest delivery areas.",
+  },
+  logbessou: {
+    fr: "Logbessou prolonge le nord de Douala au-delà de Logpom et de Bonamoussadi. C'est un secteur en pleine expansion, où les nouveaux lotissements attirent des familles et où les commerces s'installent au fil des constructions. L'offre de restauration y est surtout de proximité — snacks, restaurants de quartier, grillades du soir — et la livraison depuis les quartiers voisins y joue un grand rôle. Les délais dépendent de la distance au centre-ville.",
+    en: "Logbessou extends northern Douala beyond Logpom and Bonamoussadi. It is a fast-growing area, where new housing estates draw families and shops open as the building goes on. The food is mostly local — snack spots, neighbourhood restaurants, evening grills — and delivery from the neighbouring quarters matters a great deal. Delivery times depend on the distance from the city centre.",
+  },
+  youpwe: {
+    fr: "Youpwé est le port de pêche de Douala, au bord de l'estuaire du Wouri. Les pirogues y débarquent le poisson chaque jour, et son marché est l'un des plus réputés de la ville pour le poisson frais et les crevettes. La restauration suit : poisson braisé, bars et machoirons grillés, sauces de poisson, servis au plus près de l'eau. On vient à Youpwé pour manger le poisson du jour, souvent le soir et en groupe.",
+    en: "Youpwé is Douala's fishing port, on the Wouri estuary. Pirogues land fish there every day, and its market is one of the city's best known for fresh fish and prawns. The food follows: braised fish, grilled sea bass and catfish, fish sauces, served close to the water. People come to Youpwé to eat the day's catch, usually in the evening and in a group.",
+  },
 };
 
 /** Cuisines, keyed by `discoverySlug(name)`. */
@@ -162,13 +220,187 @@ const CUISINES: Record<string, Copy> = {
     fr: "La pâtisserie à Douala mêle héritage français et goûts locaux. On y trouve viennoiseries, gâteaux de fête et entremets à côté de préparations à la banane plantain, à la noix de coco ou à l'arachide. Les pâtisseries de la ville travaillent beaucoup sur commande — anniversaires, mariages, baptêmes — et proposent en parallèle une offre de salon de thé. C'est un segment concentré dans les quartiers les plus aisés, où la clientèle est la plus régulière.",
     en: "Patisserie in Douala mixes a French inheritance with local tastes. Viennoiseries, celebration cakes and entremets sit alongside preparations built on plantain, coconut or groundnut. The city's patisseries work substantially to order — birthdays, weddings, christenings — and run a tea-room trade alongside. It is a segment concentrated in the wealthier quarters, where the custom is most regular.",
   },
+  /*
+    The cuisine pages below share a word with a dish page ("Grillades" is both
+    a restaurant's cuisine and a dish name), so their copy is written about
+    the KIND OF RESTAURANT, never the dish — two pages saying the same thing
+    would compete for the same search and both lose.
+  */
+  grillades: {
+    fr: "Les restaurants de grillades sont les adresses du soir à Douala : on y vient pour la braise, et la carte tourne autour d'elle. Poulet, porc, soya de bœuf, poisson entier et brochettes y sont grillés à la commande, puis servis avec plantains braisés, bâtons de manioc, frites de plantain et piment. Beaucoup de ces établissements ouvrent en fin d'après-midi et servent jusqu'à tard, en salle ou en terrasse. Ce qui les distingue les uns des autres, c'est la marinade et la cuisson — les fiches ci-dessous donnent les prix de chaque pièce.",
+    en: "Grill restaurants are Douala's evening addresses: people come for the coals, and the menu is built around them. Chicken, pork, beef soya, whole fish and brochettes are grilled to order and served with braised plantains, cassava sticks, plantain fries and piment. Many of these places open late in the afternoon and serve until late, inside or on a terrace. What sets one apart from another is the marinade and the cooking — the listings below give the price of every cut.",
+  },
+  poisson: {
+    fr: "Douala est une ville portuaire, et ses restaurants de poisson le montrent. Bar, maquereau, sole, capitaine ou machoiron y sont braisés au charbon, frits, ou cuits dans une sauce — mbongo, sauce jaune, sauce tomate au poisson fumé. Les crevettes et les écrevisses complètent souvent la carte. On les accompagne de miondos, de bobolo, de plantains ou de frites de plantain, et presque toujours de piment. Les poissons se vendent souvent à la pièce, selon la taille : les fiches ci-dessous affichent les prix pratiqués.",
+    en: "Douala is a port city, and its fish restaurants show it. Sea bass, mackerel, sole, threadfin or catfish are grilled over charcoal, fried, or cooked in a sauce — mbongo, yellow sauce, tomato sauce with smoked fish. Prawns and crayfish often round out the menu. They come with miondo, bobolo, plantains or plantain fries, and nearly always with piment. Fish is often sold by the piece according to size: the listings below show the prices charged.",
+  },
+  continentale: {
+    fr: "La cuisine continentale désigne, au Cameroun, les plats venus d'Europe et d'ailleurs : viandes grillées sauce poivre ou champignons, poulet rôti, pâtes, salades composées, burgers, frites maison. À Douala, ces cartes côtoient souvent quelques classiques camerounais, pour les tables où chacun commande différemment. C'est la cuisine des déjeuners d'affaires et des dîners en famille, servie à table dans un cadre plus formel. Les restaurants ci-dessous affichent leurs menus et leurs prix.",
+    en: "In Cameroon, continental cooking means dishes from Europe and elsewhere: grilled meats with pepper or mushroom sauce, roast chicken, pasta, composed salads, burgers, home-cut fries. In Douala these menus often sit alongside a few Cameroonian classics, for tables where everyone orders something different. It is the food of business lunches and family dinners, served at the table in a more formal setting. The restaurants below show their menus and prices.",
+  },
+  "fast-food": {
+    fr: "Le fast-food à Douala va bien au-delà du burger : chawarmas, sandwichs, pizzas, poulet frit, frites de plantain et de pomme de terre, et des formules rapides à base de riz. C'est la restauration des pauses de midi, des soirées et des commandes à la maison, avec des prix plus bas que dans un restaurant à table et des délais courts. La plupart des adresses ci-dessous livrent ; comparez leurs menus, leurs prix et leurs horaires avant de commander.",
+    en: "Fast food in Douala goes well beyond the burger: shawarmas, sandwiches, pizza, fried chicken, plantain and potato fries, and quick rice plates. It is the food of lunch breaks, evenings and orders at home, at lower prices than a sit-down restaurant and with short waits. Most of the places below deliver; compare their menus, prices and hours before you order.",
+  },
 };
+
+/**
+ * Titles for cuisine pages. The generic "{name} à Douala" produced
+ * "Camerounaise à Douala" — an adjective with no noun, and not what anyone
+ * types. People search "restaurant camerounais douala", "pâtisserie douala".
+ */
+const CUISINE_TITLES: Record<string, Copy> = {
+  camerounaise: { fr: "Restaurants camerounais à Douala", en: "Cameroonian restaurants in Douala" },
+  patisserie: { fr: "Pâtisseries à Douala", en: "Patisseries in Douala" },
+  grillades: { fr: "Restaurants de grillades à Douala", en: "Grill restaurants in Douala" },
+  poisson: { fr: "Restaurants de poisson à Douala", en: "Fish restaurants in Douala" },
+  continentale: { fr: "Restaurants de cuisine continentale à Douala", en: "Continental restaurants in Douala" },
+  "fast-food": { fr: "Fast-food à Douala", en: "Fast food in Douala" },
+};
+
+export function cuisineTitle(slug: string, name: string, fr: boolean): string {
+  const title = CUISINE_TITLES[slug];
+  return title ? (fr ? title.fr : title.en) : `${name} ${fr ? "à" : "in"} Douala`;
+}
 
 const BY_KIND: Record<string, Record<string, Copy>> = {
   food: DISHES,
   neighbourhood: QUARTIERS,
   cuisine: CUISINES,
 };
+
+/**
+ * Spellings that reach the database but are keyed differently above.
+ *
+ * Quartier names are typed by restaurants at signup, so the same place can
+ * arrive spelled two ways: the seed says "Ndokotti", the copy was written
+ * for "Ndokoti", and the page fell back to the generic sentence.
+ */
+const ALIASES: Record<string, string> = {
+  ndokotti: "ndokoti",
+  "bonaberi-douala": "bonaberi",
+  "akwa-nord": "akwa",
+  shawarma: "chawarma",
+  "okok-sucre": "okok",
+  "okok-sale": "okok",
+};
+
+function copyFor(kind: string, slug: string): Copy | undefined {
+  const entries = BY_KIND[kind];
+  return entries?.[slug] ?? entries?.[ALIASES[slug] ?? ""];
+}
+
+/**
+ * Whether a discovery page has real, written copy rather than the composed
+ * fallback. A page with one restaurant and no copy is thin; the sitemap and
+ * the robots tag use this to keep such pages out of the index until there is
+ * something to say.
+ */
+export function hasEditorialCopy(kind: string, slug: string): boolean {
+  return Boolean(copyFor(kind, slug));
+}
+
+/**
+ * The quality gate for a discovery page: indexable with two or more
+ * restaurants behind it, or with one when real copy stands beside it. One
+ * restaurant under a composed sentence is the thin, name-swapped page Google
+ * treats as a doorway — it stays reachable but `noindex`, out of the sitemap,
+ * until a second restaurant or real copy arrives.
+ */
+export function isDiscoveryIndexable(kind: string, slug: string, restaurantCount: number): boolean {
+  return restaurantCount >= 2 || (restaurantCount >= 1 && hasEditorialCopy(kind, slug));
+}
+
+/**
+ * "le ndolé", "l'eru", "les grillades", "la sauce jaune" — the article a
+ * French speaker puts before a dish name, close enough for the names on
+ * Douala menus. No elision before "h": "les haricots", not "l'haricots".
+ */
+export function frenchArticle(name: string): string {
+  const lower = name.trim().toLowerCase();
+  if (/^[aeiouyéèêàâîïô]/.test(lower)) return "l'";
+  if (/^(sauce|soupe|pizza|salade|omelette|brochette|galette|tarte)\b/.test(lower)) return "la ";
+  const firstWord = lower.split(/[\s/&,]+/)[0] ?? "";
+  if (/[sx]$/.test(firstWord)) return "les ";
+  return "le ";
+}
+
+/** "Poulet DG" → "poulet DG", "Ndolé" → "ndolé"; acronyms like "BHB" are left alone. */
+function inSentence(name: string): string {
+  return /^[A-ZÀ-Ý][a-zà-ÿ]/.test(name) ? name[0].toLowerCase() + name.slice(1) : name;
+}
+
+export interface DiscoveryFaqInput {
+  kind: string;
+  name: string;
+  fr: boolean;
+  restaurants: { name: string; quartier: string; acceptsDelivery: boolean; minPrice: number | null }[];
+  /** On a dish page: each restaurant's price for that dish. */
+  dishOffers: { restaurant: string; quartier: string; price: number }[];
+  money: (amount: number) => string;
+}
+
+/**
+ * Questions for dish and quartier pages, phrased as they are searched
+ * ("ou manger le ndole a douala", "où manger à bonamoussadi") and answered
+ * from the listings on the page — names, quartiers, prices, delivery.
+ */
+export function discoveryFaq(input: DiscoveryFaqInput): { question: string; answer: string }[] {
+  const { kind, name, fr, restaurants, dishOffers, money } = input;
+  const join = (items: string[]) => items.length <= 1 ? items[0] ?? "" : items.slice(0, -1).join(", ") + (fr ? " et " : " and ") + items[items.length - 1];
+  const noun = (n: number) => `${n} restaurant${n > 1 ? "s" : ""}`;
+  const items: { question: string; answer: string }[] = [];
+
+  if (kind === "food" && dishOffers.length) {
+    const dish = inSentence(name);
+    const art = fr ? frenchArticle(name) : "";
+    const offers = [...dishOffers].sort((a, b) => a.price - b.price);
+    const shown = offers.slice(0, 5).map((o) => `${o.restaurant} (${o.quartier}${o.price > 0 ? `, ${money(o.price)}` : ""})`);
+    items.push({
+      question: fr ? `Où manger ${art}${dish} à Douala ?` : `Where can I eat ${dish} in Douala?`,
+      answer: fr
+        ? `Sur Resto237, ${noun(offers.length)} ${offers.length > 1 ? "proposent" : "propose"} ce plat : ${join(shown)}.`
+        : `On Resto237, ${noun(offers.length)} ${offers.length > 1 ? "serve" : "serves"} it: ${join(shown)}.`,
+    });
+    const prices = offers.map((o) => o.price).filter((p) => p > 0);
+    if (prices.length) {
+      const low = Math.min(...prices);
+      const high = Math.max(...prices);
+      items.push({
+        question: fr ? `Combien coûte ${art}${dish} à Douala ?` : `How much does ${dish} cost in Douala?`,
+        answer: low === high
+          ? fr ? `Autour de ${money(low)}, d'après les menus publiés sur Resto237.` : `About ${money(low)}, going by the menus on Resto237.`
+          : fr ? `De ${money(low)} à ${money(high)} selon le restaurant, d'après les menus publiés sur Resto237.` : `From ${money(low)} to ${money(high)} depending on the restaurant, going by the menus on Resto237.`,
+      });
+    }
+    const delivering = restaurants.filter((r) => r.acceptsDelivery).length;
+    items.push({
+      question: fr ? `Peut-on se faire livrer ${art}${dish} à Douala ?` : `Can I get ${dish} delivered in Douala?`,
+      answer: !delivering
+        ? fr ? "Pas encore en livraison : les restaurants qui le proposent fonctionnent à emporter ou sur place." : "Not by delivery yet: the restaurants that serve it work for pickup or on site."
+        : delivering === 1
+          ? fr ? "Oui : l'un des restaurants qui le proposent livre à domicile. Commandez depuis sa fiche ; les frais dépendent de votre quartier." : "Yes: one of the restaurants that serve it delivers. Order from its listing; the fee depends on your neighbourhood."
+          : fr ? `Oui : ${delivering} des restaurants qui le proposent livrent à domicile. Commandez depuis leur fiche ; les frais dépendent de votre quartier.` : `Yes: ${delivering} of the restaurants that serve it deliver. Order from their listing; the fee depends on your neighbourhood.`,
+    });
+  }
+
+  if (kind === "neighbourhood" && restaurants.length) {
+    const shown = restaurants.slice(0, 5).map((r) => r.minPrice ? `${r.name} (${fr ? "plats dès" : "dishes from"} ${money(r.minPrice)})` : r.name);
+    items.push({
+      question: fr ? `Où manger à ${name}, Douala ?` : `Where to eat in ${name}, Douala?`,
+      answer: fr ? `Sur Resto237 : ${join(shown)}. Chaque fiche affiche le menu, les prix et les horaires.` : `On Resto237: ${join(shown)}. Each listing shows the menu, prices and hours.`,
+    });
+    const delivering = restaurants.filter((r) => r.acceptsDelivery).map((r) => r.name);
+    items.push({
+      question: fr ? `Quels restaurants de ${name} livrent à domicile ?` : `Which restaurants in ${name} deliver?`,
+      answer: delivering.length
+        ? fr ? `${join(delivering)}. Les frais de livraison dépendent de votre quartier et sont confirmés avant le paiement.` : `${join(delivering)}. Delivery fees depend on your neighbourhood and are confirmed before you pay.`
+        : fr ? "Aucun pour l'instant : les restaurants du quartier fonctionnent à emporter ou sur place." : "None yet: the restaurants here work for pickup or on site.",
+    });
+  }
+
+  return items;
+}
 
 /**
  * The editorial paragraph for a discovery page, or a composed fallback.
@@ -179,7 +411,7 @@ const BY_KIND: Record<string, Record<string, Copy>> = {
  * can while someone writes the real text.
  */
 export function discoveryIntro(kind: string, slug: string, name: string, fr: boolean): string {
-  const entry = BY_KIND[kind]?.[slug];
+  const entry = copyFor(kind, slug);
   if (entry) return fr ? entry.fr : entry.en;
 
   if (kind === "neighbourhood") {

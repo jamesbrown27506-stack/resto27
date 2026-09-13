@@ -184,7 +184,7 @@ export function OrderActionBar({
               setReason("");
             }}
           >
-            <span>{t("m.orders.cancel")}</span>
+            <span>{t("mo.cancelTitle")}</span>
           </Button>
         )}
       </div>
@@ -226,16 +226,17 @@ export function OrderActionBar({
           size="sm"
           footer={
             <>
-              <Button variant="outline" onClick={() => setCancelOpen(false)} disabled={pending}>
-                <span>{t("common.cancel")}</span>
+              <Button variant="outline" className="whitespace-normal text-center leading-snug" onClick={() => setCancelOpen(false)} disabled={pending}>
+                <span>{t("mo.keepOrder")}</span>
               </Button>
               <Button
                 variant="danger"
+                className="whitespace-normal text-center leading-snug"
                 disabled={pending || reason.trim().length < 3}
                 loading={pending}
                 onClick={submitCancel}
               >
-                <span>{t("m.orders.cancel")}</span>
+                <span>{t("mo.cancelTitle")}</span>
               </Button>
             </>
           }

@@ -48,7 +48,14 @@ export function SiteFooter({
   brand,
   socialLinks,
   showAppLinks = true,
+  guides = null,
 }: {
+  /**
+   * "Where to eat in Douala": the guide pages that pass their quality gate,
+   * resolved on the server (see the public layout). Absent on screens that do
+   * not pass it, and whenever no guide qualifies.
+   */
+  guides?: { heading: string; links: { href: string; label: string }[] } | null;
   brand: {
     name: string;
     logoUrl: string | null;
@@ -65,7 +72,7 @@ export function SiteFooter({
   return (
     <footer className="mt-auto bg-brand-solid text-brand-on-solid">
       <div className="container-page py-14 sm:py-16">
-        <div className="grid gap-10 md:grid-cols-2 lg:grid-cols-[1.8fr_repeat(3,1fr)]">
+        <div className={guides ? "grid gap-10 md:grid-cols-2 lg:grid-cols-[1.5fr_repeat(4,1fr)]" : "grid gap-10 md:grid-cols-2 lg:grid-cols-[1.8fr_repeat(3,1fr)]"}>
           <div>
             <BrandMark name={brand.name} logoUrl={brand.logoUrl} tone="inherit" />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-brand-on-solid/70">
@@ -120,6 +127,26 @@ export function SiteFooter({
 
             {showAppLinks && <AppDownloadFooterLinks />}
           </div>
+
+          {guides && (
+            <nav aria-label={guides.heading}>
+              <h2 className="font-sans text-[11px] font-bold tracking-[0.12em] text-brand-on-solid/45 uppercase">
+                {guides.heading}
+              </h2>
+              <ul className="mt-4 flex flex-col gap-2.5">
+                {guides.links.map((link) => (
+                  <li key={link.href}>
+                    <Link
+                      href={link.href}
+                      className="text-sm text-brand-on-solid/70 transition-colors hover:text-brand-on-solid"
+                    >
+                      {link.label}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
 
           {GROUPS.map((group) => (
             <nav key={group.heading} aria-label={t(group.heading)}>

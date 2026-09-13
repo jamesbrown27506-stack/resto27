@@ -1,4 +1,4 @@
-import { jsonLdString, publicMetadata } from "@/lib/seo";
+import { faqJsonLd, jsonLdString, publicMetadata } from "@/lib/seo";
 import { absolutePublicUrl } from "@/lib/seo-config";
 import { breadcrumbJsonLd } from "@/lib/breadcrumbs";
 import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
@@ -115,6 +115,8 @@ export default async function PricingPage() {
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(pricingJsonLd) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(crumbs) }} />
+      {/* The FAQ below is visible; this tells answer engines which answer is whose. */}
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(faqJsonLd(faqItems(t))) }} />
       <section className="container-page py-14 text-center lg:py-20">
         <SectionTag>{t("mk.pricing.tag")}</SectionTag>
         <h1 className="mx-auto mt-4 max-w-2xl font-display text-4xl font-bold sm:text-5xl">

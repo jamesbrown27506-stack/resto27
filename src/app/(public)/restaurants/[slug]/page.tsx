@@ -1,6 +1,7 @@
-import { publicMetadata } from "@/lib/seo";
+import { jsonLdString, publicMetadata } from "@/lib/seo";
 import { ShareButton } from "@/components/capacitor/share-button";
-import { absolutePublicUrl, isUsableDescription } from "@/lib/seo-config";
+import { absolutePublicUrl, discoverySlug, dishPath, isUsableDescription } from "@/lib/seo-config";
+import { breadcrumbJsonLd } from "@/lib/breadcrumbs";
 import { getLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import Link from "@/components/layout/public-link";
@@ -38,7 +39,12 @@ export async function generateMetadata({
     : locale === "fr"
       ? `Consultez le menu, les prix et les horaires de ${restaurant.name} à ${place}. Commandez en livraison ou à emporter sur Resto237.`
       : `Browse the menu, prices and opening hours for ${restaurant.name} in ${place}. Order for delivery or pickup on Resto237.`;
-  return publicMetadata("/restaurants/" + restaurant.slug, restaurant.name + " — " + place, description, restaurant.coverUrl ?? restaurant.logoUrl);
+  // "Menu", "prix", "avis" are what people add to a restaurant's name when
+  // they search it ("restaurant douala menu", "<nom> menu et prix"), and the
+  // pattern the directories ranking for those names use — the title says the
+  // page has exactly that.
+  const title = locale === "fr" ? `${restaurant.name} à ${place} : menu, prix et avis` : `${restaurant.name}, ${place}: menu, prices and reviews`;
+  return publicMetadata("/restaurants/" + restaurant.slug, title, description, restaurant.coverUrl ?? restaurant.logoUrl);
 }
 
 export default async function RestaurantDetailPage({
@@ -53,6 +59,8 @@ export default async function RestaurantDetailPage({
   const locale = await getLocale();
   const pageUrl = absolutePublicUrl("/restaurants/" + restaurant.slug, locale);
   const place = [formatQuartier(restaurant.quartier), "Douala"].filter(Boolean).join(", ");
+  const quartierSlug = discoverySlug(restaurant.quartier);
+  const cuisineSlug = discoverySlug(restaurant.cuisine);
 
   const [menu, reviews] = await Promise.all([
     fetchMenuSections(restaurant.id),
@@ -91,15 +99,40 @@ export default async function RestaurantDetailPage({
     "@id": pageUrl + "#restaurant",
     url: pageUrl,
     image: restaurant.coverUrl ? new URL(restaurant.coverUrl, pageUrl).href : undefined,
-    // Point at the menu section of this page rather than the page itself, so
-    // `hasMenu` resolves somewhere that actually is a menu.
-    hasMenu: menu.length ? pageUrl + "#menu" : undefined,
+    /*
+      The whole menu as structured data: each category a MenuSection, each
+      dish a MenuItem with its FCFA price and its own page. None of the
+      directories that rank for Douala restaurants mark up a menu; this one
+      is the page's real content, so it can say so. `@id` still points at
+      the menu section of this page.
+    */
+    hasMenu: menu.length
+      ? {
+          "@type": "Menu",
+          "@id": pageUrl + "#menu",
+          url: pageUrl + "#menu",
+          inLanguage: locale === "fr" ? "fr-CM" : "en-CM",
+          hasMenuSection: menu.map(section => ({
+            "@type": "MenuSection",
+            name: section.category.name,
+            hasMenuItem: section.items.map(item => ({
+              "@type": "MenuItem",
+              name: item.name,
+              ...(item.description?.trim() ? { description: item.description.trim() } : {}),
+              url: absolutePublicUrl(dishPath(restaurant.slug, item), locale),
+              ...(item.price > 0 ? { offers: { "@type": "Offer", price: item.price, priceCurrency: "XAF" } } : {}),
+            })),
+          })),
+        }
+      : undefined,
     openingHoursSpecification: openingHours.length ? openingHours : undefined,
     name: `${restaurant.name}${restaurant.isPrimary ? "" : ` — ${restaurant.branchLabel}`}`,
     // Same gate as the meta description: a partner sentence that is neither
     // long enough nor in this page's language is worse than no description.
     description: isUsableDescription(restaurant.description, locale) ? restaurant.description : undefined,
     servesCuisine: restaurant.cuisine || undefined,
+    // Every listing carries the "Book a table" button below.
+    acceptsReservations: true,
     priceRange,
     telephone: restaurant.phone,
     address: {
@@ -132,6 +165,23 @@ export default async function RestaurantDetailPage({
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }}
+      />
+      {/* Home › Restaurants › quartier › this restaurant — the path shown under the result. */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: jsonLdString(
+            breadcrumbJsonLd(
+              [
+                { name: locale === "fr" ? "Accueil" : "Home", path: "/" },
+                { name: "Restaurants", path: "/restaurants" },
+                ...(quartierSlug ? [{ name: formatQuartier(restaurant.quartier), path: `/explore/neighbourhood/${quartierSlug}` }] : []),
+                { name: restaurant.name, path: "/restaurants/" + restaurant.slug },
+              ],
+              locale,
+            ),
+          ),
+        }}
       />
 
       {/*
@@ -278,6 +328,26 @@ export default async function RestaurantDetailPage({
         <p className="mt-6 max-w-2xl leading-relaxed text-text-secondary">
           {restaurant.description}
         </p>
+
+        {/*
+          The restaurant page linked nowhere into the discovery pages, so a
+          visitor (and a crawler) arriving on a restaurant had no path to its
+          quartier or its kind of cooking.
+        */}
+        {(quartierSlug || cuisineSlug) && (
+          <p className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
+            {quartierSlug && (
+              <Link href={`/explore/neighbourhood/${quartierSlug}`} className="font-semibold text-primary hover:underline">
+                {locale === "fr" ? `Autres restaurants à ${formatQuartier(restaurant.quartier)}` : `More restaurants in ${formatQuartier(restaurant.quartier)}`}
+              </Link>
+            )}
+            {cuisineSlug && (
+              <Link href={`/explore/cuisine/${cuisineSlug}`} className="font-semibold text-primary hover:underline">
+                {locale === "fr" ? `Cuisine ${restaurant.cuisine.toLowerCase()} à Douala` : `${restaurant.cuisine} food in Douala`}
+              </Link>
+            )}
+          </p>
+        )}
 
         <div className="mt-12 grid gap-10 lg:grid-cols-[1fr_20rem]">
           <div className="min-w-0">

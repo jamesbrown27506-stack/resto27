@@ -31,6 +31,19 @@ export const fetchDiscoveryCatalog = cache(async () => {
   return { restaurants, dishes, groups: uniqueGroups };
 });
 
+type DiscoveryCatalog = Awaited<ReturnType<typeof fetchDiscoveryCatalog>>;
+
+/**
+ * How many distinct restaurants stand behind a discovery page — the number
+ * the quality gate (`isDiscoveryIndexable`) is decided on. Matched on the
+ * same fields the group was derived from, so page, sitemap and gate agree.
+ */
+export function groupRestaurantCount(catalog: Pick<DiscoveryCatalog, "restaurants" | "dishes">, group: { kind: string; slug: string }): number {
+  if (group.kind === "neighbourhood") return catalog.restaurants.filter(r => discoverySlug(r.quartier) === group.slug).length;
+  if (group.kind === "cuisine") return catalog.restaurants.filter(r => discoverySlug(r.cuisine) === group.slug).length;
+  return new Set(catalog.dishes.filter(d => discoverySlug(d.name) === group.slug).map(d => d.restaurant_id)).size;
+}
+
 /**
  * The homepage's dish tiles: one per dish, each leading to its
  * /explore/food page. Never throws — the catalog does, and a menu read that

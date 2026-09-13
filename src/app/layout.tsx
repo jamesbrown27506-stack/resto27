@@ -66,7 +66,14 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase: new URL("https://resto237.online"),
-    verification: process.env.GOOGLE_SITE_VERIFICATION ? { google: process.env.GOOGLE_SITE_VERIFICATION } : undefined,
+    // Search Console, and Bing Webmaster Tools — Bing's index also feeds
+    // ChatGPT search and Copilot. Each tag appears only once its code is set.
+    verification: process.env.GOOGLE_SITE_VERIFICATION || process.env.BING_SITE_VERIFICATION
+      ? {
+          ...(process.env.GOOGLE_SITE_VERIFICATION ? { google: process.env.GOOGLE_SITE_VERIFICATION } : {}),
+          ...(process.env.BING_SITE_VERIFICATION ? { other: { "msvalidate.01": process.env.BING_SITE_VERIFICATION } } : {}),
+        }
+      : undefined,
     title: {
       default: `${brand.tagline} | ${brand.name}`,
       template: `%s | ${brand.name}`,

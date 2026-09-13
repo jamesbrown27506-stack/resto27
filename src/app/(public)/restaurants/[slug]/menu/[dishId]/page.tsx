@@ -4,8 +4,10 @@ import { notFound, permanentRedirect } from "next/navigation";
 import { fetchPublicRestaurantBySlug, fetchMenuSections } from "@/lib/data/public";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { publicMetadata, jsonLdString } from "@/lib/seo";
-import { absolutePublicUrl, dishPath, dishSlug } from "@/lib/seo-config";
+import { absolutePublicUrl, dishPath, dishSlug, isUsableDescription } from "@/lib/seo-config";
 import { MenuOrderer } from "@/components/menu/menu-orderer";
+import { formatMoney } from "@/lib/format/currency";
+import { formatQuartier } from "@/lib/geo-cm";
 
 type Props = { params: Promise<{ slug: string; dishId: string }> };
 /**
@@ -42,7 +44,26 @@ async function content(params: Props["params"]) {
 }
 export async function generateMetadata({ params }: Props) {
   const c = await content(params);
-  return publicMetadata(c.path, `${c.dish.name} — ${c.restaurant.name}, Douala`, c.dish.description || `${c.dish.name} · ${c.restaurant.name} · ${c.restaurant.quartier}, Douala`, c.dish.imageUrl);
+  const locale = await getLocale();
+  const fr = locale === "fr";
+  const place = [formatQuartier(c.restaurant.quartier), "Douala"].filter(Boolean).join(", ");
+  /*
+    The price goes in the title: "combien coûte le ndolé" and "<plat> prix"
+    are how people search a dish, and the one dish site ranking in Douala
+    ("Poulet DG 5000 — Mimosa · Douala") leads with it.
+  */
+  const price = c.dish.price > 0 ? formatMoney(c.dish.price) : null;
+  const title = price
+    ? `${c.dish.name} ${fr ? "à" : "for"} ${price} — ${c.restaurant.name}, Douala`
+    : `${c.dish.name} — ${c.restaurant.name}, Douala`;
+  // The partner's own words only when they are usable prose in this page's
+  // language — the same gate as the restaurant page (see isUsableDescription).
+  const description = isUsableDescription(c.dish.description, locale)
+    ? c.dish.description
+    : fr
+      ? `${c.dish.name}${price ? ` à ${price}` : ""} chez ${c.restaurant.name} (${place}). Commandez-le en livraison ou à emporter sur Resto237.`
+      : `${c.dish.name}${price ? ` for ${price}` : ""} at ${c.restaurant.name} (${place}). Order it for delivery or pickup on Resto237.`;
+  return publicMetadata(c.path, title, description, c.dish.imageUrl);
 }
 export default async function DishPage({ params }: Props) {
   const c = await content(params);
