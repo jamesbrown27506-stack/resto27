@@ -26,6 +26,11 @@ import {
   type CamerPayService,
   type TransactionHint,
 } from "@/lib/payments/camerpay/client";
+import {
+  findPaymentInstruction,
+  type CamerPayNotificationEntry,
+  type PaymentInstruction,
+} from "@/lib/payments/camerpay/notification";
 
 /**
  * CamerPay console actions.
@@ -48,6 +53,8 @@ export interface ProbeResult {
   trackingId?: string;
   /** Captured before the provider request, for report-row matching. */
   startedAt?: string;
+  /** Notification counter before the request, preventing stale Orange codes. */
+  notificationAfterId?: number;
   payload?: unknown;
   /**
    * The exact request that was sent, secrets redacted — for pasting into a
@@ -157,6 +164,7 @@ export interface TransactionStatus {
   detail: string;
   amount?: number;
   raw?: unknown;
+  instruction?: PaymentInstruction;
 }
 
 /**
@@ -178,6 +186,7 @@ export interface TransactionStatus {
 export async function checkTransaction(
   replyTo: string,
   hint: TransactionHint = {},
+  includeInstruction = true,
 ): Promise<TransactionStatus> {
   await requireRole("admin");
 
@@ -186,11 +195,35 @@ export async function checkTransaction(
 
   try {
     const result = await confirmTransaction(trimmed, hint);
+    let instruction: PaymentInstruction | undefined;
+
+    if (
+      includeInstruction &&
+      result.status === "pending" &&
+      hint.direction === "collect" &&
+      hint.phone &&
+      hint.amount !== undefined
+    ) {
+      try {
+        const notifications = await listNotifications({ limit: 25 });
+        if (notifications.etat && Array.isArray(notifications.data)) {
+          instruction =
+            findPaymentInstruction(notifications.data as CamerPayNotificationEntry[], {
+              phone: hint.phone,
+              amount: hint.amount,
+              afterNotificationId: hint.notificationAfterId,
+            }) ?? undefined;
+        }
+      } catch (error) {
+        console.warn("[camerpay] notification check failed", error);
+      }
+    }
 
     return {
       status: result.status,
       amount: result.amount,
       raw: result.raw ?? result.searched,
+      instruction,
       detail:
         result.status === "success"
           ? `Settled${result.amount ? ` — ${result.amount} FCFA` : ""}.`
@@ -572,12 +605,26 @@ export async function registerCallback(url: string): Promise<ProbeResult> {
  * the customer still approves on their handset, and the outcome arrives later.
  * Nothing anywhere may treat a 202 as settled.
  */
+async function latestNotificationId(): Promise<number | undefined> {
+  try {
+    const response = await listNotifications({ limit: 100 });
+    if (!Array.isArray(response.data)) return undefined;
+    const ids = (response.data as CamerPayNotificationEntry[])
+      .map((entry) => entry.id)
+      .filter((id): id is number => typeof id === "number");
+    return ids.length > 0 ? Math.max(...ids) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function probeCollection(phone: string, amount: number): Promise<ProbeResult> {
   const admin = await requireRole("admin");
   try {
     // Read the counter BEFORE charging. The row this creates is the first one
     // above it, which identifies it without trusting a timezone-less date.
     const afterId = await latestTransactionId();
+    const notificationAfterId = await latestNotificationId();
     const startedAt = new Date().toISOString();
     const response = await requestCollection(phone, amount);
 
@@ -622,6 +669,7 @@ export async function probeCollection(phone: string, amount: number): Promise<Pr
         afterId: afterId ?? undefined,
         trackingId,
         startedAt,
+        notificationAfterId,
       };
     }
 

@@ -676,6 +676,8 @@ export interface TransactionHint {
   direction?: "collect" | "payout";
   /** ISO instant the request was accepted. */
   startedAt?: string;
+  /** Notification report counter captured before initiating the request. */
+  notificationAfterId?: number;
   /**
    * Report rows another attempt has already consumed.
    *

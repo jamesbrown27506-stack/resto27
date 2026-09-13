@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, Clock, RefreshCw, XCircle } from "lucide-react";
+import { CheckCircle2, Clock, Copy, PhoneCall, RefreshCw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { checkTransaction, type TransactionStatus } from "./actions";
 import type { TransactionHint } from "@/lib/payments/camerpay/client";
@@ -93,17 +93,23 @@ export function TransactionWatcher({
   const direction = hint?.direction;
   const startedAt = hint?.startedAt;
   const afterId = hint?.afterId;
+  const notificationAfterId = hint?.notificationAfterId;
 
   const [result, setResult] = useState<TransactionStatus | null>(null);
   const [attempts, setAttempts] = useState(0);
   const [busy, setBusy] = useState(false);
   const [auto, setAuto] = useState(true);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const [instruction, setInstruction] = useState<
+    NonNullable<TransactionStatus["instruction"]> | null
+  >(null);
+  const [copied, setCopied] = useState(false);
   /** One line per completed check — the panel's own flight recorder. */
   const [history, setHistory] = useState<{ n: number; at: string; status: string }[]>([]);
 
   /** Set on a terminal answer, readable by BOTH the loop and a manual check. */
   const doneRef = useRef(false);
+  const instructionRef = useRef<NonNullable<TransactionStatus["instruction"]> | null>(null);
 
   /** Latest callback without it being a reason to restart the loop. */
   const onSettledRef = useRef(onSettled);
@@ -131,7 +137,11 @@ export function TransactionWatcher({
       setBusy(true);
       let next: TransactionStatus | null = null;
       try {
-        next = await checkTransaction(replyTo, { phone, amount, direction, startedAt, afterId });
+        next = await checkTransaction(
+          replyTo,
+          { phone, amount, direction, startedAt, afterId, notificationAfterId },
+          instructionRef.current === null,
+        );
       } catch {
         // A failed CHECK is not a failed PAYMENT. The attempt still counts,
         // so the schedule keeps moving instead of freezing on a blip.
@@ -147,6 +157,10 @@ export function TransactionWatcher({
 
       if (next) {
         setResult(next);
+        if (next.instruction) {
+          instructionRef.current = next.instruction;
+          setInstruction(next.instruction);
+        }
         if (next.status !== "pending") {
           doneRef.current = true;
           onSettledRef.current?.(next);
@@ -166,7 +180,7 @@ export function TransactionWatcher({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [auto, replyTo, phone, amount, direction, startedAt, afterId]);
+  }, [auto, replyTo, phone, amount, direction, startedAt, afterId, notificationAfterId]);
 
   /**
    * Manual check — plain async, no transition, nothing shared with the loop
@@ -183,8 +197,13 @@ export function TransactionWatcher({
         direction,
         startedAt,
         afterId,
-      });
+        notificationAfterId,
+      }, instructionRef.current === null);
       setResult(next);
+      if (next.instruction) {
+        instructionRef.current = next.instruction;
+        setInstruction(next.instruction);
+      }
       const stamp = new Date().toLocaleTimeString();
       setCheckedAt(stamp);
       setHistory((h) => [...h.slice(-14), { n: h.length + 1, at: stamp, status: `${next.status} (manual)` }]);
@@ -236,6 +255,61 @@ export function TransactionWatcher({
             </span>
           </p>
 
+          {instruction && (
+            <div
+              className="mt-3 rounded-md border border-warning/50 bg-surface p-3 text-text"
+              aria-live="polite"
+            >
+              <p className="text-sm font-bold">Orange action required</p>
+              <p className="mt-1 text-xs leading-relaxed text-text-secondary">
+                {instruction.message}
+              </p>
+              {instruction.code && (
+                <>
+                  <code className="mt-2 block rounded bg-surface-2 p-2 text-center text-sm font-bold break-all">
+                    {instruction.code}
+                  </code>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (!navigator.clipboard) {
+                          window.prompt("Copy this code", instruction.code);
+                          return;
+                        }
+                        void navigator.clipboard
+                          .writeText(instruction.code!)
+                          .then(() => {
+                            setCopied(true);
+                            window.setTimeout(() => setCopied(false), 2_000);
+                          })
+                          .catch(() => window.prompt("Copy this code", instruction.code));
+                      }}
+                    >
+                      <Copy className="size-3.5" aria-hidden />
+                      <span>{copied ? "Copied" : "Copy code"}</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        window.location.href = "tel:" + encodeURIComponent(instruction.code!);
+                      }}
+                    >
+                      <PhoneCall className="size-3.5" aria-hidden />
+                      <span>Open phone</span>
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-[11px] text-text-light">
+                    Use the SIM for the customer number. If the dialer cannot open USSD, copy the
+                    code and paste it into the phone app.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
           <p className="mt-1 font-mono text-[11px] break-all opacity-75">
             <span>tracking {replyTo}</span>
             <span>
@@ -246,7 +320,7 @@ export function TransactionWatcher({
             {afterId !== undefined && <span> · after #{afterId}</span>}
             {/* v4 — so a screenshot of this panel says which watcher it is.
                 Chasing a fixed bug through a stale deploy cost an afternoon. */}
-            <span> · v4</span>
+            <span> · v5</span>
           </p>
 
           {/* Appended, never rewritten: each check leaves its own line, so the

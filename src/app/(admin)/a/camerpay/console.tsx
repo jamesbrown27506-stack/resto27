@@ -212,6 +212,8 @@ interface RecentTx {
   startedAt: string;
   /** Report counter before the call — the reliable way to find our row. */
   afterId?: number;
+  /** Notification counter before the call, used to reject stale Orange codes. */
+  notificationAfterId?: number;
 }
 
 /** The five jobs this console does, in the order you do them. */
@@ -872,6 +874,7 @@ export function CamerPayConsole({
                     at: now.toLocaleTimeString(),
                     startedAt: result.startedAt ?? now.toISOString(),
                     afterId: result.afterId,
+                    notificationAfterId: result.notificationAfterId,
                   };
                   setWatching(tx);
                   // Prefilled, so "check this one" never means retyping a
@@ -897,6 +900,7 @@ export function CamerPayConsole({
                 direction: watching.kind,
                 startedAt: watching.startedAt,
                 afterId: watching.afterId,
+                notificationAfterId: watching.notificationAfterId,
               }}
             />
           )}
