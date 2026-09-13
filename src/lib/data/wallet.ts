@@ -29,6 +29,7 @@ export interface WalletRequestRow {
   net: number | null;
   requestedAt: string;
   decidedAt: string | null;
+  replyTo: string | null;
 }
 
 export interface WalletState {
@@ -51,7 +52,7 @@ export async function getWalletState(restaurantId: string): Promise<WalletState>
       .limit(25),
     supabase
       .from("withdrawal_requests")
-      .select("id, amount, phone, status, note, fee, net, requested_at, decided_at")
+      .select("id, amount, phone, status, note, fee, net, reply_to, requested_at, decided_at")
       .eq("restaurant_id", restaurantId)
       .order("requested_at", { ascending: false })
       .limit(20),
@@ -85,6 +86,7 @@ export async function getWalletState(restaurantId: string): Promise<WalletState>
       net: r.net === null ? null : Number(r.net),
       requestedAt: String(r.requested_at),
       decidedAt: (r.decided_at as string | null) ?? null,
+      replyTo: (r.reply_to as string | null) ?? null,
     })),
   };
 }
@@ -102,6 +104,7 @@ export interface AdminWithdrawalRequest {
   net: number | null;
   requestedAt: string;
   decidedAt: string | null;
+  replyTo: string | null;
 }
 
 /** Every withdrawal request, newest first — for the /a/wallet inbox. */
@@ -112,6 +115,7 @@ export async function listWithdrawalRequests(limit = 50): Promise<AdminWithdrawa
     .from("withdrawal_requests")
     .select(
       `id, restaurant_id, amount, phone, status, note, fee, net, requested_at, decided_at,
+       reply_to,
        restaurants ( name ),
        profiles ( name )`,
     )
@@ -134,6 +138,7 @@ export async function listWithdrawalRequests(limit = 50): Promise<AdminWithdrawa
     net: number | null;
     requested_at: string;
     decided_at: string | null;
+    reply_to: string | null;
     restaurants: { name: string }[] | null;
     profiles: { name: string }[] | null;
   }[]).map((r) => ({
@@ -149,5 +154,6 @@ export async function listWithdrawalRequests(limit = 50): Promise<AdminWithdrawa
     net: r.net === null ? null : Number(r.net),
     requestedAt: r.requested_at,
     decidedAt: r.decided_at,
+    replyTo: r.reply_to,
   }));
 }

@@ -73,7 +73,7 @@ import {
  *  The French `error` string is the fallback for callers that do not map it.
  */
 
-export type AttemptKind = "subscription" | "reservation" | "order";
+export type AttemptKind = "subscription" | "reservation" | "order" | "wallet";
 
 export type PaymentStatus = "succeeded" | "pending" | "failed";
 
@@ -142,7 +142,7 @@ function attemptRow(row: Record<string, unknown>): PaymentAttemptRow {
     reservationId: (row.reservation_id as string | null) ?? null,
     orderId,
     restaurantId: row.restaurant_id as string,
-    kind: orderId ? "order" : (row.kind as AttemptKind),
+    kind: rawResponse?.walletFunding === true ? "wallet" : orderId ? "order" : (row.kind as AttemptKind),
     provider: row.provider as string,
     transactionId: (row.transaction_id as string | null) ?? null,
     phone: (row.phone as string | null) ?? null,
@@ -219,7 +219,7 @@ export async function initiatePaymentAttempt(input: {
     restaurant_id: input.restaurantId,
     invoice_id: input.kind === "subscription" ? input.invoiceId! : null,
     reservation_id: input.kind === "reservation" ? input.reservationId! : null,
-    kind: input.kind === "order" ? "reservation" : input.kind,
+    kind: input.kind === "order" || input.kind === "wallet" ? "reservation" : input.kind,
     method: "mobile_money",
     phone,
     amount,
@@ -231,7 +231,7 @@ export async function initiatePaymentAttempt(input: {
   if (mode === "sandbox") {
     const { data, error } = await supabase
       .from("payment_attempts")
-      .insert({ ...base, provider: "sandbox", status: "succeeded", raw_response: { sandbox: true, orderId: input.orderId } })
+      .insert({ ...base, provider: "sandbox", status: "succeeded", raw_response: { sandbox: true, orderId: input.orderId, walletFunding: input.kind === "wallet" } })
       .select("id")
       .single();
 
@@ -269,7 +269,7 @@ export async function initiatePaymentAttempt(input: {
       ...base,
       provider: "camerpay",
       status: "pending",
-      raw_response: { requested_at: startedAt, afterId, notificationAfterId, orderId: input.orderId },
+      raw_response: { requested_at: startedAt, afterId, notificationAfterId, orderId: input.orderId, walletFunding: input.kind === "wallet" },
     })
     .select("id")
     .single();
@@ -301,6 +301,7 @@ export async function initiatePaymentAttempt(input: {
           afterId,
           notificationAfterId,
           orderId: input.orderId,
+          walletFunding: input.kind === "wallet",
           transport_error: error instanceof Error ? error.message : String(error),
         },
       })
@@ -348,6 +349,7 @@ export async function initiatePaymentAttempt(input: {
         afterId,
         notificationAfterId,
         orderId: input.orderId,
+        walletFunding: input.kind === "wallet",
         requested_at: startedAt,
       },
     })
@@ -668,6 +670,42 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
     if (!result.ok) {
       error = result.error;
       reason = result.reason ?? "activationFailed";
+    }
+  } else if (row.kind === "wallet") {
+    const settledAt = new Date().toISOString();
+    const { data: claimed, error: claimError } = await supabase
+      .from("payment_attempts")
+      .update({ settled_at: settledAt })
+      .eq("id", row.id)
+      .eq("status", "succeeded")
+      .is("settled_at", null)
+      .select("id")
+      .maybeSingle();
+
+    if (claimError) {
+      error = "Le paiement est confirmé mais le portefeuille n'a pas pu être crédité.";
+      reason = "walletFundingClaimFailed";
+    } else if (!claimed) {
+      ok = true;
+    } else {
+      const { error: creditError } = await supabase.rpc("wallet_credit", {
+        p_restaurant_id: row.restaurantId,
+        p_amount: row.amount,
+        p_kind: "payment",
+        p_note: "Approvisionnement Mobile Money " + row.reference,
+        p_reference: row.reference,
+      });
+      if (creditError) {
+        await supabase
+          .from("payment_attempts")
+          .update({ settled_at: null })
+          .eq("id", row.id)
+          .eq("settled_at", settledAt);
+        error = "Le paiement est confirmé mais le portefeuille n'a pas pu être crédité.";
+        reason = "walletCreditFailed";
+      } else {
+        ok = true;
+      }
     }
   } else if (row.kind === "order" && row.orderId) {
     /*

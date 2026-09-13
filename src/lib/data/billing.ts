@@ -634,19 +634,20 @@ export async function getFreeModeInfo(): Promise<FreeModeInfo> {
 
 /**
  * Which payment mode the platform is in: `sandbox` (simulated, no money
- * moves) or `live` (real charges through CamerPay). Seeded to sandbox by
- * migration 0031 — a fresh deployment must never take real money until an
- * admin switches the mode in /a/settings → Payments.
+ * moves) or `live` (real charges through CamerPay). Simulation is opt-in:
+ * an absent/unreadable setting must never manufacture a successful payment.
  */
 export async function paymentMode(): Promise<"sandbox" | "live"> {
   const supabase = createAdminClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("settings")
     .select("value")
     .eq("key", "payment_mode")
     .maybeSingle();
 
-  return data?.value === "live" ? "live" : "sandbox";
+  if (error) console.error("[billing:paymentMode]", error.message);
+  if (data?.value === "sandbox") return "sandbox";
+  return "live";
 }
 
 /** The more permissive of two ceilings — `null` means unlimited. */

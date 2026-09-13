@@ -11,6 +11,8 @@ import { getWithdrawalFeeConfig } from "./settings";
 import { paymentMode } from "./billing";
 import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 import {
+  acceptedTransactionId,
+  confirmTransaction,
   isPayableAmount,
   latestTransactionId,
   MAX_AMOUNT_XAF,
@@ -21,6 +23,8 @@ import {
   sendPayout,
 } from "@/lib/payments/camerpay/client";
 import type { ActionResult } from "./admin-actions";
+import { checkPaymentAttempt, initiatePaymentAttempt, settlePayment } from "@/lib/payments/collect";
+import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 
 /**
  * Wallet mutations (migration 0024).
@@ -38,7 +42,11 @@ import type { ActionResult } from "./admin-actions";
  * are still English-only and a later pass translates them, so callers key off
  * `reason`, never off the sentence. Same convention as checkout-actions.
  */
-type WalletResult = ActionResult & { reason?: string };
+type WalletResult = ActionResult & {
+  reason?: string;
+  status?: "pending" | "succeeded" | "failed";
+  requestId?: string;
+};
 
 /* ── Credit ────────────────────────────────────────────────────────────── */
 
@@ -61,7 +69,6 @@ export async function creditWallet(
   if (!Number.isInteger(value) || value <= 0) {
     return { ok: false, reason: "badAmount", error: "Amount must be a positive number of francs." };
   }
-
   const supabase = createAdminClient();
 
   const { data: restaurant } = await supabase
@@ -100,6 +107,106 @@ export async function creditWallet(
   return { ok: true, balance: Number(balance ?? 0) };
 }
 
+/**
+ * Collect real Mobile Money before crediting a restaurant wallet. The admin
+ * chooses the beneficiary, but CamerPay decides whether money was received.
+ */
+export async function fundWallet(
+  restaurantId: string,
+  phone: string,
+  amount: number,
+): Promise<WalletResult & {
+  status?: "succeeded" | "pending";
+  attemptId?: string;
+  instruction?: PaymentInstruction;
+}> {
+  await requireRole("admin");
+  const value = Math.round(amount);
+  if (!Number.isInteger(value) || value <= 0) {
+    return { ok: false, reason: "badAmount", error: "Amount must be a positive number of francs." };
+  }
+  const normalizedPhone = normalisePhone(phone);
+  if (!normalizedPhone) {
+    return { ok: false, reason: "badPhone", error: "Enter a valid Mobile Money number." };
+  }
+
+  const supabase = createAdminClient();
+  const { data: restaurant } = await supabase
+    .from("restaurants")
+    .select("id, name")
+    .eq("id", restaurantId)
+    .maybeSingle();
+  if (!restaurant) return { ok: false, reason: "restaurantNotFound", error: "Restaurant not found." };
+
+  const { data: attempts, error: lookupError } = await supabase
+    .from("payment_attempts")
+    .select("id, status, transaction_id")
+    .eq("restaurant_id", restaurantId)
+    .eq("amount", value)
+    .eq("phone", normalizedPhone)
+    .contains("raw_response", { walletFunding: true })
+    .in("status", ["pending", "succeeded"])
+    .is("settled_at", null)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (lookupError) return { ok: false, error: "Could not verify the wallet payment." };
+  const open = (attempts ?? []).find(
+    (attempt) => attempt.status === "succeeded" || Boolean(attempt.transaction_id),
+  );
+  if (open?.status === "succeeded") {
+    const settled = await settlePayment(open.id as string);
+    return settled.ok
+      ? { ok: true, status: "succeeded", attemptId: open.id as string }
+      : { ok: false, error: settled.error ?? "Wallet settlement failed." };
+  }
+  if (open?.status === "pending" && open.transaction_id) {
+    return { ok: true, status: "pending", attemptId: open.id as string };
+  }
+
+  const initiated = await initiatePaymentAttempt({
+    kind: "wallet",
+    restaurantId,
+    reference: "Wallet " + restaurant.name,
+    phone: normalizedPhone,
+    amount: value,
+  });
+  if (!initiated.ok || !initiated.attemptId) {
+    return { ok: false, reason: initiated.reason, error: initiated.error ?? "CamerPay payment failed." };
+  }
+  if (initiated.status === "pending") {
+    return { ok: true, status: "pending", attemptId: initiated.attemptId };
+  }
+
+  const settled = await settlePayment(initiated.attemptId);
+  return settled.ok
+    ? { ok: true, status: "succeeded", attemptId: initiated.attemptId }
+    : { ok: false, error: settled.error ?? "Wallet settlement failed." };
+}
+
+export async function checkWalletFunding(
+  attemptId: string,
+): Promise<WalletResult & {
+  status?: "succeeded" | "pending" | "failed";
+  instruction?: PaymentInstruction;
+}> {
+  await requireRole("admin");
+  const supabase = createAdminClient();
+  const { data: attempt } = await supabase
+    .from("payment_attempts")
+    .select("raw_response")
+    .eq("id", attemptId)
+    .maybeSingle();
+  if (attempt?.raw_response?.walletFunding !== true) {
+    return { ok: false, error: "Wallet payment not found." };
+  }
+
+  const result = await checkPaymentAttempt(attemptId);
+  if (!result.ok) return { ok: false, error: result.error ?? "Wallet payment not found." };
+  revalidatePath("/a/wallet");
+  revalidatePath("/m/wallet");
+  return { ok: true, status: result.status, instruction: result.instruction };
+}
 /* ── Withdrawal requests ───────────────────────────────────────────────── */
 
 /**
@@ -301,7 +408,7 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
    * this one update. */
   const { data: claimed, error: claimError } = await supabase
     .from("withdrawal_requests")
-    .update({ status: "paid", decided_at: new Date().toISOString(), decided_by: admin.id })
+    .update({ status: "paid", decided_at: null, decided_by: admin.id })
     .eq("id", requestId)
     .eq("status", "pending")
     .select("id")
@@ -451,7 +558,7 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
       };
     }
 
-    const accepted = response.data?.replyTo?.trim();
+    const accepted = acceptedTransactionId(response);
     if (!accepted) {
       // Accepted, so money may move, but with nothing to track it by.
       await markUnresolved("accepted without a replyTo");
@@ -483,7 +590,12 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
 
   const { error: stampError } = await supabase
     .from("withdrawal_requests")
-    .update({ reply_to: replyTo, fee: fee > 0 ? fee : null, net })
+    .update({
+      reply_to: replyTo,
+      fee: fee > 0 ? fee : null,
+      net,
+      decided_at: mode === "sandbox" ? new Date().toISOString() : null,
+    })
     .eq("id", requestId)
     .eq("status", "paid");
 
@@ -505,7 +617,99 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
   const feeNote = fee > 0 ? `Fee of ${fee.toLocaleString("fr-CM")} FCFA withheld.` : "";
   const modeNote = mode === "sandbox" ? "Sandbox mode — the transfer was simulated, no money moved." : "";
   const note = [modeNote, feeNote].filter(Boolean).join(" ");
-  return { ok: true, note: note || undefined };
+  return mode === "sandbox"
+    ? { ok: true, status: "succeeded", requestId, note: note || undefined }
+    : {
+        ok: true,
+        status: "pending",
+        requestId,
+        note: "CamerPay accepted the payout. Waiting for confirmation.",
+      };
+}
+
+/** Poll an accepted payout until CamerPay reports its final outcome. */
+export async function checkWithdrawalPayout(requestId: string): Promise<WalletResult> {
+  const admin = await requireRole("admin");
+  const supabase = createAdminClient();
+  const { data: row, error } = await supabase
+    .from("withdrawal_requests")
+    .select("id, restaurant_id, amount, phone, status, reply_to, net, decided_at")
+    .eq("id", requestId)
+    .maybeSingle();
+
+  if (error || !row) return { ok: false, reason: "notFound", error: "Withdrawal not found." };
+  if (row.status === "rejected") return { ok: true, status: "failed", requestId };
+  if (row.status !== "paid" || !row.reply_to) {
+    return { ok: false, reason: "notTrackable", error: "This payout is not awaiting confirmation." };
+  }
+  if (row.decided_at || String(row.reply_to).startsWith("SANDBOX-")) {
+    return { ok: true, status: "succeeded", requestId };
+  }
+
+  const gross = Number(row.amount);
+  const net = Number(row.net ?? row.amount);
+  const outcome = await confirmTransaction(String(row.reply_to), {
+    direction: "payout",
+    phone: String(row.phone),
+    amount: net,
+  });
+
+  if (outcome.status === "pending") return { ok: true, status: "pending", requestId };
+  if (outcome.status === "success") {
+    const { data: confirmed } = await supabase
+      .from("withdrawal_requests")
+      .update({ decided_at: new Date().toISOString() })
+      .eq("id", requestId)
+      .eq("status", "paid")
+      .is("decided_at", null)
+      .select("id")
+      .maybeSingle();
+    if (confirmed) {
+      await writeAudit(admin, {
+        action: "wallet.withdrawal_confirmed",
+        entityType: "withdrawal_request",
+        entityId: requestId,
+        summary: `CamerPay confirmed ${net.toLocaleString("fr-CM")} FCFA to ${row.phone}`,
+        metadata: { gross, net, replyTo: row.reply_to },
+      });
+    }
+    revalidatePath("/a/wallet");
+    revalidatePath("/m/wallet");
+    return { ok: true, status: "succeeded", requestId };
+  }
+
+  const { data: rejected } = await supabase
+    .from("withdrawal_requests")
+    .update({ status: "rejected", decided_at: new Date().toISOString() })
+    .eq("id", requestId)
+    .eq("status", "paid")
+    .is("decided_at", null)
+    .select("id")
+    .maybeSingle();
+  if (rejected) {
+    const { error: reversalError } = await supabase.rpc("wallet_credit", {
+      p_restaurant_id: row.restaurant_id,
+      p_amount: gross,
+      p_kind: "adjustment",
+      p_note: `Withdrawal ${requestId} reversed - CamerPay reported failure`,
+      p_reference: requestId,
+    });
+    if (reversalError) {
+      await supabase
+        .from("withdrawal_requests")
+        .update({ status: "paid", decided_at: null })
+        .eq("id", requestId)
+        .eq("status", "rejected");
+      return {
+        ok: false,
+        reason: "reversalFailed",
+        error: "Payout failed, but the wallet refund could not be recorded.",
+      };
+    }
+  }
+  revalidatePath("/a/wallet");
+  revalidatePath("/m/wallet");
+  return { ok: true, status: "failed", requestId };
 }
 
 /**

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { ArrowUpFromLine, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
@@ -34,7 +35,17 @@ export function WalletClient({
   fee: { enabled: boolean; percent: number };
 }) {
   const { toast } = useToast();
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const hasProcessingPayout = state.requests.some(
+    (request) => request.status === "paid" && Boolean(request.replyTo) && !request.decidedAt,
+  );
+
+  useEffect(() => {
+    if (!hasProcessingPayout) return;
+    const timer = setInterval(() => router.refresh(), 10_000);
+    return () => clearInterval(timer);
+  }, [hasProcessingPayout, router]);
 
   const [amount, setAmount] = useState("");
   const [phone, setPhone] = useState("");
@@ -169,7 +180,10 @@ export function WalletClient({
       {state.requests.length > 0 && (
         <Panel title="Demandes de retrait" description="Vos retraits, du plus récent au plus ancien.">
           <ul className="divide-y divide-border">
-            {state.requests.map((r) => (
+            {state.requests.map((r) => {
+              const processing = r.status === "paid" && Boolean(r.replyTo) && !r.decidedAt;
+              const displayStatus = processing ? { label: "Traitement", tone: "warning" as const } : REQUEST_STATUS[r.status];
+              return (
               <li key={r.id} className="flex flex-wrap items-center gap-x-6 gap-y-1 px-5 py-4">
                 <div className="min-w-0 flex-1">
                   <p className="tnum text-sm font-semibold">
@@ -181,11 +195,12 @@ export function WalletClient({
                 {r.fee !== null && (
                   <span className="tnum text-xs text-text-light">frais {r.fee.toLocaleString("fr-CM")} FCFA</span>
                 )}
-                <Badge tone={REQUEST_STATUS[r.status]?.tone ?? "neutral"}>
-                  {REQUEST_STATUS[r.status]?.label ?? r.status}
+                <Badge tone={displayStatus?.tone ?? "neutral"}>
+                  {displayStatus?.label ?? r.status}
                 </Badge>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </Panel>
       )}

@@ -1,15 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { ArrowUpFromLine, Check, Wallet, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
+import { Dialog } from "@/components/ui/dialog";
+import { PaymentPendingView } from "@/components/payment/payment-pending";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { formatDateTime } from "@/lib/format/datetime";
-import { approveWithdrawal, creditWallet, rejectWithdrawal } from "@/lib/data/wallet-actions";
+import { approveWithdrawal, checkWalletFunding, checkWithdrawalPayout, fundWallet, rejectWithdrawal } from "@/lib/data/wallet-actions";
+import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import type { AdminWithdrawalRequest } from "@/lib/data/wallet";
 
 /**
@@ -31,8 +34,16 @@ export function WalletInbox({
   // The credit box — which restaurant, how much, and for what.
   const [creditRestaurant, setCreditRestaurant] = useState("");
   const [creditAmount, setCreditAmount] = useState("");
-  const [creditNote, setCreditNote] = useState("");
   const [showCredit, setShowCredit] = useState(false);
+  const [creditPhone, setCreditPhone] = useState("");
+  const [fundingAttemptId, setFundingAttemptId] = useState<string | null>(null);
+  const [fundingOpen, setFundingOpen] = useState(false);
+  const [fundingInstruction, setFundingInstruction] = useState<PaymentInstruction | null>(null);
+  const initialPayout = requests.find(
+    (request) => request.status === "paid" && Boolean(request.replyTo) && !request.decidedAt,
+  );
+  const [payoutRequestId, setPayoutRequestId] = useState<string | null>(initialPayout?.id ?? null);
+  const [payoutOpen, setPayoutOpen] = useState(Boolean(initialPayout));
 
   const pendingRequests = requests.filter((r) => r.status === "pending");
   const decidedRequests = requests.filter((r) => r.status !== "pending");
@@ -50,21 +61,103 @@ export function WalletInbox({
     });
   }
 
+  function approvePayout(requestId: string) {
+    setActing(requestId);
+    startTransition(async () => {
+      const result = await approveWithdrawal(requestId);
+      setActing(null);
+      if (!result.ok) {
+        toast(result.error ?? "Payout failed.", "error");
+        return;
+      }
+      if (result.status === "pending") {
+        setPayoutRequestId(requestId);
+        setPayoutOpen(true);
+        toast(result.note ?? "CamerPay accepted the payout.", "success");
+        return;
+      }
+      toast(result.note ?? "Payout confirmed.", "success");
+    });
+  }
+
   function submitCredit() {
     const amount = Number(creditAmount);
+    setFundingInstruction(null);
     startTransition(async () => {
-      const result = await creditWallet(creditRestaurant, amount, creditNote);
+      const result = await fundWallet(creditRestaurant, creditPhone, amount);
       if (!result.ok) {
         toast(result.error, "error");
         return;
       }
-      toast(`Credited — new balance ${(result.balance ?? 0).toLocaleString("fr-CM")} FCFA.`, "success");
+      if (result.status === "pending" && result.attemptId) {
+        setFundingAttemptId(result.attemptId);
+        setFundingOpen(true);
+        return;
+      }
+      toast("CamerPay confirmed the payment and the wallet was credited.", "success");
       setCreditRestaurant("");
       setCreditAmount("");
-      setCreditNote("");
+      setCreditPhone("");
       setShowCredit(false);
     });
   }
+
+  useEffect(() => {
+    if (!fundingAttemptId) return;
+    let checking = false;
+    const timer = setInterval(async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await checkWalletFunding(fundingAttemptId);
+        if (result.instruction) setFundingInstruction(result.instruction);
+        if (result.status === "succeeded") {
+          clearInterval(timer);
+          setFundingAttemptId(null);
+          setFundingOpen(false);
+          toast("CamerPay confirmed the payment and the wallet was credited.", "success");
+          setCreditRestaurant("");
+          setCreditAmount("");
+          setCreditPhone("");
+          setShowCredit(false);
+        } else if (!result.ok || result.status === "failed") {
+          clearInterval(timer);
+          setFundingAttemptId(null);
+          setFundingOpen(false);
+          toast(result.ok ? "CamerPay rejected the payment." : result.error, "error");
+        }
+      } finally {
+        checking = false;
+      }
+    }, 4_000);
+    return () => clearInterval(timer);
+  }, [fundingAttemptId, toast]);
+
+  useEffect(() => {
+    if (!payoutRequestId) return;
+    let checking = false;
+    const timer = setInterval(async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await checkWithdrawalPayout(payoutRequestId);
+        if (result.status === "succeeded") {
+          clearInterval(timer);
+          setPayoutRequestId(null);
+          setPayoutOpen(false);
+          toast("CamerPay confirmed the restaurant payout.", "success");
+        } else if (!result.ok || result.status === "failed") {
+          clearInterval(timer);
+          setPayoutRequestId(null);
+          setPayoutOpen(false);
+          toast(result.ok ? "CamerPay reported that the payout failed. The wallet was refunded." : result.error, "error");
+        }
+      } finally {
+        checking = false;
+      }
+    }, 4_000);
+    return () => clearInterval(timer);
+  }, [payoutRequestId, toast]);
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
@@ -81,12 +174,11 @@ export function WalletInbox({
       {showCredit && (
         <Card className="border-primary/30">
           <CardBody className="flex flex-col gap-4">
-            <p className="text-sm font-semibold">Credit a restaurant wallet</p>
+            <p className="text-sm font-semibold">Fund a restaurant wallet through CamerPay</p>
             <p className="text-xs text-text-light">
-              Use this when money has actually been received for a restaurant (a CamerPay
-              collection, a deposit paid at the counter). Audited.
+              CamerPay collects the amount from the phone below. The wallet is credited only after provider confirmation.
             </p>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Restaurant id" htmlFor="wl-credit-restaurant" required className="sm:col-span-1">
                 <Input
                   id="wl-credit-restaurant"
@@ -105,23 +197,26 @@ export function WalletInbox({
                   onChange={(e) => setCreditAmount(e.target.value)}
                 />
               </Field>
-              <Field label="Note" htmlFor="wl-credit-note">
+
+              <Field label="Customer Mobile Money number" htmlFor="wl-credit-phone" required>
                 <Input
-                  id="wl-credit-note"
-                  value={creditNote}
-                  onChange={(e) => setCreditNote(e.target.value)}
-                  placeholder="Commande #…, acompte…"
+                  id="wl-credit-phone"
+                  type="tel"
+                  inputMode="tel"
+                  value={creditPhone}
+                  onChange={(e) => setCreditPhone(e.target.value)}
+                  placeholder="6XXXXXXXX"
                 />
               </Field>
             </div>
             <Button
               className="self-start"
-              disabled={pending || !creditRestaurant.trim() || !(Number(creditAmount) > 0)}
+              disabled={pending || !creditRestaurant.trim() || !creditPhone.trim() || !(Number(creditAmount) > 0)}
               loading={pending}
               onClick={submitCredit}
             >
               <Wallet className="size-4" aria-hidden />
-              <span>Credit wallet</span>
+              <span>Collect and fund wallet</span>
             </Button>
           </CardBody>
         </Card>
@@ -145,9 +240,7 @@ export function WalletInbox({
                 request={r}
                 acting={acting === r.id}
                 disabled={pending}
-                onApprove={() =>
-                  run(r.id, () => approveWithdrawal(r.id))
-                }
+                onApprove={() => approvePayout(r.id)}
                 onReject={() =>
                   run(r.id, () => rejectWithdrawal(r.id))
                 }
@@ -160,7 +253,9 @@ export function WalletInbox({
       {decidedRequests.length > 0 && (
         <Panel title="History" description="Decided requests, newest first.">
           <ul className="divide-y divide-border">
-            {decidedRequests.slice(0, 15).map((r) => (
+            {decidedRequests.slice(0, 15).map((r) => {
+              const processing = r.status === "paid" && Boolean(r.replyTo) && !r.decidedAt;
+              return (
               <li key={r.id} className="flex flex-wrap items-center gap-x-6 gap-y-1 px-5 py-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold">
@@ -176,14 +271,63 @@ export function WalletInbox({
                     fee {r.fee.toLocaleString("fr-CM")} · net {r.net?.toLocaleString("fr-CM")}
                   </span>
                 )}
-                <Badge tone={r.status === "paid" ? "success" : "neutral"}>
-                  {r.status === "paid" ? "Paid" : "Rejected"}
+                <Badge tone={processing ? "warning" : r.status === "paid" ? "success" : "neutral"}>
+                  {processing ? "Processing" : r.status === "paid" ? "Paid" : "Rejected"}
                 </Badge>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </Panel>
       )}
+      <Dialog
+        open={payoutOpen}
+        onClose={() => setPayoutOpen(false)}
+        title="Restaurant payout processing"
+        size="sm"
+        footer={
+          <Button variant="outline" onClick={() => setPayoutOpen(false)}>
+            Continue in background
+          </Button>
+        }
+      >
+        <PaymentPendingView
+          body="CamerPay accepted the transfer request. The restaurant sees Processing until the provider confirms it."
+          hint="This status updates automatically. A failed payout is returned to the restaurant wallet."
+          amountLabel="Status"
+          amount="Processing"
+          referenceLabel="Withdrawal"
+          reference={payoutRequestId ?? ""}
+          phoneLabel="Provider"
+          phone="CamerPay"
+          gatewayLabel="Confirmation"
+        />
+      </Dialog>
+
+      <Dialog
+        open={fundingOpen}
+        onClose={() => setFundingOpen(false)}
+        title="Wallet payment pending"
+        size="sm"
+        footer={
+          <Button variant="outline" onClick={() => setFundingOpen(false)}>
+            Continue in background
+          </Button>
+        }
+      >
+        <PaymentPendingView
+          body="Approve the Mobile Money request. The wallet remains unchanged until CamerPay confirms it."
+          hint="This status updates automatically. Closing the window does not mark the payment as successful."
+          amountLabel="Amount"
+          amount={Number(creditAmount || 0).toLocaleString("fr-CM") + " FCFA"}
+          referenceLabel="Restaurant"
+          reference={creditRestaurant}
+          phoneLabel="Phone"
+          phone={creditPhone}
+          gatewayLabel="Provider"
+          instruction={fundingInstruction}
+        />
+      </Dialog>
     </div>
   );
 }
