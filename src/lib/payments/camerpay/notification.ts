@@ -6,17 +6,29 @@ export interface CamerPayNotificationEntry {
   message?: string;
 }
 
-export interface PaymentInstruction {
+export interface PaymentNotification {
   id?: number;
   date?: string;
   message: string;
   code?: string;
+  status: "instruction" | "success" | "failed";
 }
 
-export interface PaymentInstructionHint {
+export type PaymentInstruction = Omit<PaymentNotification, "status">;
+
+export interface PaymentNotificationHint {
   phone: string;
   amount: number;
   afterNotificationId?: number;
+  /** Which way the money was meant to go. A collection unless said otherwise. */
+  direction?: "collect" | "payout";
+  /** Receipts other attempts already settled from, as `notificationRowId` values. */
+  excludeIds?: string[];
+}
+
+/** How a settled notification is claimed on `payment_attempts.provider_row_id`. */
+export function notificationRowId(id: number): string {
+  return "notification:" + id;
 }
 
 function barePhone(value: string): string {
@@ -26,47 +38,142 @@ function barePhone(value: string): string {
 function containsPhone(message: string, phone: string): boolean {
   const digits = barePhone(phone);
   if (!digits) return false;
-  const separated = digits
-    .split("")
-    .map((digit) => digit + "\\D*")
-    .join("");
+  const separated = digits.split("").map((digit) => digit + "\\D*").join("");
   return new RegExp("(?:^|\\D)" + separated + "(?:$|\\D)").test(message);
 }
 
 function containsAmount(message: string, amount: number): boolean {
-  return new RegExp("(?:^|\\D)" + amount + "(?:$|\\D)").test(message);
+  const digits = String(amount).split("").map((digit) => digit + "[\\s.,]*").join("");
+  return new RegExp("(?:^|\\D)" + digits + "(?:FCFA|XAF|$|\\D)", "i").test(message);
+}
+
+/** "• Client : 691 09 89 99" on a receipt — the customer. */
+const CLIENT_FIELD = /client\s*:\s*\+?([\d .]{9,})/i;
+/** "Le propriétaire du numéro (691098999)" on an Orange instruction. */
+const OWNER_FIELD = /num[ée]ro\s*\(\s*\+?([\d .]{9,})\)/i;
+/** "• Montant : 2 000 FCFA" on a receipt. */
+const AMOUNT_FIELD = /montant\s*:\s*([\d .,]+?)\s*(?:FCFA|XAF)/i;
+/** "• Vous : <our account> (NAME)" — on every receipt, and never the customer. */
+const ACCOUNT_LINE = /(?:^|\n|•)\s*vous\s*:[^\n•]*/gi;
+
+/**
+ * Is this notice about `phone`?
+ *
+ * Every receipt names OUR account on its "Vous :" line. Searching the whole
+ * text for a number therefore matched any receipt whenever the customer's
+ * number was the account's own — which is exactly how MTN tests from the
+ * account number were matched to an Orange receipt paid by someone else. The
+ * labelled field is read when there is one; otherwise the text is searched
+ * with the account line removed.
+ */
+function isAboutCustomer(message: string, phone: string): boolean {
+  const field = message.match(CLIENT_FIELD)?.[1] ?? message.match(OWNER_FIELD)?.[1];
+  if (field) return barePhone(field) === barePhone(phone);
+  return containsPhone(message.replace(ACCOUNT_LINE, " "), phone);
+}
+
+/** Is this notice for `amount`? The labelled "Montant :" field wins over a text search. */
+function isForAmount(message: string, amount: number): boolean {
+  const field = message.match(AMOUNT_FIELD)?.[1];
+  if (field) {
+    const whole = field.trim().replace(/\s/g, "").replace(/[.,]00$/, "").replace(/[.,]/g, "");
+    return Number(whole) === amount;
+  }
+  return containsAmount(message, amount);
+}
+
+const SUCCESS = /(?:valid[ée]|effectu[ée]|r[ée]ussi|succ[eè]s|successful)/i;
+const FAILURE = /(?:[ée]chec|failed|failure|refus[ée]?|rejet[ée]?|insuffisant|expir[ée]?)/i;
+const TRANSACTION_REFERENCE = /(?:r[ée]f(?:[ée]rence)?\.?\s*transaction|transaction\s*(?:id|n[o°]))/i;
+const USSD_CODE = /[#*][0-9*#]{3,}#/;
+const OPEN_PHONE = /(?:composer|dial|ouvrir|open).{0,40}(?:t[ée]l[ée]phone|phone|ussd)/i;
+
+/**
+ * Which way a receipt says the money went.
+ *
+ * Receipts name the operation — "RETRAIT_ORANGE validé", "DEPOT_ORANGE validé".
+ * A payout to the same number for the same amount reads exactly like a
+ * collection otherwise, and must never settle one.
+ */
+function operationOf(message: string): "collect" | "payout" | undefined {
+  if (/(?:^|[^a-z])(?:retrait|withdraw)/i.test(message)) return "collect";
+  if (/(?:^|[^a-z])(?:d[ée]p[ôo]t|depot|deposit)/i.test(message)) return "payout";
+  return undefined;
 }
 
 /**
- * Finds a post-initiation action notice for this exact customer and amount.
- * The notification envelope's numero is deliberately ignored: live Orange
- * notifications have shown the merchant number there while naming the charged
- * customer inside the message.
+ * Classifies the provider notifications for ONE post-initiation payment.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  OLDEST FIRST, AND A SECOND INSTRUCTION ENDS THIS REQUEST'S WINDOW.
+ *
+ *  Orange publishes its receipt ("RETRAIT_ORANGE validé avec succès … Réf.
+ *  Transaction …") in this report. The notices above the counter captured
+ *  before a request, for its number and amount, run in order: the "dial
+ *  #150*…#" instruction CamerPay issued for it, then — if the customer paid —
+ *  the receipt. A retry starts a new run with a new instruction.
+ *
+ *  This used to read newest first and stop at the first match, so on
+ *  2026-09-13 a paid 14:17 collection found the 14:31 retry's instruction
+ *  before its own receipt and read "pending" for ever. Now the notices are
+ *  read oldest first, a final receipt settles, and meeting a SECOND
+ *  instruction means the rest belongs to a later request.
+ * ─────────────────────────────────────────────────────────────────────────
  */
-export function findPaymentInstruction(
+export function findPaymentNotification(
   rows: CamerPayNotificationEntry[],
-  hint: PaymentInstructionHint,
-): PaymentInstruction | null {
-  const match = [...rows]
+  hint: PaymentNotificationHint,
+): PaymentNotification | null {
+  const direction = hint.direction ?? "collect";
+  const excluded = new Set(hint.excludeIds ?? []);
+
+  const ours = [...rows]
     .filter((row) => {
       if (!row.message) return false;
       if (
         hint.afterNotificationId !== undefined &&
         (row.id === undefined || row.id <= hint.afterNotificationId)
-      ) {
-        return false;
-      }
-      return containsPhone(row.message, hint.phone) && containsAmount(row.message, hint.amount);
+      ) return false;
+      if (row.id !== undefined && excluded.has(notificationRowId(row.id))) return false;
+      return isAboutCustomer(row.message, hint.phone) && isForAmount(row.message, hint.amount);
     })
-    .sort((a, b) => (b.id ?? 0) - (a.id ?? 0))[0];
+    .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
 
-  if (!match?.message) return null;
+  let instruction: PaymentNotification | null = null;
 
-  const code = match.message.match(/[#*][0-9*#]{3,}#/)?.[0];
-  return {
-    id: match.id,
-    date: match.date,
-    message: match.message,
-    code,
-  };
+  for (const row of ours) {
+    const message = row.message!;
+    const code = message.match(USSD_CODE)?.[0];
+
+    if (code || OPEN_PHONE.test(message)) {
+      // A second instruction for the same number and amount is a new request.
+      if (instruction) break;
+      instruction = { id: row.id, date: row.date, message, code, status: "instruction" };
+      continue;
+    }
+
+    // A final verdict must name OUR operation: an unlabelled or opposite-way
+    // notice is left alone, and the transaction row or the abandonment horizon
+    // decides instead.
+    if (operationOf(message) !== direction) continue;
+
+    if (FAILURE.test(message)) {
+      return { id: row.id, date: row.date, message, status: "failed" };
+    }
+    if (SUCCESS.test(message) && TRANSACTION_REFERENCE.test(message)) {
+      return { id: row.id, date: row.date, message, status: "success" };
+    }
+  }
+
+  return instruction;
+}
+
+/** Returns only a real handset action; final success notices are excluded. */
+export function findPaymentInstruction(
+  rows: CamerPayNotificationEntry[],
+  hint: PaymentNotificationHint,
+): PaymentInstruction | null {
+  const match = findPaymentNotification(rows, hint);
+  if (!match || match.status !== "instruction") return null;
+  return { id: match.id, date: match.date, message: match.message, code: match.code };
 }

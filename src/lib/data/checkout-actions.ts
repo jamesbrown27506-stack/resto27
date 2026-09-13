@@ -167,6 +167,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   // decrements. A script could drive it as a spam/DOS vector against a
   // kitchen. 10 orders in 10 minutes per person/IP is beyond any human cadence.
   const profile = await getCurrentProfile();
+  if (!profile) return { ok: false, reason: "loginRequired" };
   const limited = await rateLimit({
     key: "checkout:place",
     limit: 10,
@@ -557,7 +558,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     delivery_address: input.type === "delivery" ? addressLine : null,
     delivery_quartier: input.type === "delivery" ? quartier : null,
     delivery_landmark: input.type === "delivery" ? landmark : null,
-    payment_method: input.paymentMethod === "mobile_money" ? "mobile_money" : "cash_on_delivery",
+    payment_method: "mobile_money",
     notes: input.notes?.trim() || null,
     scheduled_for: scheduledFor,
   };
@@ -737,17 +738,25 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
 
   // ── Notification triggers ────────────────────────────────────────────
   // The order is written; everything below is news about it. Non-fatal.
-  await notify({
-    event: "new_order",
-    tone: "success",
-    restaurantId: input.restaurantId,
-    href: `/m/orders/${created.id}`,
-    params: {
-      reference: created.reference,
-      customerName: deliveryName,
-      amount: totals.total,
-    },
-  });
+  //
+  // PAYMENT FIRST: the kitchen hears about an order when there is something
+  // for it to do. A delivery order needs its fee quoted before the customer
+  // can pay, so the restaurant is told now. A pickup order is announced by
+  // settlePayment the moment the customer's payment is confirmed — ringing
+  // the kitchen for an order nobody has paid for invites cooking it.
+  if (input.type === "delivery") {
+    await notify({
+      event: "new_order",
+      tone: "success",
+      restaurantId: input.restaurantId,
+      href: `/m/orders/${created.id}`,
+      params: {
+        reference: created.reference,
+        customerName: deliveryName,
+        amount: totals.total,
+      },
+    });
+  }
 
   // Registered customers get a confirmation; guests have no profile to reach.
   if (profile) {

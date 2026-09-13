@@ -1,6 +1,16 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/server";
+import {
+  findPaymentNotification,
+  type CamerPayNotificationEntry,
+  type PaymentInstruction,
+} from "./notification";
+import { directionFor, normalisePhone, reportRowId, rowAmount, rowPhone, selectReportRow } from "./match";
+
+// The matching rules are pure and live in ./match (tested against real rows);
+// these two are part of this module's public surface and stay importable here.
+export { normalisePhone, reportRowId } from "./match";
 
 /**
  * CamerPay API client — https://doc.camerpay.net
@@ -99,14 +109,6 @@ function redactTrace(
   }
 
   return { method: "GET", url: BASE_URL, headers: safeHeaders, data: safeData };
-}
-
-/** Phone numbers must be exactly 9 digits starting with 6, no +237 prefix. */
-export function normalisePhone(input: string): string | null {
-  const digits = input.replace(/\D/g, "");
-  // Accept the forms people actually type: 237XXXXXXXXX, 00237…, or bare.
-  const bare = digits.replace(/^(00)?237/, "");
-  return /^6\d{8}$/.test(bare) ? bare : null;
 }
 
 /** CamerPay rejects anything outside this band. Checked before sending. */
@@ -719,29 +721,19 @@ export async function listNotifications(
   });
 }
 
-/**
- * Africa/Douala is UTC+1 all year — no DST, ever (0011 §2) — so a fixed offset
- * is exact, which is why this needs no library.
- */
-const DOUALA_OFFSET_MS = 60 * 60_000;
-
-/**
- * A report timestamp as an instant.
- *
- * CamerPay sends "2026-08-12T15:12:45.000": no zone, and the clock behind it is
- * Douala's. `new Date(...)` reads a naive string in the SERVER's zone, so on a
- * UTC host every row parses an hour older than it really is — old enough, on a
- * five-minute rule, to condemn a payment on its very first poll. Anything that
- * does carry a zone is believed as sent.
- */
-function parseProviderDate(value: string | null | undefined): number | null {
-  const text = value == null ? "" : String(value).trim();
-  if (!text) return null;
-
-  const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text);
-  const ms = Date.parse(zoned ? text : `${text.replace(" ", "T")}Z`);
-  if (Number.isNaN(ms)) return null;
-  return zoned ? ms : ms - DOUALA_OFFSET_MS;
+/** Highest notification counter visible immediately before a payment request. */
+export async function latestNotificationId(): Promise<number | undefined> {
+  try {
+    const report = await listNotifications({ limit: 100 });
+    if (!report.etat || !Array.isArray(report.data)) return undefined;
+    return report.data.reduce<number | undefined>((highest, value) => {
+      const id = Number((value as { id?: unknown })?.id);
+      if (!Number.isFinite(id)) return highest;
+      return highest === undefined ? id : Math.max(highest, id);
+    }, undefined);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -755,45 +747,6 @@ function parseProviderDate(value: string | null | undefined): number | null {
  */
 const CONCLUSIVE_FAILURE = /(echec|échec|failed|failure|refus|rejet|insuffis|expir)/i;
 
-/** Which way a report row's action moves money, when it can be told. */
-function directionFor(action: string | undefined): "collect" | "payout" | undefined {
-  const a = (action ?? "").toUpperCase();
-  // "MTN_WITHDRAWAL" / "RETRAIT" pull from the customer; "DEPOT_MTN" pushes.
-  if (a.includes("WITHDRAW") || a.includes("RETRAIT")) return "collect";
-  if (a.includes("DEPOT") || a.includes("DEPOSIT")) return "payout";
-  return undefined;
-}
-
-/** Does this row's action match the direction we asked for? */
-function matchesDirection(action: string | undefined, direction: "collect" | "payout"): boolean {
-  return directionFor(action) === direction;
-}
-
-/** Every spelling of the customer-number key seen from CamerPay's report. */
-function rowPhone(row: TransactionReportEntry): string | undefined {
-  const raw = row["customer number"] ?? row.number ?? row.numero ?? row.numeroClient ?? row.phone;
-  return raw != null ? String(raw) : undefined;
-}
-
-/** Every spelling of the amount key seen from CamerPay's report. */
-function rowAmount(row: TransactionReportEntry): number | undefined {
-  return row.Amount ?? row.montant ?? row.amount;
-}
-
-/**
- * The identity of a report row, as something storable.
- *
- * `id` is CamerPay's own counter and is what a row is claimed under; `ref` (the
- * operator's reference) is the fallback for a report shape that omits it. A row
- * with neither cannot be claimed, and a claim is what stops two attempts
- * settling from one payment — so the caller must treat `undefined` as "not
- * safely identifiable", not as "no constraint needed".
- */
-export function reportRowId(row: TransactionReportEntry): string | undefined {
-  if (row.id !== undefined && row.id !== null) return String(row.id);
-  if (row.ref) return String(row.ref);
-  return undefined;
-}
 
 /**
  * Confirm a single transaction against CamerPay's own record.
@@ -1018,6 +971,7 @@ export async function confirmTransaction(
   rowId?: string;
   raw?: unknown;
   searched?: unknown;
+  instruction?: PaymentInstruction;
 }> {
   const report = await listTransactions({ limit: 100 });
 
@@ -1028,17 +982,6 @@ export async function confirmTransaction(
   const rows = report.data;
   const needle = replyTo.trim();
   const consumed = new Set(hint.excludeRowIds ?? []);
-  const available = (row: TransactionReportEntry) => {
-    const id = reportRowId(row);
-    return !id || !consumed.has(id);
-  };
-
-  // Defensive: if a future version ever does echo the id back, believe it.
-  const direct = rows.find(
-    (row) =>
-      available(row) &&
-      (row.ref === needle || row.replyTo === needle || String(row.id ?? "") === needle),
-  );
 
   /**
    * THE LEDGER, WHEN THE CALLER HAS NO FACTS.
@@ -1059,6 +1002,10 @@ export async function confirmTransaction(
       // typed into the Confirm panel) still gets the amount and direction the
       // console recorded at initiation.
       effective = {
+        // Spread first: the exclusion list and the notification counter must
+        // survive the fill. Rebuilding the hint from the ledger alone dropped
+        // them, so a retry could settle from a row its first try had consumed.
+        ...hint,
         phone: hint.phone ?? ledger.phone,
         amount: hint.amount ?? ledger.amount,
         direction: hint.direction ?? ledger.direction,
@@ -1069,51 +1016,77 @@ export async function confirmTransaction(
   }
 
   const phone = effective.phone ? normalisePhone(effective.phone) : null;
+
+  /*
+   * Orange currently publishes the conclusive operator receipt in the
+   * authenticated notification report while its transaction row can remain
+   * unused. Only inspect notifications above the counter captured before this
+   * request, and require the exact customer plus amount.
+   */
+  const notificationVerdict = async (searched: unknown) => {
+    if (
+      effective.direction !== "collect" ||
+      !effective.phone ||
+      effective.amount === undefined ||
+      effective.notificationAfterId === undefined
+    ) {
+      return { status: "pending" as const, searched };
+    }
+
+    const notifications = await listNotifications({ limit: 100 });
+    if (!notifications.etat || !Array.isArray(notifications.data)) {
+      return { status: "pending" as const, searched };
+    }
+
+    const match = findPaymentNotification(
+      notifications.data as CamerPayNotificationEntry[],
+      {
+        phone: effective.phone,
+        amount: effective.amount,
+        afterNotificationId: effective.notificationAfterId,
+        direction: "collect",
+        // A receipt another attempt already settled from is not ours to take.
+        excludeIds: [...consumed].filter((id) => id.startsWith("notification:")),
+      },
+    );
+
+    if (!match) return { status: "pending" as const, searched };
+    if (match.status === "instruction") {
+      return {
+        status: "pending" as const,
+        searched,
+        instruction: {
+          id: match.id,
+          date: match.date,
+          message: match.message,
+          code: match.code,
+        },
+      };
+    }
+
+    return {
+      status: match.status,
+      amount: effective.amount,
+      rowId: match.id === undefined ? undefined : "notification:" + match.id,
+      raw: match,
+      searched,
+    };
+  };
   const startedAt = effective.startedAt ? new Date(effective.startedAt).getTime() : null;
 
-  const candidates = direct
-    ? [direct]
-    : rows
-        .filter((row) => {
-          if (!available(row)) return false;
-          if (phone) {
-            // The report's customer-number key has appeared as "customer
-            // number", number, numero AND numeroClient across accounts and
-            // versions. Reading one spelling is how a correct row silently
-            // fails to match and a paid transaction reads as pending.
-            if (normalisePhone(rowPhone(row) ?? "") !== phone) return false;
-          }
-          if (effective.amount !== undefined && rowAmount(row) !== effective.amount) return false;
-          if (effective.direction && !matchesDirection(row.action, effective.direction)) return false;
-
-          // The precise test, when we have it: our row is above the counter as
-          // it stood before we asked.
-          if (effective.afterId !== undefined && (row.id ?? 0) <= effective.afterId) return false;
-
-          /**
-           * The date is only a COARSE guard, and only when there is no
-           * afterId. CamerPay sends no timezone, so this is generous by hours
-           * on purpose — its job is to exclude last week, not last minute.
-           * Tightening it is how a correct row gets rejected on a server whose
-           * clock sits in a different zone from Douala.
-           */
-          if (effective.afterId === undefined && startedAt && row.date) {
-            const TOLERANCE_MS = 6 * 60 * 60_000;
-            const rowAt = parseProviderDate(row.date);
-            if (rowAt !== null && rowAt < startedAt - TOLERANCE_MS) return false;
-          }
-          return true;
-        })
-        // Newest first — `id` counts up, and is more reliable than parsing dates.
-        .sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
-
-  // Nothing identifiable. Never fall back to "the most recent row", which
-  // would happily settle an invoice against an unrelated payment.
-  if (candidates.length === 0 || (!direct && !phone && effective.amount === undefined)) {
-    return { status: "pending", searched: rows };
-  }
-
-  const match = candidates[0];
+  // THE row this request created — the first above the counter captured
+  // before it, never simply the newest (see selectReportRow for the Orange
+  // retry that made the newest one wrong).
+  const match = selectReportRow(rows, {
+    needle,
+    phone,
+    amount: effective.amount,
+    direction: effective.direction,
+    afterId: effective.afterId,
+    startedAt,
+    exclude: consumed,
+  });
+  if (!match) return notificationVerdict(rows);
   const amount = rowAmount(match);
   const rowId = reportRowId(match);
 
@@ -1141,6 +1114,21 @@ export async function confirmTransaction(
     status = "failed";
   } else {
     status = "pending";
+  }
+
+  if (status === "pending") {
+    const fromNotification = await notificationVerdict(rows);
+    if (fromNotification.status !== "pending") {
+      await persistResolution(needle, {
+        direction: effective.direction,
+        phone: effective.phone,
+        amount: fromNotification.amount,
+        afterId: effective.afterId,
+        startedAt: effective.startedAt,
+        status: fromNotification.status,
+      });
+      return fromNotification;
+    }
   }
 
   // Persist the outcome — and, if this check started from a ledger row, the

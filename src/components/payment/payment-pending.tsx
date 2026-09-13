@@ -1,6 +1,7 @@
 "use client";
 
-import { LoaderCircle, Radio, ShieldCheck, Smartphone } from "lucide-react";
+import { Copy, LoaderCircle, PhoneCall, Radio, ShieldCheck, Smartphone } from "lucide-react";
+import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 
 export interface PaymentPendingViewProps {
   body: string;
@@ -14,6 +15,7 @@ export interface PaymentPendingViewProps {
   gatewayLabel: string;
   /** True while the collection request itself is still being sent. */
   requesting?: boolean;
+  instruction?: PaymentInstruction | null;
 }
 
 /**
@@ -32,6 +34,7 @@ export function PaymentPendingView({
   phone,
   gatewayLabel,
   requesting = false,
+  instruction,
 }: PaymentPendingViewProps) {
   return (
     <div role="status" aria-live="polite" className="text-center">
@@ -72,6 +75,37 @@ export function PaymentPendingView({
           <dd className="font-semibold">CamerPay</dd>
         </div>
       </dl>
+
+      {instruction && (
+        <div className="mx-auto mt-4 max-w-sm rounded-lg border border-warning/35 bg-warning-light p-4 text-left">
+          <p className="font-semibold text-warning">Action Orange requise / Orange action required</p>
+          <p className="mt-1 text-sm leading-relaxed text-text-secondary">{instruction.message}</p>
+          {instruction.code && (
+            <>
+              <code className="mt-3 block break-all rounded bg-surface px-3 py-2 text-sm font-bold">
+                {instruction.code}
+              </code>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 text-sm font-semibold"
+                  onClick={() => void navigator.clipboard.writeText(instruction.code!)}
+                >
+                  <Copy className="size-4" aria-hidden />
+                  Copier / Copy
+                </button>
+                <a
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-white"
+                  href={"tel:" + encodeURIComponent(instruction.code)}
+                >
+                  <PhoneCall className="size-4" aria-hidden />
+                  Téléphone / Phone
+                </a>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       <p className="mx-auto mt-4 max-w-sm text-xs leading-relaxed text-text-light">{hint}</p>
     </div>

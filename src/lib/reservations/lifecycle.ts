@@ -93,9 +93,9 @@ export function canManagerCollectReservationDeposit(input: {
   depositPaid: boolean;
 }): boolean {
   if (input.depositPaid) return false;
-  // Fixed/per-seat deposits belong to the customer online flow. Cash remains
-  // an explicit fallback only after the restaurant has accepted the request.
-  if (input.depositPercent <= 0) return input.status === "awaiting_payment";
+  // Fixed/per-seat deposits are paid ONLINE, by the customer, from their own
+  // phone — never recorded as cash by the restaurant (payment first, 2026-09).
+  if (input.depositPercent <= 0) return false;
   // A percentage of the bill only exists once the party is dining.
   return input.status === "seated" || input.status === "completed";
 }

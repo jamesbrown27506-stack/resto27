@@ -245,7 +245,11 @@ export async function POST(request: NextRequest) {
     // looking at an invoice. Non-fatal, like every delivery here. Sent once per
     // distinct delivery — the replay guard above is what keeps a redelivery
     // from announcing the same payment twice.
-    if (attempt && corroborated) {
+    // Subscriptions only: a reservation deposit and an order payment are
+    // announced by settlePayment itself, whichever route settled them — this
+    // used to add a second "billing paid" alert linking order payments to the
+    // reservations page.
+    if (attempt && corroborated && attempt.kind === "subscription") {
       try {
         await notify({
           event: "billing_paid",

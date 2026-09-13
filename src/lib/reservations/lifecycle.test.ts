@@ -96,9 +96,11 @@ describe("reservation controls", () => {
     expect(
       canManagerCollectReservationDeposit({ status: "pending", depositPercent: 0, depositPaid: false }),
     ).toBe(false);
+    // Payment first: a fixed/per-seat deposit is paid online by the customer
+    // only — the restaurant can no longer record it as cash to confirm a table.
     expect(
       canManagerCollectReservationDeposit({ status: "awaiting_payment", depositPercent: 0, depositPaid: false }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       canManagerCollectReservationDeposit({ status: "confirmed", depositPercent: 10, depositPaid: false }),
     ).toBe(false);

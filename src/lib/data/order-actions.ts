@@ -7,6 +7,7 @@ import { requireCapability } from "@/lib/auth/branch";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { nextStatus, isTerminal, type OrderStatus } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
+import { orderPaymentInFlight } from "@/lib/payments/collect";
 
 /**
  * The statuses `notify` has copy for. `awaiting_customer` is included: the
@@ -30,7 +31,7 @@ async function loadOrder(restaurantId: string, orderId: string) {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("orders")
-    .select("id, status, type, total, delivery_fee, delivery_fee_set_at, subtotal, reference, customer_id, restaurant_id, table_number")
+    .select("id, status, type, total, delivery_fee, delivery_fee_set_at, is_paid, payment_method, subtotal, reference, customer_id, restaurant_id, table_number")
     .eq("restaurant_id", restaurantId)
     .eq("id", orderId)
     .maybeSingle();
@@ -41,6 +42,8 @@ async function loadOrder(restaurantId: string, orderId: string) {
     total: number;
     delivery_fee: number;
     delivery_fee_set_at: string | null;
+    is_paid: boolean;
+    payment_method: string;
     subtotal: number;
     reference: string;
     customer_id: string | null;
@@ -193,7 +196,24 @@ export async function advanceOrder(
        customer agreed to, so there is nothing to accept.
       ─────────────────────────────────────────────────────────────────────
     */
-    if (fee > 0) target = "awaiting_customer";
+    target = fee > 0 ? "awaiting_customer" : "pending";
+  }
+
+  /*
+    PAYMENT FIRST. A customer's order moves only once their Mobile Money
+    payment is confirmed — accepting, cooking, ready, delivered, every step.
+    The single step allowed before it is the delivery-fee quote above: the
+    customer cannot pay a total nobody has priced yet.
+
+    Keyed on `mobile_money` because that is what every customer order is now
+    placed with; dine-in orders the restaurant takes itself are paid at the
+    table, and older cash orders finish the way they started.
+  */
+  if (order.payment_method === "mobile_money" && !order.is_paid && quotedFee === undefined) {
+    return {
+      ok: false,
+      error: "Waiting for the customer's Mobile Money payment. The order can start once it is confirmed.",
+    };
   }
 
   const patch: Record<string, unknown> = { status: target };
@@ -282,6 +302,25 @@ export async function cancelOrder(orderId: string, reason: string): Promise<Acti
   const order = await loadOrder(active.restaurantId, orderId);
   if (!order) return { ok: false, error: "Order not found." };
   if (isTerminal(order.status)) return { ok: false, error: "This order is already finished." };
+
+  /*
+    A PAID ORDER IS NOT THE RESTAURANT'S TO CANCEL ALONE.
+
+    Its money is already in the wallet, and there is no automated refund yet:
+    cancelling here would keep the customer's payment and send them nothing.
+    Support cancels it and refunds the customer. And while a prompt is still
+    open on the customer's phone, the payment may land a second after the
+    cancellation — so that waits too.
+  */
+  if (order.payment_method === "mobile_money" && order.is_paid) {
+    return {
+      ok: false,
+      error: "This order is paid online, so the customer must be refunded. Contact Resto237 support to cancel it.",
+    };
+  }
+  if (order.payment_method === "mobile_money" && (await orderPaymentInFlight(orderId))) {
+    return { ok: false, error: "The customer is paying right now. Wait a few minutes before cancelling." };
+  }
 
   const supabase = createAdminClient();
   const { error } = await supabase

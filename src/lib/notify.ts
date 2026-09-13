@@ -131,6 +131,8 @@ export interface NotifyParams {
   audience?: "customer" | "staff";
   /** True on a watchdog re-send — the copy says "still waiting", not "new". */
   reminder?: boolean;
+  /** new_order: the customer's online payment just landed — the order may start. */
+  paid?: boolean;
   /** reservation_reminder: how far out the slot is. */
   stage?: "day" | "soon";
   /** A pre-formatted, recipient-facing time ("sam. 30 août, 20:00"). */
@@ -206,7 +208,20 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
             REPLACED and re-buzzes (renotify) instead of stacking.
           · whenLabel   — a scheduled order whose prep window has arrived.
           · neither     — the original "a customer just ordered".
+          · paid        — the customer's payment landed: the kitchen's start
+            signal, since nothing is cooked before it (payment first).
       */
+      if (p.paid) {
+        return fr
+          ? {
+              title: `Commande ${p.reference ?? ""} payée — à préparer`,
+              body: `${p.customerName ?? "Client"} · ${money(p.amount)} payé en ligne. Confirmez-la et lancez la préparation.`,
+            }
+          : {
+              title: `Order ${p.reference ?? ""} paid — start it`,
+              body: `${p.customerName ?? "Customer"} · ${money(p.amount)} paid online. Confirm it and start preparing.`,
+            };
+      }
       if (p.reminder) {
         return fr
           ? {

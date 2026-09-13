@@ -35,9 +35,11 @@ import {
 import {
   checkPaymentAttempt,
   initiatePaymentAttempt,
+  orderPaymentInFlight,
   settlePayment,
 } from "@/lib/payments/collect";
 import type { ActionResult } from "./admin-actions";
+import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import type { CustomerPreferences } from "./customer";
 import type { UploadActionResult } from "./profile-actions";
 
@@ -62,7 +64,7 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
 
   const { data: order, error } = await supabase
     .from("orders")
-    .select("id, customer_id, restaurant_id, reference, status")
+    .select("id, customer_id, restaurant_id, reference, status, is_paid, payment_method")
     .eq("id", orderId)
     .eq("customer_id", user.id)
     .maybeSingle();
@@ -70,6 +72,19 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
   if (error || !order) return { ok: false, error: "Commande introuvable." };
   if (!canCustomerCancel(order.status as CustomerStatus)) {
     return { ok: false, error: "Cette commande ne peut plus être annulée." };
+  }
+  // A PAID order is refunded, not just cancelled — that goes through the
+  // restaurant and Resto237, never a one-tap that loses the customer's money.
+  if (order.is_paid) {
+    return { ok: false, error: "Cette commande est déjà payée : contactez le restaurant pour l'annuler." };
+  }
+  // A prompt still open on the customer's phone may yet be approved: cancelling
+  // now would leave them charged for an order that no longer exists.
+  if (order.payment_method === "mobile_money" && (await orderPaymentInFlight(order.id))) {
+    return {
+      ok: false,
+      error: "Un paiement est en cours pour cette commande. Attendez sa confirmation, ou réessayez dans quelques minutes.",
+    };
   }
 
   const now = new Date().toISOString();
@@ -158,7 +173,7 @@ export async function respondToDeliveryFee(
   const now = new Date().toISOString();
 
   const patch = accepted
-    ? { status: "confirmed" }
+    ? { status: "pending" }
     : {
         status: "cancelled",
         cancelled_reason: "Frais de livraison refusés par le client",
@@ -180,7 +195,7 @@ export async function respondToDeliveryFee(
 
   await supabase.from("order_status_history").insert({
     order_id: orderId,
-    status: accepted ? "confirmed" : "cancelled",
+    status: accepted ? "pending" : "cancelled",
     by_name: user.name,
     note: accepted ? "Delivery fee accepted by customer" : "Delivery fee declined by customer",
   });
@@ -194,7 +209,7 @@ export async function respondToDeliveryFee(
     href: `/m/orders/${orderId}`,
     params: {
       reference: order.reference,
-      status: accepted ? "confirmed" : undefined,
+      status: accepted ? "pending" : undefined,
       cancelledBy: accepted ? undefined : "customer",
       reason: accepted ? undefined : "Frais de livraison refusés",
     },
@@ -206,6 +221,118 @@ export async function respondToDeliveryFee(
   return { ok: true };
 }
 
+/** Start or resume the signed-in customer's Mobile Money order payment. */
+export async function payOwnOrder(
+  orderId: string,
+  phone: string,
+): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string }> {
+  const user = await requireUser();
+  const supabase = createAdminClient();
+
+  if (!z.string().uuid().safeParse(orderId).success) {
+    return { ok: false, error: "Commande introuvable." };
+  }
+  if (!phone.trim()) return { ok: false, error: "Numéro Mobile Money requis." };
+
+  const { data } = await supabase
+    .from("orders")
+    .select("id, reference, restaurant_id, customer_id, status, type, total, is_paid, payment_method, delivery_fee_set_at")
+    .eq("id", orderId)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+
+  if (!data) return { ok: false, error: "Commande introuvable." };
+  if (data.is_paid) return { ok: true, status: "succeeded" };
+  if (data.payment_method !== "mobile_money" || data.status !== "pending") {
+    return { ok: false, error: "Cette commande n'attend pas de paiement en ligne." };
+  }
+  if (data.type === "delivery" && !data.delivery_fee_set_at) {
+    return { ok: false, error: "Le restaurant doit d'abord confirmer les frais de livraison." };
+  }
+
+  // Order attempts carry the order id in `raw_response.orderId`: the column
+  // `payment_attempts.order_id` does not exist on the live database, and
+  // filtering on it made every payment fail before a charge was ever sent.
+  const { data: attempts, error: attemptsError } = await supabase
+    .from("payment_attempts")
+    .select("id, status, transaction_id")
+    .eq("raw_response->>orderId", data.id)
+    .in("status", ["pending", "succeeded"])
+    .is("settled_at", null)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (attemptsError) return { ok: false, error: "Impossible de vérifier le paiement en cours." };
+
+  const open = (attempts ?? []).find(
+    (attempt) => attempt.status === "succeeded" || Boolean(attempt.transaction_id),
+  );
+  if (open?.status === "succeeded") {
+    const settled = await settlePayment(open.id as string);
+    if (!settled.ok) return { ok: false, error: settled.error ?? "Le paiement n'a pas pu être appliqué." };
+    return { ok: true, status: "succeeded" };
+  }
+  if (open?.status === "pending" && open.transaction_id) {
+    return { ok: true, status: "pending", attemptId: open.id as string };
+  }
+
+  const initiated = await initiatePaymentAttempt({
+    kind: "order",
+    restaurantId: data.restaurant_id,
+    orderId: data.id,
+    reference: data.reference,
+    phone,
+    amount: Number(data.total),
+  });
+
+  if (!initiated.ok || !initiated.attemptId) {
+    return { ok: false, error: initiated.error ?? "Le paiement a échoué." };
+  }
+  if (initiated.status === "pending") {
+    return { ok: true, status: "pending", attemptId: initiated.attemptId };
+  }
+
+  const settled = await settlePayment(initiated.attemptId);
+  if (!settled.ok) return { ok: false, error: settled.error ?? "Le paiement n'a pas pu être appliqué." };
+  revalidatePath("/orders");
+  revalidatePath("/orders/" + orderId);
+  revalidatePath("/account");
+  return { ok: true, status: "succeeded" };
+}
+
+/** Poll an order payment owned by the signed-in customer. */
+export async function checkOwnOrderPayment(
+  attemptId: string,
+): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed"; instruction?: PaymentInstruction }> {
+  const user = await requireUser();
+  const supabase = createAdminClient();
+  const { data: attempt } = await supabase
+    .from("payment_attempts")
+    .select("raw_response")
+    .eq("id", attemptId)
+    .maybeSingle();
+
+  const raw = (attempt?.raw_response ?? null) as { orderId?: unknown } | null;
+  const paidOrderId = typeof raw?.orderId === "string" ? raw.orderId : null;
+  if (!paidOrderId) return { ok: false, error: "Paiement introuvable." };
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id")
+    .eq("id", paidOrderId)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+  if (!order) return { ok: false, error: "Paiement introuvable." };
+
+  const result = await checkPaymentAttempt(attemptId);
+  if (!result.ok) return { ok: false, error: result.error ?? "Paiement introuvable." };
+  if (result.status === "succeeded") {
+    revalidatePath("/orders");
+    revalidatePath("/orders/" + paidOrderId);
+    revalidatePath("/account");
+  }
+  return { ok: true, status: result.status, instruction: result.instruction };
+}
 /**
  * "I HAVE MY FOOD." — the customer closing their own order.
  *
@@ -1078,7 +1205,7 @@ export async function payReservationDeposit(
  */
 export async function checkReservationPayment(
   attemptId: string,
-): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed" }> {
+): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed"; instruction?: PaymentInstruction }> {
   const user = await requireUser();
   const supabase = createAdminClient();
 
@@ -1106,7 +1233,7 @@ export async function checkReservationPayment(
     revalidatePath("/reservations");
     revalidatePath("/account");
   }
-  return { ok: true, status: result.status };
+  return { ok: true, status: result.status, instruction: result.instruction };
 }
 
 /** Cancel one of your own pre-service reservations. */

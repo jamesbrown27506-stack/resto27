@@ -43,9 +43,16 @@ import { cn } from "@/lib/utils";
  * is what makes a working poller feel broken. Then tight while the PIN prompt
  * is plausibly on screen, stretching out once the customer has wandered off.
  */
-const SCHEDULE_MS = [0, 3_000, 3_000, 4_000, 5_000, 6_000, 8_000, 10_000, 15_000, 20_000, 30_000];
+const SCHEDULE_MS = [
+  0, 3_000, 3_000, 4_000, 5_000, 6_000, 8_000, 10_000, 15_000, 20_000, 30_000,
+  30_000, 30_000, 30_000, 30_000, 30_000, 30_000,
+];
 
-/** Roughly two minutes of automatic watching. */
+/**
+ * About five minutes of automatic watching. Two was too short for Orange: the
+ * customer must first dial a #150*…# code, and the 2026-09-13 payment was
+ * confirmed after this panel had already stopped.
+ */
 const MAX_ATTEMPTS = SCHEDULE_MS.length;
 
 function delayFor(attempt: number): number {

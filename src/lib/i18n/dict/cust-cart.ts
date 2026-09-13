@@ -143,7 +143,7 @@ export const custCartDict = defineDict({
     "cct.co.date": "Date",
     "cct.co.time": "Heure",
     "cct.co.scheduleRequired": "Choisissez une date et une heure pour la programmation.",
-    "cct.co.onlineSoon": "Le paiement en ligne des commandes arrive bientôt.",
+    "cct.co.onlineSoon": "Le paiement Mobile Money est obligatoire. La cuisine ne démarre qu'après confirmation du paiement.",
     "cct.co.noDelivery": "Ce restaurant ne propose pas la livraison.",
     "cct.co.noPickup": "Ce restaurant ne propose pas le retrait.",
 
@@ -173,6 +173,7 @@ export const custCartDict = defineDict({
     "cct.co.redirecting": "Nous vous emmenons à votre commande…",
 
     /* ── Why an order was refused (checkout-actions reason codes) ───── */
+    "cct.err.loginRequired": "Connectez-vous pour payer cette commande en ligne.",
     "cct.err.emptyBasket": "Votre panier est vide.",
     "cct.err.badType": "Choisissez la livraison ou le retrait.",
     "cct.err.restaurantUnavailable": "Ce restaurant n'est plus disponible.",
@@ -328,7 +329,7 @@ export const custCartDict = defineDict({
     "cct.co.date": "Date",
     "cct.co.time": "Time",
     "cct.co.scheduleRequired": "Pick a date and time for the scheduled order.",
-    "cct.co.onlineSoon": "Online payment for orders is coming soon.",
+    "cct.co.onlineSoon": "Mobile Money payment is required. The kitchen only starts after the payment is confirmed.",
     "cct.co.noDelivery": "This restaurant does not offer delivery.",
     "cct.co.noPickup": "This restaurant does not offer pickup.",
 
@@ -355,6 +356,7 @@ export const custCartDict = defineDict({
     "cct.co.redirecting": "Taking you to your order…",
 
     /* ── Why an order was refused (checkout-actions reason codes) ───── */
+    "cct.err.loginRequired": "Sign in to pay for this order online.",
     "cct.err.emptyBasket": "Your basket is empty.",
     "cct.err.badType": "Choose delivery or pickup.",
     "cct.err.restaurantUnavailable": "This restaurant is no longer available.",

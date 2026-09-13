@@ -27,6 +27,7 @@ import { formatDate, formatDayLabel, formatTime, weekdayName } from "@/lib/forma
 import { formatMoney } from "@/lib/format/currency";
 import { depositChargedNow } from "@/lib/reservations/deposit";
 import { PaymentPendingView } from "@/components/payment/payment-pending";
+import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import {
   canCustomerCancelReservation,
   canCustomerPayReservation,
@@ -41,7 +42,12 @@ import {
 import type { SessionUser } from "@/lib/session";
 
 const POLL_INTERVAL_MS = 4_000;
-const POLL_TRIES = 30;
+/**
+ * Six minutes. Two was too short for Orange Money, where the customer first
+ * dials a #150*…# code before approving — the payment kept landing after this
+ * screen had stopped watching. The reconciler settles anything later anyway.
+ */
+const POLL_TRIES = 90;
 
 /**
  * Low season, fixed windows: the restaurants practically share one kitchen
@@ -149,6 +155,7 @@ export function ReservationsClient({
   const [busy, setBusy] = useState(false);
   /** The booking whose deposit is being charged right now, or null. */
   const [payingId, setPayingId] = useState<string | null>(null);
+  const [paymentInstruction, setPaymentInstruction] = useState<PaymentInstruction | null>(null);
   const firstPendingReservation = initial.find((reservation) => reservation.paymentAttemptId);
   const [paymentScreenId, setPaymentScreenId] = useState<string | null>(
     () => firstPendingReservation?.id ?? null,
@@ -224,6 +231,7 @@ export function ReservationsClient({
   const startPaymentPolling = useCallback(
     (attemptId: string, reservationId: string, paymentPhone?: string | null) => {
       stopPaymentPolling();
+      setPaymentInstruction(null);
       setPayingId(reservationId);
       setPaymentScreenId(reservationId);
       setPaymentScreenOpen(true);
@@ -248,6 +256,7 @@ export function ReservationsClient({
 
         try {
           const check = await checkReservationPayment(attemptId);
+          if (check.instruction) setPaymentInstruction(check.instruction);
           if (check.status === "succeeded") {
             stopPaymentPolling();
             setPayingId(null);
@@ -1083,6 +1092,7 @@ export function ReservationsClient({
               phoneLabel={t("crs.paymentPhone")}
               phone={reservation.paymentPhone ?? phone}
               gatewayLabel={t("crs.paymentGateway")}
+              instruction={paymentInstruction}
               requesting={payingId === reservation.id && !reservation.paymentAttemptId}
             />
           </Dialog>

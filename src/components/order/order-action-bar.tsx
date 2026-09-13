@@ -69,6 +69,9 @@ export type OrderActionTarget = Pick<
   // The landmark is how a rider actually finds a door in Douala, and the fee
   // dialog shows it while the manager decides what to charge.
   | "deliveryLandmark"
+  // Payment first: an unpaid Mobile Money order shows a notice, not a button.
+  | "isPaid"
+  | "paymentMethod"
 >;
 
 export function OrderActionBar({
@@ -106,6 +109,21 @@ export function OrderActionBar({
     a different one to someone walking to a counter.
   */
   const nextLabel = advanceLabelKey(order.status, order.type);
+
+  /*
+    PAYMENT FIRST. An unpaid Mobile Money order is waiting on the customer,
+    and `advanceOrder` refuses every step until the money lands — except
+    quoting a delivery fee, because the customer cannot pay a total nobody has
+    priced. So that one button stays; every other advance becomes a notice
+    instead of a button the server would refuse after it was pressed.
+  */
+  const quoteStep = next === "confirmed" && order.type === "delivery" && order.deliveryFeeSetAt === null;
+  const blockedByPayment =
+    order.paymentMethod === "mobile_money" &&
+    !order.isPaid &&
+    order.status !== "awaiting_customer" &&
+    !isTerminal(order.status) &&
+    !quoteStep;
 
   function advance(fee?: number) {
     if (!next) return;
@@ -164,8 +182,17 @@ export function OrderActionBar({
         </p>
       )}
 
+      {blockedByPayment && (
+        <p className="mb-3 flex items-start gap-2 rounded-md border border-info/30 bg-info-light px-3 py-2 text-xs leading-relaxed text-info">
+          <Clock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span>
+            <strong>{t("mo.awaitingPayment")}</strong> {t("mo.awaitingPaymentBody")}
+          </span>
+        </p>
+      )}
+
       <div className={cn("flex flex-wrap items-center gap-2", className)}>
-        {canAdvance && next && nextLabel && (
+        {canAdvance && next && nextLabel && !blockedByPayment && (
           <Button size={size} disabled={pending} onClick={() => advance()}>
             <span>{t(nextLabel)}</span>
           </Button>

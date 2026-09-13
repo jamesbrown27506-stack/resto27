@@ -5,10 +5,12 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { activateFromInvoice } from "@/lib/data/invoice-activation";
 import { paymentMode } from "@/lib/data/billing";
 import { notify } from "@/lib/notify";
+import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import {
   acceptedTransactionId,
   confirmTransaction,
   isPayableAmount,
+  latestNotificationId,
   latestTransactionId,
   normalisePhone,
   recordAcceptedRequest,
@@ -71,7 +73,7 @@ import {
  *  The French `error` string is the fallback for callers that do not map it.
  */
 
-export type AttemptKind = "subscription" | "reservation";
+export type AttemptKind = "subscription" | "reservation" | "order";
 
 export type PaymentStatus = "succeeded" | "pending" | "failed";
 
@@ -82,6 +84,7 @@ export interface PaymentOutcome {
   reason?: string;
   status?: PaymentStatus;
   attemptId?: string;
+  instruction?: PaymentInstruction;
 }
 
 export interface SettleResult {
@@ -90,6 +93,7 @@ export interface SettleResult {
   reason?: string;
   /** A CODE, not prose: "alreadySettled" when there was nothing left to do. */
   note?: string;
+  instruction?: PaymentInstruction;
 }
 
 /**
@@ -105,6 +109,7 @@ export interface AttemptResolution {
   settled: boolean;
   error?: string;
   note?: string;
+  instruction?: PaymentInstruction;
 }
 
 export interface PaymentAttemptRow {
@@ -112,6 +117,7 @@ export interface PaymentAttemptRow {
   reference: string;
   invoiceId: string | null;
   reservationId: string | null;
+  orderId: string | null;
   restaurantId: string;
   kind: AttemptKind;
   provider: string;
@@ -122,16 +128,21 @@ export interface PaymentAttemptRow {
   settledAt: string | null;
   /** The report row this attempt consumed (0036). Null until it settles. */
   providerRowId: string | null;
+  rawResponse: Record<string, unknown> | null;
+  createdAt: string;
 }
 
 function attemptRow(row: Record<string, unknown>): PaymentAttemptRow {
+  const rawResponse = (row.raw_response as Record<string, unknown> | null) ?? null;
+  const orderId = typeof rawResponse?.orderId === "string" ? rawResponse.orderId : null;
   return {
     id: row.id as string,
     reference: row.reference as string,
     invoiceId: (row.invoice_id as string | null) ?? null,
     reservationId: (row.reservation_id as string | null) ?? null,
+    orderId,
     restaurantId: row.restaurant_id as string,
-    kind: row.kind as AttemptKind,
+    kind: orderId ? "order" : (row.kind as AttemptKind),
     provider: row.provider as string,
     transactionId: (row.transaction_id as string | null) ?? null,
     phone: (row.phone as string | null) ?? null,
@@ -139,6 +150,8 @@ function attemptRow(row: Record<string, unknown>): PaymentAttemptRow {
     status: row.status as PaymentAttemptRow["status"],
     settledAt: (row.settled_at as string | null) ?? null,
     providerRowId: (row.provider_row_id as string | null) ?? null,
+    rawResponse,
+    createdAt: row.created_at as string,
   };
 }
 
@@ -157,6 +170,8 @@ export async function initiatePaymentAttempt(input: {
   invoiceId?: string;
   /** Required when kind === "reservation". */
   reservationId?: string;
+  /** Required when kind === "order". */
+  orderId?: string;
   /** Human-readable reference for the attempt (invoice number, reservation reference). */
   reference: string;
   phone: string;
@@ -194,6 +209,9 @@ export async function initiatePaymentAttempt(input: {
   if (input.kind === "reservation" && !input.reservationId) {
     return { ok: false, reason: "reservationMissing", error: "Réservation manquante." };
   }
+  if (input.kind === "order" && !input.orderId) {
+    return { ok: false, reason: "orderMissing", error: "Commande manquante." };
+  }
 
   const reference = `PAY-${randomUUID().slice(0, 10).toUpperCase()}`;
   const base = {
@@ -201,7 +219,7 @@ export async function initiatePaymentAttempt(input: {
     restaurant_id: input.restaurantId,
     invoice_id: input.kind === "subscription" ? input.invoiceId! : null,
     reservation_id: input.kind === "reservation" ? input.reservationId! : null,
-    kind: input.kind,
+    kind: input.kind === "order" ? "reservation" : input.kind,
     method: "mobile_money",
     phone,
     amount,
@@ -213,7 +231,7 @@ export async function initiatePaymentAttempt(input: {
   if (mode === "sandbox") {
     const { data, error } = await supabase
       .from("payment_attempts")
-      .insert({ ...base, provider: "sandbox", status: "succeeded", raw_response: { sandbox: true } })
+      .insert({ ...base, provider: "sandbox", status: "succeeded", raw_response: { sandbox: true, orderId: input.orderId } })
       .select("id")
       .single();
 
@@ -229,7 +247,10 @@ export async function initiatePaymentAttempt(input: {
 
   // Best effort: the report id just before the charge, so confirmTransaction
   // can match OUR row precisely even if the provider's timestamps lie.
-  const afterId = await latestTransactionId();
+  const [afterId, notificationAfterId] = await Promise.all([
+    latestTransactionId(),
+    latestNotificationId(),
+  ]);
   const startedAt = new Date().toISOString();
 
   /**
@@ -248,7 +269,7 @@ export async function initiatePaymentAttempt(input: {
       ...base,
       provider: "camerpay",
       status: "pending",
-      raw_response: { requested_at: startedAt, afterId },
+      raw_response: { requested_at: startedAt, afterId, notificationAfterId, orderId: input.orderId },
     })
     .select("id")
     .single();
@@ -278,6 +299,8 @@ export async function initiatePaymentAttempt(input: {
         raw_response: {
           requested_at: startedAt,
           afterId,
+          notificationAfterId,
+          orderId: input.orderId,
           transport_error: error instanceof Error ? error.message : String(error),
         },
       })
@@ -323,6 +346,8 @@ export async function initiatePaymentAttempt(input: {
         message: accepted.message,
         data: accepted.data,
         afterId,
+        notificationAfterId,
+        orderId: input.orderId,
         requested_at: startedAt,
       },
     })
@@ -360,7 +385,7 @@ export async function checkPaymentAttempt(
   }
 
   const outcome = await resolveAttemptOutcome(attemptId);
-  return { ok: true, status: outcome.status };
+  return { ok: true, status: outcome.status, instruction: outcome.instruction };
 }
 
 /**
@@ -402,6 +427,21 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
     // number, amount and direction the report is matched on. The exclusion
     // list keeps a retry off the row its own first try already consumed.
     confirmed = await confirmTransaction(row.transactionId, {
+      phone: row.phone ?? undefined,
+      amount: row.amount,
+      direction: "collect",
+      startedAt:
+        typeof row.rawResponse?.requested_at === "string"
+          ? row.rawResponse.requested_at
+          : row.createdAt,
+      afterId:
+        typeof row.rawResponse?.afterId === "number"
+          ? row.rawResponse.afterId
+          : undefined,
+      notificationAfterId:
+        typeof row.rawResponse?.notificationAfterId === "number"
+          ? row.rawResponse.notificationAfterId
+          : undefined,
       excludeRowIds: await consumedRowIds(row),
     });
   } catch (error) {
@@ -414,7 +454,9 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
     return { status: "failed", settled: false };
   }
 
-  if (confirmed.status !== "success") return { status: "pending", settled: false };
+  if (confirmed.status !== "success") {
+    return { status: "pending", settled: false, instruction: confirmed.instruction };
+  }
 
   if (!confirmed.rowId) {
     // The row carried neither an id nor a ref, so it cannot be claimed and the
@@ -627,6 +669,108 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
       error = result.error;
       reason = result.reason ?? "activationFailed";
     }
+  } else if (row.kind === "order" && row.orderId) {
+    /*
+     * Claim the unpaid order before crediting it. Only one poll/webhook can
+     * flip false to true, which is the right to move the money once.
+     */
+    const { data: claimed, error: claimError } = await supabase
+      .from("orders")
+      .update({ is_paid: true })
+      .eq("id", row.orderId)
+      .eq("restaurant_id", row.restaurantId)
+      .eq("status", "pending")
+      .eq("payment_method", "mobile_money")
+      .eq("is_paid", false)
+      .eq("total", row.amount)
+      .select("id, reference, delivery_name")
+      .maybeSingle();
+
+    if (claimError) {
+      console.error("[pay:settle:order] claim", claimError.message);
+      error = "Le paiement est confirmé mais la commande n'a pas pu être créditée.";
+      reason = "orderClaimFailed";
+    } else if (!claimed) {
+      const { data: existing } = await supabase
+        .from("orders")
+        .select("id, is_paid")
+        .eq("id", row.orderId)
+        .eq("restaurant_id", row.restaurantId)
+        .maybeSingle();
+      if (existing?.is_paid) ok = true;
+      else {
+        /*
+          The customer's money arrived for an order no longer waiting for it —
+          cancelled while the prompt was still open. Nothing is credited, so
+          the restaurant is not paid for food it will not cook. The attempt is
+          CLOSED with a refund flag instead of being left unsettled: an
+          unsettled success is the reconciler's retry queue, and this one would
+          have been swept on every run, for ever. Support refunds it until
+          payouts are automated.
+        */
+        const stamp = new Date().toISOString();
+        await supabase
+          .from("payment_attempts")
+          .update({
+            settled_at: stamp,
+            raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "orderNotPayable", at: stamp } },
+          })
+          .eq("id", attemptId)
+          .is("settled_at", null);
+        console.error("[pay:settle:order] REFUND DUE — paid for an order no longer payable", attemptId, row.orderId);
+        error = "Cette commande n'attend plus ce paiement.";
+        reason = "orderNotPayable";
+      }
+    } else {
+      const { error: creditError } = await supabase.rpc("wallet_credit", {
+        p_restaurant_id: row.restaurantId,
+        p_amount: row.amount,
+        p_kind: "payment",
+        p_note: "Commande " + claimed.reference + " (paiement en ligne)",
+        p_reference: claimed.reference,
+      });
+
+      if (creditError) {
+        console.error("[pay:settle:order] credit", creditError.message);
+        await supabase
+          .from("orders")
+          .update({ is_paid: false })
+          .eq("id", row.orderId)
+          .eq("status", "pending")
+          .eq("is_paid", true);
+        error = "Le paiement est confirmé mais le crédit du portefeuille a échoué.";
+        reason = "walletCreditFailed";
+      } else {
+        const { error: receiptError } = await supabase.from("order_payments").insert({
+          order_id: row.orderId,
+          amount: row.amount,
+          method: "mobile_money",
+          collected_by: "camerpay",
+        });
+        if (receiptError) console.error("[pay:settle:order] receipt", receiptError.message);
+        ok = true;
+
+        /*
+          THE KITCHEN'S START SIGNAL. Nothing is cooked before the payment
+          lands, so this is the moment the restaurant hears it may start: a
+          pickup order is first announced here, a delivery order was
+          announced for its fee quote and now hears it is paid. Sent by
+          whichever route settled it — poll, webhook or reconciler.
+        */
+        await notify({
+          event: "new_order",
+          tone: "success",
+          restaurantId: row.restaurantId,
+          href: `/m/orders/${row.orderId}`,
+          params: {
+            reference: claimed.reference as string,
+            customerName: (claimed.delivery_name as string | null) ?? undefined,
+            amount: row.amount,
+            paid: true,
+          },
+        });
+      }
+    }
   } else if (row.kind === "reservation" && row.reservationId) {
     /**
      * THE CLAIM COMES BEFORE THE MONEY.
@@ -793,6 +937,41 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
   return { ok, error, reason };
 }
 
+/**
+ * How long a pending Mobile Money prompt counts as "in flight".
+ *
+ * MTN and Orange prompts lapse within minutes; past this, a pending attempt is
+ * one the customer walked away from, and it must not hold the order hostage
+ * until the reconciler's six-hour horizon closes it. A success that still
+ * lands later is caught by the refund flag in settlePayment.
+ */
+const IN_FLIGHT_MS = 15 * 60_000;
+
+/**
+ * Whether a customer is paying for this order right now.
+ *
+ * Order attempts carry the order id in `raw_response.orderId` — the column
+ * `payment_attempts.order_id` does not exist on the live database — so the
+ * lookup filters on the JSON path.
+ */
+export async function orderPaymentInFlight(orderId: string): Promise<boolean> {
+  const supabase = createAdminClient();
+  const { count, error } = await supabase
+    .from("payment_attempts")
+    .select("id", { count: "exact", head: true })
+    .eq("raw_response->>orderId", orderId)
+    .eq("status", "pending")
+    .gt("created_at", new Date(Date.now() - IN_FLIGHT_MS).toISOString());
+
+  if (error) {
+    // Unknown is treated as "maybe": refusing a cancellation for a minute is
+    // recoverable, a customer charged for a cancelled order is not.
+    console.error("[pay:inFlight]", orderId, error.message);
+    return true;
+  }
+  return (count ?? 0) > 0;
+}
+
 async function notifyReservationPaid(input: {
   restaurantId: string;
   customerId: string | null;
@@ -821,3 +1000,4 @@ async function notifyReservationPaid(input: {
     });
   }
 }
+

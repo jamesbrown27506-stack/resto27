@@ -1824,6 +1824,22 @@ export async function collectReservationDeposit(
 
   if (!row) return { ok: false, error: "Reservation not found." };
   if (row.deposit_paid) return { ok: false, error: "Deposit already collected." };
+
+  /*
+    ONLY THE CUSTOMER PAYS AN ONLINE DEPOSIT (payment first, 2026-09).
+
+    A fixed or per-seat deposit is paid from the customer's own phone and
+    confirms the booking the moment it lands. Recording it here as cash
+    confirmed tables with no money received online — the restaurant stood in
+    for a step only the customer may take. Only a percentage deposit, a share
+    of a bill that exists once the party is eating, is collected on site.
+  */
+  if (Number(row.deposit_percent ?? 0) <= 0) {
+    return {
+      ok: false,
+      error: "This deposit is paid online by the customer. The booking confirms itself as soon as their payment lands.",
+    };
+  }
   if (!canManagerCollectReservationDeposit({
     status: row.status,
     depositPercent: Number(row.deposit_percent ?? 0),

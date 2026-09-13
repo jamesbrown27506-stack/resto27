@@ -65,7 +65,7 @@ export async function GET(request: Request) {
     const dueHorizon = new Date(now + DUE_ALERT_LEAD_MINUTES * 60 * 1000).toISOString();
     const { data, error } = await supabase
       .from("orders")
-      .select("id, reference, restaurant_id, total, delivery_name, pending_alert_count, pending_alert_at, scheduled_for")
+      .select("id, reference, restaurant_id, total, delivery_name, pending_alert_count, pending_alert_at, scheduled_for, type, payment_method, is_paid, delivery_fee_set_at")
       .eq("status", "pending")
       .lt("created_at", nagCutoff)
       .lt("pending_alert_count", PENDING_NAG_MAX)
@@ -79,6 +79,17 @@ export async function GET(request: Request) {
       console.error("[order-nag] pending query failed", error.message);
     } else {
       for (const order of data ?? []) {
+        /*
+          PAYMENT FIRST: an unpaid Mobile Money order is waiting on the
+          CUSTOMER, not the kitchen. Ringing the restaurant about it — and
+          escalating to the admins that "the restaurant is not responding" —
+          pushes them to act on food they may not start. The one restaurant
+          move before payment is quoting a delivery fee, so that still rings.
+        */
+        const awaitingPayment = order.payment_method === "mobile_money" && !order.is_paid;
+        const needsQuote = order.type === "delivery" && !order.delivery_fee_set_at;
+        if (awaitingPayment && !needsQuote) continue;
+
         const lastAlert = order.pending_alert_at ? Date.parse(order.pending_alert_at as string) : 0;
         if (now - lastAlert < PENDING_NAG_MINUTES * 60 * 1000) continue;
 

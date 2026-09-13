@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
-  Banknote,
   Bike,
   Clock,
   Info,
@@ -29,7 +28,7 @@ import {
 } from "@/lib/data/checkout-actions";
 import type { CustomerAddress } from "@/lib/data/customer";
 import { formatMoney } from "@/lib/format/currency";
-import type { OrderType, PaymentMethod } from "@/lib/format/order-status";
+import type { OrderType } from "@/lib/format/order-status";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SessionUser } from "@/lib/session";
@@ -75,7 +74,7 @@ export function CheckoutClient({
   const [deliveryQuartier, setDeliveryQuartier] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [deliveryLandmark, setDeliveryLandmark] = useState("");
-  const [payment, setPayment] = useState<PaymentMethod>("cash_on_delivery");
+  const payment = "mobile_money" as const;
   const [schedule, setSchedule] = useState("asap");
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
@@ -118,15 +117,6 @@ export function CheckoutClient({
       if (type === "delivery" && !caps.acceptsDelivery && caps.acceptsPickup) setType("pickup");
       else if (type === "pickup" && !caps.acceptsPickup && caps.acceptsDelivery) setType("delivery");
     }
-  }
-
-  // The payment method must match the mode — cash on delivery for delivery,
-  // pay at the restaurant for pickup. Switching mode with a stale method would
-  // offer "cash on delivery" to someone collecting their own order.
-  const [knownType, setKnownType] = useState(type);
-  if (knownType !== type) {
-    setKnownType(type);
-    setPayment(type === "delivery" ? "cash_on_delivery" : "pay_at_restaurant");
   }
 
   if (lines.length === 0) {
@@ -542,36 +532,17 @@ export function CheckoutClient({
           {/* ── Payment ────────────────────────────────────────────────── */}
           <section className="rounded-lg border border-border bg-surface p-5">
             <h2 className="font-display text-lg font-bold">{t("cct.co.payment")}</h2>
-            <div className="mt-4 flex flex-col gap-2">
-              {/* The method must match the mode: you pay the rider on delivery,
-                  or the counter on pickup. Showing both for one mode is how a
-                  customer ends up promising cash on delivery for a pickup. */}
-              {(
-                [
-                  ["cash_on_delivery", "cct.co.payCashDelivery"],
-                  ["pay_at_restaurant", "cct.co.payCashPickup"],
-                ] as [PaymentMethod, string][]
-              )
-                .filter(([m]) =>
-                  type === "delivery" ? m === "cash_on_delivery" : m === "pay_at_restaurant",
-                )
-                .map(([m, description]) => (
-                  <Radio
-                    key={m}
-                    name="payment"
-                    checked={payment === m}
-                    onChange={() => setPayment(m)}
-                    label={t(m === "cash_on_delivery" ? "cct.co.payCashLabel" : "cct.co.payRestaurantLabel")}
-                    description={t(description as TranslationKey)}
-                  />
-                ))}
+            <div className="mt-4 rounded-md border border-success/25 bg-success-light p-4">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-semibold">Mobile Money</span>
+                <Badge tone="success">{t("cct.co.payment")}</Badge>
+              </div>
+              <p className="mt-2 flex items-start gap-2 text-sm text-text-secondary">
+                <Info className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
+                <span>{t("cct.co.onlineSoon")}</span>
+              </p>
             </div>
-            <p className="mt-3 flex items-center gap-2 text-xs text-text-light">
-              <Banknote className="size-3.5" aria-hidden />
-              {t("cct.co.onlineSoon")}
-            </p>
           </section>
-
           {/* ── Notes ─────────────────────────────────────────────────── */}
           <section className="rounded-lg border border-border bg-surface p-5">
             <h2 className="font-display text-lg font-bold">{t("cct.co.notes")}</h2>

@@ -10,7 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/input";
+import { Field, Input, Textarea } from "@/components/ui/input";
+import { PaymentPendingView } from "@/components/payment/payment-pending";
 import { RatingInput } from "@/components/ui/rating-stars";
 import { useToast } from "@/components/ui/toast";
 import { formatMoney } from "@/lib/format/currency";
@@ -18,6 +19,8 @@ import { formatDateTime, isoAttr } from "@/lib/format/datetime";
 import { canCustomerCancel } from "@/lib/format/order-status";
 import {
   cancelOwnOrder,
+  checkOwnOrderPayment,
+  payOwnOrder,
   respondToDeliveryFee,
   confirmOwnDelivery,
   rateOwnDelivery,
@@ -27,6 +30,7 @@ import {
 import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { CustomerOrder as Order } from "@/lib/data/customer";
+import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 
 /**
  * /orders/[id] — "the busiest page in the app" (§14.3).
@@ -50,6 +54,11 @@ export function OrderDetail({ order }: { order: Order }) {
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [deliveryRating, setDeliveryRating] = useState(order.deliveryRating ?? 0);
+  const [paymentPhone, setPaymentPhone] = useState(order.deliveryPhone ?? "");
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [paymentAttemptId, setPaymentAttemptId] = useState<string | null>(null);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentInstruction, setPaymentInstruction] = useState<PaymentInstruction | null>(null);
 
   const cancellable = canCustomerCancel(order.status);
 
@@ -106,6 +115,57 @@ export function OrderDetail({ order }: { order: Order }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const canPay =
+    order.paymentMethod === "mobile_money" &&
+    !order.isPaid &&
+    order.status === "pending" &&
+    (order.type !== "delivery" || order.deliveryFeeSetAt !== null);
+
+  async function startOrderPayment() {
+    setPaymentBusy(true);
+    setPaymentInstruction(null);
+    const result = await payOwnOrder(order.id, paymentPhone);
+    setPaymentBusy(false);
+    if (!result.ok) return toast(result.error, "error");
+    if (result.status === "succeeded") {
+      toast(t("cor.paymentDone"), "success");
+      router.refresh();
+      return;
+    }
+    if (result.attemptId) {
+      setPaymentAttemptId(result.attemptId);
+      setPaymentOpen(true);
+    }
+  }
+
+  useEffect(() => {
+    if (!paymentAttemptId) return;
+    let checking = false;
+    const timer = setInterval(async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await checkOwnOrderPayment(paymentAttemptId);
+        if (result.instruction) setPaymentInstruction(result.instruction);
+        if (result.status === "succeeded") {
+          clearInterval(timer);
+          setPaymentAttemptId(null);
+          setPaymentOpen(false);
+          toast(t("cor.paymentDone"), "success");
+          router.refresh();
+        } else if (!result.ok || result.status === "failed") {
+          clearInterval(timer);
+          setPaymentAttemptId(null);
+          setPaymentOpen(false);
+          toast(result.ok ? t("cor.paymentFailed") : result.error, "error");
+          router.refresh();
+        }
+      } finally {
+        checking = false;
+      }
+    }, 4_000);
+    return () => clearInterval(timer);
+  }, [paymentAttemptId, router, t, toast]);
   async function respondToFee(response: "accept" | "decline") {
     setFeeBusy(response);
     const result = await respondToDeliveryFee(order.id, response);
@@ -315,6 +375,33 @@ export function OrderDetail({ order }: { order: Order }) {
         </div>
       )}
 
+      {canPay && (
+        <div className="mt-6 rounded-lg border-2 border-info/35 bg-info-light p-4">
+          <p className="font-semibold text-info">{t("cor.paymentRequired")}</p>
+          <p className="mt-1 text-sm leading-relaxed text-text-secondary">
+            {t("cor.paymentRequiredBody")}
+          </p>
+          <div className="mt-4 grid items-end gap-3 sm:grid-cols-[1fr_auto]">
+            <Field label={t("cor.paymentPhone")} htmlFor="order-payment-phone" required>
+              <Input
+                id="order-payment-phone"
+                type="tel"
+                inputMode="tel"
+                value={paymentPhone}
+                onChange={(event) => setPaymentPhone(event.target.value)}
+              />
+            </Field>
+            <Button
+              loading={paymentBusy}
+              disabled={paymentBusy || !paymentPhone.trim()}
+              onClick={() => void startOrderPayment()}
+              className="min-h-11"
+            >
+              {t("cor.payNow")}
+            </Button>
+          </div>
+        </div>
+      )}
       {confirmable && (
         <div className="mt-6 flex flex-wrap items-center gap-4 rounded-lg border-2 border-success/40 bg-success-light p-4">
           <span className="grid size-10 shrink-0 place-items-center rounded-full bg-success text-white">
@@ -471,6 +558,31 @@ export function OrderDetail({ order }: { order: Order }) {
         </aside>
       </div>
 
+      <Dialog
+        open={paymentOpen}
+        onClose={() => setPaymentOpen(false)}
+        title={t("cor.paymentPendingTitle")}
+        size="sm"
+        footer={
+          <Button variant="outline" onClick={() => setPaymentOpen(false)}>
+            {t("cor.paymentBackground")}
+          </Button>
+        }
+      >
+        <PaymentPendingView
+          body={t("cor.paymentPendingBody")}
+          hint={t("cor.paymentPendingHint")}
+          amountLabel={t("cor.total")}
+          amount={formatMoney(order.total)}
+          referenceLabel={t("cor.paymentReference")}
+          reference={order.reference}
+          phoneLabel={t("cor.paymentPhone")}
+          phone={paymentPhone}
+          gatewayLabel={t("cor.paymentGateway")}
+          instruction={paymentInstruction}
+          requesting={paymentBusy && !paymentAttemptId}
+        />
+      </Dialog>
       <ConfirmDialog
         open={cancelOpen}
         onClose={() => setCancelOpen(false)}
