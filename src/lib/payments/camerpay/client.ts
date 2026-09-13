@@ -508,6 +508,25 @@ export interface TransactionAccepted {
 }
 
 /**
+ * Extract a correlation key from both accepted-response shapes seen in use:
+ * legacy HTTP 202 responses put it in `data.replyTo`; current HTTP 200
+ * responses echo the request id at the top level and return `data: null`.
+ * Report polling still verifies the transaction by phone, amount and direction.
+ */
+export function acceptedTransactionId(
+  response: CamerPayResponse<TransactionAccepted>,
+): string | null {
+  const replyTo = response.data?.replyTo?.trim();
+  if (replyTo) return replyTo;
+
+  const responseId = response.id?.trim();
+  if (responseId) return responseId;
+
+  const requestId = response.request?.headers.id?.trim();
+  return requestId || null;
+}
+
+/**
  * ─────────────────────────────────────────────────────────────────────────
  *  `retrait` COLLECTS. `depot` PAYS OUT. GETTING THIS BACKWARDS COSTS MONEY.
  *

@@ -237,7 +237,7 @@ export function TransactionWatcher({
           </p>
 
           <p className="mt-1 font-mono text-[11px] break-all opacity-75">
-            <span>replyTo {replyTo}</span>
+            <span>tracking {replyTo}</span>
             <span>
               {" "}
               · check {attempts}/{MAX_ATTEMPTS}

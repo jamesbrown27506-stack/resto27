@@ -6,6 +6,7 @@ import { activateFromInvoice } from "@/lib/data/invoice-activation";
 import { paymentMode } from "@/lib/data/billing";
 import { notify } from "@/lib/notify";
 import {
+  acceptedTransactionId,
   confirmTransaction,
   isPayableAmount,
   latestTransactionId,
@@ -289,8 +290,8 @@ export async function initiatePaymentAttempt(input: {
     };
   }
 
-  const replyTo = accepted.data?.replyTo?.trim();
-  if (!accepted.etat || !replyTo) {
+  const trackingId = acceptedTransactionId(accepted);
+  if (!accepted.etat || !trackingId) {
     console.error("[pay:initiate:live] refused", accepted.message ?? accepted.httpStatus);
     // A refusal IS conclusive — no charge was accepted, so the attempt is done.
     await claimAttempt(attemptId, "failed");
@@ -304,7 +305,7 @@ export async function initiatePaymentAttempt(input: {
   // Bookkeeping: the webhook arrives carrying only this replyTo, and the
   // report never echoes it — the ledger is what the confirmation matches on.
   await recordAcceptedRequest({
-    replyTo,
+    replyTo: trackingId,
     direction: "collect",
     phone,
     amount,
@@ -315,7 +316,7 @@ export async function initiatePaymentAttempt(input: {
   const { error: linkError } = await supabase
     .from("payment_attempts")
     .update({
-      transaction_id: replyTo,
+      transaction_id: trackingId,
       raw_response: {
         etat: accepted.etat,
         httpStatus: accepted.httpStatus,

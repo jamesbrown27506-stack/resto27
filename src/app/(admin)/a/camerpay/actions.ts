@@ -5,6 +5,7 @@ import { MIN_AMOUNT_XAF } from "@/lib/payments/camerpay/client";
 import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 import { getWithdrawalFeeConfig } from "@/lib/data/settings";
 import {
+  acceptedTransactionId,
   confirmTransaction,
   getBalance,
   identifyNumber,
@@ -43,6 +44,10 @@ export interface ProbeResult {
   detail: string;
   /** Report counter as it stood BEFORE the call — see TransactionHint.afterId. */
   afterId?: number;
+  /** Correlation key used by the automatic transaction watcher. */
+  trackingId?: string;
+  /** Captured before the provider request, for report-row matching. */
+  startedAt?: string;
   payload?: unknown;
   /**
    * The exact request that was sent, secrets redacted — for pasting into a
@@ -573,34 +578,50 @@ export async function probeCollection(phone: string, amount: number): Promise<Pr
     // Read the counter BEFORE charging. The row this creates is the first one
     // above it, which identifies it without trusting a timezone-less date.
     const afterId = await latestTransactionId();
+    const startedAt = new Date().toISOString();
     const response = await requestCollection(phone, amount);
 
-    if (response.httpStatus === 202 || response.etat) {
-      const replyTo = response.data?.replyTo ?? "(none returned)";
-      console.info("[camerpay] collection requested", replyTo, "by", admin.email);
+    if (response.etat) {
+      const trackingId = acceptedTransactionId(response);
+      if (!trackingId) {
+        return {
+          ok: false,
+          label: "Collection",
+          detail:
+            "CamerPay accepted the request but returned no correlation id. Check the notification report before retrying.",
+          request: response.request,
+        };
+      }
+      console.info("[camerpay] collection requested", trackingId, "by", admin.email);
 
       // Ledger the acceptance under its replyTo, so the webhook — which
       // receives a callback carrying only this id — can find the report row
       // by number/amount/direction instead of a tracking id the report never
       // echoes. Without this row every callback would confirm as "pending".
-      if (response.data?.replyTo) {
-        await recordAcceptedRequest({
-          replyTo: response.data.replyTo,
-          direction: "collect",
-          phone,
-          amount,
-          afterId: afterId ?? null,
-          startedAt: new Date().toISOString(),
-        });
-      }
+      await recordAcceptedRequest({
+        replyTo: trackingId,
+        direction: "collect",
+        phone,
+        amount,
+        afterId: afterId ?? null,
+        startedAt,
+      });
 
       return {
         ok: true,
         label: "Collection",
-        detail: `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — the customer must now approve on their handset. This is NOT a completed payment.`,
-        payload: response.data,
+        detail: `Accepted (HTTP ${response.httpStatus}). Tracking ${trackingId} — this is pending, not a completed payment. Follow any Orange instruction in the notification report, then wait for confirmation.`,
+        payload: {
+          trackingId,
+          replyTo: response.data?.replyTo,
+          requestId: response.id,
+          message: response.message,
+          data: response.data,
+        },
         request: response.request,
         afterId: afterId ?? undefined,
+        trackingId,
+        startedAt,
       };
     }
 

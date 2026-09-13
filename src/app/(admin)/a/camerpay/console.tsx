@@ -861,7 +861,7 @@ export function CamerPayConsole({
                 // Verification starts on its own the moment a charge is
                 // accepted — the operator should never have to remember to
                 // go and ask whether it worked.
-                const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
+                const id = result.trackingId;
                 if (result.ok && id) {
                   const now = new Date();
                   const tx: RecentTx = {
@@ -870,7 +870,7 @@ export function CamerPayConsole({
                     phone,
                     amount: amountValue,
                     at: now.toLocaleTimeString(),
-                    startedAt: now.toISOString(),
+                    startedAt: result.startedAt ?? now.toISOString(),
                     afterId: result.afterId,
                   };
                   setWatching(tx);
