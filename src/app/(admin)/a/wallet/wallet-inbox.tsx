@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { ArrowUpFromLine, Check, Wallet, X } from "lucide-react";
+import { ArrowUpFromLine, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { formatDateTime } from "@/lib/format/datetime";
-import { approveWithdrawal, checkWalletFunding, checkWithdrawalPayout, fundWallet, rejectWithdrawal } from "@/lib/data/wallet-actions";
+import { checkWalletFunding, checkWithdrawalPayout, fundWallet } from "@/lib/data/wallet-actions";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import type { AdminWithdrawalRequest } from "@/lib/data/wallet";
 
@@ -21,7 +21,6 @@ import type { AdminWithdrawalRequest } from "@/lib/data/wallet";
  * balance untouched. The fee preview reads the same setting the action will.
  */
 export function WalletInbox({
-  adminName,
   requests,
 }: {
   adminName: string;
@@ -29,7 +28,6 @@ export function WalletInbox({
 }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
-  const [acting, setActing] = useState<string | null>(null);
 
   // The credit box — which restaurant, how much, and for what.
   const [creditRestaurant, setCreditRestaurant] = useState("");
@@ -47,38 +45,6 @@ export function WalletInbox({
 
   const pendingRequests = requests.filter((r) => r.status === "pending");
   const decidedRequests = requests.filter((r) => r.status !== "pending");
-
-  function run(id: string, fn: () => Promise<{ ok: boolean; error?: string; note?: string }>) {
-    setActing(id);
-    startTransition(async () => {
-      const result = await fn();
-      setActing(null);
-      if (!result.ok) {
-        toast(result.error ?? "Failed.", "error");
-        return;
-      }
-      toast(result.note ?? "Done.", "success");
-    });
-  }
-
-  function approvePayout(requestId: string) {
-    setActing(requestId);
-    startTransition(async () => {
-      const result = await approveWithdrawal(requestId);
-      setActing(null);
-      if (!result.ok) {
-        toast(result.error ?? "Payout failed.", "error");
-        return;
-      }
-      if (result.status === "pending") {
-        setPayoutRequestId(requestId);
-        setPayoutOpen(true);
-        toast(result.note ?? "CamerPay accepted the payout.", "success");
-        return;
-      }
-      toast(result.note ?? "Payout confirmed.", "success");
-    });
-  }
 
   function submitCredit() {
     const amount = Number(creditAmount);
@@ -163,7 +129,7 @@ export function WalletInbox({
     <div className="flex max-w-4xl flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-text-secondary">
-          Approving sends the payout through CamerPay (fee withheld) and debits the wallet.
+          Restaurant withdrawals are sent immediately. This page monitors their provider status and wallet funding.
         </p>
         <Button variant="outline" size="sm" onClick={() => setShowCredit((v) => !v)}>
           <Wallet className="size-3.5" aria-hidden />
@@ -235,16 +201,7 @@ export function WalletInbox({
         ) : (
           <ul className="divide-y divide-border">
             {pendingRequests.map((r) => (
-              <PendingRow
-                key={r.id}
-                request={r}
-                acting={acting === r.id}
-                disabled={pending}
-                onApprove={() => approvePayout(r.id)}
-                onReject={() =>
-                  run(r.id, () => rejectWithdrawal(r.id))
-                }
-              />
+              <PendingRow key={r.id} request={r} />
             ))}
           </ul>
         )}
@@ -332,19 +289,7 @@ export function WalletInbox({
   );
 }
 
-function PendingRow({
-  request,
-  acting,
-  disabled,
-  onApprove,
-  onReject,
-}: {
-  request: AdminWithdrawalRequest;
-  acting: boolean;
-  disabled: boolean;
-  onApprove: () => void;
-  onReject: () => void;
-}) {
+function PendingRow({ request }: { request: AdminWithdrawalRequest }) {
   return (
     <li className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-4">
       <div className="min-w-0 flex-1">
@@ -359,22 +304,7 @@ function PendingRow({
           {request.note ? ` · ${request.note}` : ""}
         </p>
       </div>
-      <div className="flex gap-1.5">
-        <Button size="sm" loading={acting} disabled={disabled || acting} onClick={onApprove}>
-          <Check className="size-3.5" aria-hidden />
-          <span>Pay out</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={disabled || acting}
-          className="text-error hover:bg-error-light"
-          onClick={onReject}
-        >
-          <X className="size-3.5" aria-hidden />
-          <span className="sr-only">Reject</span>
-        </Button>
-      </div>
+      <Badge tone="warning">Awaiting restaurant retry</Badge>
     </li>
   );
 }

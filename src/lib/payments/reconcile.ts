@@ -3,6 +3,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveAttemptOutcome, settlePayment } from "@/lib/payments/collect";
 import { settleReservationRefund } from "@/lib/payments/reservation-refunds";
+import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
 
 /**
  * The sweep — the third and last route by which a payment settles.
@@ -178,6 +179,31 @@ export async function runReconciliation(): Promise<ReconciliationSummary> {
     else if (outcome === "failed") summary.failed += 1;
     else summary.stillPending += 1;
   }
+  /* ── 4. Restaurant payouts awaiting provider confirmation ──────────── */
+
+  const { data: withdrawals, error: withdrawalsError } = await supabase
+    .from("withdrawal_requests")
+    .select("id")
+    .eq("status", "paid")
+    .not("reply_to", "is", null)
+    .is("decided_at", null)
+    .lt("requested_at", new Date(now - STALE_AFTER_MS).toISOString())
+    .order("requested_at", { ascending: true })
+    .limit(BATCH);
+
+  if (withdrawalsError) {
+    console.error("[pay:reconcile] withdrawal queue", withdrawalsError.message);
+    return summary;
+  }
+
+  for (const row of withdrawals ?? []) {
+    summary.checked += 1;
+    const outcome = await settleWithdrawalPayout(String(row.id));
+    if (outcome.status === "succeeded") summary.settled += 1;
+    else if (outcome.status === "failed") summary.failed += 1;
+    else summary.stillPending += 1;
+  }
+
   return summary;
 }
 

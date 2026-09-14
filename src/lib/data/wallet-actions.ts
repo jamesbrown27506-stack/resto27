@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
-import { requireRole } from "@/lib/auth/session";
+import { requireRole, type AuthProfile } from "@/lib/auth/session";
 import { requireCapability } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
 import { rateLimit } from "@/lib/rate-limit";
@@ -12,7 +12,6 @@ import { paymentMode } from "./billing";
 import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 import {
   acceptedTransactionId,
-  confirmTransaction,
   isPayableAmount,
   latestTransactionId,
   MAX_AMOUNT_XAF,
@@ -25,6 +24,7 @@ import {
 import type { ActionResult } from "./admin-actions";
 import { checkPaymentAttempt, initiatePaymentAttempt, settlePayment } from "@/lib/payments/collect";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
+import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
 
 /**
  * Wallet mutations (migration 0024).
@@ -286,22 +286,24 @@ export async function requestWithdrawal(input: {
     };
   }
 
-  const { error } = await supabase.from("withdrawal_requests").insert({
-    restaurant_id: active.restaurantId,
-    requested_by: profile.id,
-    amount,
-    phone,
-    note: input.note?.trim() || null,
-  });
+  const { data: created, error } = await supabase
+    .from("withdrawal_requests")
+    .insert({
+      restaurant_id: active.restaurantId,
+      requested_by: profile.id,
+      amount,
+      phone,
+      note: input.note?.trim() || null,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
-    console.error("[wallet:requestWithdrawal]", error.message);
-    return { ok: false, reason: "insertFailed", error: "Could not submit the request." };
+  if (error || !created) {
+    console.error("[wallet:requestWithdrawal]", error?.message ?? "missing row");
+    return { ok: false, reason: "insertFailed", error: "Could not start the withdrawal." };
   }
 
-  revalidatePath("/m/wallet");
-  revalidatePath("/a/wallet");
-  return { ok: true };
+  return executeWithdrawal(String(created.id), profile, active.restaurantId);
 }
 
 /**
@@ -340,6 +342,29 @@ export async function requestWithdrawal(input: {
  */
 export async function approveWithdrawal(requestId: string): Promise<WalletResult> {
   const admin = await requireRole("admin");
+  return executeWithdrawal(requestId, admin);
+}
+
+/** Start or retry a withdrawal belonging to the manager's active branch. */
+export async function processOwnWithdrawal(requestId: string): Promise<WalletResult> {
+  const { active, profile } = await requireCapability("finance.manage");
+  const limited = await rateLimit({
+    key: "wallet:withdraw-retry",
+    limit: 5,
+    windowMs: 60 * 60_000,
+    identifier: active.restaurantId,
+  });
+  if (!limited.ok) {
+    return { ok: false, reason: "rateLimited", error: "Too many payout attempts. Try again in an hour." };
+  }
+  return executeWithdrawal(requestId, profile, active.restaurantId);
+}
+
+async function executeWithdrawal(
+  requestId: string,
+  actor: AuthProfile,
+  scopedRestaurantId?: string,
+): Promise<WalletResult> {
   const supabase = createAdminClient();
 
   const { data: row } = await supabase
@@ -357,7 +382,9 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
     note: string | null;
   } | null;
 
-  if (!request) return { ok: false, reason: "notFound", error: "Request not found." };
+  if (!request || (scopedRestaurantId && request.restaurant_id !== scopedRestaurantId)) {
+    return { ok: false, reason: "notFound", error: "Request not found." };
+  }
   if (request.status !== "pending") {
     return { ok: false, reason: "alreadyDecided", error: "That request has already been decided." };
   }
@@ -408,7 +435,7 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
    * this one update. */
   const { data: claimed, error: claimError } = await supabase
     .from("withdrawal_requests")
-    .update({ status: "paid", decided_at: null, decided_by: admin.id })
+    .update({ status: "paid", decided_at: null, decided_by: actor.id })
     .eq("id", requestId)
     .eq("status", "pending")
     .select("id")
@@ -458,7 +485,7 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
       .eq("id", requestId)
       .eq("status", "paid");
 
-    await writeAudit(admin, {
+    await writeAudit(actor, {
       action: "wallet.withdrawal_unresolved",
       entityType: "withdrawal_request",
       entityId: requestId,
@@ -541,7 +568,7 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
       }
 
       await releaseClaim();
-      await writeAudit(admin, {
+      await writeAudit(actor, {
         action: "wallet.withdrawal_payout_refused",
         entityType: "withdrawal_request",
         entityId: requestId,
@@ -603,7 +630,7 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
     console.error("[wallet:approveWithdrawal] stamp failed", stampError.message);
   }
 
-  await writeAudit(admin, {
+  await writeAudit(actor, {
     action: "wallet.withdrawal_approved",
     entityType: "withdrawal_request",
     entityId: requestId,
@@ -629,87 +656,37 @@ export async function approveWithdrawal(requestId: string): Promise<WalletResult
 
 /** Poll an accepted payout until CamerPay reports its final outcome. */
 export async function checkWithdrawalPayout(requestId: string): Promise<WalletResult> {
-  const admin = await requireRole("admin");
+  await requireRole("admin");
+  return checkWithdrawalForScope(requestId);
+}
+
+/** Poll a payout owned by the manager's active branch. */
+export async function checkOwnWithdrawalPayout(requestId: string): Promise<WalletResult> {
+  const { active } = await requireCapability("finance.manage");
+  return checkWithdrawalForScope(requestId, active.restaurantId);
+}
+
+async function checkWithdrawalForScope(
+  requestId: string,
+  scopedRestaurantId?: string,
+): Promise<WalletResult> {
   const supabase = createAdminClient();
-  const { data: row, error } = await supabase
+  let query = supabase
     .from("withdrawal_requests")
-    .select("id, restaurant_id, amount, phone, status, reply_to, net, decided_at")
-    .eq("id", requestId)
-    .maybeSingle();
+    .select("id, restaurant_id")
+    .eq("id", requestId);
+  if (scopedRestaurantId) query = query.eq("restaurant_id", scopedRestaurantId);
+  const { data: owned } = await query.maybeSingle();
+  if (!owned) return { ok: false, reason: "notFound", error: "Withdrawal not found." };
 
-  if (error || !row) return { ok: false, reason: "notFound", error: "Withdrawal not found." };
-  if (row.status === "rejected") return { ok: true, status: "failed", requestId };
-  if (row.status !== "paid" || !row.reply_to) {
-    return { ok: false, reason: "notTrackable", error: "This payout is not awaiting confirmation." };
-  }
-  if (row.decided_at || String(row.reply_to).startsWith("SANDBOX-")) {
-    return { ok: true, status: "succeeded", requestId };
-  }
-
-  const gross = Number(row.amount);
-  const net = Number(row.net ?? row.amount);
-  const outcome = await confirmTransaction(String(row.reply_to), {
-    direction: "payout",
-    phone: String(row.phone),
-    amount: net,
-  });
-
-  if (outcome.status === "pending") return { ok: true, status: "pending", requestId };
-  if (outcome.status === "success") {
-    const { data: confirmed } = await supabase
-      .from("withdrawal_requests")
-      .update({ decided_at: new Date().toISOString() })
-      .eq("id", requestId)
-      .eq("status", "paid")
-      .is("decided_at", null)
-      .select("id")
-      .maybeSingle();
-    if (confirmed) {
-      await writeAudit(admin, {
-        action: "wallet.withdrawal_confirmed",
-        entityType: "withdrawal_request",
-        entityId: requestId,
-        summary: `CamerPay confirmed ${net.toLocaleString("fr-CM")} FCFA to ${row.phone}`,
-        metadata: { gross, net, replyTo: row.reply_to },
-      });
-    }
-    revalidatePath("/a/wallet");
-    revalidatePath("/m/wallet");
-    return { ok: true, status: "succeeded", requestId };
-  }
-
-  const { data: rejected } = await supabase
-    .from("withdrawal_requests")
-    .update({ status: "rejected", decided_at: new Date().toISOString() })
-    .eq("id", requestId)
-    .eq("status", "paid")
-    .is("decided_at", null)
-    .select("id")
-    .maybeSingle();
-  if (rejected) {
-    const { error: reversalError } = await supabase.rpc("wallet_credit", {
-      p_restaurant_id: row.restaurant_id,
-      p_amount: gross,
-      p_kind: "adjustment",
-      p_note: `Withdrawal ${requestId} reversed - CamerPay reported failure`,
-      p_reference: requestId,
-    });
-    if (reversalError) {
-      await supabase
-        .from("withdrawal_requests")
-        .update({ status: "paid", decided_at: null })
-        .eq("id", requestId)
-        .eq("status", "rejected");
-      return {
-        ok: false,
-        reason: "reversalFailed",
-        error: "Payout failed, but the wallet refund could not be recorded.",
-      };
-    }
-  }
+  const outcome = await settleWithdrawalPayout(requestId);
   revalidatePath("/a/wallet");
   revalidatePath("/m/wallet");
-  return { ok: true, status: "failed", requestId };
+  if (outcome.error) return { ok: false, reason: "reversalFailed", error: outcome.error };
+  if (outcome.status === "not_found") {
+    return { ok: false, reason: "notFound", error: "Withdrawal not found." };
+  }
+  return { ok: true, status: outcome.status, requestId };
 }
 
 /**

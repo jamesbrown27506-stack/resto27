@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { notify } from "@/lib/notify";
 import { settleReservationRefundByReplyTo } from "@/lib/payments/reservation-refunds";
+import { settleWithdrawalPayoutByReplyTo } from "@/lib/payments/withdrawals";
 
 /**
  * CamerPay callback endpoint.
@@ -221,13 +222,23 @@ export async function POST(request: NextRequest) {
      */
     const settled = attempt ? await settleConfirmedAttempt(attempt.id) : null;
     const refund = attempt ? "not_found" : await settleReservationRefundByReplyTo(replyTo);
+    const withdrawal =
+      !attempt && refund === "not_found"
+        ? await settleWithdrawalPayoutByReplyTo(replyTo)
+        : { status: "not_found" as const };
+    const payoutStatus =
+      refund !== "not_found"
+        ? refund === "refunded"
+          ? "succeeded"
+          : refund
+        : withdrawal.status;
     const verdict = settled
       ? (settled.status ?? "pending")
-      : refund === "refunded"
+      : payoutStatus === "succeeded"
         ? "succeeded"
-        : refund === "failed"
+        : payoutStatus === "failed"
           ? "failed"
-          : refund === "pending"
+          : payoutStatus === "pending"
             ? "pending"
             : (await confirmTransaction(replyTo)).status;
     const corroborated = verdict === "success" || verdict === "succeeded";
