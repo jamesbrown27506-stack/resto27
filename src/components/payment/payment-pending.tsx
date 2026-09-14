@@ -37,7 +37,7 @@ export function PaymentPendingView({
   instruction,
 }: PaymentPendingViewProps) {
   return (
-    <div role="status" aria-live="polite" className="text-center">
+    <div role="status" aria-live="polite" className="mx-auto flex w-full min-w-0 max-w-sm flex-col items-center overflow-x-hidden text-center">
       <div className="relative mx-auto grid size-20 place-items-center">
         <span className="absolute inset-0 animate-ping rounded-full bg-info/10" aria-hidden />
         <span className="relative grid size-16 place-items-center rounded-full bg-info-light text-info">
@@ -51,33 +51,33 @@ export function PaymentPendingView({
 
       <p className="mx-auto mt-4 max-w-sm text-sm leading-relaxed text-text-secondary">{body}</p>
 
-      <dl className="mx-auto mt-5 grid max-w-sm gap-2 rounded-lg border border-border bg-surface-2 p-4 text-left text-sm">
-        <div className="flex min-w-0 items-center justify-between gap-4">
-          <dt className="shrink-0 text-text-light">{amountLabel}</dt>
+      <dl className="mt-5 grid w-full min-w-0 gap-3 rounded-lg border border-border bg-surface-2 p-4 text-left text-sm">
+        <div className="grid w-full min-w-0 grid-cols-2 items-center gap-3">
+          <dt className="min-w-0 text-left leading-snug text-text-light">{amountLabel}</dt>
           <dd className="tnum min-w-0 text-right font-bold text-primary">{amount}</dd>
         </div>
-        <div className="flex min-w-0 items-center justify-between gap-4">
-          <dt className="shrink-0 text-text-light">{referenceLabel}</dt>
-          <dd className="min-w-0 truncate text-right font-mono font-semibold">{reference}</dd>
+        <div className="grid w-full min-w-0 grid-cols-2 items-center gap-3">
+          <dt className="min-w-0 text-left leading-snug text-text-light">{referenceLabel}</dt>
+          <dd className="min-w-0 break-all text-right font-mono font-semibold">{reference}</dd>
         </div>
-        <div className="flex min-w-0 items-center justify-between gap-4">
-          <dt className="flex shrink-0 items-center gap-1.5 text-text-light">
+        <div className="grid w-full min-w-0 grid-cols-2 items-center gap-3">
+          <dt className="flex min-w-0 items-center gap-1.5 text-left leading-snug text-text-light">
             <Smartphone className="size-3.5" aria-hidden />
             {phoneLabel}
           </dt>
-          <dd className="tnum min-w-0 truncate text-right font-semibold">{phone}</dd>
+          <dd className="tnum min-w-0 break-all text-right font-semibold">{phone}</dd>
         </div>
-        <div className="flex min-w-0 items-center justify-between gap-4 border-t border-border pt-2">
-          <dt className="flex shrink-0 items-center gap-1.5 text-text-light">
+        <div className="grid w-full min-w-0 grid-cols-2 items-center gap-3 border-t border-border pt-3">
+          <dt className="flex min-w-0 items-center gap-1.5 text-left leading-snug text-text-light">
             <ShieldCheck className="size-3.5" aria-hidden />
             {gatewayLabel}
           </dt>
-          <dd className="font-semibold">CamerPay</dd>
+          <dd className="min-w-0 break-words text-right font-semibold">CamerPay</dd>
         </div>
       </dl>
 
       {instruction && (
-        <div className="mx-auto mt-4 max-w-sm rounded-lg border border-warning/35 bg-warning-light p-4 text-left">
+        <div className="mt-4 w-full min-w-0 rounded-lg border border-warning/35 bg-warning-light p-4 text-left">
           <p className="font-semibold text-warning">Action Orange requise / Orange action required</p>
           <p className="mt-1 text-sm leading-relaxed text-text-secondary">{instruction.message}</p>
           {instruction.code && (
@@ -85,17 +85,17 @@ export function PaymentPendingView({
               <code className="mt-3 block break-all rounded bg-surface px-3 py-2 text-sm font-bold">
                 {instruction.code}
               </code>
-              <div className="mt-3 grid grid-cols-2 gap-2">
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <button
                   type="button"
-                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 text-sm font-semibold"
+                  className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 text-center text-sm leading-tight font-semibold"
                   onClick={() => void navigator.clipboard.writeText(instruction.code!)}
                 >
                   <Copy className="size-4" aria-hidden />
                   Copier / Copy
                 </button>
                 <a
-                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-white"
+                  className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-center text-sm leading-tight font-semibold text-white"
                   href={"tel:" + encodeURIComponent(instruction.code)}
                 >
                   <PhoneCall className="size-4" aria-hidden />
@@ -107,7 +107,7 @@ export function PaymentPendingView({
         </div>
       )}
 
-      <p className="mx-auto mt-4 max-w-sm text-xs leading-relaxed text-text-light">{hint}</p>
+      <p className="mt-4 w-full text-xs leading-relaxed text-text-light">{hint}</p>
     </div>
   );
 }

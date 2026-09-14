@@ -356,8 +356,8 @@ export function ReservationsClient({
   const lateCancellation = cancellationQuote.late;
   const cancellationDeposit = cancellationQuote.deposit;
   const cancellationRefund = cancellationQuote.refund;
-  const cancellationPlatformFee = cancellationQuote.platformFee;
-  const cancellationRestaurantCompensation = cancellationQuote.restaurantCompensation;
+  const cancellationFee =
+    cancellationQuote.platformFee + cancellationQuote.restaurantCompensation;
 
   const pendingRefundId =
     mine.find((reservation) => reservation.refundStatus === "pending")?.refundId ?? null;
@@ -1170,16 +1170,10 @@ export function ReservationsClient({
                 <dd className="tnum font-semibold text-success">{formatMoney(cancellationRefund)}</dd>
               </div>
               {lateCancellation && (
-                <>
-                  <div className="flex items-center justify-between gap-4 py-3">
-                    <dt className="text-text-secondary">{t("crs.cancelRestaurant")}</dt>
-                    <dd className="tnum font-semibold">{formatMoney(cancellationRestaurantCompensation)}</dd>
-                  </div>
-                  <div className="flex items-center justify-between gap-4 py-3">
-                    <dt className="text-text-secondary">{t("crs.cancelPlatform")}</dt>
-                    <dd className="tnum font-semibold">{formatMoney(cancellationPlatformFee)}</dd>
-                  </div>
-                </>
+                <div className="flex items-center justify-between gap-4 py-3">
+                  <dt className="text-text-secondary">{t("crs.cancelFee")}</dt>
+                  <dd className="tnum font-semibold">{formatMoney(cancellationFee)}</dd>
+                </div>
               )}
             </dl>
           )}
