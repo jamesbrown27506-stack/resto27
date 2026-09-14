@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability, setActiveBranch } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
 import { trySendMail } from "@/lib/mail";
+import { absoluteUrl } from "@/lib/site-url";
 import { notify } from "@/lib/notify";
 import { releaseTableIfFree } from "./order-actions";
 import { POPULAR_DISH_BY_ID, type DishTemplate } from "./dish-templates";
@@ -823,6 +824,8 @@ export async function inviteStaff(input: {
       "",
       "— Resto237",
     ].join("\n"),
+    action: { label: "Créer mon compte", url: await absoluteUrl("/register") },
+    locale: "fr",
   });
 
   revalidatePath("/m/staff");

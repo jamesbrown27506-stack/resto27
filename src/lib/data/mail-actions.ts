@@ -58,6 +58,7 @@ export async function sendTestEmail(): Promise<MailTestResult> {
       "",
       "Nothing else was sent, and no customer received a copy.",
     ].join("\n"),
+    locale: "en",
   });
 
   // Audited: it is a real outbound message, and "who sent mail from this

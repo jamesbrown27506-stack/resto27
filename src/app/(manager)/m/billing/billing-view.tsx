@@ -106,6 +106,12 @@ export function BillingView({
   } | null>(null);
 
   const current = plans.find((p) => p.tier === branch.planTier) ?? null;
+  // While free mode runs every restaurant has the richest paid plan's features
+  // (fetchPlanLimits), so that is the plan the card names — the same pick as
+  // freeModePlanName on the dashboard.
+  const granted = freeMode
+    ? ([...plans].filter((p) => p.tier !== "starter").sort((a, b) => b.monthlyPrice - a.monthlyPrice)[0] ?? null)
+    : null;
   const unpaid = invoices.filter((i) => i.status === "unpaid");
 
   /**
@@ -274,23 +280,29 @@ export function BillingView({
               <span>{t("mbl.current.label")}</span>
             </p>
             <p className="mt-1 font-display text-2xl font-bold">
-              <span>{branch.planName}</span>
+              <span>{granted ? granted.name : branch.planName}</span>
             </p>
-            <p className="mt-1 text-sm text-text-secondary">
-              <span>
-                {current
-                  ? current.monthlyPrice === 0
-                    ? t("mbl.current.free")
-                    : t("mbl.current.price", { amount: formatMoney(current.monthlyPrice) })
-                  : t("mbl.current.unknown")}
-              </span>
-              {current && (
+            {granted ? (
+              <p className="mt-1 max-w-prose text-sm text-text-secondary">
+                <span>{t("mbl.current.freeGranted", { plan: branch.planName })}</span>
+              </p>
+            ) : (
+              <p className="mt-1 text-sm text-text-secondary">
                 <span>
-                  {" · "}
-                  {t("mbl.current.commission", { rate: formatPercent(current.commissionRate) })}
+                  {current
+                    ? current.monthlyPrice === 0
+                      ? t("mbl.current.free")
+                      : t("mbl.current.price", { amount: formatMoney(current.monthlyPrice) })
+                    : t("mbl.current.unknown")}
                 </span>
-              )}
-            </p>
+                {current && (
+                  <span>
+                    {" · "}
+                    {t("mbl.current.commission", { rate: formatPercent(current.commissionRate) })}
+                  </span>
+                )}
+              </p>
+            )}
           </div>
 
           <div className="flex flex-col items-start gap-2 sm:items-end">

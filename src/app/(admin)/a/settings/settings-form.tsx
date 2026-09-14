@@ -549,33 +549,32 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
       </div>
 
       {/* Sticky, because these values are read across the whole app and an
-          unsaved change should never be easy to walk away from. */}
+          unsaved change should never be easy to walk away from — but just
+          ABOVE the phone tab bar, never on top of it (see the restaurant
+          profile form), and one compact row. */}
       {dirtyCount > 0 && (
-        <div className="sticky bottom-4 z-50 mt-6 rounded-lg border border-primary bg-surface p-4 shadow-lg">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm">
-              <strong className="font-semibold">{dirtyCount} unsaved change(s)</strong>
-              <span className="ml-2 text-text-light">
-                {[...changed.map(([k]) => k), ...pendingAssetKeys].join(", ")}
-              </span>
-            </p>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                disabled={pending}
-                onClick={() => {
-                  setDraft(original);
-                  clearPendingAssets();
-                }}
-              >
-                Discard
-              </Button>
-              <Button loading={pending} disabled={pending} onClick={saveAll}>
-                <Save className="size-4" aria-hidden />
-                <span>Save</span>
-              </Button>
-            </div>
-          </div>
+        <div className="sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 mt-6 flex items-center gap-2 rounded-lg border border-primary bg-surface py-2 pr-2 pl-3 shadow-lg sm:gap-3 sm:pl-4 lg:bottom-4">
+          <p className="min-w-0 flex-1 text-[13px] leading-snug sm:text-sm">
+            <strong className="font-semibold">{dirtyCount} unsaved change(s)</strong>
+            <span className="ml-2 hidden text-text-light sm:inline">
+              {[...changed.map(([k]) => k), ...pendingAssetKeys].join(", ")}
+            </span>
+          </p>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={pending}
+            onClick={() => {
+              setDraft(original);
+              clearPendingAssets();
+            }}
+          >
+            Discard
+          </Button>
+          <Button size="sm" loading={pending} disabled={pending} onClick={saveAll}>
+            <Save className="size-4" aria-hidden />
+            <span>Save</span>
+          </Button>
         </div>
       )}
     </div>

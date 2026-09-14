@@ -40,7 +40,17 @@ export interface AuthProfile {
 }
 
 /** Why a session was rejected — drives the reason shown on /login (§14.2). */
-export type RejectionReason = "invalid" | "pending" | "pending-manager" | "suspended";
+export type RejectionReason =
+  | "invalid"
+  | "pending"
+  | "pending-manager"
+  | "suspended"
+  /** Signed up, never clicked the confirmation email. */
+  | "unconfirmed"
+  /** Supabase's sign-in rate limit — nothing to do with this account. */
+  | "busy"
+  /** Supabase or the database did not answer — nothing was decided. */
+  | "unavailable";
 
 /**
  * A manager account can be active while the restaurant it operates is not.
@@ -61,9 +71,11 @@ export async function getManagerRestaurantRejection(
 
   if (error) {
     // Authorization fails closed. A database error must not turn into tenant
-    // access that the application could not prove was still valid.
+    // access that the application could not prove was still valid — but it
+    // is not a wrong password either, and saying so sent people off to
+    // reset passwords that were fine.
     console.error("[auth:manager-restaurants]", profileId, error.message);
-    return "invalid";
+    return "unavailable";
   }
 
   const statuses = (data ?? []).flatMap((row) => {

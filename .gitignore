@@ -77,3 +77,8 @@ loadtest.mjs
 # Download these native Firebase credentials per environment; never commit them.
 /android/app/google-services.json
 /ios/App/App/GoogleService-Info.plist
+
+# Throwaway browser profiles from mobile QA runs. They hold cookies, saved
+# passwords and session storage — never commit them.
+/.chrome-mobile-qa/
+/.edge-mobile-qa*/

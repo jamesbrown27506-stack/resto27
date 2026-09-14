@@ -49,6 +49,7 @@ export default async function ManagerLayout({ children }: { children: React.Reac
       user={{
         name: context.profile.name,
         email: context.profile.email,
+        phone: context.profile.phone,
         avatarUrl: context.profile.avatarUrl,
       }}
       impersonating={

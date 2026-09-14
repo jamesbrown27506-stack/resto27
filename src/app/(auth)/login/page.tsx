@@ -16,7 +16,15 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { signIn, type AuthState } from "@/lib/auth/actions";
 import { useLocale } from "@/lib/i18n/use-locale";
 
-const VALID_REASONS: LoginReason[] = ["invalid", "pending", "pending-manager", "suspended"];
+const VALID_REASONS: LoginReason[] = [
+  "invalid",
+  "pending",
+  "pending-manager",
+  "suspended",
+  "unconfirmed",
+  "busy",
+  "unavailable",
+];
 const INITIAL: AuthState = { ok: false };
 
 function LoginForm() {

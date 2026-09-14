@@ -30,13 +30,27 @@ export function AuthHeading({ title, subtitle }: { title: string; subtitle?: str
  * change is whether a restaurant applicant waits patiently or concludes we
  * lost their registration.
  */
-export type LoginReason = "invalid" | "pending" | "pending-manager" | "suspended";
+export type LoginReason =
+  | "invalid"
+  | "pending"
+  | "pending-manager"
+  | "suspended"
+  | "unconfirmed"
+  | "busy"
+  | "unavailable";
 
+/**
+ * `busy` and `unavailable` are warnings, not errors: they are about the
+ * service, and the copy says outright that the credentials are not at fault.
+ */
 const REASON_TONES: Record<LoginReason, "error" | "warning" | "info"> = {
   invalid: "error",
   pending: "info",
   "pending-manager": "info",
   suspended: "error",
+  unconfirmed: "info",
+  busy: "warning",
+  unavailable: "warning",
 };
 
 const REASON_ICONS: Record<LoginReason, typeof AlertTriangle> = {
@@ -44,6 +58,9 @@ const REASON_ICONS: Record<LoginReason, typeof AlertTriangle> = {
   pending: Clock,
   "pending-manager": Clock,
   suspended: AlertTriangle,
+  unconfirmed: Info,
+  busy: Clock,
+  unavailable: AlertTriangle,
 };
 
 export function LoginReasonAlert({ reason }: { reason: LoginReason }) {

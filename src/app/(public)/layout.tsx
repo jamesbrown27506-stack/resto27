@@ -54,10 +54,10 @@ async function footerGuides() {
  *  addressed to their own support queue.
  *
  *  So the whole bar follows the person, not the page: a visitor gets
- *  discovery and sign-in, a customer their orders and account, a manager
- *  their desks, and an administrator the same bar as inside /a — so it never
- *  changes shape when they cross between the site and their area. Every bar
- *  is defined in lib/mobile-tabs.
+ *  discovery, the basket, the plans and sign-in, a customer their orders and
+ *  bookings, and a manager or administrator the very same bar as inside /m or
+ *  /a — so it never changes shape when they cross between the site and their
+ *  area. Every bar is defined in lib/mobile-tabs.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
@@ -79,7 +79,7 @@ export default async function PublicLayout({ children }: { children: React.React
       </div>
       {mobileApp.appDownload && <AppDownloadBand brandName={brand.name} />}
       <SiteFooter brand={brand} socialLinks={socialLinks} showAppLinks={mobileApp.appDownload} guides={guides} />
-      <CustomerNavigation area={user?.area ?? "visitor"} />
+      <CustomerNavigation user={user} />
       <RevealOnScroll />
     </div>
   );

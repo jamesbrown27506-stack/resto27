@@ -705,38 +705,41 @@ export function ProfileForm({
       </div>
 
       {/*
-        The save bar is the LAST CHILD of the page wrapper, not of a column, so
-        `sticky bottom` keeps it against the bottom of the screen from the first
-        scroll — on a phone the buttons are under the thumb the whole way down,
-        and nothing on this page is ever reached by scrolling sideways.
-      */}
-      <div className="sticky bottom-4 z-50 mt-6 rounded-lg border border-primary bg-surface p-4 shadow-lg">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold">
-              <span>
-                {dirtyCount > 0 ? t("mpf.unsaved", { count: dirtyCount }) : t("mpf.noChanges")}
-              </span>
-            </p>
-            <p className="mt-0.5 text-xs text-text-light">{t("mpf.saveHint")}</p>
-          </div>
+        ─────────────────────────────────────────────────────────────────────
+         THE SAVE BAR APPEARS ONLY WHEN THERE IS SOMETHING TO SAVE.
 
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Button
-              variant="outline"
-              disabled={pending || dirtyCount === 0}
-              className="w-full sm:w-auto"
-              onClick={discard}
-            >
-              <span>{t("mpf.discard")}</span>
-            </Button>
-            <Button loading={pending} disabled={pending} className="w-full sm:w-auto" onClick={save}>
-              <Save className="size-4" aria-hidden />
-              <span>{t("common.save")}</span>
-            </Button>
+         It used to be on screen from the first second — "Aucune
+         modification", two full-width buttons, a hint — about 130 px of a
+         phone, and at `bottom-4` with z-50 it sat ON TOP of the tab bar, so
+         the only way off the page was to scroll to its very end.
+
+         Now it is one compact row, shown only with pending changes, and it
+         sticks just ABOVE the tab bar (4rem of bar + the gesture inset + a
+         gap), returning to the bottom edge at lg where there is no bar. It is
+         still the LAST CHILD of the page wrapper, so `sticky` keeps it in view
+         from the first scroll.
+        ─────────────────────────────────────────────────────────────────────
+      */}
+      {dirtyCount > 0 && (
+        <div
+          role="status"
+          className="sticky bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 mt-6 flex items-center gap-2 rounded-lg border border-primary bg-surface py-2 pr-2 pl-3 shadow-lg sm:gap-3 sm:pl-4 lg:bottom-4"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] leading-snug font-semibold sm:text-sm">
+              <span>{t("mpf.unsaved", { count: dirtyCount })}</span>
+            </p>
+            <p className="hidden text-xs text-text-light sm:block">{t("mpf.saveHint")}</p>
           </div>
+          <Button variant="ghost" size="sm" disabled={pending} onClick={discard}>
+            <span>{t("mpf.discardShort")}</span>
+          </Button>
+          <Button size="sm" loading={pending} disabled={pending} onClick={save}>
+            <Save className="size-4" aria-hidden />
+            <span>{t("common.save")}</span>
+          </Button>
         </div>
-      </div>
+      )}
     </div>
   );
 }

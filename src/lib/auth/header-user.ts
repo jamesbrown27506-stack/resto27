@@ -1,5 +1,6 @@
 import { getCurrentProfile } from "./session";
 import { getImpersonation } from "./impersonation";
+import { getActiveBranchSummary } from "./branch";
 import type { HeaderUser } from "@/components/layout/site-header";
 
 /**
@@ -25,11 +26,17 @@ export async function getHeaderUser(): Promise<HeaderUser | null> {
         ? "manager"
         : "customer";
 
+  // Staff get their /m phone bar on the public site too, and that bar is
+  // built from their role at the active branch.
+  const branch = area === "manager" ? await getActiveBranchSummary(profile.id) : null;
+
   return {
     name: profile.name,
     email: profile.email,
+    phone: profile.phone,
     avatarUrl: profile.avatarUrl,
     area,
     homeHref: area === "admin" ? "/a" : area === "manager" ? "/m" : "/account",
+    branch,
   };
 }

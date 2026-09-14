@@ -373,6 +373,7 @@ export async function replyToSupport(messageId: string, reply: string): Promise<
       body: [`Hello ${message.name.split(" ")[0]},`, "", reply.trim(), "", "— Resto237 support"].join(
         "\n",
       ),
+      locale: "en",
     });
 
     if (!result.sent) {

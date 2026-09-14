@@ -1,6 +1,8 @@
 import "server-only";
 import nodemailer, { type Transporter } from "nodemailer";
-import { appMode } from "./site-url";
+import { appMode, siteUrl } from "./site-url";
+import { DEFAULT_BRANDING, getBranding } from "./branding";
+import { renderEmailHtml, type EmailBrand } from "./email-layout";
 
 /**
  * Outbound email, over SMTP.
@@ -31,9 +33,16 @@ import { appMode } from "./site-url";
 export interface MailMessage {
   to: string;
   subject: string;
-  /** Plain text. Kept deliberately simple — no templating layer yet. */
+  /**
+   * Plain text. It goes out as the text part AND is rendered into the branded
+   * HTML layout (lib/email-layout) — paragraphs, links, sign-off.
+   */
   body: string;
   replyTo?: string;
+  /** A button in the HTML version. */
+  action?: { label: string; url: string };
+  /** Language of the layout's own words (footer). Defaults to French. */
+  locale?: "fr" | "en";
 }
 
 export interface MailResult {
@@ -204,11 +213,23 @@ export async function sendMail(input: MailMessage): Promise<MailResult> {
   }
 
   try {
+    const html = renderEmailHtml(
+      {
+        subject: input.subject,
+        body: input.body,
+        action: message.action,
+        locale: message.locale,
+        notice: diverted ? `TEST MODE — addressed to ${diverted}, diverted here because APP_MODE=test.` : undefined,
+      },
+      await emailBrand(),
+    );
+
     await transporter(settings.smtp).sendMail({
       from: settings.smtp.from,
       to: message.to,
       subject: message.subject,
       text: message.body,
+      html,
       ...(message.replyTo ? { replyTo: message.replyTo } : {}),
     });
 
@@ -240,6 +261,27 @@ export async function sendMail(input: MailMessage): Promise<MailResult> {
 
     return { sent: false, reason: "The mail server refused the message." };
   }
+}
+
+/**
+ * The identity the HTML layout is drawn with. Never throws: an email with the
+ * default name and logo beats an email that was not sent because the settings
+ * table hiccuped, and a cron sweep has no request to derive a URL from.
+ */
+async function emailBrand(): Promise<EmailBrand> {
+  const [brand, site] = await Promise.all([
+    getBranding().catch(() => DEFAULT_BRANDING),
+    siteUrl().catch(() => process.env.NEXT_PUBLIC_SITE_URL || "https://resto237.online"),
+  ]);
+  const logo = brand.logoUrl ?? brand.iconUrl;
+  return {
+    name: brand.name,
+    tagline: brand.tagline,
+    // An email is read far from the site: a site-relative logo must be made absolute.
+    logoUrl: logo ? (logo.startsWith("http") ? logo : `${site}${logo.startsWith("/") ? "" : "/"}${logo}`) : null,
+    siteUrl: site,
+    supportEmail: brand.supportEmail,
+  };
 }
 
 /**

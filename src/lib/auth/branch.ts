@@ -276,6 +276,30 @@ export const getBranchContext = cache(async (): Promise<BranchContext | null> =>
 });
 
 /**
+ * The active branch's id and role, for chrome OUTSIDE /m.
+ *
+ * The public site draws a manager the same phone bar as /m, and that bar is
+ * built from the branch role. getBranchContext cannot serve it: it goes
+ * through requireRole, a guard built for /m, while the public layout must
+ * still render for a pending or suspended account (see header-user.ts). This
+ * resolves the same branch the same way — the cookie still only a preference
+ * checked against real membership — and answers null instead.
+ */
+export const getActiveBranchSummary = cache(
+  async (profileId: string): Promise<{ restaurantId: string; role: BranchRole } | null> => {
+    const impersonation = await getImpersonation();
+    if (impersonation) return { restaurantId: impersonation.restaurantId, role: "owner" };
+
+    const branches = await loadBranches(profileId);
+    if (branches.length === 0) return null;
+
+    const chosen = (await cookies()).get(ACTIVE_BRANCH_COOKIE)?.value;
+    const active = branches.find((b) => b.restaurantId === chosen) ?? branches[0]!;
+    return { restaurantId: active.restaurantId, role: active.role };
+  },
+);
+
+/**
  * The branch context, or a redirect.
  *
  * A manager with no branch is a real state, not a bug: their application was

@@ -244,6 +244,8 @@ export async function setRestaurantStatus(
         "",
         `— The ${brand.name} team`,
       ].join("\n"),
+      action: { label: "Sign in and set up my menu", url: loginUrl },
+      locale: "en",
     });
 
     if (!result.sent) {

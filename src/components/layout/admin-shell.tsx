@@ -134,9 +134,10 @@ export function AdminShell({
   children: React.ReactNode;
 }) {
   /*
-    Below lg the navigation is the bottom bar and nothing else: the way home,
-    the three desks an operator bounces between all day, and "More" for the
-    whole menu. It is the SAME bar the administrator sees on the public site
+    Below lg the navigation is the bottom bar and nothing else: the
+    dashboard, the three desks an operator checks all day (restaurants,
+    payments, diagnostics), and "More" for the whole menu, the public site
+    included. It is the SAME bar the administrator sees on the public site
     (lib/mobile-tabs). A left-hand drawer used to sit here too, opening from
     the opposite side to the public site's menu — two navigations, mirrored,
     for the same person.

@@ -610,6 +610,34 @@ export async function freeModeEndsAt(): Promise<string | null> {
 }
 
 /**
+ * The plan every restaurant is SHOWN as while free mode runs, or null.
+ *
+ * `fetchPlanLimits` already grants every tenant the richest paid tier's
+ * entitlements during free mode — but screens still named the plan on file,
+ * so a restaurant approved during the giveaway read "Starter" while holding
+ * Enterprise's features, and could not tell what it had. This names the tier
+ * it is actually getting: the most expensive non-Starter plan.
+ */
+export async function freeModePlanName(): Promise<string | null> {
+  if (!(await isFreeMode())) return null;
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("subscription_plans")
+    .select("name")
+    .neq("tier", "starter")
+    .order("monthly_price", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[billing:freeModePlanName]", error.message);
+    return null;
+  }
+  return (data as { name: string } | null)?.name ?? null;
+}
+
+/**
  * The home-page announcement: is free mode on, and for how long.
  *
  * `active` is the EFFECTIVE state, so the banner stops advertising a free

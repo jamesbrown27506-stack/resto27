@@ -1126,7 +1126,13 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
 
     // ── Deliver per recipient, each channel fenced ──────────────────────
     const inAppRows: { profile_id: string; title: string; body: string; tone: NotifyTone; href: string | null }[] = [];
-    const emails: { to: string; subject: string; body: string }[] = [];
+    const emails: {
+      to: string;
+      subject: string;
+      body: string;
+      action?: { label: string; url: string };
+      locale: Locale;
+    }[] = [];
     const pushes: {
       profileId: string;
       title: string;
@@ -1200,6 +1206,11 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
           to: recipient.email,
           subject: text.title,
           body: [text.title, "", text.body, href ? `${base}${href}` : "", "", `— ${brandName}`].join("\n"),
+          // The branded HTML version shows the link as a button (lib/email-layout).
+          action: href
+            ? { label: locale === "en" ? `Open in ${brandName}` : `Ouvrir dans ${brandName}`, url: `${base}${href}` }
+            : undefined,
+          locale,
         });
       }
       if (push) {
@@ -1275,7 +1286,7 @@ export async function notify(input: NotifyInput): Promise<{ delivered: number }>
       channel waits on the other now.
     */
     const emailTask = Promise.allSettled(
-      emails.map((m) => trySendMail({ to: m.to, subject: m.subject, body: m.body })),
+      emails.map((m) => trySendMail(m)),
     );
 
     const pushTask =

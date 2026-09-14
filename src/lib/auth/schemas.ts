@@ -84,6 +84,19 @@ export const signUpRestaurantSchema = z.object({
 
 export const forgotPasswordSchema = z.object({ email: emailSchema });
 
+/**
+ * The code from the reset email. Supabase's length is a project setting
+ * (6 by default, up to 10), so any run of 6–10 digits is accepted and the
+ * spaces people type between groups are ignored.
+ */
+export const resetCodeSchema = z.object({
+  email: emailSchema,
+  code: z
+    .string()
+    .transform((v) => v.replace(/\s/g, ""))
+    .refine((v) => /^\d{6,10}$/.test(v), "Saisissez le code à chiffres reçu par email"),
+});
+
 export const resetPasswordSchema = z
   .object({
     password: passwordSchema,

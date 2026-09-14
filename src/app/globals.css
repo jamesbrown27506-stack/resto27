@@ -373,36 +373,12 @@
    A section fades and lifts as it comes into view, so a long marketing page
    reads as something arriving rather than as one tall static image.
 
-   Driven by components/marketing/reveal-on-scroll, which marks each section
-   `.is-visible` as it crosses into view. It replaced a scroll-driven CSS
-   animation that only Chromium ran and that was too subtle to notice — see
-   that file.
-
-   HIDDEN ONLY ONCE THE SCRIPT HAS ARMED IT (`.reveal-armed`), section by
-   section. The first version hid every `.reveal` behind one page-wide flag,
-   and sections that streamed in after the loading screen were never watched
-   — the homepage went blank below the fold. A section the script has not
-   reached is now simply visible: a blank column is the failure mode of every
-   reveal that ever shipped broken, and this one cannot have it.
-
-   The grids inside a section (`.stagger-in`) wait for it: their entrance used
-   to play on page load, while they were still far below the fold, so by the
-   time anyone scrolled down it had long finished. Paused until the section
-   arrives, the cards now come in one after another as it does. */
-@media (prefers-reduced-motion: no-preference) {
-  .reveal.reveal-armed {
-    transition:
-      opacity 0.7s cubic-bezier(0.2, 0.7, 0.2, 1),
-      transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
-  }
-  .reveal.reveal-armed:not(.is-visible) {
-    opacity: 0;
-    transform: translateY(28px);
-  }
-  .reveal.reveal-armed:not(.is-visible) .stagger-in > * {
-    animation-play-state: paused;
-  }
-}
+   There is deliberately NO CSS for it here. `.reveal` is only the marker
+   components/marketing/reveal-on-scroll looks for; the hidden state and the
+   fade are paused Web Animations it holds on each section. The classes this
+   block used to style were added before React hydrated a streamed section,
+   which is a hydration mismatch — see that file. A section the script never
+   reaches is simply visible. */
 
 /* ── The installed app's opening mark (components/capacitor/app-launch) ──
    The icon lands like a pin on a map: a short drop, one small bounce, and

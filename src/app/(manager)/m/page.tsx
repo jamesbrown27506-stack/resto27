@@ -4,7 +4,7 @@ import { DashboardView } from "./dashboard-view";
 import { SUBSCRIPTION_STATE_META } from "@/lib/format/subscription";
 import { requireBranch } from "@/lib/auth/branch";
 import { fetchBranchOverview, fetchReservations, fetchSetupChecklist } from "@/lib/data/manager";
-import { fetchPlanLimits } from "@/lib/data/billing";
+import { fetchPlanLimits, freeModePlanName } from "@/lib/data/billing";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -30,14 +30,18 @@ export default async function ManagerDashboard() {
   // established tenant, so this only ever catches genuinely new ones.
   if (!active.setupDoneAt) redirect("/m/setup");
 
-  const [overview, upcoming, limits, checklist] = await Promise.all([
+  const [overview, upcoming, limits, checklist, freePlan] = await Promise.all([
     fetchBranchOverview(active.restaurantId),
     fetchReservations(active.restaurantId, { from: new Date(), status: "pending" }),
     fetchPlanLimits(),
     fetchSetupChecklist(active.restaurantId),
+    freeModePlanName(),
   ]);
 
-  const stateMeta = SUBSCRIPTION_STATE_META[active.subscriptionState];
+  // While the platform is free every restaurant has the richest plan's
+  // features, so that is the plan the chip names — "Enterprise · Gratuit",
+  // not the "Starter" on file that it is not limited to.
+  const stateMeta = SUBSCRIPTION_STATE_META[freePlan ? "free_mode" : active.subscriptionState];
 
   // A locked tenant drops to Starter limits (§5) — existing rows keep working.
   const tier = active.subscriptionState === "locked" ? "starter" : active.planTier;
@@ -52,7 +56,7 @@ export default async function ManagerDashboard() {
         status: active.status,
         role: active.role,
       }}
-      planLabel={`${active.planName} · ${stateMeta.label}`}
+      planLabel={`${freePlan ?? active.planName} · ${stateMeta.label}`}
       // `tone: null` on an active subscription means "no banner needed" — it is
       // not a Badge tone. Neutral is the right chip for a healthy plan.
       planTone={stateMeta.tone ?? "neutral"}

@@ -40,6 +40,7 @@ export const billingDict = defineDict({
     "mbl.freeMode.title": "Mode gratuit actif",
     "mbl.freeMode.bodyDate": "Toutes les formules sont offertes gratuitement jusqu'au {date}.",
     "mbl.freeMode.body": "Toutes les formules sont actuellement offertes gratuitement.",
+    "mbl.current.freeGranted": "Offert pendant le mode gratuit : toutes les fonctions sont incluses. Votre formule enregistrée ({plan}) reprend ensuite.",
 
     /* ── Essai gratuit ────────────────────────────────────────────────── */
     "mbl.trial.left": "Essai gratuit — {days} jour(s) restant(s).",
@@ -204,6 +205,7 @@ export const billingDict = defineDict({
     "mbl.freeMode.title": "Free mode is on",
     "mbl.freeMode.bodyDate": "Every plan is free until {date}.",
     "mbl.freeMode.body": "Every plan is currently free.",
+    "mbl.current.freeGranted": "Included while free mode lasts: every feature is unlocked. Your plan on file ({plan}) applies again afterwards.",
 
     /* ── Free trial ───────────────────────────────────────────────────── */
     "mbl.trial.left": "Free trial — {days} day(s) left.",

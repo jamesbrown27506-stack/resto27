@@ -11,12 +11,41 @@ import { notify } from "@/lib/notify";
 import { resolveOrCreateQuartier } from "@/lib/data/quartiers";
 import {
   forgotPasswordSchema,
+  resetCodeSchema,
   resetPasswordSchema,
   signInSchema,
   signUpCustomerSchema,
   signUpRestaurantSchema,
 } from "./schemas";
 import { getManagerRestaurantRejection, type RejectionReason } from "./session";
+import { signInFailureReason } from "./sign-in-failure";
+
+/**
+ * The profile behind a sign-in that just succeeded, read with the SERVER's
+ * key and retried once.
+ *
+ * It was read with the brand-new session, which is exactly the request that
+ * Supabase's intermittent "JWT issued at future" clock skew hits (see
+ * lib/supabase/server.ts), and any failure — a timeout included — came back
+ * as "no profile", i.e. "wrong password". The admin client carries no user
+ * JWT, one retry absorbs a blip, and a real failure is reported as what it is.
+ */
+async function loadSignInProfile(
+  authUserId: string,
+): Promise<{ id: string; role: string; status: string; deleted_at: string | null } | null | "unavailable"> {
+  const admin = createAdminClient();
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const { data, error } = await admin
+      .from("profiles")
+      .select("id, role, status, deleted_at")
+      .eq("auth_user_id", authUserId)
+      .maybeSingle();
+    if (!error) return data;
+    console.error(`[auth:signIn] profile read failed (attempt ${attempt})`, error.message);
+    if (attempt === 1) await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  return "unavailable";
+}
 
 /** What every auth action returns, so forms can render errors uniformly. */
 export interface AuthState {
@@ -139,17 +168,29 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   });
 
   if (error || !data.user) {
-    return { ok: false, reason: "invalid" };
+    // Not every refusal is a wrong password — see sign-in-failure.ts. The
+    // ones that are not get logged, so the next outage is in the logs rather
+    // than in a stack of password resets.
+    const reason = signInFailureReason(error);
+    if (reason !== "invalid") {
+      console.error("[auth:signIn]", reason, error?.status, error?.code, error?.message);
+    }
+    return { ok: false, reason };
   }
 
   // Credentials were correct. Now: are they still allowed in?
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("id, role, status, deleted_at")
-    .eq("auth_user_id", data.user.id)
-    .maybeSingle();
+  const profile = await loadSignInProfile(data.user.id);
+
+  if (profile === "unavailable") {
+    // The password was right; the database did not answer. Nothing was
+    // decided, so nobody is told their credentials are wrong.
+    await supabase.auth.signOut();
+    return { ok: false, reason: "unavailable" };
+  }
 
   if (!profile) {
+    // A real account with no profile row — an orphan (0002_backfill_profiles).
+    console.error("[auth:signIn] orphan: auth user has no profile", data.user.id);
     await supabase.auth.signOut();
     return { ok: false, reason: "invalid" };
   }
@@ -488,6 +529,42 @@ export async function requestPasswordReset(
   });
 
   return { ok: true, done: true };
+}
+
+/**
+ * Signs in with the CODE from the reset email, then hands over to the
+ * new-password screen — the same one-time proof as the emailed link, typed
+ * where the reset started instead of travelling through a browser.
+ *
+ * Why a code at all: see app/(auth)/forgot-password. The session it creates is
+ * exactly the one the link would have created, so /reset-password and
+ * `updatePassword` below serve both without knowing which was used.
+ */
+export async function verifyResetCode(_prev: AuthState, formData: FormData): Promise<AuthState> {
+  // Six digits can be guessed in a way a link cannot, so guesses are
+  // throttled per IP — on top of Supabase's own limit on verifications.
+  const limited = await rateLimit({ key: "auth:reset-code", limit: 10, windowMs: 15 * 60_000 });
+  if (!limited.ok) return { ok: false, error: "rate" };
+
+  const parsed = resetCodeSchema.safeParse({
+    email: formData.get("email"),
+    code: formData.get("code"),
+  });
+  if (!parsed.success) {
+    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error) };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.verifyOtp({
+    email: parsed.data.email,
+    token: parsed.data.code,
+    type: "recovery",
+  });
+
+  // Wrong, expired or already used — one answer for all three.
+  if (error) return { ok: false, error: "code" };
+
+  redirect("/reset-password");
 }
 
 /**
