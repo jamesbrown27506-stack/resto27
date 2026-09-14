@@ -4,6 +4,7 @@ import { settleConfirmedAttempt } from "@/lib/payments/collect";
 import { createAdminClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { notify } from "@/lib/notify";
+import { settleReservationRefundByReplyTo } from "@/lib/payments/reservation-refunds";
 
 /**
  * CamerPay callback endpoint.
@@ -219,7 +220,16 @@ export async function POST(request: NextRequest) {
      * verdict into the request ledger.
      */
     const settled = attempt ? await settleConfirmedAttempt(attempt.id) : null;
-    const verdict = settled ? (settled.status ?? "pending") : (await confirmTransaction(replyTo)).status;
+    const refund = attempt ? "not_found" : await settleReservationRefundByReplyTo(replyTo);
+    const verdict = settled
+      ? (settled.status ?? "pending")
+      : refund === "refunded"
+        ? "succeeded"
+        : refund === "failed"
+          ? "failed"
+          : refund === "pending"
+            ? "pending"
+            : (await confirmTransaction(replyTo)).status;
     const corroborated = verdict === "success" || verdict === "succeeded";
 
     console.info("[camerpay:webhook]", replyTo, "claimed:", claimed, "confirmed:", verdict);

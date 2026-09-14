@@ -7,7 +7,7 @@ import { AccountShell } from "@/components/layout/account-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
-import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
+import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { QtyStepper } from "@/components/ui/qty-stepper";
@@ -15,6 +15,7 @@ import { useToast } from "@/components/ui/toast";
 import {
   cancelOwnReservation,
   checkReservationPayment,
+  checkReservationRefund,
   createOwnReservation,
   fetchDayAvailability,
   payReservationDeposit,
@@ -26,6 +27,7 @@ import type { PublicRestaurant } from "@/lib/data/public";
 import { formatDate, formatDayLabel, formatTime, weekdayName } from "@/lib/format/datetime";
 import { formatMoney } from "@/lib/format/currency";
 import { depositChargedNow } from "@/lib/reservations/deposit";
+import { quoteReservationCancellation } from "@/lib/reservations/cancellation";
 import { PaymentPendingView } from "@/components/payment/payment-pending";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import {
@@ -344,6 +346,53 @@ export function ReservationsClient({
   }, [initial, startPaymentPolling]);
 
   const { upcoming, history: past } = partitionCustomerReservations(mine, now);
+  const cancellingReservation = mine.find((reservation) => reservation.id === cancelId) ?? null;
+  const cancellationQuote = quoteReservationCancellation(
+    cancellingReservation?.depositPaid ?? false,
+    cancellingReservation?.depositAmount ?? 0,
+    cancellingReservation?.reservedFor ?? now,
+    now,
+  );
+  const lateCancellation = cancellationQuote.late;
+  const cancellationDeposit = cancellationQuote.deposit;
+  const cancellationRefund = cancellationQuote.refund;
+  const cancellationPlatformFee = cancellationQuote.platformFee;
+  const cancellationRestaurantCompensation = cancellationQuote.restaurantCompensation;
+
+  const pendingRefundId =
+    mine.find((reservation) => reservation.refundStatus === "pending")?.refundId ?? null;
+  useEffect(() => {
+    if (!pendingRefundId) return;
+    let checking = false;
+    const timer = setInterval(async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const result = await checkReservationRefund(pendingRefundId);
+        if (result.status === "refunded" || result.status === "refund_failed") {
+          clearInterval(timer);
+          setMine((current) =>
+            current.map((reservation) =>
+              reservation.refundId === pendingRefundId
+                ? {
+                    ...reservation,
+                    refundStatus: result.status === "refunded" ? "completed" : "rejected",
+                  }
+                : reservation,
+            ),
+          );
+          toast(
+            t(result.status === "refunded" ? "crs.refundDone" : "crs.refundFailed"),
+            result.status === "refunded" ? "success" : "error",
+          );
+          router.refresh();
+        }
+      } finally {
+        checking = false;
+      }
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [pendingRefundId, router, t, toast]);
 
   /* ── What can actually be booked, for the restaurant and day chosen ──── */
 
@@ -565,9 +614,29 @@ export function ReservationsClient({
     setBusy(false);
     if (result.ok) {
       setMine((current) =>
-        current.map((row) => (row.id === cancelId ? { ...row, status: "cancelled" } : row)),
+        current.map((row) =>
+          row.id === cancelId
+            ? {
+                ...row,
+                status: "cancelled",
+                refundId: result.refundId ?? null,
+                refundStatus:
+                  result.status === "refunded"
+                    ? "completed"
+                    : result.status === "refund_pending"
+                      ? "pending"
+                      : null,
+                refundAmount: result.refundAmount ?? 0,
+                restaurantCompensation: result.restaurantCompensation ?? 0,
+                platformFee: result.platformFee ?? 0,
+              }
+            : row,
+        ),
       );
-      toast(t("crs.cancelled"), "info");
+      toast(
+        t(result.status === "refunded" ? "crs.refundDone" : result.status === "refund_pending" ? "crs.refundPending" : "crs.cancelled"),
+        result.status === "refunded" ? "success" : "info",
+      );
       router.refresh();
     } else {
       toast(result.error, "error");
@@ -746,9 +815,23 @@ export function ReservationsClient({
                         {t("crs.people", { count: r.partySize })}
                       </p>
                     </div>
-                    <Badge tone={RESERVATION_STATUS_TONE[r.status]}>
-                      {reservationStatusLabel(r.status, t)}
-                    </Badge>
+                    <div className="flex flex-col items-end gap-1.5">
+                      <Badge tone={RESERVATION_STATUS_TONE[r.status]}>
+                        {reservationStatusLabel(r.status, t)}
+                      </Badge>
+                      {r.refundStatus && (
+                        <Badge tone={r.refundStatus === "completed" ? "success" : r.refundStatus === "rejected" ? "error" : "warning"}>
+                          {t(
+                            r.refundStatus === "completed"
+                              ? "crs.refundStatusDone"
+                              : r.refundStatus === "rejected"
+                                ? "crs.refundStatusFailed"
+                                : "crs.refundStatusPending",
+                            { amount: formatMoney(r.refundAmount) },
+                          )}
+                        </Badge>
+                      )}
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1056,16 +1139,53 @@ export function ReservationsClient({
         </aside>
       </div>
 
-      <ConfirmDialog
+      <Dialog
         open={cancelId !== null}
         onClose={() => setCancelId(null)}
-        onConfirm={confirmCancel}
         title={t("crs.cancelTitle")}
-        message={t("crs.cancelBody")}
-        confirmLabel={t("crs.cancelConfirm")}
-        cancelLabel={t("crs.cancelKeep")}
-        destructive
-      />
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" disabled={busy} onClick={() => setCancelId(null)}>
+              {t("crs.cancelKeep")}
+            </Button>
+            <Button variant="danger" loading={busy} onClick={confirmCancel}>
+              {t("crs.cancelConfirm")}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm leading-relaxed text-text-secondary">
+            {t(lateCancellation ? "crs.cancelPolicyLate" : "crs.cancelPolicyFree")}
+          </p>
+          {cancellationDeposit > 0 && (
+            <dl className="divide-y divide-border rounded-md border border-border bg-surface-2 px-4 text-sm">
+              <div className="flex items-center justify-between gap-4 py-3">
+                <dt className="text-text-secondary">{t("crs.cancelDeposit")}</dt>
+                <dd className="tnum font-semibold">{formatMoney(cancellationDeposit)}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-4 py-3">
+                <dt className="text-text-secondary">{t("crs.cancelRefund")}</dt>
+                <dd className="tnum font-semibold text-success">{formatMoney(cancellationRefund)}</dd>
+              </div>
+              {lateCancellation && (
+                <>
+                  <div className="flex items-center justify-between gap-4 py-3">
+                    <dt className="text-text-secondary">{t("crs.cancelRestaurant")}</dt>
+                    <dd className="tnum font-semibold">{formatMoney(cancellationRestaurantCompensation)}</dd>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 py-3">
+                    <dt className="text-text-secondary">{t("crs.cancelPlatform")}</dt>
+                    <dd className="tnum font-semibold">{formatMoney(cancellationPlatformFee)}</dd>
+                  </div>
+                </>
+              )}
+            </dl>
+          )}
+          <p className="text-xs leading-relaxed text-text-light">{t("crs.cancelBody")}</p>
+        </div>
+      </Dialog>
 
       {(() => {
         const reservation = mine.find((row) => row.id === paymentScreenId);

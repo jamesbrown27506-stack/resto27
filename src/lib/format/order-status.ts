@@ -310,7 +310,7 @@ export function canCustomerCancel(status: OrderStatus): boolean {
   // `awaiting_customer` has its own Decline, which cancels with the reason
   // "the delivery fee" already filled in — but plain cancel stays available so
   // the ordinary control never disappears mid-flow.
-  return status === "pending" || status === "awaiting_customer" || status === "confirmed";
+  return status === "pending" || status === "awaiting_customer";
 }
 
 /**

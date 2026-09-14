@@ -10,6 +10,7 @@ import { notify } from "@/lib/notify";
 import { saveUpload, type UploadKind } from "@/lib/uploads";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
+import { paymentMode } from "./billing";
 import { anyPushWanted, toStoredJson } from "@/lib/notifications/customer-topics";
 import {
   floorIsUnmanaged,
@@ -40,6 +41,14 @@ import {
 } from "@/lib/payments/collect";
 import type { ActionResult } from "./admin-actions";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
+import {
+  acceptedTransactionId,
+  latestTransactionId,
+  normalisePhone,
+  recordAcceptedRequest,
+  sendPayout,
+} from "@/lib/payments/camerpay/client";
+import { settleReservationRefund } from "@/lib/payments/reservation-refunds";
 import type { CustomerPreferences } from "./customer";
 import type { UploadActionResult } from "./profile-actions";
 
@@ -1236,8 +1245,37 @@ export async function checkReservationPayment(
   return { ok: true, status: result.status, instruction: result.instruction };
 }
 
-/** Cancel one of your own pre-service reservations. */
-export async function cancelOwnReservation(reservationId: string): Promise<ActionResult> {
+/** The financial result returned by the atomic cancellation claim. */
+type ReservationCancellationResult = ActionResult & {
+  status?: "cancelled" | "refund_pending" | "refunded" | "refund_failed";
+  refundId?: string;
+  refundAmount?: number;
+  restaurantCompensation?: number;
+  platformFee?: number;
+};
+
+type CancellationClaim = {
+  reservationId: string;
+  reference: string;
+  restaurantId: string;
+  refundId: string | null;
+  refundAmount: number;
+  restaurantCompensation: number;
+  platformFee: number;
+  refundStatus: "pending" | "completed" | "rejected" | null;
+  phone: string | null;
+  replyTo: string | null;
+};
+
+/**
+ * Cancel a reservation and, when its deposit was paid, begin the Mobile Money
+ * refund. The database RPC cancels the table, debits the restaurant wallet and
+ * records the 70/25/5 split in one transaction. CamerPay then runs as a tracked
+ * saga because an external network request cannot join a PostgreSQL transaction.
+ */
+export async function cancelOwnReservation(
+  reservationId: string,
+): Promise<ReservationCancellationResult> {
   const user = await requireUser();
   const supabase = createAdminClient();
 
@@ -1252,7 +1290,6 @@ export async function cancelOwnReservation(reservationId: string): Promise<Actio
   if (!canCustomerCancelReservation(reservation.status)) {
     return { ok: false, error: "Cette réservation ne peut plus être annulée." };
   }
-
   if (
     !isUpcomingReservation({
       status: reservation.status,
@@ -1263,22 +1300,12 @@ export async function cancelOwnReservation(reservationId: string): Promise<Actio
     return { ok: false, error: "Le créneau de cette réservation est déjà passé." };
   }
 
-  // A paid deposit needs a real Mobile Money refund. Until that refund path is
-  // executed by the restaurant, never silently cancel while keeping the money.
-  if (reservation.deposit_paid) {
-    return {
-      ok: false,
-      error: "Cette réservation a déjà été payée. Contactez le restaurant pour l'annuler et traiter le remboursement.",
-    };
-  }
-
-  // Do not race a payment that is already on the handset. It may have succeeded
-  // even if the callback has not reached us yet.
+  // Do not race a charge still being approved on the customer's handset.
   const { data: openAttempt } = await supabase
     .from("payment_attempts")
     .select("id")
     .eq("reservation_id", reservationId)
-    .in("status", ["pending", "succeeded"])
+    .eq("status", "pending")
     .is("settled_at", null)
     .limit(1)
     .maybeSingle();
@@ -1289,16 +1316,39 @@ export async function cancelOwnReservation(reservationId: string): Promise<Actio
     };
   }
 
-  const { data: cancelled, error: updateError } = await supabase
-    .from("reservations")
-    .update({ status: "cancelled", table_id: null })
-    .eq("id", reservationId)
-    .eq("status", reservation.status)
-    .select("id")
-    .maybeSingle();
+  const { data: claimData, error: claimError } = await supabase.rpc(
+    "cancel_customer_reservation",
+    {
+      p_reservation_id: reservationId,
+      p_customer_id: user.id,
+      p_created_by: user.email,
+    },
+  );
 
-  if (updateError) return { ok: false, error: "L'annulation a échoué." };
-  if (!cancelled) return { ok: false, error: "La réservation a changé. Actualisez puis réessayez." };
+  if (claimError) {
+    console.error("[customer:cancelReservation]", claimError.message);
+    if (claimError.message.includes("insufficient balance")) {
+      return {
+        ok: false,
+        error: "Le remboursement ne peut pas encore être réservé. Resto237 a été alerté; contactez l'assistance.",
+      };
+    }
+    if (claimError.message.includes("refund_below_provider_minimum")) {
+      return {
+        ok: false,
+        error: "Le remboursement est inférieur au minimum Mobile Money. Contactez l'assistance Resto237.",
+      };
+    }
+    return { ok: false, error: "L'annulation n'a pas pu être enregistrée." };
+  }
+
+  const claim = claimData as CancellationClaim;
+  const resultBase = {
+    refundId: claim.refundId ?? undefined,
+    refundAmount: Number(claim.refundAmount ?? 0),
+    restaurantCompensation: Number(claim.restaurantCompensation ?? 0),
+    platformFee: Number(claim.platformFee ?? 0),
+  };
 
   await notify({
     event: "reservation",
@@ -1316,7 +1366,121 @@ export async function cancelOwnReservation(reservationId: string): Promise<Actio
   revalidatePath("/reservations");
   revalidatePath("/account");
   revalidatePath("/m/reservations");
-  return { ok: true };
+  revalidatePath("/m/wallet");
+
+  if (!claim.refundId || claim.refundAmount <= 0) {
+    return { ok: true, status: "cancelled", ...resultBase };
+  }
+  if (claim.refundStatus === "completed") {
+    return { ok: true, status: "refunded", ...resultBase };
+  }
+  if (claim.replyTo) {
+    return { ok: true, status: "refund_pending", ...resultBase };
+  }
+
+  const phone = normalisePhone(claim.phone ?? "");
+  if (!phone) {
+    return {
+      ok: true,
+      status: "refund_pending",
+      note: "Réservation annulée. Le remboursement attend la vérification du numéro Mobile Money.",
+      ...resultBase,
+    };
+  }
+
+  if ((await paymentMode()) === "sandbox") {
+    const { data: completed } = await supabase.rpc("complete_reservation_refund", {
+      p_refund_id: claim.refundId,
+      p_provider_row_id: null,
+    });
+    return completed
+      ? { ok: true, status: "refunded", ...resultBase }
+      : { ok: true, status: "refund_pending", ...resultBase };
+  }
+
+  const afterId = await latestTransactionId();
+  let response;
+  try {
+    response = await sendPayout(phone, claim.refundAmount);
+  } catch (payoutError) {
+    console.error("[customer:reservationRefund] payout call", payoutError);
+    return {
+      ok: true,
+      status: "refund_pending",
+      note: "Réservation annulée. Le remboursement reste en attente de traitement.",
+      ...resultBase,
+    };
+  }
+
+  const replyTo = acceptedTransactionId(response);
+  if (!(response.httpStatus === 202 || response.etat) || !replyTo) {
+    await supabase
+      .from("refunds")
+      .update({ raw_response: { response, needs_retry: true } })
+      .eq("id", claim.refundId)
+      .eq("status", "pending");
+    return {
+      ok: true,
+      status: "refund_pending",
+      note: "Réservation annulée. CamerPay n'a pas encore accepté le remboursement.",
+      ...resultBase,
+    };
+  }
+
+  await recordAcceptedRequest({
+    replyTo,
+    direction: "payout",
+    phone,
+    amount: claim.refundAmount,
+    afterId: afterId ?? null,
+    startedAt: new Date().toISOString(),
+  });
+  await supabase
+    .from("refunds")
+    .update({ reply_to: replyTo, phone, raw_response: { response, afterId } })
+    .eq("id", claim.refundId)
+    .eq("status", "pending")
+    .is("reply_to", null);
+
+  return { ok: true, status: "refund_pending", ...resultBase };
+}
+
+/** Poll a reservation refund owned by the signed-in customer. */
+export async function checkReservationRefund(
+  refundId: string,
+): Promise<ReservationCancellationResult> {
+  const user = await requireUser();
+  const supabase = createAdminClient();
+
+  const { data: refund } = await supabase
+    .from("refunds")
+    .select("id, reservation_id, amount, status, phone, reply_to, restaurant_compensation, platform_fee")
+    .eq("id", refundId)
+    .maybeSingle();
+  if (!refund?.reservation_id) return { ok: false, error: "Remboursement introuvable." };
+
+  const { data: reservation } = await supabase
+    .from("reservations")
+    .select("id")
+    .eq("id", refund.reservation_id)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+  if (!reservation) return { ok: false, error: "Remboursement introuvable." };
+
+  const resultBase = {
+    refundId,
+    refundAmount: Number(refund.amount),
+    restaurantCompensation: Number(refund.restaurant_compensation ?? 0),
+    platformFee: Number(refund.platform_fee ?? 0),
+  };
+  if (refund.status === "completed") return { ok: true, status: "refunded", ...resultBase };
+  if (refund.status === "rejected") return { ok: true, status: "refund_failed", ...resultBase };
+  const outcome = await settleReservationRefund(refundId);
+  revalidatePath("/reservations");
+  revalidatePath("/account");
+  if (outcome === "refunded") return { ok: true, status: "refunded", ...resultBase };
+  if (outcome === "failed") return { ok: true, status: "refund_failed", ...resultBase };
+  return { ok: true, status: "refund_pending", ...resultBase };
 }
 
 /* ── Favourites ─────────────────────────────────────────────────────────── */

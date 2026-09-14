@@ -115,9 +115,9 @@ describe("canCustomerCancel", () => {
     expect(canCustomerCancel("awaiting_customer")).toBe(true);
   });
 
-  it("still stops once the kitchen has committed", () => {
+  it("stops as soon as the restaurant confirms the order", () => {
     expect(canCustomerCancel("pending")).toBe(true);
-    expect(canCustomerCancel("confirmed")).toBe(true);
+    expect(canCustomerCancel("confirmed")).toBe(false);
     expect(canCustomerCancel("preparing")).toBe(false);
     expect(canCustomerCancel("shipped")).toBe(false);
     expect(canCustomerCancel("delivered")).toBe(false);

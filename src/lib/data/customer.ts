@@ -292,6 +292,11 @@ export interface CustomerReservation {
   paymentAttemptId: string | null;
   /** The Mobile Money line used for that attempt (may differ from the profile). */
   paymentPhone: string | null;
+  refundId: string | null;
+  refundStatus: "pending" | "completed" | "rejected" | null;
+  refundAmount: number;
+  restaurantCompensation: number;
+  platformFee: number;
   notes: string | null;
   createdAt: string;
 }
@@ -347,6 +352,11 @@ export async function fetchCustomerReservations(
     depositPaid: r.deposit_paid === true,
     paymentAttemptId: null,
     paymentPhone: null,
+    refundId: null,
+    refundStatus: null,
+    refundAmount: 0,
+    restaurantCompensation: 0,
+    platformFee: 0,
     notes: r.notes,
     createdAt: r.created_at,
   }));
@@ -384,12 +394,41 @@ export async function fetchCustomerReservations(
     }
   }
 
+  const { data: refundRows, error: refundsError } = await supabase
+    .from("refunds")
+    .select("id, reservation_id, status, amount, restaurant_compensation, platform_fee")
+    .in("reservation_id", reservations.map((reservation) => reservation.id));
+
+  if (refundsError) {
+    console.error("[customer:fetchCustomerReservations] refunds", refundsError.message);
+  }
+  const refundByReservation = new Map(
+    (refundRows ?? [])
+      .filter((refund) => Boolean(refund.reservation_id))
+      .map((refund) => [
+        refund.reservation_id as string,
+        {
+          id: refund.id as string,
+          status: refund.status as "pending" | "completed" | "rejected",
+          amount: Number(refund.amount),
+          restaurantCompensation: Number(refund.restaurant_compensation ?? 0),
+          platformFee: Number(refund.platform_fee ?? 0),
+        },
+      ]),
+  );
+
   return reservations.map((reservation) => {
     const attempt = latestByReservation.get(reservation.id);
+    const refund = refundByReservation.get(reservation.id);
     return {
       ...reservation,
       paymentAttemptId: attempt?.id ?? null,
       paymentPhone: attempt?.phone ?? null,
+      refundId: refund?.id ?? null,
+      refundStatus: refund?.status ?? null,
+      refundAmount: refund?.amount ?? 0,
+      restaurantCompensation: refund?.restaurantCompensation ?? 0,
+      platformFee: refund?.platformFee ?? 0,
     };
   });
 }

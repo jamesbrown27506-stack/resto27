@@ -2,6 +2,7 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveAttemptOutcome, settlePayment } from "@/lib/payments/collect";
+import { settleReservationRefund } from "@/lib/payments/reservation-refunds";
 
 /**
  * The sweep — the third and last route by which a payment settles.
@@ -154,6 +155,29 @@ export async function runReconciliation(): Promise<ReconciliationSummary> {
     else if (!settled.ok) summary.failed += 1;
   }
 
+  /* ── 3. Reservation refunds whose customer closed the page ───────────── */
+
+  const { data: refunds, error: refundsError } = await supabase
+    .from("refunds")
+    .select("id")
+    .eq("status", "pending")
+    .not("reply_to", "is", null)
+    .lt("created_at", new Date(now - STALE_AFTER_MS).toISOString())
+    .order("created_at", { ascending: true })
+    .limit(BATCH);
+
+  if (refundsError) {
+    console.error("[pay:reconcile] refund queue", refundsError.message);
+    return summary;
+  }
+
+  for (const row of refunds ?? []) {
+    summary.checked += 1;
+    const outcome = await settleReservationRefund(row.id as string);
+    if (outcome === "refunded") summary.settled += 1;
+    else if (outcome === "failed") summary.failed += 1;
+    else summary.stillPending += 1;
+  }
   return summary;
 }
 
