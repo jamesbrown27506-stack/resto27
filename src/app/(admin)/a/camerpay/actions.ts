@@ -64,7 +64,7 @@ export interface ProbeResult {
   /** The raw response body, so support sees both halves of the exchange. */
   response?: unknown;
   /**
-   * Present on a payout when the withdrawal fee is enabled: the gross the
+   * Present on a payout when the tax is enabled: the gross the
    * recipient is owed, the withheld fee, and the net actually sent.
    */
   fee?: { gross: number; fee: number; net: number };
@@ -278,7 +278,7 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
         return {
           ok: false,
           label: "Payout",
-          detail: `The ${feeConfig.percent}% withdrawal fee (${fee} FCFA) is the whole amount — nothing would reach the recipient.`,
+          detail: `The ${feeConfig.percent}% tax (${fee} FCFA) is the whole amount — nothing would reach the recipient.`,
         };
       }
       if (net < MIN_AMOUNT_XAF) {
@@ -341,7 +341,7 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
         label: "Payout",
         detail:
           fee > 0
-            ? `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — ${net.toLocaleString("fr-CM")} FCFA sent (${fee.toLocaleString("fr-CM")} FCFA withdrawal fee withheld). Money is on its way OUT of your balance.`
+            ? `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — ${net.toLocaleString("fr-CM")} FCFA sent (${fee.toLocaleString("fr-CM")} FCFA tax withheld). Money is on its way OUT of your balance.`
             : `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — money is on its way OUT of your balance. Watch it settle below.`,
         payload: response.data,
         request: response.request,

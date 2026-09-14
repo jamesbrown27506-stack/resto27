@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "@/components/layout/public-link";
 import { CalendarCheck, Check, Smartphone, Users } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { Badge } from "@/components/ui/badge";
@@ -692,6 +693,13 @@ export function ReservationsClient({
                           {r.notes && (
                             <p className="mt-1 text-xs text-text-light italic">« {r.notes} »</p>
                           )}
+                          {canCustomerCancelReservation(r.status) && r.depositPaid && (
+                            <p className={new Date(r.reservedFor).getTime() - now.getTime() < 60 * 60_000 ? "mt-2 text-xs font-semibold text-warning" : "mt-2 text-xs font-semibold text-success"}>
+                              {new Date(r.reservedFor).getTime() - now.getTime() < 60 * 60_000
+                                ? t("crs.cancelChargeNow")
+                                : t("crs.cancelFreeUntil", { time: formatTime(new Date(new Date(r.reservedFor).getTime() - 60 * 60_000).toISOString(), dateLocale) })}
+                            </p>
+                          )}
                         </div>
 
                         <Badge tone={RESERVATION_STATUS_TONE[r.status]}>
@@ -832,6 +840,14 @@ export function ReservationsClient({
                         </Badge>
                       )}
                     </div>
+                    {r.refundStatus === "completed" && (
+                      <div className="mt-3 rounded-md border border-success/25 bg-success-light p-3 text-sm">
+                        <p className="font-semibold text-success">{t("crs.refundWalletTitle")}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-text-secondary">{t("crs.refundWalletBody", { amount: formatMoney(r.refundAmount), reference: r.reference })}</p>
+                        {r.refundBalanceAfter !== null && <p className="tnum mt-1 text-xs font-semibold text-success">{t("crs.refundBalanceAfter", { amount: formatMoney(r.refundBalanceAfter) })}</p>}
+                        <Link href="/restaurants" className="mt-2 inline-flex text-xs font-bold text-primary hover:underline">{t("crs.useBalance")}</Link>
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

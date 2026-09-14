@@ -164,7 +164,7 @@ export function WalletClient({
         <CardBody className="flex flex-col gap-4">
           {feeEnabled && (
             <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs text-warning">
-              Frais de retrait : <strong>{fee.percent} %</strong>. Ils sont retenus sur le montant demandé.
+              Taxe : <strong>{fee.percent} %</strong>. Ils sont retenus sur le montant demandé.
             </p>
           )}
 

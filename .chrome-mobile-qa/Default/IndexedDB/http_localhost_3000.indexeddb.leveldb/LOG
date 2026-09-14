@@ -1,0 +1,10 @@
+2026/09/14-09:41:09.860 a24 Creating DB C:\xampp\htdocs\resto237\.chrome-mobile-qa\Default\IndexedDB\http_localhost_3000.indexeddb.leveldb since it was missing.
+2026/09/14-09:41:09.944 a24 Reusing MANIFEST C:\xampp\htdocs\resto237\.chrome-mobile-qa\Default\IndexedDB\http_localhost_3000.indexeddb.leveldb/MANIFEST-000001
+2026/09/14-09:41:09.968 a24 Level-0 table #5: started
+2026/09/14-09:41:09.980 a24 Level-0 table #5: 655 bytes OK
+2026/09/14-09:41:10.023 a24 Delete type=0 #3
+2026/09/14-09:41:10.025 54bc Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)
+2026/09/14-09:41:10.075 a24 Level-0 table #7: started
+2026/09/14-09:41:10.088 a24 Level-0 table #7: 732 bytes OK
+2026/09/14-09:41:10.168 a24 Delete type=0 #4
+2026/09/14-09:41:10.169 a24 Manual compaction at level-0 from '\x00\x02\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x03\x00\x00\x00' @ 0 : 0; will stop at (end)

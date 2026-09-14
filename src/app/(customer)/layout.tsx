@@ -3,6 +3,7 @@ export const metadata: Metadata = { robots: { index: false, follow: false } };
 import { SiteHeader } from "@/components/layout/site-header";
 import { SiteFooter } from "@/components/layout/site-footer";
 import { CustomerNavigation } from "@/components/layout/customer-navigation";
+import { CustomerFooter } from "@/components/layout/customer-footer";
 
 import { getHeaderUser } from "@/lib/auth/header-user";
 import { getBranding } from "@/lib/branding";
@@ -44,7 +45,9 @@ export default async function CustomerLayout({ children }: { children: React.Rea
       <div id="main" className="flex flex-1 flex-col pt-20 lg:pt-16">
         {children}
       </div>
-      <SiteFooter brand={brand} socialLinks={socialLinks} showAppLinks={mobileApp.appDownload} />
+      <CustomerFooter>
+        <SiteFooter brand={brand} socialLinks={socialLinks} showAppLinks={mobileApp.appDownload} />
+      </CustomerFooter>
       <CustomerNavigation area={user?.area ?? "visitor"} />
     </div>
   );

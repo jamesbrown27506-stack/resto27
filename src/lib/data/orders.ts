@@ -32,7 +32,7 @@ export interface ManagerOrder {
   reference: string;
   status: OrderStatus;
   type: OrderType;
-  paymentMethod: PaymentMethod | "mobile_money";
+  paymentMethod: PaymentMethod;
   isPaid: boolean;
 
   subtotal: number;

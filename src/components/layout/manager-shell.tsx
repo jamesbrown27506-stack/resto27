@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Menu, PauseCircle } from "lucide-react";
+import { PauseCircle } from "lucide-react";
 import { PageBackLink } from "./page-back-link";
 import { BrandMark } from "./brand-mark";
 import { ManagerSidebar } from "./manager-sidebar";
 import { MANAGER_NAV } from "@/lib/nav";
+import { MANAGER_SITE_TABS } from "@/lib/mobile-tabs";
 import type { IconName } from "./icon";
 import { MobileTabBar, type TabItem } from "./mobile-tabbar";
 import { ImpersonationBanner } from "./impersonation-banner";
@@ -18,8 +19,6 @@ import { Avatar } from "@/components/ui/avatar";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { SubscriptionBanner } from "@/components/billing/subscription-banner";
-import { Button } from "@/components/ui/button";
-import { Sheet } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
 import { switchBranch } from "@/lib/data/manager-actions";
 import { can } from "@/lib/capabilities";
@@ -66,57 +65,23 @@ export function ManagerShell({
   const router = useRouter();
   const { t } = useLocale();
   const { toast } = useToast();
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [, startTransition] = useTransition();
+  const [switchingBranch, startTransition] = useTransition();
 
   // The "N orders need you" bubble on the bottom tab and the sidebar.
   const navCounts = useManagerNavCounts(active.restaurantId);
 
-  // The manager's own "back to the public site" is the FIRST bottom tab, and
-  // the sidebar's way out is the brand mark. Dashboard home for the phone bar.
-  const tabItems: TabItem[] = [
-    { href: "/m", icon: "LayoutDashboard", labelKey: "nav.m.dashboard" },
-    ...(can(active.role, "orders.view")
-      ? [
-          {
-            href: "/m/orders",
-            icon: "ReceiptText",
-            labelKey: "nav.m.orders",
-            matchPrefix: true,
-            badge: navCounts.orders,
-          } as TabItem,
-        ]
-      : []),
-    ...(can(active.role, "menu.view")
-      ? [{ href: "/m/menu", icon: "UtensilsCrossed", labelKey: "nav.m.menu", matchPrefix: true } as TabItem]
-      : []),
-    ...(!can(active.role, "menu.view") && can(active.role, "kitchen.display")
-      ? [{ href: "/m/kitchen", icon: "ChefHat", labelKey: "nav.m.kitchen" } as TabItem]
-      : []),
-    { href: "/m/messages", icon: "MessageSquare", labelKey: "nav.m.messages", badge: navCounts.messages },
-  ];
-
-  // Close the drawer on navigation — otherwise tapping a link leaves it open
-  // over the page you just moved to. Adjusted during render rather than in an
-  // effect, so the still-open drawer never paints over the new page.
-  const [openedOn, setOpenedOn] = useState(pathname);
-  if (drawerOpen && openedOn !== pathname) {
-    setDrawerOpen(false);
-    setOpenedOn(pathname);
-  }
-
-  function openMenu() {
-    setOpenedOn(pathname);
-    setDrawerOpen(true);
-  }
+  // Keep the same primary destinations on the public site and in the dashboard.
+  const tabItems: TabItem[] = MANAGER_SITE_TABS.map((tab) => ({
+    ...tab,
+    badge: tab.href === "/m/orders" ? navCounts.orders : undefined,
+  }));
 
   function onSwitchBranch(id: string) {
-    if (id === active.restaurantId) return setDrawerOpen(false);
+    if (id === active.restaurantId) return;
 
     startTransition(async () => {
       const result = await switchBranch(id);
       if (!result.ok) return toast(result.error, "error");
-      setDrawerOpen(false);
       // Refresh rather than navigate: every Server Component on the current
       // page re-reads with the new branch cookie, and the user stays where
       // they were instead of being bounced to the dashboard.
@@ -146,24 +111,6 @@ export function ManagerShell({
         {sidebar}
       </aside>
 
-      <Sheet
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        title={t("nav.menu")}
-        side="left"
-        className="p-0"
-      >
-        {/* Any link tap closes the drawer — including a link to the page you
-            are already on, which no pathname change can ever tell us about. */}
-        <div
-          className="flex h-full flex-col"
-          onClick={(e) => {
-            if ((e.target as HTMLElement).closest("a")) setDrawerOpen(false);
-          }}
-        >
-          {sidebar}
-        </div>
-      </Sheet>
 
       <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
         {impersonating && (
@@ -203,17 +150,6 @@ export function ManagerShell({
               bar. Same fix, same reason, as the admin shell and site header. */}
           <div aria-hidden className="absolute inset-0 -z-10 bg-surface/95 backdrop-blur-md" />
 
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="lg:hidden"
-            aria-label={t("nav.openMenu")}
-            aria-expanded={drawerOpen}
-            onClick={openMenu}
-          >
-            <Menu className="size-5" aria-hidden />
-          </Button>
-
           {/* The platform first, then the restaurant: on a phone the sidebar
               that carries the brand is hidden, and without this the platform's
               name appeared only once the menu was opened. */}
@@ -222,7 +158,17 @@ export function ManagerShell({
             <span aria-hidden className="h-6 w-px shrink-0 bg-border" />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold">{active.restaurantName}</p>
-              <p className="truncate text-xs text-text-light">{active.branchLabel}</p>
+              {branches.length > 1 ? (
+                <select
+                  aria-label={active.branchLabel}
+                  value={active.restaurantId}
+                  disabled={switchingBranch}
+                  onChange={(event) => onSwitchBranch(event.target.value)}
+                  className="block max-w-32 bg-transparent text-xs text-text-light outline-none"
+                >
+                  {branches.map((branch) => <option key={branch.restaurantId} value={branch.restaurantId}>{branch.branchLabel}</option>)}
+                </select>
+              ) : <p className="truncate text-xs text-text-light">{active.branchLabel}</p>}
             </div>
           </div>
 
@@ -262,12 +208,12 @@ export function ManagerShell({
       </div>
 
       {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
-        <MobileTabBar items={tabItems} more={{ labelKey: "nav.more", titleKey: "nav.menu", withAccountActions: true,
+        <MobileTabBar items={tabItems} more={{ labelKey: "nav.more", icon: "User", titleKey: "nav.menu", withAccountActions: true,
           items: [
             ...MANAGER_NAV.flatMap(group => group.items.filter(item => !tabItems.some(tab => tab.href === item.href) && (!item.capability || can(active.role, item.capability))).map(item => ({
               href: item.href, labelKey: item.labelKey, label: item.label, icon: item.icon as IconName, matchPrefix: item.matchPrefix, group: group.labelKey ? t(group.labelKey) : group.label,
             }))),
-            { href: "/", icon: "Store", label: t("nav.site") },
+            { href: "/", icon: "Home", label: t("nav.site"), group: "Resto237" },
           ],
         }} />
       </div>

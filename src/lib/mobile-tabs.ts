@@ -29,23 +29,32 @@ export const VISITOR_TABS: TabItem[] = [
   { href: "/restaurants", icon: "Store", labelKey: "nav.restaurants", matchPrefix: true },
   { href: "/explore", icon: "Search", labelKey: "tab.explore", matchPrefix: true },
   { href: "/pricing", icon: "Layers", labelKey: "nav.pricing" },
-  { href: "/login", icon: "User", labelKey: "nav.login" },
 ];
+
+export const VISITOR_MORE: MoreTab = {
+  labelKey: "nav.more", icon: "User", titleKey: "nav.menu", withAccountActions: true,
+  items: [
+    { href: "/login", icon: "User", labelKey: "nav.login", group: "Account" },
+    { href: "/register", icon: "User", labelKey: "nav.register", group: "Account" },
+    { href: "/contact", icon: "LifeBuoy", labelKey: "nav.contact", group: "Help" },
+    { href: "/register/restaurant", icon: "Store", labelKey: "nav.registerRestaurant", group: "Restaurants" },
+  ],
+};
 
 /** A signed-in customer: find food, follow orders, talk to restaurants. */
 export const CUSTOMER_TABS: TabItem[] = [
   { href: "/", icon: "Home", labelKey: "nav.home" },
   { href: "/restaurants", icon: "Store", labelKey: "nav.restaurants", matchPrefix: true, activePaths: ["/browse", "/explore"] },
   { href: "/orders", icon: "ReceiptText", labelKey: "nav.m.orders", matchPrefix: true },
-  { href: "/messages", icon: "MessageSquare", labelKey: "nav.m.messages", matchPrefix: true },
+  { href: "/reservations", icon: "CalendarCheck", labelKey: "nav.m.reservations", matchPrefix: true },
 ];
 
-/** A restaurant's staff on the public site: straight back to their desks. */
+/** A restaurant's staff sees these same primary desks everywhere. */
 export const MANAGER_SITE_TABS: TabItem[] = [
-  { href: "/", icon: "Home", labelKey: "nav.site" },
   { href: "/m", icon: "LayoutDashboard", labelKey: "nav.m.dashboard" },
   { href: "/m/orders", icon: "ReceiptText", labelKey: "nav.m.orders", matchPrefix: true },
-  { href: "/m/messages", icon: "MessageSquare", labelKey: "nav.m.messages" },
+  { href: "/m/reservations", icon: "CalendarCheck", labelKey: "nav.m.reservations", matchPrefix: true },
+  { href: "/m/wallet", icon: "Wallet", labelKey: "nav.m.wallet", matchPrefix: true },
 ];
 
 /** An administrator — the same bar on the public site and inside /a. */
@@ -76,7 +85,22 @@ export const CUSTOMER_MORE: MoreTab = {
   titleKey: "nav.moreTitle",
   descriptionKey: "nav.moreBody",
   withAccountActions: true,
-  items: CUSTOMER_NAV.filter((item) => !inTabs(CUSTOMER_TABS, item.href)).map((item) => toMenuItem(item)),
+  items: CUSTOMER_NAV.filter((item) => !inTabs(CUSTOMER_TABS, item.href)).map((item) =>
+    toMenuItem(item, ["/account", "/messages"].includes(item.href) ? "Activity" : ["/favorites", "/loyalty", "/reviews"].includes(item.href) ? "Your Resto237" : "Account"),
+  ),
+};
+
+/** Secondary restaurant tools, shared by the public site and manager area. */
+export const MANAGER_MORE: MoreTab = {
+  labelKey: "nav.more", icon: "User", titleKey: "nav.menu", withAccountActions: true,
+  items: [
+    { href: "/m/menu", icon: "UtensilsCrossed", labelKey: "nav.m.menu", matchPrefix: true, group: "Restaurant" },
+    { href: "/m/kitchen", icon: "ChefHat", labelKey: "nav.m.kitchen", matchPrefix: true, group: "Restaurant" },
+    { href: "/m/messages", icon: "MessageSquare", labelKey: "nav.m.messages", matchPrefix: true, group: "Restaurant" },
+    { href: "/m/settings", icon: "Settings", labelKey: "nav.m.settings", matchPrefix: true, group: "Account" },
+    { href: "/m/profile", icon: "Store", labelKey: "nav.m.profile", matchPrefix: true, group: "Account" },
+    { href: "/", icon: "Home", labelKey: "nav.site", group: "Resto237" },
+  ],
 };
 
 /** The administrator's "More" tab: the whole admin menu, grouped as in the sidebar. */
@@ -94,10 +118,10 @@ export function tabsFor(area: TabArea): { items: TabItem[]; more?: MoreTab } {
     case "customer":
       return { items: CUSTOMER_TABS, more: CUSTOMER_MORE };
     case "manager":
-      return { items: MANAGER_SITE_TABS };
+      return { items: MANAGER_SITE_TABS, more: MANAGER_MORE };
     case "admin":
       return { items: ADMIN_TABS, more: ADMIN_MORE };
     default:
-      return { items: VISITOR_TABS };
+      return { items: VISITOR_TABS, more: VISITOR_MORE };
   }
 }

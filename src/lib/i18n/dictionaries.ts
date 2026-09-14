@@ -773,6 +773,7 @@ const baseFr = {
   "order.pay.cash_on_delivery": "Espèces à la livraison",
   "order.pay.pay_at_restaurant": "Paiement au restaurant",
   "order.pay.mobile_money": "Mobile Money",
+  "order.pay.wallet": "Portefeuille",
   "order.paid": "Payée",
   "order.unpaid": "Non payée",
 
@@ -1572,6 +1573,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "order.pay.cash_on_delivery": "Cash on delivery",
   "order.pay.pay_at_restaurant": "Pay at the restaurant",
   "order.pay.mobile_money": "Mobile Money",
+  "order.pay.wallet": "Wallet",
   "order.paid": "Paid",
   "order.unpaid": "Unpaid",
 

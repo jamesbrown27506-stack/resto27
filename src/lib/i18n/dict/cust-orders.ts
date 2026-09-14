@@ -54,6 +54,7 @@ export const custOrdersDict = defineDict({
     "cor.pay.cash_on_delivery": "Espèces à la livraison",
     "cor.pay.pay_at_restaurant": "Paiement au restaurant",
     "cor.pay.mobile_money": "Mobile Money",
+    "cor.pay.wallet": "Portefeuille",
     "cor.cancel": "Annuler la commande",
     "cor.cancelTitle": "Annuler cette commande ?",
     "cor.cancelBody":
@@ -167,6 +168,7 @@ export const custOrdersDict = defineDict({
     "cor.pay.cash_on_delivery": "Cash on delivery",
     "cor.pay.pay_at_restaurant": "Pay at the restaurant",
     "cor.pay.mobile_money": "Mobile Money",
+    "cor.pay.wallet": "Wallet",
     "cor.cancel": "Cancel the order",
     "cor.cancelTitle": "Cancel this order?",
     "cor.cancelBody":

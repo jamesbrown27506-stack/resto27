@@ -361,9 +361,11 @@ export const ORDER_TYPE_LABEL: Record<OrderType, string> = {
   dine_in: "Sur place",
 };
 
-export type PaymentMethod = "cash_on_delivery" | "pay_at_restaurant";
+export type PaymentMethod = "cash_on_delivery" | "pay_at_restaurant" | "mobile_money" | "wallet";
 
 export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = {
   cash_on_delivery: "Espèces à la livraison",
   pay_at_restaurant: "Paiement au restaurant",
+  mobile_money: "Mobile Money",
+  wallet: "Portefeuille",
 };

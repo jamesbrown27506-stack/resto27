@@ -336,7 +336,7 @@ export function CamerPayConsole({
 
   const payoutValue = Number(payoutAmount);
 
-  // The withdrawal fee is a dial in settings (migration 0020). The console
+  // The tax is a dial in settings (migration 0020). The console
   // computes the same math the server action enforces at send time — the one
   // shared function (withdrawal-fee.ts) feeds both, so the numbers on screen
   // are the numbers that will move. Fee = gross × %, rounded to whole francs;
@@ -988,7 +988,7 @@ export function CamerPayConsole({
           {feeEnabled && (
             <div className="rounded-md border border-warning/30 bg-warning-light p-3 text-sm text-warning">
               <span>
-                <strong>Withdrawal fee: {withdrawalFee.percent}%.</strong> Withheld from the amount
+                <strong>Tax: {withdrawalFee.percent}%.</strong> Withheld from the amount
                 below — the recipient receives the net, the fee stays in the platform balance.
                 Pay-ins (<code className="font-mono text-xs">retrait</code>) are always free.
               </span>

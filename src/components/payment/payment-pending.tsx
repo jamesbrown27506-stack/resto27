@@ -2,6 +2,7 @@
 
 import { Copy, LoaderCircle, PhoneCall, Radio, ShieldCheck, Smartphone } from "lucide-react";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
+import { useLocale } from "@/lib/i18n/use-locale";
 
 export interface PaymentPendingViewProps {
   body: string;
@@ -36,6 +37,10 @@ export function PaymentPendingView({
   requesting = false,
   instruction,
 }: PaymentPendingViewProps) {
+  const { locale } = useLocale();
+  const orange = locale === "fr"
+    ? { title: "Action Orange requise", copy: "Copier le code", phone: "Ouvrir le téléphone", steps: ["Copiez le code", "Ouvrez l’application Téléphone", "Composez le code et validez", "Revenez sur Resto237"] }
+    : { title: "Orange action required", copy: "Copy code", phone: "Open Phone", steps: ["Copy the code", "Open the Phone app", "Dial the code and confirm", "Return to Resto237"] };
   return (
     <div role="status" aria-live="polite" className="mx-auto flex w-full min-w-0 max-w-sm flex-col items-center overflow-x-hidden text-center">
       <div className="relative mx-auto grid size-20 place-items-center">
@@ -78,13 +83,18 @@ export function PaymentPendingView({
 
       {instruction && (
         <div className="mt-4 w-full min-w-0 rounded-lg border border-warning/35 bg-warning-light p-4 text-left">
-          <p className="font-semibold text-warning">Action Orange requise / Orange action required</p>
+          <p className="font-semibold text-warning">{orange.title}</p>
           <p className="mt-1 text-sm leading-relaxed text-text-secondary">{instruction.message}</p>
           {instruction.code && (
             <>
               <code className="mt-3 block break-all rounded bg-surface px-3 py-2 text-sm font-bold">
                 {instruction.code}
               </code>
+              <ol className="mt-3 grid gap-1.5 text-xs leading-relaxed text-text-secondary">
+                {orange.steps.map((step, index) => (
+                  <li key={step} className="flex gap-2"><span className="tnum font-bold text-warning">{index + 1}.</span><span>{step}</span></li>
+                ))}
+              </ol>
               <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <button
                   type="button"
@@ -92,14 +102,14 @@ export function PaymentPendingView({
                   onClick={() => void navigator.clipboard.writeText(instruction.code!)}
                 >
                   <Copy className="size-4" aria-hidden />
-                  Copier / Copy
+                  {orange.copy}
                 </button>
                 <a
                   className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-center text-sm leading-tight font-semibold text-white"
                   href={"tel:" + encodeURIComponent(instruction.code)}
                 >
                   <PhoneCall className="size-4" aria-hidden />
-                  Téléphone / Phone
+                  {orange.phone}
                 </a>
               </div>
             </>

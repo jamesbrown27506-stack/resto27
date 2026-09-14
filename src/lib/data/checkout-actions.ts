@@ -199,6 +199,8 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   }
 
   if (!input.lines?.length) return { ok: false, reason: "emptyBasket" };
+  const paymentMethod = input.paymentMethod === "wallet" ? "wallet" : "mobile_money";
+  if (paymentMethod === "wallet" && !profile) return { ok: false, reason: "loginRequired" };
   if (input.type !== "delivery" && input.type !== "pickup") {
     return { ok: false, reason: "badType" };
   }
@@ -558,7 +560,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     delivery_address: input.type === "delivery" ? addressLine : null,
     delivery_quartier: input.type === "delivery" ? quartier : null,
     delivery_landmark: input.type === "delivery" ? landmark : null,
-    payment_method: "mobile_money",
+    payment_method: paymentMethod,
     notes: input.notes?.trim() || null,
     scheduled_for: scheduledFor,
   };
@@ -626,6 +628,23 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     console.error("[checkout:placeOrder] items", itemsError.message);
     await supabase.from("orders").delete().eq("id", created.id);
     return { ok: false, reason: "failed" };
+  }
+
+  if (paymentMethod === "wallet") {
+    const { error: walletError } = await supabase.rpc("customer_wallet_pay_order", {
+      p_profile_id: profile.id,
+      p_order_id: created.id,
+    });
+    if (walletError) {
+      console.error("[checkout:wallet]", walletError.message);
+      await supabase.from("orders").delete().eq("id", created.id);
+      return {
+        ok: false,
+        reason: walletError.message.includes("insufficient_customer_wallet")
+          ? "notEnoughWallet"
+          : "walletUnavailable",
+      };
+    }
   }
 
   // ── Everything below is non-fatal ───────────────────────────────────────

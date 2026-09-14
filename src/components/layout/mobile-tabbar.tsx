@@ -113,11 +113,14 @@ export function MobileTabBar({
         // neumorphic surface still reaches the physical bottom edge.
         style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       >
-        <ul className="grid auto-cols-fr grid-flow-col">
+        <ul
+          className="grid"
+          style={{ gridTemplateColumns: `repeat(${items.length + (more ? 1 : 0)}, minmax(0, 1fr))` }}
+        >
           {items.map((item) => {
             const active = isActive(item);
             return (
-              <li key={item.href}>
+              <li key={item.href} className="min-w-0">
                 <Link
                   href={item.href}
                   aria-current={active ? "page" : undefined}
@@ -128,7 +131,7 @@ export function MobileTabBar({
                     moment the finger lifts. Pressed, the whole cell goes
                     concave (globals.css), the same physics as .soft-press.
                   */
-                  className="neu-tab block"
+                  className="neu-tab block min-w-0"
                 >
                   <TabBody
                     item={item}
@@ -149,7 +152,7 @@ export function MobileTabBar({
                 onClick={() => setMenuOpen(true)}
                 className={cn(
                   tabClasses(moreActive || menuOpen),
-                  "neu-tab w-full",
+                  "neu-tab min-w-0 w-full",
                 )}
               >
                 <Lit active={moreActive || menuOpen} />
@@ -241,7 +244,7 @@ function TabBody({
 
 function tabClasses(active: boolean): string {
   return cn(
-    "relative flex min-h-16 flex-col items-center justify-center gap-1 px-1 pt-2 pb-1.5",
+    "relative flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-1 pt-2 pb-1.5",
     "text-[11px] font-medium transition-colors",
     active ? "text-primary" : "text-text-light hover:text-text-secondary",
   );

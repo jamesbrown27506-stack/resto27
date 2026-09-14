@@ -122,21 +122,21 @@ export default async function AdminDashboard() {
       </div>
 
       {/*
-        The withdrawal fee is the platform's revenue (migration 0022) — this
+        The tax is the platform's revenue (migration 0022) — this
         is where it becomes visible instead of theory. Zero here means either
         the fee is off or no payout has carried one yet; the tile above sums
         the same rows.
       */}
       <div className="mt-6">
         <Panel
-          title="Recent withdrawal fees"
+          title="Recent taxs"
           description="One row per payout that withheld a fee — gross owed, fee kept, net sent."
         >
           {fees.recent.length === 0 ? (
             <EmptyState
               icon={<Banknote />}
               title="No fees collected yet"
-              description="Payouts are free until the withdrawal fee is switched on in Settings → Payments, or until a payout carries one."
+              description="Payouts are free until the tax is switched on in Settings → Payments, or until a payout carries one."
             />
           ) : (
             <ul className="divide-y divide-border">

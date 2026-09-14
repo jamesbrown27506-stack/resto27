@@ -3,18 +3,15 @@
 import Link from "@/components/layout/public-link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Menu, ShoppingBag } from "lucide-react";
+import { ShoppingBag } from "lucide-react";
 import { BrandMark } from "./brand-mark";
 import { LogoutButton } from "./logout-button";
-import { NavIcon } from "./icon";
 import { Avatar } from "@/components/ui/avatar";
-import { Button, buttonClasses } from "@/components/ui/button";
-import { Sheet } from "@/components/ui/sheet";
+import { buttonClasses } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { LocaleToggle } from "./locale-toggle";
 import { useCart } from "@/components/cart/cart-provider";
 import { useLocale } from "@/lib/i18n/use-locale";
-import { CUSTOMER_NAV } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { NotificationProvider } from "@/components/notifications/notification-provider";
@@ -78,7 +75,6 @@ export function SiteHeader({
   const { itemCount: cartCount } = useCart();
   const { t } = useLocale();
   const [scrolled, setScrolled] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
 
   // "Tarifs" is how a restaurant decides to join, so every visitor sees it,
   // on desktop and in the phone menu. A signed-in customer is not a
@@ -92,19 +88,7 @@ export function SiteHeader({
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Close the drawer on navigation — otherwise tapping a link leaves it open
-  // over the page you just moved to. Adjusted during render rather than in an
-  // effect, so the still-open drawer never paints over the new page.
-  const [openedOn, setOpenedOn] = useState(pathname);
-  if (menuOpen && openedOn !== pathname) {
-    setMenuOpen(false);
-    setOpenedOn(pathname);
-  }
 
-  function openMenu() {
-    setOpenedOn(pathname);
-    setMenuOpen(true);
-  }
 
   return (
     <>
@@ -195,7 +179,7 @@ export function SiteHeader({
                   href="/login"
                   className={cn(
                     buttonClasses({ variant: "ghost", size: "sm" }),
-                    "inline-flex",
+                    "hidden lg:inline-flex",
                   )}
                 >
                   {t("nav.login")}
@@ -209,136 +193,11 @@ export function SiteHeader({
               </>
             )}
 
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="lg:hidden"
-              aria-label={t("nav.openMenu")}
-              aria-expanded={menuOpen}
-              onClick={openMenu}
-            >
-              <Menu className="size-5" aria-hidden />
-            </Button>
+            {/* Mobile navigation lives in the role-specific bottom bar. */}
           </div>
         </div>
       </header>
 
-      <Sheet open={menuOpen} onClose={() => setMenuOpen(false)} title={t("nav.menu")} side="right">
-        {/* Any link tap closes the drawer — including a link to the page you
-            are already on, which no pathname change can ever tell us about. */}
-        <div
-          onClick={(e) => {
-            if ((e.target as HTMLElement).closest("a")) setMenuOpen(false);
-          }}
-        >
-          <nav aria-label={t("nav.menu")} className="flex flex-col gap-1">
-            {nav.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={pathname.startsWith(item.href) ? "page" : undefined}
-                className={cn(
-                  // `aria-current` latches the concave face on phones — the
-                  // same "you are here" physics as the bottom tab bar.
-                  "soft-press rounded-md px-4 py-3 text-base font-medium transition-colors",
-                  pathname.startsWith(item.href)
-                    ? "bg-primary-light text-primary"
-                    : "text-text hover:bg-surface-2",
-                )}
-              >
-                {t(item.label)}
-              </Link>
-            ))}
-          </nav>
-
-          <div className="mt-6 flex flex-col gap-3 border-t border-border pt-6">
-            {user ? (
-              <>
-                {/*
-                  WHO YOU ARE, then WHERE YOU CAN GO.
-
-                  The drawer used to offer a signed-in customer exactly two
-                  things: a button with their own name on it, and sign out.
-                  Every account screen they actually wanted — orders, messages,
-                  addresses, loyalty — was reachable only from a different
-                  page. The identity card and the destination grid below are
-                  the same ones the account menu uses, so the drawer is now a
-                  real way around the product rather than a dead end.
-                */}
-                <Link
-                  href={user.homeHref}
-                  className="soft-press flex items-center gap-3 rounded-lg border border-border bg-surface-2 p-3 transition-colors hover:bg-surface"
-                >
-                  <Avatar name={user.name} src={user.avatarUrl} size="md" />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold">{user.name}</span>
-                    <span className="block truncate text-xs text-text-light">{user.email}</span>
-                  </span>
-                </Link>
-
-                {user.area === "customer" ? (
-                  <ul className="grid grid-cols-2 gap-2">
-                    {CUSTOMER_NAV.map((item) => (
-                      <li key={item.href}>
-                        <Link
-                          href={item.href}
-                          aria-current={pathname === item.href ? "page" : undefined}
-                          className={cn(
-                            "soft-press flex h-full items-center gap-2.5 rounded-lg border p-3 text-sm font-medium transition-colors",
-                            pathname === item.href
-                              ? "border-primary bg-primary-light/50 text-primary"
-                              : "border-border text-text-secondary hover:bg-surface-2 hover:text-text",
-                          )}
-                        >
-                          <NavIcon name={item.icon} className="size-4 shrink-0" />
-                          <span className="min-w-0 truncate">
-                            {item.labelKey ? t(item.labelKey) : item.label}
-                          </span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <Link href={user.homeHref} className={buttonClasses({ fullWidth: true })}>
-                    {t("nav.myArea")}
-                  </Link>
-                )}
-
-                <LogoutButton variant="block" />
-              </>
-            ) : (
-              <>
-                <Link
-                  href="/login"
-                  className={buttonClasses({ variant: "outline", fullWidth: true })}
-                >
-                  {t("nav.login")}
-                </Link>
-                <Link href="/register" className={buttonClasses({ fullWidth: true })}>
-                  {t("nav.register")}
-                </Link>
-                <Link
-                  href="/register/restaurant"
-                  className={buttonClasses({ variant: "ghost", fullWidth: true })}
-                >
-                  {t("nav.registerRestaurant")}
-                </Link>
-              </>
-            )}
-          </div>
-
-          <div className="mt-6 flex flex-col gap-4 border-t border-border pt-6">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-text-secondary">{t("nav.language")}</span>
-              <LocaleToggle />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-text-secondary">{t("nav.theme")}</span>
-              <ThemeToggle />
-            </div>
-          </div>
-        </div>
-      </Sheet>
     </>
   );
 }

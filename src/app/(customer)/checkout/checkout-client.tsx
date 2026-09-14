@@ -7,11 +7,14 @@ import { useEffect, useState } from "react";
 import {
   ArrowLeft,
   Bike,
+  ChevronUp,
   Clock,
   Info,
   MapPin,
   Plus,
   ShoppingBag,
+  Smartphone,
+  WalletCards,
 } from "lucide-react";
 import { useCart } from "@/components/cart/cart-provider";
 import { clearIdempotencyKey, currentIdempotencyKey } from "@/lib/orders/idempotency";
@@ -38,10 +41,12 @@ export function CheckoutClient({
   user,
   addresses,
   quartiers,
+  wallet,
 }: {
   user: SessionUser | null;
   addresses: CustomerAddress[];
   quartiers: string[];
+  wallet: { balance: number; available: boolean };
 }) {
   const router = useRouter();
   const { lines, totals, promoCode, loyaltyPointsUsed, clear } = useCart();
@@ -74,7 +79,9 @@ export function CheckoutClient({
   const [deliveryQuartier, setDeliveryQuartier] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
   const [deliveryLandmark, setDeliveryLandmark] = useState("");
-  const payment = "mobile_money" as const;
+  const [payment, setPayment] = useState<"mobile_money" | "wallet">("mobile_money");
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [schedule, setSchedule] = useState("asap");
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
@@ -140,14 +147,52 @@ export function CheckoutClient({
 
   const restaurant = lines[0];
 
+  function showFieldError(id: string, message: string) {
+    setErrors({ [id === "checkout-form-error" ? "form" : id]: message });
+    requestAnimationFrame(() => {
+      const field = document.getElementById(id);
+      field?.scrollIntoView({ behavior: "smooth", block: "center" });
+      field?.focus({ preventScroll: true });
+    });
+  }
+
   async function submit() {
-    if (schedule === "later" && (!scheduleDate || !scheduleTime)) {
-      toast(t("cct.co.scheduleRequired"), "error");
+    setErrors({});
+    const chosen = addresses.find((a) => a.id === addressId);
+    if (type === "delivery" && !newAddress && !chosen) {
+      showFieldError("checkout-addresses", t("cct.err.addressNotFound"));
+      return;
+    }
+    if ((newAddress || type === "pickup") && !deliveryName.trim()) {
+      showFieldError(type === "pickup" ? "ck-pu-name" : "ck-name", t("cct.err.nameRequired"));
+      return;
+    }
+    if ((newAddress || type === "pickup") && !deliveryPhone.trim()) {
+      showFieldError(type === "pickup" ? "ck-pu-phone" : "ck-phone", t("cct.err.phoneRequired"));
+      return;
+    }
+    if (type === "delivery" && newAddress && !deliveryQuartier.trim()) {
+      showFieldError("ck-quartier", t("cct.err.quartierRequired"));
+      return;
+    }
+    if (type === "delivery" && newAddress && !deliveryAddress.trim()) {
+      showFieldError("ck-address", t("cct.err.addressRequired"));
+      return;
+    }
+    if (schedule === "later" && !scheduleDate) {
+      showFieldError("ck-date", t("cct.co.scheduleRequired"));
+      return;
+    }
+    if (schedule === "later" && !scheduleTime) {
+      showFieldError("ck-time", t("cct.co.scheduleRequired"));
+      return;
+    }
+    if (payment === "wallet" && (!wallet.available || wallet.balance < totals.total)) {
+      showFieldError("payment-wallet", t("cct.err.notEnoughWallet"));
       return;
     }
     setPlacing(true);
 
-    const chosen = addresses.find((a) => a.id === addressId);
     const input: CheckoutInput = {
       restaurantId: restaurant.restaurantId,
       type: type === "delivery" ? "delivery" : "pickup",
@@ -216,11 +261,24 @@ export function CheckoutClient({
     }
 
     setPlacing(false);
-    toast(reasonText(result.reason, result.detail), "error");
+    const message = reasonText(result.reason, result.detail);
+    const fieldByReason: Record<string, string> = {
+      nameRequired: type === "pickup" ? "ck-pu-name" : "ck-name",
+      phoneRequired: type === "pickup" ? "ck-pu-phone" : "ck-phone",
+      addressRequired: "ck-address",
+      addressNotFound: "checkout-addresses",
+      notEnoughWallet: "payment-wallet",
+      walletUnavailable: "payment-wallet",
+      badSchedule: "ck-date",
+      scheduleTooSoon: "ck-time",
+      scheduleTooFar: "ck-date",
+    };
+    showFieldError(fieldByReason[result.reason] ?? "checkout-form-error", message);
+    toast(message, "error");
   }
 
   return (
-    <div className="container-page w-full py-8 lg:py-12">
+    <div className="container-page w-full py-6 pb-44 lg:py-12 lg:pb-12">
       <Link
         href="/cart"
         className="inline-flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-primary"
@@ -230,6 +288,7 @@ export function CheckoutClient({
       </Link>
 
       <h1 className="mt-4 font-display text-3xl font-bold">{t("cct.co.title")}</h1>
+      <div id="checkout-form-error" tabIndex={-1} className="outline-none">{errors.form && <p role="alert" className="mt-3 rounded-md border border-error/25 bg-error-light p-3 text-sm font-medium text-error">{errors.form}</p>}</div>
 
       <div className="mt-8 grid items-start gap-8 lg:grid-cols-[1fr_22rem]">
         <div className="flex flex-col gap-6">
@@ -295,7 +354,7 @@ export function CheckoutClient({
               </div>
 
               {!newAddress ? (
-                <div className="mt-4 flex flex-col gap-2">
+                <div id="checkout-addresses" tabIndex={-1} className="mt-4 flex flex-col gap-2 outline-none">
                   {addresses.length === 0 ? (
                     <p className="rounded-md border border-border bg-surface-2 p-3 text-sm text-text-secondary">
                       {t("cct.co.noAddresses")}
@@ -328,6 +387,7 @@ export function CheckoutClient({
                     label={t("cct.co.destinationName")}
                     htmlFor="ck-name"
                     required
+                    error={errors["ck-name"]}
                     className="sm:col-span-2"
                   >
                     <Input
@@ -336,7 +396,7 @@ export function CheckoutClient({
                       onChange={(e) => setDeliveryName(e.target.value)}
                     />
                   </Field>
-                  <Field label={t("cct.co.phone")} htmlFor="ck-phone" required>
+                  <Field label={t("cct.co.phone")} htmlFor="ck-phone" required error={errors["ck-phone"]}>
                     <Input
                       id="ck-phone"
                       type="tel"
@@ -360,6 +420,7 @@ export function CheckoutClient({
                     htmlFor="ck-quartier"
                     required
                     hint={t("cct.co.quartierHint")}
+                    error={errors["ck-quartier"]}
                   >
                     <Input
                       id="ck-quartier"
@@ -387,6 +448,7 @@ export function CheckoutClient({
                     htmlFor="ck-address"
                     required
                     hint={t("cct.co.addressHint")}
+                    error={errors["ck-address"]}
                     className="sm:col-span-2"
                   >
                     <Input
@@ -468,14 +530,14 @@ export function CheckoutClient({
                 );
               })()}
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <Field label={t("cct.co.name")} htmlFor="ck-pu-name" required>
+                <Field label={t("cct.co.name")} htmlFor="ck-pu-name" required error={errors["ck-pu-name"]}>
                   <Input
                     id="ck-pu-name"
                     value={deliveryName}
                     onChange={(e) => setDeliveryName(e.target.value)}
                   />
                 </Field>
-                <Field label={t("cct.co.phone")} htmlFor="ck-pu-phone" required>
+                <Field label={t("cct.co.phone")} htmlFor="ck-pu-phone" required error={errors["ck-pu-phone"]}>
                   <Input
                     id="ck-pu-phone"
                     type="tel"
@@ -509,7 +571,7 @@ export function CheckoutClient({
 
             {schedule === "later" && (
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <Field label={t("cct.co.date")} htmlFor="ck-date">
+                <Field label={t("cct.co.date")} htmlFor="ck-date" error={errors["ck-date"]}>
                   <Input
                     id="ck-date"
                     type="date"
@@ -517,7 +579,7 @@ export function CheckoutClient({
                     onChange={(e) => setScheduleDate(e.target.value)}
                   />
                 </Field>
-                <Field label={t("cct.co.time")} htmlFor="ck-time">
+                <Field label={t("cct.co.time")} htmlFor="ck-time" error={errors["ck-time"]}>
                   <Input
                     id="ck-time"
                     type="time"
@@ -532,16 +594,18 @@ export function CheckoutClient({
           {/* ── Payment ────────────────────────────────────────────────── */}
           <section className="rounded-lg border border-border bg-surface p-5">
             <h2 className="font-display text-lg font-bold">{t("cct.co.payment")}</h2>
-            <div className="mt-4 rounded-md border border-success/25 bg-success-light p-4">
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-semibold">Mobile Money</span>
-                <Badge tone="success">{t("cct.co.payment")}</Badge>
-              </div>
-              <p className="mt-2 flex items-start gap-2 text-sm text-text-secondary">
-                <Info className="mt-0.5 size-4 shrink-0 text-success" aria-hidden />
-                <span>{t("cct.co.onlineSoon")}</span>
-              </p>
+            <p className="mt-1 text-sm text-text-secondary">{t("cct.co.paymentChoice")}</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <button type="button" aria-pressed={payment === "mobile_money"} onClick={() => setPayment("mobile_money")} className={cn("min-h-28 rounded-md border p-4 text-left transition-colors", payment === "mobile_money" ? "border-primary bg-primary-light" : "border-border hover:border-border-strong")}>
+                <span className="flex items-center gap-2 font-semibold"><Smartphone className="size-5 text-primary" aria-hidden />Mobile Money</span>
+                <span className="mt-2 block text-xs leading-relaxed text-text-secondary">{t("cct.co.mobileMoneyBody")}</span>
+              </button>
+              <button id="payment-wallet" type="button" aria-pressed={payment === "wallet"} disabled={!user || !wallet.available || wallet.balance < totals.total} onClick={() => setPayment("wallet")} className={cn("min-h-28 rounded-md border p-4 text-left transition-colors", payment === "wallet" ? "border-primary bg-primary-light" : "border-border hover:border-border-strong", (!user || !wallet.available || wallet.balance < totals.total) && "cursor-not-allowed opacity-55")}>
+                <span className="flex items-center justify-between gap-2 font-semibold"><span className="flex items-center gap-2"><WalletCards className="size-5 text-primary" aria-hidden />{t("cct.co.wallet")}</span><span className="tnum text-xs">{formatMoney(wallet.balance)}</span></span>
+                <span className="mt-2 block text-xs leading-relaxed text-text-secondary">{!user ? t("cct.co.walletLogin") : !wallet.available ? t("cct.co.walletUnavailable") : wallet.balance < totals.total ? t("cct.co.walletInsufficient", { missing: formatMoney(totals.total - wallet.balance) }) : t("cct.co.walletReady")}</span>
+              </button>
             </div>
+            {errors["payment-wallet"] && <p role="alert" className="mt-2 text-xs font-medium text-error">{errors["payment-wallet"]}</p>}
           </section>
           {/* ── Notes ─────────────────────────────────────────────────── */}
           <section className="rounded-lg border border-border bg-surface p-5">
@@ -558,7 +622,7 @@ export function CheckoutClient({
         </div>
 
         {/* ── Summary ──────────────────────────────────────────────────── */}
-        <div className="flex flex-col gap-4 lg:sticky lg:top-24">
+        <div className="hidden flex-col gap-4 lg:sticky lg:top-24 lg:flex">
           <div className="rounded-lg border border-border bg-surface p-5">
             <p className="font-display font-bold">{restaurant.restaurantName}</p>
             <ul className="mt-3 flex flex-col gap-2 text-sm">
@@ -612,6 +676,26 @@ export function CheckoutClient({
               .
             </p>
           </CartSummary>
+        </div>
+      </div>
+
+      <div className="fixed inset-x-0 z-30 border-t border-border bg-surface/98 px-4 pt-3 shadow-[0_-10px_30px_rgba(0,0,0,0.08)] backdrop-blur-md lg:hidden" style={{ bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))" }}>
+        <div className="mx-auto max-w-lg">
+          {summaryOpen && (
+            <div className="mb-3 max-h-52 overflow-y-auto rounded-md bg-surface-2 p-3">
+              <p className="font-semibold">{restaurant.restaurantName}</p>
+              <ul className="mt-2 grid gap-1.5 text-xs text-text-secondary">
+                {lines.map((line) => <li key={line.id} className="flex justify-between gap-3"><span className="min-w-0 truncate">{line.quantity} x {line.name}</span><span className="tnum shrink-0">{formatMoney((line.basePrice + line.options.reduce((sum, option) => sum + option.priceDelta, 0)) * line.quantity)}</span></li>)}
+              </ul>
+            </div>
+          )}
+          <div className="flex items-center gap-3 pb-3">
+            <button type="button" aria-expanded={summaryOpen} onClick={() => setSummaryOpen((open) => !open)} className="min-w-0 flex-1 text-left">
+              <span className="flex items-center gap-1 text-xs font-medium text-text-light">{t("cct.co.yourOrder")}<ChevronUp className={cn("size-3.5 transition-transform", !summaryOpen && "rotate-180")} aria-hidden /></span>
+              <span className="tnum block text-lg font-bold">{formatMoney(totals.total)}</span>
+            </button>
+            <Button size="lg" loading={placing} disabled={placing} onClick={submit} className="min-w-36 px-5">{t("cct.co.pay")}</Button>
+          </div>
         </div>
       </div>
     </div>

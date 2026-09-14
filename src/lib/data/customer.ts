@@ -42,7 +42,7 @@ export interface CustomerOrder {
   restaurantSlug: string;
   status: OrderStatus;
   type: OrderType;
-  paymentMethod: PaymentMethod | "mobile_money";
+  paymentMethod: PaymentMethod;
   isPaid: boolean;
 
   subtotal: number;
@@ -297,6 +297,7 @@ export interface CustomerReservation {
   refundAmount: number;
   restaurantCompensation: number;
   platformFee: number;
+  refundBalanceAfter: number | null;
   notes: string | null;
   createdAt: string;
 }
@@ -357,6 +358,7 @@ export async function fetchCustomerReservations(
     refundAmount: 0,
     restaurantCompensation: 0,
     platformFee: 0,
+    refundBalanceAfter: null,
     notes: r.notes,
     createdAt: r.created_at,
   }));
@@ -396,7 +398,7 @@ export async function fetchCustomerReservations(
 
   const { data: refundRows, error: refundsError } = await supabase
     .from("refunds")
-    .select("id, reservation_id, status, amount, restaurant_compensation, platform_fee")
+    .select("id, reservation_id, status, amount, restaurant_compensation, platform_fee, raw_response")
     .in("reservation_id", reservations.map((reservation) => reservation.id));
 
   if (refundsError) {
@@ -413,6 +415,9 @@ export async function fetchCustomerReservations(
           amount: Number(refund.amount),
           restaurantCompensation: Number(refund.restaurant_compensation ?? 0),
           platformFee: Number(refund.platform_fee ?? 0),
+          balanceAfter: typeof (refund.raw_response as { balanceAfter?: unknown } | null)?.balanceAfter === "number"
+            ? Number((refund.raw_response as { balanceAfter: number }).balanceAfter)
+            : null,
         },
       ]),
   );
@@ -429,6 +434,7 @@ export async function fetchCustomerReservations(
       refundAmount: refund?.amount ?? 0,
       restaurantCompensation: refund?.restaurantCompensation ?? 0,
       platformFee: refund?.platformFee ?? 0,
+      refundBalanceAfter: refund?.balanceAfter ?? null,
     };
   });
 }
@@ -683,4 +689,25 @@ export async function fetchCustomerPreferences(
   if (!data) return customerTopicDefaults();
 
   return readTopicPreferences((data as { notification_json: unknown }).notification_json, true);
+}
+
+
+export interface CustomerWalletSummary {
+  balance: number;
+  available: boolean;
+}
+
+/** Current customer wallet balance. Missing migration fails closed. */
+export async function fetchCustomerWalletSummary(profileId: string): Promise<CustomerWalletSummary> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("customer_wallets")
+    .select("balance")
+    .eq("profile_id", profileId)
+    .maybeSingle();
+  if (error) {
+    console.warn("[customer:wallet]", error.message);
+    return { balance: 0, available: false };
+  }
+  return { balance: Number(data?.balance ?? 0), available: true };
 }
