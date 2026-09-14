@@ -340,10 +340,10 @@ export function ReservationBoard({
             two lines of prose on a phone, and without a zero minimum the
             number input and the select push the row past the viewport.
           */}
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="min-w-0 flex-1 basis-full sm:basis-auto">
-              <p className="text-sm font-semibold">{t(DEPOSIT_TITLE_KEY[depositType])}</p>
-              <p className="text-xs leading-relaxed text-text-light">
+          <div className="grid gap-3 sm:grid-cols-2 sm:items-end lg:grid-cols-[minmax(0,1fr)_11rem_10rem_auto]">
+            <div className="min-w-0 sm:col-span-2 lg:col-span-1">
+              <p className="break-words text-sm font-semibold">{t(DEPOSIT_TITLE_KEY[depositType])}</p>
+              <p className="break-words text-xs leading-relaxed text-text-light">
                 {t(DEPOSIT_BODY_KEY[depositType])}
               </p>
             </div>
@@ -352,21 +352,21 @@ export function ReservationBoard({
               value={depositType}
               onChange={(e) => setDepositTypeDraft(e.target.value as DepositType)}
               aria-label={t("res.depositKind")}
-              className="min-w-0 flex-1 sm:w-44 sm:flex-none"
+              className="w-full min-w-0"
             >
               <option value="fixed">{t("res.kindFixed")}</option>
               <option value="per_seat">{t("res.kindPerSeat")}</option>
               <option value="percent">{t("res.kindPercent")}</option>
             </Select>
 
-            <div className="flex min-w-0 flex-1 items-center gap-2 sm:flex-none">
+            <div className="flex min-w-0 items-center gap-2">
               <Input
                 type="number"
                 min={0}
                 step={depositType === "percent" ? 1 : 100}
                 value={depositDraft}
                 onChange={(e) => setDepositDraft(e.target.value)}
-                className="min-w-0 flex-1 sm:w-32 sm:flex-none"
+                className="min-w-0 flex-1"
                 aria-label={t(DEPOSIT_TITLE_KEY[depositType])}
               />
               <span className="shrink-0 text-sm text-text-light">
@@ -377,6 +377,7 @@ export function ReservationBoard({
             <Button
               variant="outline"
               size="sm"
+              className="w-full sm:col-span-2 sm:w-auto sm:justify-self-end lg:col-span-1"
               disabled={pending}
               onClick={() =>
                 run(
