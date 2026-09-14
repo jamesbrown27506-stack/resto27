@@ -1,0 +1,48 @@
+<!doctype html>
+<!--
+  Supabase → Authentication → Emails → Templates → "Confirm signup".
+  Subject:  Confirmez votre adresse email — Resto237
+  Paste everything below this comment into the message body.
+  The link lands on /auth/confirm and works in any browser — see docs/SUPABASE_AUTH_EMAILS.md.
+-->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>Confirmez votre adresse email</title>
+</head>
+<body style="margin:0;padding:0;background:#F7F4ED;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;">Un clic et votre compte Resto237 est prêt.</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F7F4ED;">
+  <tr><td align="center" style="padding:28px 12px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+      <tr><td style="padding:0 4px 18px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td style="padding-right:10px;"><img src="{{ .SiteURL }}/app-icon-192.png" width="36" height="36" alt="" style="display:block;border:0;border-radius:9px;"></td>
+          <td style="font-family:Georgia,'Times New Roman',serif;font-size:20px;font-weight:700;color:#1C1C1C;">Resto237</td>
+        </tr></table>
+      </td></tr>
+      <tr><td style="background:#FFFFFF;border:1px solid #E4DDD0;border-radius:16px;padding:32px 28px 20px;">
+        <h1 style="margin:0 0 14px;font-family:Georgia,'Times New Roman',serif;font-size:22px;line-height:1.3;color:#1C1C1C;">Bienvenue sur Resto237</h1>
+        <p style="margin:0 0 20px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#1C1C1C;">Il ne reste qu'une étape : confirmer que cette adresse est bien la vôtre. Ensuite, commandez, réservez une table et suivez vos commandes depuis votre compte.</p>
+
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+          <tr><td bgcolor="#5F7257" style="border-radius:10px;">
+            <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email&next=/account" style="display:inline-block;padding:13px 24px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1;color:#FFFFFF;text-decoration:none;border-radius:10px;">Confirmer mon adresse</a>
+          </td></tr>
+        </table>
+
+        <p style="margin:0 0 12px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:#8A8478;">Vous n'avez pas créé de compte ? Ignorez cet email, rien ne sera activé.</p>
+        <p style="margin:0 0 12px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.6;color:#8A8478;"><em>English: tap the button above to confirm your email address and finish creating your Resto237 account.</em></p>
+      </td></tr>
+      <tr><td align="center" style="padding:20px 16px 0;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:1.6;color:#8A8478;">
+        <strong style="color:#5A5A52;">Resto237</strong> · Commandez vos plats préférés à Douala<br>
+        Envoyé à {{ .Email }} · <a href="{{ .SiteURL }}" style="color:#5F7257;">resto237.online</a>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>

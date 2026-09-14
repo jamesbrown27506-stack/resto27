@@ -3,9 +3,10 @@
 import Link from "@/components/layout/public-link";
 import { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { NavIcon, type IconName } from "./icon";
 import { NavMenuSheet, type NavMenuItem } from "./nav-menu-sheet";
+import { useCart } from "@/components/cart/cart-provider";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
@@ -17,20 +18,21 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
  *  ONE COMPONENT, FOUR AREAS, DIFFERENT ITEMS.
  *
  *  Public visitors, customers, managers and admins each get their own set of
- *  four-or-five tabs, decided by the layout that mounts this. What is shared
- *  is the physics: fixed to the bottom where thumbs live, visible only below
- *  lg (desktop keeps its sidebars and header nav), each tab an icon over a
- *  short label — the grammar every mobile app has taught people for a decade.
+ *  tabs, all defined in lib/mobile-tabs. What is shared is the physics: fixed
+ *  to the bottom where thumbs live, visible only below lg (desktop keeps its
+ *  sidebars and header nav), each tab an icon over a short label — the
+ *  grammar every mobile app has taught people for a decade.
  *
- *  By convention the FIRST tab of the signed-in areas points back at the
- *  public site: whatever corner of the platform someone works in, the way
- *  home is always in the same place.
- *
- *  THE LAST TAB CAN BE "MORE" instead of a link. An area with more
- *  destinations than tabs (the customer's nine account screens) hands them to
- *  `more`, and they open as a grid in a bottom sheet rather than being hidden
- *  behind a sideways-scrolling strip at the top of every page.
+ *  THE LAST CELL IS A SHEET, not a link. Every destination that is not a tab
+ *  opens there as a grid, with language and theme under it — the only other
+ *  navigation on a phone, now that the header drawers are gone.
  * ─────────────────────────────────────────────────────────────────────────
+ *
+ *  SIX CELLS ON A 360 PX PHONE is 60 px each, and "Réservations" needs a
+ *  little more than that. So cells share the width equally but never shrink
+ *  below their own label: a long word borrows a few pixels from "Plus"
+ *  instead of being cut to "Réserv…". Below 360 px, where even that cannot
+ *  fit, the labels truncate as before rather than pushing the bar off-screen.
  *
  *  `labelKey` for the bilingual areas; plain `label` for the admin area,
  *  which is English by design (see ADMIN_NAV). Labels sit in their own
@@ -40,6 +42,9 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
  *  Layouts that mount this must give the page column matching bottom
  *  clearance (`pb-20 lg:pb-0`), or the bar covers the last rows of content.
  */
+
+/** The live counts a tab can carry, supplied by whoever mounts the bar. */
+export type TabCountKey = "orders" | "reservations" | "messages";
 
 export interface TabItem {
   href: string;
@@ -52,15 +57,21 @@ export interface TabItem {
    * with "/", so the home tab would never go quiet.
    */
   matchPrefix?: boolean;
-  /** Right-aligned count bubble — the cart, mostly. */
+  /** A fixed count bubble. */
   badge?: number;
+  /**
+   * A LIVE count instead: "cart" reads the basket, the others the `counts`
+   * the bar is handed (the manager's "needs you" numbers). A key rather than
+   * a number so the tab lists in lib/mobile-tabs stay plain data.
+   */
+  badgeKey?: "cart" | TabCountKey;
   activePaths?: string[];
 }
 
 /**
- * The last tab, when it opens a menu instead of navigating.
+ * The last cell, which opens a menu instead of navigating.
  *
- * Keys rather than strings for the heading, because the layouts that build
+ * Keys rather than strings for the heading, because some layouts that build
  * this are Server Components and cannot call useLocale — the same reason
  * ManagerPage takes a `titleKey`.
  */
@@ -74,27 +85,49 @@ export interface MoreTab {
   descriptionKey?: TranslationKey;
   description?: string;
   items: NavMenuItem[];
-  /** Sign out, theme and language under the grid — the account areas. */
-  withAccountActions?: boolean;
+  /**
+   * What surrounds the grid. "account": language, theme and sign out under
+   * it. "guest": sign in and create an account above it, language and theme
+   * under it.
+   */
+  actions?: "account" | "guest";
 }
+
+/** Equal shares, but never narrower than the cell's own label (see above). */
+const CELL = "min-w-max flex-1 max-[359px]:min-w-0";
 
 export function MobileTabBar({
   items,
   more,
+  counts,
+  sheetHeader,
   ariaLabel,
 }: {
   items: TabItem[];
   more?: MoreTab;
+  counts?: Partial<Record<TabCountKey, number>>;
+  /** Shown at the top of the sheet — the manager's branch switcher. */
+  sheetHeader?: ReactNode;
   ariaLabel?: string;
 }) {
   const pathname = usePathname();
   const { t } = useLocale();
+  const { itemCount } = useCart();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Six cells leave 60 px each on a 360 px phone, so they take a smaller label.
+  const dense = items.length + (more ? 1 : 0) > 5;
 
   function isActive(item: TabItem): boolean {
     if (item.activePaths?.some(path => pathname === path || pathname.startsWith(path + "/"))) return true;
     if (item.matchPrefix) return pathname === item.href || pathname.startsWith(item.href + "/");
     return pathname === item.href;
+  }
+
+  function badgeFor(item: TabItem): number | undefined {
+    if (item.badge !== undefined) return item.badge;
+    if (item.badgeKey === "cart") return itemCount;
+    return item.badgeKey ? counts?.[item.badgeKey] : undefined;
   }
 
   // "More" lights up when the page you are on lives inside it — otherwise the
@@ -113,14 +146,11 @@ export function MobileTabBar({
         // neumorphic surface still reaches the physical bottom edge.
         style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
       >
-        <ul
-          className="grid"
-          style={{ gridTemplateColumns: `repeat(${items.length + (more ? 1 : 0)}, minmax(0, 1fr))` }}
-        >
+        <ul className="flex">
           {items.map((item) => {
             const active = isActive(item);
             return (
-              <li key={item.href} className="min-w-0">
+              <li key={item.href} className={CELL}>
                 <Link
                   href={item.href}
                   aria-current={active ? "page" : undefined}
@@ -131,11 +161,13 @@ export function MobileTabBar({
                     moment the finger lifts. Pressed, the whole cell goes
                     concave (globals.css), the same physics as .soft-press.
                   */
-                  className="neu-tab block min-w-0"
+                  className="neu-tab block"
                 >
                   <TabBody
                     item={item}
                     active={active}
+                    dense={dense}
+                    badge={badgeFor(item)}
                     label={item.labelKey ? t(item.labelKey) : (item.label ?? "")}
                   />
                 </Link>
@@ -144,19 +176,19 @@ export function MobileTabBar({
           })}
 
           {more && (
-            <li>
+            <li className={CELL}>
               <button
                 type="button"
                 aria-haspopup="dialog"
                 aria-expanded={menuOpen}
                 onClick={() => setMenuOpen(true)}
                 className={cn(
-                  tabClasses(moreActive || menuOpen),
-                  "neu-tab min-w-0 w-full",
+                  tabClasses(moreActive || menuOpen, dense),
+                  "neu-tab w-full",
                 )}
               >
                 <Lit active={moreActive || menuOpen} />
-                <span className="relative">
+                <span className={cn("relative rounded-full py-1.5", dense ? "px-3" : "px-3.5")}>
                   <NavIcon name={more.icon ?? "Ellipsis"} className="size-5" />
                 </span>
                 <span className="max-w-full truncate">
@@ -175,7 +207,8 @@ export function MobileTabBar({
           title={more.titleKey ? t(more.titleKey) : (more.title ?? "")}
           description={more.descriptionKey ? t(more.descriptionKey) : more.description}
           items={more.items}
-          withAccountActions={more.withAccountActions}
+          actions={more.actions}
+          header={sheetHeader}
         />
       )}
     </>
@@ -214,38 +247,46 @@ export function MobileTabBar({
 function TabBody({
   item,
   active,
+  dense,
+  badge,
   label,
 }: {
   item: TabItem;
   active: boolean;
+  dense: boolean;
+  badge: number | undefined;
   label: string;
 }) {
   const { pending } = useLinkStatus();
 
   return (
-    <span className={cn(tabClasses(active || pending), "w-full")}>
+    <span className={cn(tabClasses(active || pending, dense), "w-full")}>
       <Lit active={active} pending={pending} />
       {/* Padding and radius live here at rest, so the raised key (.neu-key,
           mobile only) changes paint only — no layout jump on activation. */}
       <span
         className={cn(
-          "relative rounded-full px-3.5 py-1.5 transition-transform duration-150",
+          "relative rounded-full py-1.5 transition-transform duration-150",
+          dense ? "px-3" : "px-3.5",
           pending && "scale-110",
           (active || pending) && "neu-key",
         )}
       >
         <NavIcon name={item.icon} className="size-5" />
-        {item.badge !== undefined && item.badge > 0 && <Bubble count={item.badge} />}
+        {badge !== undefined && badge > 0 && <Bubble count={badge} />}
       </span>
       <span className="max-w-full truncate">{label}</span>
     </span>
   );
 }
 
-function tabClasses(active: boolean): string {
+function tabClasses(active: boolean, dense: boolean): string {
   return cn(
-    "relative flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 px-1 pt-2 pb-1.5",
-    "text-[11px] font-medium transition-colors",
+    "relative flex min-h-16 flex-col items-center justify-center gap-1 pt-2 pb-1.5",
+    // 10 px is the iPhone tab-bar size; at 10.5 "Commandes" and
+    // "Réservations" all but touched in a six-cell bar on 360 px.
+    dense ? "px-0.5 text-[10px] tracking-[-0.015em]" : "px-1 text-[11px]",
+    "font-medium transition-colors",
     active ? "text-primary" : "text-text-light hover:text-text-secondary",
   );
 }

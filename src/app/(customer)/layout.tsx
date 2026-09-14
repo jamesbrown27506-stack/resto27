@@ -20,14 +20,12 @@ import { getMobileAppVisibility } from "@/lib/mobile-app-settings";
  * onto a checkout flow that should have nothing else on screen.
  *
  * ─────────────────────────────────────────────────────────────────────────
- *  THE BOTTOM BAR IS FOUR TABS, AND THE FOURTH IS "MORE".
+ *  THE BOTTOM BAR IS THE SAME ONE THE PUBLIC SITE DRAWS.
  *
- *  It used to be Site / Restaurants / Contact / Dashboard, with the nine
- *  account destinations exiled to a sideways-scrolling strip at the top of
- *  every account page. Contact was the odd one out — a signed-in customer
- *  with a Messages screen does not need a public contact form in their thumb
- *  reach — so that slot now carries the whole account menu instead, opened as
- *  a grid where all nine are visible at once.
+ *  Accueil, Restaurants, Explorer, Commandes, Réservations — and "Plus",
+ *  which opens every other account screen as a grid where all of them are
+ *  visible at once (they used to be exiled to a sideways-scrolling strip at
+ *  the top of every account page). Defined in lib/mobile-tabs.
  * ─────────────────────────────────────────────────────────────────────────
  */
 export default async function CustomerLayout({ children }: { children: React.ReactNode }) {
@@ -48,7 +46,7 @@ export default async function CustomerLayout({ children }: { children: React.Rea
       <CustomerFooter>
         <SiteFooter brand={brand} socialLinks={socialLinks} showAppLinks={mobileApp.appDownload} />
       </CustomerFooter>
-      <CustomerNavigation area={user?.area ?? "visitor"} />
+      <CustomerNavigation user={user} />
     </div>
   );
 }

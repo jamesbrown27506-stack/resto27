@@ -1,27 +1,24 @@
 "use client";
 
-import Link from "next/link";
 import { useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { PauseCircle } from "lucide-react";
 import { PageBackLink } from "./page-back-link";
 import { BrandMark } from "./brand-mark";
+import { BranchSwitcher } from "./branch-switcher";
 import { ManagerSidebar } from "./manager-sidebar";
-import { MANAGER_NAV } from "@/lib/nav";
-import { MANAGER_SITE_TABS } from "@/lib/mobile-tabs";
-import type { IconName } from "./icon";
-import { MobileTabBar, type TabItem } from "./mobile-tabbar";
+import { MobileTabBar } from "./mobile-tabbar";
 import { ImpersonationBanner } from "./impersonation-banner";
 import { LocaleToggle } from "./locale-toggle";
-import { LogoutButton } from "./logout-button";
+import { AccountMenu } from "./account-menu";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
-import { Avatar } from "@/components/ui/avatar";
+import { accountLinksFor } from "@/lib/account-links";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { SubscriptionBanner } from "@/components/billing/subscription-banner";
 import { useToast } from "@/components/ui/toast";
 import { switchBranch } from "@/lib/data/manager-actions";
-import { can } from "@/lib/capabilities";
+import { tabsFor } from "@/lib/mobile-tabs";
 import type { Branch } from "@/lib/branch-types";
 import { NotificationProvider } from "@/components/notifications/notification-provider";
 import { NotificationBell } from "@/components/notifications/notification-bell";
@@ -53,7 +50,7 @@ export function ManagerShell({
   branches: Branch[];
   active: Branch;
   brand: { name: string; logoUrl: string | null };
-  user: { name: string; email: string; avatarUrl: string | null };
+  user: { name: string; email: string; phone: string | null; avatarUrl: string | null };
   impersonating: { adminName: string; targetName: string } | null;
   /** Free mode (platform completely free for now) suppresses the plan locks. */
   freeMode: boolean;
@@ -67,14 +64,14 @@ export function ManagerShell({
   const { toast } = useToast();
   const [switchingBranch, startTransition] = useTransition();
 
-  // The "N orders need you" bubble on the bottom tab and the sidebar.
+  // The "N orders need you" bubbles on the bottom tabs and the sidebar.
   const navCounts = useManagerNavCounts(active.restaurantId);
 
-  // Keep the same primary destinations on the public site and in the dashboard.
-  const tabItems: TabItem[] = MANAGER_SITE_TABS.map((tab) => ({
-    ...tab,
-    badge: tab.href === "/m/orders" ? navCounts.orders : undefined,
-  }));
+  // The SAME bar the public site draws for this person (lib/mobile-tabs),
+  // from the same branch role: the dashboard and the site never change shape
+  // under a thumb in the middle of a service. No ☰ drawer below lg — the
+  // bar's "Plus" sheet carries the rest of the menu and the branch switcher.
+  const { items: tabItems, more } = tabsFor("manager", active.role);
 
   function onSwitchBranch(id: string) {
     if (id === active.restaurantId) return;
@@ -110,7 +107,6 @@ export function ManagerShell({
       <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 border-r border-border bg-surface lg:block">
         {sidebar}
       </aside>
-
 
       <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
         {impersonating && (
@@ -158,6 +154,8 @@ export function ManagerShell({
             <span aria-hidden className="h-6 w-px shrink-0 bg-border" />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold">{active.restaurantName}</p>
+              {/* A quick branch switch right under the restaurant's name; the
+                  "Plus" sheet carries the full switcher with roles and plans. */}
               {branches.length > 1 ? (
                 <select
                   aria-label={active.branchLabel}
@@ -166,39 +164,40 @@ export function ManagerShell({
                   onChange={(event) => onSwitchBranch(event.target.value)}
                   className="block max-w-32 bg-transparent text-xs text-text-light outline-none"
                 >
-                  {branches.map((branch) => <option key={branch.restaurantId} value={branch.restaurantId}>{branch.branchLabel}</option>)}
+                  {branches.map((branch) => (
+                    <option key={branch.restaurantId} value={branch.restaurantId}>
+                      {branch.branchLabel}
+                    </option>
+                  ))}
                 </select>
-              ) : <p className="truncate text-xs text-text-light">{active.branchLabel}</p>}
+              ) : (
+                <p className="truncate text-xs text-text-light">{active.branchLabel}</p>
+              )}
             </div>
           </div>
 
           <div className="ml-auto flex items-center gap-2">
             <NotificationBell />
 
-            {/* Theme and language live in the drawer below lg — the mobile bar
-                otherwise crowds the tenant name off the screen. */}
+            {/* Theme and language live in the "Plus" sheet below lg — the
+                mobile bar otherwise crowds the tenant name off the screen. */}
             <LocaleToggle className="hidden lg:inline-flex" />
             <ThemeToggle className="hidden lg:inline-flex" />
 
             <div className="hidden h-6 w-px bg-border lg:block" aria-hidden />
 
-            {/* The identity doubles as the link to your own profile — where
-                people instinctively click when they want to change it. */}
-            <Link
-              href="/m/profile"
-              title={t("common.myProfile")}
-              className="flex min-w-0 items-center gap-2.5 rounded-full py-1 pr-3 pl-1 transition-colors hover:bg-surface-2"
-            >
-              <Avatar name={user.name} src={user.avatarUrl} size="sm" />
-              <div className="hidden min-w-0 sm:block">
-                <p className="truncate text-sm leading-tight font-semibold">{user.name}</p>
-                <p className="truncate text-xs leading-tight text-text-light">
-                  {t(`common.role.${active.role}` as TranslationKey)}
-                </p>
-              </div>
-            </Link>
-
-            <LogoutButton />
+            {/* Who is signed in and as what. Opens onto their OWN profile and,
+                only for a role holding profile.edit, the restaurant's — two
+                different profiles the avatar used to conflate. Sign-out moved
+                in here too. */}
+            <AccountMenu
+              name={user.name}
+              email={user.email}
+              phone={user.phone}
+              avatarUrl={user.avatarUrl}
+              subtitle={`${t(`common.role.${active.role}` as TranslationKey)} · ${active.restaurantName}`}
+              links={accountLinksFor("manager", active.role)}
+            />
           </div>
         </header>
 
@@ -208,14 +207,14 @@ export function ManagerShell({
       </div>
 
       {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
-        <MobileTabBar items={tabItems} more={{ labelKey: "nav.more", icon: "User", titleKey: "nav.menu", withAccountActions: true,
-          items: [
-            ...MANAGER_NAV.flatMap(group => group.items.filter(item => !tabItems.some(tab => tab.href === item.href) && (!item.capability || can(active.role, item.capability))).map(item => ({
-              href: item.href, labelKey: item.labelKey, label: item.label, icon: item.icon as IconName, matchPrefix: item.matchPrefix, group: group.labelKey ? t(group.labelKey) : group.label,
-            }))),
-            { href: "/", icon: "Home", label: t("nav.site"), group: "Resto237" },
-          ],
-        }} />
+      <MobileTabBar
+        items={tabItems}
+        more={more}
+        counts={navCounts}
+        sheetHeader={
+          <BranchSwitcher branches={branches} activeId={active.restaurantId} onSwitch={onSwitchBranch} />
+        }
+      />
       </div>
     </NotificationProvider>
   );
