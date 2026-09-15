@@ -82,6 +82,10 @@ export const custReservationsDict = defineDict({
     "crs.paymentPhone": "Téléphone",
     "crs.paymentGateway": "Passerelle sécurisée",
     "crs.payFailed": "Le paiement de l'acompte n'a pas abouti. Réessayez.",
+    "crs.payExpiredTitle": "Confirmation expirée",
+    "crs.payExpiredBody":
+      "Le délai de confirmation Mobile Money de cinq minutes est dépassé. Aucun paiement n'a été validé. Vous pouvez lancer une nouvelle demande.",
+    "crs.payRetry": "Réessayer le paiement",
     "crs.payStillPending":
       "La confirmation prend plus de temps que prévu. Votre paiement reste suivi en arrière-plan — revenez ici dans quelques instants.",
     "crs.depositPerSeatMath": "{rate} par convive × {guests} convive(s).",
@@ -184,6 +188,10 @@ export const custReservationsDict = defineDict({
     "crs.paymentPhone": "Phone",
     "crs.paymentGateway": "Secure gateway",
     "crs.payFailed": "The deposit payment did not go through. Please try again.",
+    "crs.payExpiredTitle": "Confirmation expired",
+    "crs.payExpiredBody":
+      "The five-minute Mobile Money confirmation window has expired. No payment was confirmed. You can start a new request.",
+    "crs.payRetry": "Try payment again",
     "crs.payStillPending":
       "Confirmation is taking longer than expected. Your payment is still tracked in the background — check back here shortly.",
     "crs.depositPerSeatMath": "{rate} per guest × {guests} guest(s).",

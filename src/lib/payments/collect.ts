@@ -155,6 +155,42 @@ function attemptRow(row: Record<string, unknown>): PaymentAttemptRow {
   };
 }
 
+/** Cameroon Mobile Money prompts are only valid for a short confirmation window. */
+export const MOBILE_MONEY_CONFIRMATION_WINDOW_MS = 5 * 60_000;
+
+/**
+ * Atomically close an unconfirmed CamerPay request after the customer-facing
+ * five-minute window. The created-at predicate matters: a concurrent callback
+ * or poll can settle first, but a late report can never revive an expired
+ * request and credit money twice.
+ */
+async function expireUnconfirmedMobileMoneyAttempt(row: PaymentAttemptRow): Promise<boolean> {
+  if (row.provider !== "camerpay") return false;
+
+  const createdAt = Date.parse(row.createdAt);
+  if (!Number.isFinite(createdAt) || Date.now() - createdAt < MOBILE_MONEY_CONFIRMATION_WINDOW_MS) {
+    return false;
+  }
+
+  const supabase = createAdminClient();
+  const now = new Date().toISOString();
+  const cutoff = new Date(Date.now() - MOBILE_MONEY_CONFIRMATION_WINDOW_MS).toISOString();
+  const { data, error } = await supabase
+    .from("payment_attempts")
+    .update({ status: "failed", settled_at: now })
+    .eq("id", row.id)
+    .eq("status", "pending")
+    .lt("created_at", cutoff)
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    console.error("[pay:expire]", row.id, error.message);
+    return false;
+  }
+  return Boolean(data);
+}
+
 /**
  * Start a payment for a subscription invoice or a reservation deposit.
  *
@@ -416,6 +452,10 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
   // its money side — an earlier settlement can have failed halfway.
   if (row.status === "succeeded") return settledResolution(row.id);
   if (row.status !== "pending") return { status: "failed", settled: false };
+
+  if (await expireUnconfirmedMobileMoneyAttempt(row)) {
+    return { status: "failed", settled: false, error: "confirmationExpired" };
+  }
 
   // A pending sandbox attempt, or one whose 202 never came back with a
   // tracking id, has nothing to ask. It stays pending until it is abandoned.
@@ -983,7 +1023,7 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
  * until the reconciler's six-hour horizon closes it. A success that still
  * lands later is caught by the refund flag in settlePayment.
  */
-const IN_FLIGHT_MS = 15 * 60_000;
+const IN_FLIGHT_MS = MOBILE_MONEY_CONFIRMATION_WINDOW_MS;
 
 /**
  * Whether a customer is paying for this order right now.

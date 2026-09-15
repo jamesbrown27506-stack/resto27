@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/server";
-import { resolveAttemptOutcome, settlePayment } from "@/lib/payments/collect";
+import { MOBILE_MONEY_CONFIRMATION_WINDOW_MS, resolveAttemptOutcome, settlePayment } from "@/lib/payments/collect";
 import { settleReservationRefund } from "@/lib/payments/reservation-refunds";
 import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
 
@@ -41,15 +41,11 @@ import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
 const STALE_AFTER_MS = 2 * 60_000;
 
 /**
- * The abandonment horizon — deliberately hours, not minutes.
- *
- * Mobile-money PIN entry routinely runs long past any poll window, so age
- * alone is never evidence of failure inside it (see CONCLUSIVE_FAILURE in the
- * CamerPay client). Past this, though, the operator's prompt is long dead and
- * the row has fallen off the 100-row report, so nothing more can be learned:
- * the attempt is closed rather than swept for ever.
+ * The same five-minute deadline used by browser polling. The resolver normally
+ * marks the attempt failed first; this is the guarded fallback for a row that
+ * could not be confirmed or expired during that call.
  */
-const ABANDON_AFTER_MS = 6 * 60 * 60_000;
+const ABANDON_AFTER_MS = MOBILE_MONEY_CONFIRMATION_WINDOW_MS;
 
 /**
  * Attempts examined per run, per queue. Each pending attempt costs one
@@ -120,7 +116,7 @@ export async function runReconciliation(): Promise<ReconciliationSummary> {
     const startedAt = new Date(row.created_at as string).getTime();
     if (now - startedAt > ABANDON_AFTER_MS) {
       const abandoned = await abandon(attemptId, row.raw_response, outcome.error ?? "unresolved");
-      if (abandoned) summary.abandoned += 1;
+      if (abandoned) summary.failed += 1;
       else summary.stillPending += 1;
       continue;
     }
@@ -230,7 +226,7 @@ async function abandon(
   const { data, error } = await supabase
     .from("payment_attempts")
     .update({
-      status: "abandoned",
+      status: "failed",
       // Terminal and nothing owed — the same meaning settled_at carries
       // everywhere else.
       settled_at: new Date().toISOString(),

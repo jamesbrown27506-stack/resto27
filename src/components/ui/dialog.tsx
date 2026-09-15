@@ -39,6 +39,8 @@ export interface DialogProps {
   /** Hide the × and ignore backdrop clicks — for flows that must be resolved. */
   mandatory?: boolean;
   footer?: React.ReactNode;
+  /** Additional sizing or overflow constraints for a particular flow. */
+  className?: string;
   children: React.ReactNode;
 }
 
@@ -50,6 +52,7 @@ export function Dialog({
   size = "md",
   mandatory = false,
   footer,
+  className,
   children,
 }: DialogProps) {
   const { t } = useLocale();
@@ -121,10 +124,11 @@ export function Dialog({
         "backdrop:bg-black/50 backdrop:backdrop-blur-sm",
         "open:animate-rise",
         SIZES[size],
+        className,
       )}
     >
       <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border p-5">
-        <div>
+        <div className="min-w-0">
           <h2 id="dialog-title" className="font-display text-xl font-bold">
             {title}
           </h2>
@@ -142,7 +146,7 @@ export function Dialog({
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">{children}</div>
+      <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-5">{children}</div>
 
       {footer && (
         /*

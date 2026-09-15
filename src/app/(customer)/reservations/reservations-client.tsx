@@ -45,12 +45,8 @@ import {
 import type { SessionUser } from "@/lib/session";
 
 const POLL_INTERVAL_MS = 4_000;
-/**
- * Six minutes. Two was too short for Orange Money, where the customer first
- * dials a #150*…# code before approving — the payment kept landing after this
- * screen had stopped watching. The reconciler settles anything later anyway.
- */
-const POLL_TRIES = 90;
+/** Five minutes at a four-second polling interval. */
+const POLL_TRIES = 75;
 
 /**
  * Low season, fixed windows: the restaurants practically share one kitchen
@@ -159,6 +155,8 @@ export function ReservationsClient({
   /** The booking whose deposit is being charged right now, or null. */
   const [payingId, setPayingId] = useState<string | null>(null);
   const [paymentInstruction, setPaymentInstruction] = useState<PaymentInstruction | null>(null);
+  /** A terminal provider failure remains actionable instead of vanishing into a toast. */
+  const [paymentExpiredId, setPaymentExpiredId] = useState<string | null>(null);
   const firstPendingReservation = initial.find((reservation) => reservation.paymentAttemptId);
   const [paymentScreenId, setPaymentScreenId] = useState<string | null>(
     () => firstPendingReservation?.id ?? null,
@@ -226,15 +224,15 @@ export function ReservationsClient({
   }
 
   /**
-   * Watch one trackable CamerPay attempt without ever turning a browser
-   * timeout into a payment failure. The webhook and server reconciler keep
-   * working after a phone sleeps, so the pending row and screen remain until
-   * a real terminal provider status arrives.
+   * Watch one trackable CamerPay attempt. The server is the authority for the
+   * five-minute deadline, so a temporary browser/network failure cannot mark a
+   * charge failed locally while CamerPay is still processing it.
    */
   const startPaymentPolling = useCallback(
     (attemptId: string, reservationId: string, paymentPhone?: string | null) => {
       stopPaymentPolling();
       setPaymentInstruction(null);
+      setPaymentExpiredId(null);
       setPayingId(reservationId);
       setPaymentScreenId(reservationId);
       setPaymentScreenOpen(true);
@@ -282,7 +280,8 @@ export function ReservationsClient({
           } else if (!check.ok || check.status === "failed") {
             stopPaymentPolling();
             setPayingId(null);
-            setPaymentScreenOpen(false);
+            setPaymentExpiredId(reservationId);
+            setPaymentScreenOpen(true);
             setMine((current) =>
               current.map((row) =>
                 row.id === reservationId
@@ -332,7 +331,7 @@ export function ReservationsClient({
       restructuring live Mobile Money polling to suit a compiler — would risk
       real money to silence a lint error, which is the wrong trade.
     */
-    [router, stopPaymentPolling, t, toast, setPayingId, setPaymentScreenId, setPaymentScreenOpen, setMine],
+    [router, stopPaymentPolling, t, toast, setPayingId, setPaymentScreenId, setPaymentScreenOpen, setPaymentExpiredId, setMine],
   );
 
   // Reloading or navigating back to the page adopts the latest server-side
@@ -571,6 +570,7 @@ export function ReservationsClient({
     }
 
     stopPaymentPolling();
+    setPaymentExpiredId(null);
     setPayingId(reservation.id);
     setPaymentScreenId(reservation.id);
     setPaymentScreenOpen(true);
@@ -1200,31 +1200,50 @@ export function ReservationsClient({
       {(() => {
         const reservation = mine.find((row) => row.id === paymentScreenId);
         if (!reservation) return null;
+        const expired = paymentExpiredId === reservation.id;
         return (
           <Dialog
             open={paymentScreenOpen}
             onClose={() => setPaymentScreenOpen(false)}
-            title={t("crs.payPendingTitle")}
+            title={t(expired ? "crs.payExpiredTitle" : "crs.payPendingTitle")}
             size="sm"
+            className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-x-hidden sm:max-w-sm"
             footer={
-              <Button variant="outline" onClick={() => setPaymentScreenOpen(false)}>
-                {t("crs.continueBackground")}
-              </Button>
+              expired ? (
+                <>
+                  <Button variant="outline" onClick={() => setPaymentScreenOpen(false)}>
+                    {t("crs.continueBackground")}
+                  </Button>
+                  <Button onClick={() => void payDeposit(reservation)}>
+                    {t("crs.payRetry")}
+                  </Button>
+                </>
+              ) : (
+                <Button variant="outline" fullWidth onClick={() => setPaymentScreenOpen(false)}>
+                  {t("crs.continueBackground")}
+                </Button>
+              )
             }
           >
-            <PaymentPendingView
-              body={t("crs.payPendingBody")}
-              hint={t("crs.payPendingHint")}
-              amountLabel={t("crs.paymentAmount")}
-              amount={formatMoney(reservation.depositAmount)}
-              referenceLabel={t("crs.paymentReference")}
-              reference={reservation.reference}
-              phoneLabel={t("crs.paymentPhone")}
-              phone={reservation.paymentPhone ?? phone}
-              gatewayLabel={t("crs.paymentGateway")}
-              instruction={paymentInstruction}
-              requesting={payingId === reservation.id && !reservation.paymentAttemptId}
-            />
+            {expired ? (
+              <div className="rounded-lg border border-warning/30 bg-warning-light p-4 text-sm leading-relaxed text-warning">
+                {t("crs.payExpiredBody")}
+              </div>
+            ) : (
+              <PaymentPendingView
+                body={t("crs.payPendingBody")}
+                hint={t("crs.payPendingHint")}
+                amountLabel={t("crs.paymentAmount")}
+                amount={formatMoney(reservation.depositAmount)}
+                referenceLabel={t("crs.paymentReference")}
+                reference={reservation.reference}
+                phoneLabel={t("crs.paymentPhone")}
+                phone={reservation.paymentPhone ?? phone}
+                gatewayLabel={t("crs.paymentGateway")}
+                instruction={paymentInstruction}
+                requesting={payingId === reservation.id && !reservation.paymentAttemptId}
+              />
+            )}
           </Dialog>
         );
       })()}
