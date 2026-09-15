@@ -10,6 +10,7 @@
 export type Theme = "light" | "dark";
 
 export const THEME_COOKIE = "restolink-theme";
+export const THEME_EXPLICIT_COOKIE = "restolink-theme-explicit";
 
 /**
  * Runs before first paint so the initial page follows a saved choice or the
@@ -18,11 +19,13 @@ export const THEME_COOKIE = "restolink-theme";
  */
 export const themeScript = `(function(){
   try {
-    var cookiePattern = /(?:^|;\s*)${THEME_COOKIE}=(light|dark)/;
-    var stored = document.cookie.match(cookiePattern);
+    var themePattern = /(?:^|;\s*)${THEME_COOKIE}=(light|dark)/;
+    var explicitPattern = /(?:^|;\s*)${THEME_EXPLICIT_COOKIE}=1(?:;|$)/;
+    var explicit = explicitPattern.test(document.cookie);
+    var stored = explicit ? document.cookie.match(themePattern) : null;
     var media = window.matchMedia('(prefers-color-scheme: dark)');
     var applySystemTheme = function(matches) {
-      if (!document.cookie.match(cookiePattern)) {
+      if (!explicitPattern.test(document.cookie)) {
         document.documentElement.setAttribute('data-theme', matches ? 'dark' : 'light');
       }
     };
@@ -30,6 +33,9 @@ export const themeScript = `(function(){
     if (stored) {
       document.documentElement.setAttribute('data-theme', stored[1]);
     } else {
+      if (themePattern.test(document.cookie)) {
+        document.cookie = '${THEME_COOKIE}=; path=/; max-age=0; samesite=lax';
+      }
       applySystemTheme(media.matches);
       if (media.addEventListener) media.addEventListener('change', function(event) {
         applySystemTheme(event.matches);
@@ -57,6 +63,7 @@ export function applyTheme(next: Theme): void {
   document.documentElement.setAttribute("data-theme", next);
   try {
     document.cookie = `${THEME_COOKIE}=${next}; path=/; max-age=31536000; samesite=lax`;
+    document.cookie = `${THEME_EXPLICIT_COOKIE}=1; path=/; max-age=31536000; samesite=lax`;
   } catch {
     // Cookies blocked — the theme still applies for this page view.
   }

@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { Inter, Playfair_Display } from "next/font/google";
 import { cookies } from "next/headers";
-import { THEME_COOKIE, themeScript } from "@/components/theme/theme-provider";
+import { THEME_COOKIE, THEME_EXPLICIT_COOKIE, themeScript } from "@/components/theme/theme-provider";
 import { LocaleProvider } from "@/lib/i18n/locale-provider";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { getBranding } from "@/lib/branding";
@@ -132,7 +132,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     getMobileAppVisibility(),
   ]);
 
-  const stored = cookieStore.get(THEME_COOKIE)?.value;
+  const explicitTheme = cookieStore.get(THEME_EXPLICIT_COOKIE)?.value === "1";
+  const stored = explicitTheme ? cookieStore.get(THEME_COOKIE)?.value : undefined;
   const theme = stored === "dark" ? "dark" : "light";
 
   return (
@@ -152,13 +153,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           are never executed" warning, the reason a plain <script> element
           cannot do this job).
 
-          On a first visit there is no theme cookie, so it reads the OS
-          preference, applies it before the first paint (no white flash) and
-          writes the cookie — after which the server renders `data-theme`
-          itself. On later visits it re-reads that cookie and re-applies the
-          attribute the server already rendered; a no-op, but idempotent, and
-          the script keeps the first paint safe even if the cookie ever fails
-          to reach the server.
+          On a first visit there is no explicit theme choice, so it reads the OS
+          preference and applies it before the first paint (no white flash).
+          It stores a preference only after someone uses the theme toggle.
+          Later visits re-apply that explicit choice before paint.
 
           The locale needs no equivalent: Accept-Language arrives with the
           request, so the server already knows the answer.
