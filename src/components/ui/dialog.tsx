@@ -177,7 +177,7 @@ export function Dialog({
           other does not.
         */
         <div
-          className="flex shrink-0 flex-wrap items-stretch gap-3 border-t border-border bg-surface-2 p-5 *:min-h-12 *:min-w-0 *:flex-1 sm:justify-end sm:*:min-w-32 sm:*:flex-none"
+          className="grid shrink-0 grid-cols-2 items-stretch gap-3 border-t border-border bg-surface-2 p-5 *:min-h-12 *:min-w-0 sm:flex sm:justify-end sm:*:min-w-32 sm:*:flex-none"
           style={{ paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom, 0px))" }}
         >
           {footer}

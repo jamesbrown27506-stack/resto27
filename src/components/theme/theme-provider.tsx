@@ -1,40 +1,44 @@
 "use client";
 
 /**
- * Light or dark. That's the whole model.
+ * Light or dark, with the device as the default.
  *
- * There is no "system" option: on first visit the OS preference is used as the
- * starting point, and from the moment the user touches the toggle their choice
- * wins. A three-state control asks people to reason about a mode they mostly
- * don't think about, and the toggle is the thing they actually wanted.
+ * Until a person touches the toggle there is no stored preference, so the page
+ * follows the operating system and follows later device theme changes too.
+ * The first toggle creates the explicit preference that then wins.
  */
 export type Theme = "light" | "dark";
 
 export const THEME_COOKIE = "restolink-theme";
 
 /**
- * Runs before first paint. Must be inline and synchronous in <head>: applying
- * the attribute from an effect paints the light theme first, so a dark-theme
- * user gets a white flash on every navigation.
- *
- * IT ALSO WRITES THE COOKIE. That is the part that matters beyond the flash —
- * once the cookie exists, the SERVER renders `data-theme` itself and this
- * script has nothing left to do. Without it the server would be permanently
- * blind to the choice, which is exactly the bug the locale had.
+ * Runs before first paint so the initial page follows a saved choice or the
+ * device theme without a visible light-theme flash. A cookie is created only
+ * after a person uses the theme toggle.
  */
-export const themeScript = `
-(function(){
+export const themeScript = `(function(){
   try {
-    var m = document.cookie.match(/(?:^|;\\s*)${THEME_COOKIE}=(light|dark)/);
-    var theme = m ? m[1]
-      : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-    document.documentElement.setAttribute('data-theme', theme);
-    if (!m) document.cookie = '${THEME_COOKIE}=' + theme + '; path=/; max-age=31536000; samesite=lax';
+    var cookiePattern = /(?:^|;\s*)${THEME_COOKIE}=(light|dark)/;
+    var stored = document.cookie.match(cookiePattern);
+    var media = window.matchMedia('(prefers-color-scheme: dark)');
+    var applySystemTheme = function(matches) {
+      if (!document.cookie.match(cookiePattern)) {
+        document.documentElement.setAttribute('data-theme', matches ? 'dark' : 'light');
+      }
+    };
+
+    if (stored) {
+      document.documentElement.setAttribute('data-theme', stored[1]);
+    } else {
+      applySystemTheme(media.matches);
+      if (media.addEventListener) media.addEventListener('change', function(event) {
+        applySystemTheme(event.matches);
+      });
+    }
   } catch (e) {
     document.documentElement.setAttribute('data-theme', 'light');
   }
-})();
-`.trim();
+})();`.trim();
 
 /**
  * THE DOM IS THE SOURCE OF TRUTH, not React state.

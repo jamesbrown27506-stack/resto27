@@ -71,7 +71,7 @@ export function Button({
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-full font-semibold whitespace-nowrap",
+        "inline-flex min-w-0 shrink-0 items-center justify-center rounded-full text-center font-semibold leading-tight whitespace-normal sm:whitespace-nowrap",
         "transition-all duration-200 active:scale-[.98]",
         /*
           The tactile press treatment, which is a no-op above `sm` — see
@@ -145,7 +145,7 @@ export function buttonClasses({
   className,
 }: Pick<ButtonLinkProps, "variant" | "size" | "fullWidth" | "className"> = {}) {
   return cn(
-    "inline-flex shrink-0 items-center justify-center rounded-full font-semibold whitespace-nowrap",
+    "inline-flex min-w-0 shrink-0 items-center justify-center rounded-full text-center font-semibold leading-tight whitespace-normal sm:whitespace-nowrap",
     "transition-all duration-200 active:scale-[.98]",
     VARIANTS[variant],
     SIZES[size],
