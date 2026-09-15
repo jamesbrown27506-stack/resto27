@@ -703,22 +703,31 @@ export interface TransactionHint {
   afterId?: number;
 }
 
+/**
+ * CamerPay's live report endpoint currently rejects a request that omits `id`
+ * even though the public documentation describes it as optional. Supplying a
+ * high cursor means "start at the newest available row" and preserves the
+ * documented pagination behaviour when a caller does provide an id.
+ */
+const REPORT_LATEST_ID = 999_999_999;
+
+function reportData(options: { limit?: number; id?: number }): { limit: number; id: number } {
+  return {
+    limit: Math.min(options.limit ?? 25, 100),
+    id: options.id ?? REPORT_LATEST_ID,
+  };
+}
+
 export async function listTransactions(
   options: { limit?: number; id?: number } = {},
 ): Promise<CamerPayResponse<TransactionReportEntry[]>> {
-  return authed<TransactionReportEntry[]>("rapport", "transaction", {
-    limit: Math.min(options.limit ?? 25, 100),
-    ...(options.id !== undefined ? { id: options.id } : {}),
-  });
+  return authed<TransactionReportEntry[]>("rapport", "transaction", reportData(options));
 }
 
 export async function listNotifications(
   options: { limit?: number; id?: number } = {},
 ): Promise<CamerPayResponse<unknown[]>> {
-  return authed<unknown[]>("rapport", "notification", {
-    limit: Math.min(options.limit ?? 25, 100),
-    ...(options.id !== undefined ? { id: options.id } : {}),
-  });
+  return authed<unknown[]>("rapport", "notification", reportData(options));
 }
 
 /** Highest notification counter visible immediately before a payment request. */
