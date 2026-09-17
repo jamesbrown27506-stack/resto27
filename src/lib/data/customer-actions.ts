@@ -245,6 +245,8 @@ export async function payOwnOrder(
     return { ok: false, error: "Commande introuvable." };
   }
   if (!phone.trim()) return { ok: false, error: "Numéro Mobile Money requis." };
+  const requestedPhone = normalisePhone(phone);
+  if (!requestedPhone) return { ok: false, error: "Numéro Mobile Money invalide." };
 
   const { data } = await supabase
     .from("orders")
@@ -267,7 +269,7 @@ export async function payOwnOrder(
   // filtering on it made every payment fail before a charge was ever sent.
   const { data: attempts, error: attemptsError } = await supabase
     .from("payment_attempts")
-    .select("id, status, transaction_id")
+    .select("id, status, transaction_id, phone")
     .eq("raw_response->>orderId", data.id)
     .in("status", ["pending", "succeeded"])
     .is("settled_at", null)
@@ -285,7 +287,28 @@ export async function payOwnOrder(
     return { ok: true, status: "succeeded" };
   }
   if (open?.status === "pending" && open.transaction_id) {
-    return { ok: true, status: "pending", attemptId: open.id as string };
+    // Resolve first so an expired/failed Orange try cannot silently swallow a
+    // later MTN submission. A still-live request is resumed only for the same
+    // handset; changing numbers while it is active would risk two real charges.
+    const current = await checkPaymentAttempt(open.id as string);
+    if (current.status === "succeeded") {
+      return { ok: true, status: "succeeded" };
+    }
+    if (current.status === "pending") {
+      if (normalisePhone(String(open.phone ?? "")) !== requestedPhone) {
+        return {
+          ok: false,
+          error:
+            "Une autre demande Mobile Money est encore active. Terminez-la ou attendez son expiration avant de changer de numéro.",
+        };
+      }
+      return {
+        ok: true,
+        status: "pending",
+        attemptId: open.id as string,
+        instruction: current.instruction,
+      };
+    }
   }
 
   const initiated = await initiatePaymentAttempt({
@@ -293,7 +316,7 @@ export async function payOwnOrder(
     restaurantId: data.restaurant_id,
     orderId: data.id,
     reference: data.reference,
-    phone,
+    phone: requestedPhone,
     amount: Number(data.total),
   });
 
@@ -1149,6 +1172,10 @@ export async function payReservationDeposit(
   if (!phone.trim()) {
     return { ok: false, error: "Numéro Mobile Money requis pour régler l'acompte." };
   }
+  const requestedPhone = normalisePhone(phone);
+  if (!requestedPhone) {
+    return { ok: false, error: "Numéro Mobile Money invalide." };
+  }
 
   const supabase = createAdminClient();
 
@@ -1203,7 +1230,7 @@ export async function payReservationDeposit(
    */
   const { data: openAttempts, error: openAttemptsError } = await supabase
     .from("payment_attempts")
-    .select("id, status, transaction_id")
+    .select("id, status, transaction_id, phone")
     .eq("reservation_id", booking.id)
     .in("status", ["pending", "succeeded"])
     .is("settled_at", null)
@@ -1232,7 +1259,27 @@ export async function payReservationDeposit(
     return { ok: true, status: "succeeded" };
   }
   if (openAttempt?.status === "pending" && openAttempt.transaction_id) {
-    return { ok: true, status: "pending", attemptId: openAttempt.id as string };
+    const current = await checkPaymentAttempt(openAttempt.id as string);
+    if (current.status === "succeeded") {
+      revalidatePath("/reservations");
+      revalidatePath("/account");
+      return { ok: true, status: "succeeded" };
+    }
+    if (current.status === "pending") {
+      if (normalisePhone(String(openAttempt.phone ?? "")) !== requestedPhone) {
+        return {
+          ok: false,
+          error:
+            "Une autre demande Mobile Money est encore active. Terminez-la ou attendez son expiration avant de changer de numéro.",
+        };
+      }
+      return {
+        ok: true,
+        status: "pending",
+        attemptId: openAttempt.id as string,
+        instruction: current.instruction,
+      };
+    }
   }
 
   const initiated = await initiatePaymentAttempt({
@@ -1240,7 +1287,7 @@ export async function payReservationDeposit(
     restaurantId: booking.restaurant_id,
     reservationId: booking.id,
     reference: booking.reference,
-    phone,
+    phone: requestedPhone,
     amount,
   });
 

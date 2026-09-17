@@ -983,12 +983,8 @@ export async function confirmTransaction(
   instruction?: PaymentInstruction;
 }> {
   const report = await listTransactions({ limit: 100 });
-
-  if (!report.etat || !Array.isArray(report.data)) {
-    return { status: "pending", searched: report.data ?? report.message };
-  }
-
-  const rows = report.data;
+  const transactionReportAvailable = report.etat && Array.isArray(report.data);
+  const rows: TransactionReportEntry[] = transactionReportAvailable ? (report.data ?? []) : [];
   const needle = replyTo.trim();
   const consumed = new Set(hint.excludeRowIds ?? []);
 
@@ -1092,6 +1088,20 @@ export async function confirmTransaction(
       searched,
     };
   };
+
+  /*
+   * The notification report is an independent CamerPay endpoint. In live use
+   * rapport/transaction can return a temporary 502 while rapport/notification
+   * is healthy and already contains Orange's USSD instruction. Returning
+   * above before checking notifications made customer checkout lose Copy/Open
+   * Phone, while the admin console (which had its own fallback) still worked.
+   * Keep the payment pending, but use the healthy report for instructions and
+   * conclusive Orange receipts.
+   */
+  if (!transactionReportAvailable) {
+    return notificationVerdict(report.data ?? report.message);
+  }
+
   const startedAt = effective.startedAt ? new Date(effective.startedAt).getTime() : null;
 
   // THE row this request created — the first above the counter captured

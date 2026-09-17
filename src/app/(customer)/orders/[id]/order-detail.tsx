@@ -131,20 +131,21 @@ export function OrderDetail({ order }: { order: Order }) {
   useEffect(() => {
     if (!paymentAttemptId) return;
     let checking = false;
-    const timer = setInterval(async () => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const tick = async () => {
       if (checking) return;
       checking = true;
       try {
         const result = await checkOwnOrderPayment(paymentAttemptId);
         if (result.instruction) setPaymentInstruction(result.instruction);
         if (result.status === "succeeded") {
-          clearInterval(timer);
+          if (timer) clearInterval(timer);
           setPaymentAttemptId(null);
           setPaymentOpen(false);
           toast(t("cor.paymentDone"), "success");
           router.refresh();
         } else if (!result.ok || result.status === "failed") {
-          clearInterval(timer);
+          if (timer) clearInterval(timer);
           setPaymentAttemptId(null);
           setPaymentOpen(false);
           toast(result.ok ? t("cor.paymentFailed") : result.error, "error");
@@ -153,8 +154,12 @@ export function OrderDetail({ order }: { order: Order }) {
       } finally {
         checking = false;
       }
-    }, 4_000);
-    return () => clearInterval(timer);
+    };
+    timer = setInterval(() => void tick(), 4_000);
+    void tick();
+    return () => {
+      if (timer) clearInterval(timer);
+    };
   }, [paymentAttemptId, router, t, toast]);
   async function confirmReceived() {
     setConfirming(true);

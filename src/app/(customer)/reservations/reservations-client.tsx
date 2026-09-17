@@ -250,7 +250,7 @@ export function ReservationsClient({
 
       let tries = 0;
       let checking = false;
-      pollRef.current = setInterval(async () => {
+      const tick = async () => {
         if (checking) return;
         checking = true;
         tries += 1;
@@ -312,7 +312,9 @@ export function ReservationsClient({
         } finally {
           checking = false;
         }
-      }, POLL_INTERVAL_MS);
+      };
+      pollRef.current = setInterval(() => void tick(), POLL_INTERVAL_MS);
+      void tick();
     },
     /*
       THE SETTERS ARE LISTED, AND LISTING THEM CHANGES NOTHING AT RUNTIME.
