@@ -398,7 +398,31 @@ export async function initiatePaymentAttempt(input: {
     console.error("[pay:initiate:live] tracking id", attemptId, linkError.message);
   }
 
-  return { ok: true, status: "pending", attemptId };
+
+  /*
+   * Mirror the admin console's first verification immediately after CamerPay
+   * accepts the request. Orange often publishes its USSD instruction in the
+   * notification report before the browser's first scheduled poll; returning
+   * it here lets every customer-facing pending view show Copy/Open Phone at
+   * once, while the attempt remains pending until a later verified success.
+   */
+  let instruction: PaymentInstruction | undefined;
+  try {
+    const initial = await confirmTransaction(trackingId, {
+      phone,
+      amount,
+      direction: "collect",
+      startedAt,
+      afterId: afterId ?? undefined,
+      notificationAfterId: notificationAfterId ?? undefined,
+    });
+    instruction = initial.instruction;
+  } catch (error) {
+    // A read failure cannot turn an accepted payment into a failed one.
+    console.warn("[pay:initiate:initial-check]", attemptId, error);
+  }
+
+  return { ok: true, status: "pending", attemptId, instruction };
 }
 
 /**

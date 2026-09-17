@@ -9,6 +9,7 @@ import { canCustomerCancel, type OrderStatus } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
 import { saveUpload, type UploadKind } from "@/lib/uploads";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
+import { PICKUP_RECEIPT_CONFIRMATION_NOTE } from "@/lib/orders/pickup-receipt";
 import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
 import { paymentMode } from "./billing";
 import { anyPushWanted, toStoredJson } from "@/lib/notifications/customer-topics";
@@ -94,6 +95,24 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
       ok: false,
       error: "Un paiement est en cours pour cette commande. Attendez sa confirmation, ou réessayez dans quelques minutes.",
     };
+  }
+
+  if (order.type === "pickup") {
+    const { data: request } = await supabase
+      .from("order_status_history")
+      .select("id")
+      .eq("order_id", orderId)
+      .eq("status", "shipped")
+      .eq("note", PICKUP_RECEIPT_CONFIRMATION_NOTE)
+      .limit(1)
+      .maybeSingle();
+
+    if (!request) {
+      return {
+        ok: false,
+        error: "The restaurant must first request confirmation after handing over your pickup.",
+      };
+    }
   }
 
   const now = new Date().toISOString();
@@ -237,7 +256,7 @@ export async function respondToDeliveryFee(
 export async function payOwnOrder(
   orderId: string,
   phone: string,
-): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string }> {
+): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string; instruction?: PaymentInstruction }> {
   const user = await requireUser();
   const supabase = createAdminClient();
 
@@ -301,7 +320,7 @@ export async function payOwnOrder(
     return { ok: false, error: initiated.error ?? "Le paiement a échoué." };
   }
   if (initiated.status === "pending") {
-    return { ok: true, status: "pending", attemptId: initiated.attemptId };
+    return { ok: true, status: "pending", attemptId: initiated.attemptId, instruction: initiated.instruction };
   }
 
   const settled = await settlePayment(initiated.attemptId);
@@ -757,7 +776,7 @@ async function readDepositConfig(
  */
 export async function createOwnReservation(
   input: z.infer<typeof ReservationSchema>,
-): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string }> {
+): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string; instruction?: PaymentInstruction }> {
   const user = await requireUser();
 
   const parsed = ReservationSchema.safeParse(input);
@@ -1121,7 +1140,7 @@ export async function fetchDayAvailability(input: {
 export async function payReservationDeposit(
   reservationId: string,
   phone: string,
-): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string }> {
+): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string; instruction?: PaymentInstruction }> {
   const user = await requireUser();
 
   if (!z.string().uuid().safeParse(reservationId).success) {
@@ -1237,7 +1256,7 @@ export async function payReservationDeposit(
     // Live mode: the customer must approve on their handset. The client polls
     // checkReservationPayment, and the CamerPay webhook settles it even if the
     // page is closed.
-    return { ok: true, status: "pending", attemptId: initiated.attemptId };
+    return { ok: true, status: "pending", attemptId: initiated.attemptId, instruction: initiated.instruction };
   }
 
   // Sandbox: the attempt is already 'succeeded' — settle now. settlePayment

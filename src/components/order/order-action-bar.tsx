@@ -8,7 +8,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { advanceLabelKey, isTerminal, nextStatus } from "@/lib/format/order-status";
-import { advanceOrder, cancelOrder } from "@/lib/data/order-actions";
+import { advanceOrder, cancelOrder, requestPickupReceiptConfirmation } from "@/lib/data/order-actions";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { ManagerOrder } from "@/lib/data/orders";
 import { cn } from "@/lib/utils";
@@ -100,6 +100,7 @@ export function OrderActionBar({
   const [feeOpen, setFeeOpen] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [reason, setReason] = useState("");
+  const [pickupRequestSent, setPickupRequestSent] = useState(false);
 
   const next = nextStatus(order.status);
   /*
@@ -119,6 +120,7 @@ export function OrderActionBar({
   */
   const blockedByPayment =
     order.status === "awaiting_customer" && !order.isPaid && !isTerminal(order.status);
+  const needsPickupConfirmation = order.type === "pickup" && order.status === "shipped";
 
   function advance(fee?: number) {
     if (!next) return;
@@ -152,6 +154,15 @@ export function OrderActionBar({
     });
   }
 
+  function requestPickupConfirmation() {
+    startTransition(async () => {
+      const result = await requestPickupReceiptConfirmation(order.id);
+      if (!result.ok) return toast(result.error, "error");
+      setPickupRequestSent(true);
+      toast(t("oact.pickupConfirmationSent"), "success");
+    });
+  }
+
   function submitCancel() {
     startTransition(async () => {
       const result = await cancelOrder(order.id, reason);
@@ -177,6 +188,13 @@ export function OrderActionBar({
         </p>
       )}
 
+      {needsPickupConfirmation && pickupRequestSent && (
+        <p className="mb-3 flex items-start gap-2 rounded-md border border-info/30 bg-info-light px-3 py-2 text-xs leading-relaxed text-info">
+          <Clock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span>{t("oact.pickupConfirmationPending")}</span>
+        </p>
+      )}
+
       {blockedByPayment && (
         <p className="mb-3 flex items-start gap-2 rounded-md border border-info/30 bg-info-light px-3 py-2 text-xs leading-relaxed text-info">
           <Clock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -187,9 +205,13 @@ export function OrderActionBar({
       )}
 
       <div className={cn("flex flex-wrap items-center gap-2", className)}>
-        {canAdvance && next && nextLabel && !blockedByPayment && (
-          <Button size={size} disabled={pending} onClick={() => advance()}>
-            <span>{t(nextLabel)}</span>
+        {canAdvance && next && nextLabel && !blockedByPayment && !pickupRequestSent && (
+          <Button
+            size={size}
+            disabled={pending}
+            onClick={() => (needsPickupConfirmation ? requestPickupConfirmation() : advance())}
+          >
+            <span>{needsPickupConfirmation ? t("oact.requestPickupConfirmation") : t(nextLabel)}</span>
           </Button>
         )}
 

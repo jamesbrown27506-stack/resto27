@@ -68,7 +68,7 @@ export interface CustomerOrder {
   scheduledFor: string | null;
 
   items: CustomerOrderItem[];
-  history: { status: string; at: string; byName: string | null }[];
+  history: { status: string; at: string; byName: string | null; note: string | null }[];
   createdAt: string;
 }
 
@@ -189,7 +189,7 @@ async function fetchHistoryFor(ids: string[]): Promise<Map<string, CustomerOrder
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("order_status_history")
-    .select("order_id, status, by_name, created_at")
+    .select("order_id, status, by_name, note, created_at")
     .in("order_id", ids)
     .order("created_at");
 
@@ -197,10 +197,11 @@ async function fetchHistoryFor(ids: string[]): Promise<Map<string, CustomerOrder
     order_id: string;
     status: string;
     by_name: string | null;
+    note: string | null;
     created_at: string;
   }[]) {
     const list = map.get(h.order_id) ?? [];
-    list.push({ status: h.status, at: h.created_at, byName: h.by_name });
+    list.push({ status: h.status, at: h.created_at, byName: h.by_name, note: h.note });
     map.set(h.order_id, list);
   }
 

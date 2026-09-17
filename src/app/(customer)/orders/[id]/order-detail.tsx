@@ -31,6 +31,7 @@ import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { CustomerOrder as Order } from "@/lib/data/customer";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
+import { PICKUP_RECEIPT_CONFIRMATION_NOTE } from "@/lib/orders/pickup-receipt";
 
 /**
  * /orders/[id] — "the busiest page in the app" (§14.3).
@@ -70,7 +71,13 @@ export function OrderDetail({ order }: { order: Order }) {
    * confirmOwnDelivery for why the person holding the bag is the right one
    * to press this.
    */
-  const confirmable = order.status === "shipped";
+  const pickupReceiptRequested =
+    order.type === "pickup" &&
+    order.history.some(
+      (event) => event.status === "shipped" && event.note === PICKUP_RECEIPT_CONFIRMATION_NOTE,
+    );
+  const confirmable =
+    order.status === "shipped" && (order.type !== "pickup" || pickupReceiptRequested);
 
 
   /*
@@ -115,6 +122,7 @@ export function OrderDetail({ order }: { order: Order }) {
       return;
     }
     if ("attemptId" in result && result.attemptId) {
+      if ("instruction" in result && result.instruction) setPaymentInstruction(result.instruction);
       setPaymentAttemptId(result.attemptId);
       setPaymentOpen(true);
     }
@@ -348,8 +356,12 @@ export function OrderDetail({ order }: { order: Order }) {
             <PackageCheck className="size-5" aria-hidden />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="font-semibold text-success">{t("cor.receivedTitle")}</p>
-            <p className="mt-0.5 text-sm text-text-secondary">{t("cor.receivedBody")}</p>
+            <p className="font-semibold text-success">
+              {t(order.type === "pickup" ? "cor.pickupReceiptTitle" : "cor.receivedTitle")}
+            </p>
+            <p className="mt-0.5 text-sm text-text-secondary">
+              {t(order.type === "pickup" ? "cor.pickupReceiptBody" : "cor.receivedBody")}
+            </p>
           </div>
           <Button
             variant="primary"
@@ -358,7 +370,7 @@ export function OrderDetail({ order }: { order: Order }) {
             onClick={confirmReceived}
             className="max-sm:w-full"
           >
-            {t("cor.receivedAction")}
+            {t(order.type === "pickup" ? "cor.pickupReceiptAction" : "cor.receivedAction")}
           </Button>
         </div>
       )}

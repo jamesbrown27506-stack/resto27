@@ -175,7 +175,7 @@ export async function fundWallet(
     return { ok: false, reason: initiated.reason, error: initiated.error ?? "CamerPay payment failed." };
   }
   if (initiated.status === "pending") {
-    return { ok: true, status: "pending", attemptId: initiated.attemptId };
+    return { ok: true, status: "pending", attemptId: initiated.attemptId, instruction: initiated.instruction };
   }
 
   const settled = await settlePayment(initiated.attemptId);

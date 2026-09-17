@@ -56,6 +56,7 @@ export function WalletInbox({
         return;
       }
       if (result.status === "pending" && result.attemptId) {
+        if (result.instruction) setFundingInstruction(result.instruction);
         setFundingAttemptId(result.attemptId);
         setFundingOpen(true);
         return;

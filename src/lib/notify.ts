@@ -127,6 +127,8 @@ export interface NotifyParams {
    * in-app UI already made (order-status.ts, commit 3fc967f).
    */
   orderType?: "delivery" | "pickup" | "dine_in";
+  /** Restaurant says a pickup was handed over; the customer must confirm. */
+  pickupReceiptConfirmation?: boolean;
   /** Which side of the counter reads this copy, for two-sided cron events. */
   audience?: "customer" | "staff";
   /** True on a watchdog re-send — the copy says "still waiting", not "new". */
@@ -283,6 +285,17 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
         forks with it. A pickup order that is ready is the one push in the
         flow that asks the customer to stand up, so it gets its own title.
       */
+      if (p.orderType === "pickup" && p.status === "shipped" && p.pickupReceiptConfirmation) {
+        return fr
+          ? {
+              title: `Commande ${p.reference ?? ""} — confirmez le retrait`,
+              body: `${p.restaurantName ?? "Le restaurant"} indique que vous avez récupéré votre commande. Confirmez seulement si c'est bien le cas.`,
+            }
+          : {
+              title: `Order ${p.reference ?? ""} — confirm pickup`,
+              body: `${p.restaurantName ?? "The restaurant"} says you collected this order. Confirm only if that is correct.`,
+            };
+      }
       if (p.orderType === "pickup" && p.status === "shipped") {
         return fr
           ? {
@@ -1374,6 +1387,9 @@ function pushActionsFor(
       // still asks for the confirming tap, signed in.
       if (params.status === "awaiting_customer") {
         return [{ action: "pay", title: fr ? "Payer" : "Pay now", href }];
+      }
+      if (params.pickupReceiptConfirmation) {
+        return [{ action: "confirm-receipt", title: fr ? "Confirmer le retrait" : "Confirm pickup", href }];
       }
       return undefined;
     case "chat":

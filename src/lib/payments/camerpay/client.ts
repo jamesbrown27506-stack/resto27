@@ -1003,8 +1003,19 @@ export async function confirmTransaction(
    * "pending" no matter what actually happened.
    */
   let effective = hint;
-  const needsFacts = !hint.phone || hint.amount === undefined || hint.direction === undefined;
-  if (needsFacts) {
+  /*
+   * The ledger carries more than the basic facts: its report counter is the
+   * boundary that proves a row was created after THIS request. Payout callers
+   * already know phone, amount and direction, so the older facts-only branch
+   * skipped that counter and matched less strictly than the admin console.
+   */
+  const needsLedger =
+    !hint.phone ||
+    hint.amount === undefined ||
+    hint.direction === undefined ||
+    hint.afterId === undefined ||
+    hint.startedAt === undefined;
+  if (needsLedger) {
     const ledger = await findRequestByReplyTo(needle);
     if (ledger) {
       // Fill only what the caller omitted, so a partial hint (say, a phone

@@ -584,6 +584,7 @@ export function ReservationsClient({
     }
 
     if (result.status === "pending" && result.attemptId) {
+      if (result.instruction) setPaymentInstruction(result.instruction);
       automaticallyPolledAttempts.current.add(result.attemptId);
       startPaymentPolling(result.attemptId, reservation.id, phone.trim());
       return;

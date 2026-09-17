@@ -8,6 +8,7 @@ import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { nextStatus, isTerminal, type OrderStatus } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
 import { orderPaymentInFlight } from "@/lib/payments/collect";
+import { PICKUP_RECEIPT_CONFIRMATION_NOTE } from "@/lib/orders/pickup-receipt";
 
 /**
  * The statuses `notify` has copy for. `awaiting_customer` is included: the
@@ -137,6 +138,13 @@ export async function advanceOrder(
   const next = nextStatus(order.status);
   if (!next) return { ok: false, error: "This order is already finished." };
 
+  if (next === "delivered" && order.type === "pickup") {
+    return {
+      ok: false,
+      error: "Ask the customer to confirm collection instead of closing this pickup directly.",
+    };
+  }
+
   let target: OrderStatus = next;
   let quotedFee: number | undefined;
 
@@ -238,6 +246,62 @@ export async function advanceOrder(
   return { ok: true, status: target };
 }
 
+
+
+/**
+ * Ask the signed-in pickup customer to confirm that the food was handed over.
+ * The status stays shipped: only that customer can close the order as collected.
+ */
+export async function requestPickupReceiptConfirmation(orderId: string): Promise<ActionResult> {
+  const { active, profile } = await requireCapability("orders.advance");
+  const supabase = createAdminClient();
+  const order = await loadOrder(active.restaurantId, orderId);
+
+  if (!order) return { ok: false, error: "Order not found." };
+  if (order.type !== "pickup") return { ok: false, error: "Only pickup orders need collection confirmation." };
+  if (order.status !== "shipped") {
+    return { ok: false, error: "Mark the pickup ready before asking the customer to confirm collection." };
+  }
+  if (!order.customer_id) {
+    return {
+      ok: false,
+      error: "This pickup was placed without a customer account, so Resto237 cannot request an in-app confirmation.",
+    };
+  }
+
+  const { data: existing } = await supabase
+    .from("order_status_history")
+    .select("id")
+    .eq("order_id", order.id)
+    .eq("status", "shipped")
+    .eq("note", PICKUP_RECEIPT_CONFIRMATION_NOTE)
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) return { ok: true };
+
+  await recordHistory(order.id, "shipped", { name: profile.name, email: profile.email }, PICKUP_RECEIPT_CONFIRMATION_NOTE);
+
+  await notify({
+    event: "order_status",
+    tone: "info",
+    customerId: order.customer_id,
+    href: "/orders/" + order.id,
+    params: {
+      status: "shipped",
+      reference: order.reference,
+      restaurantName: active.restaurantName,
+      orderType: "pickup",
+      pickupReceiptConfirmation: true,
+    },
+  });
+
+  refreshOrderScreens();
+  revalidatePath("/m/orders/" + orderId);
+  revalidatePath("/orders");
+  revalidatePath("/orders/" + orderId);
+  return { ok: true };
+}
 
 /**
  * Cancel, with a reason the customer will read.
