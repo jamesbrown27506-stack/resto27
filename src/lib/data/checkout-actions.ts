@@ -124,7 +124,7 @@ export async function getRestaurantOrderCapabilities(
   quartier: string;
   /** Estimated delivery time in minutes, for the delivery hint. */
   deliveryEstimateMin: number;
-  /** The minimum order in XAF, for the basket's progress hint. */
+  /** Delivery-only minimum order in XAF. Pickup has no minimum. */
   minimumOrder: number;
   /**
    * The delivery fee band the restaurant advertises (migration 0035).
@@ -318,7 +318,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
 
   // The restaurant's own floor, checked on food only — a minimum that a
   // delivery fee could satisfy is not a minimum.
-  if (restaurant.minimum_order > 0 && subtotal < restaurant.minimum_order) {
+  if (input.type === "delivery" && restaurant.minimum_order > 0 && subtotal < restaurant.minimum_order) {
     return { ok: false, reason: "belowMinimum", detail: String(restaurant.minimum_order) };
   }
 

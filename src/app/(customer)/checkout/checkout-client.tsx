@@ -650,7 +650,7 @@ export function CheckoutClient({
           {/* Below the minimum, say so BEFORE the customer commits — the
               basket can't be submitted yet, and a surprise at the last click
               is how baskets get abandoned. */}
-          {caps && caps.minimumOrder > 0 && totals.subtotal < caps.minimumOrder && (
+          {type === "delivery" && caps && caps.minimumOrder > 0 && totals.subtotal < caps.minimumOrder && (
             <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning">
               {t("cct.co.belowMinHint", {
                 amount: formatMoney(caps.minimumOrder - totals.subtotal),

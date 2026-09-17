@@ -1,14 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { ArrowRight, ShoppingBag, Store } from "lucide-react";
 import { useCart } from "@/components/cart/cart-provider";
 import { CartLineRow, CartSummary, LoyaltyRedeem, PromoInput } from "@/components/cart/cart-parts";
 import { buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { getRestaurantOrderCapabilities } from "@/lib/data/checkout-actions";
-import { formatMoney } from "@/lib/format/currency";
 import { useLocale } from "@/lib/i18n/use-locale";
 
 /**
@@ -33,22 +30,6 @@ export function CartView({
   // Every line in a basket belongs to one restaurant — you cannot order from
   // two kitchens in one delivery.
   const restaurant = lines[0];
-
-  // The basket lives in localStorage, so the server cannot know the minimum —
-  // ask for it, once, the way checkout does.
-  const [minimumOrder, setMinimumOrder] = useState(0);
-  useEffect(() => {
-    if (!restaurant) return;
-    let alive = true;
-    getRestaurantOrderCapabilities(restaurant.restaurantId).then((c) => {
-      if (alive && c) setMinimumOrder(c.minimumOrder);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [restaurant]);
-
-  const belowMinimum = minimumOrder > 0 && totals.subtotal < minimumOrder;
 
   return (
     <div className="container-page w-full py-8 lg:py-12">
@@ -96,16 +77,6 @@ export function CartView({
           <div className="flex flex-col gap-4 lg:sticky lg:top-24">
             <PromoInput />
             <LoyaltyRedeem balance={balance} minRedeem={minRedeem} pointValue={pointValue} />
-
-            {/* Tell the customer what stands between them and ordering —
-                before they walk to checkout and get refused there. */}
-            {belowMinimum && (
-              <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning">
-                {t("cct.co.belowMinHint", {
-                  amount: formatMoney(minimumOrder - totals.subtotal),
-                })}
-              </p>
-            )}
 
             <CartSummary>
               <Link
