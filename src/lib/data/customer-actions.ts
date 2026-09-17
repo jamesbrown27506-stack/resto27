@@ -96,25 +96,6 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
       error: "Un paiement est en cours pour cette commande. Attendez sa confirmation, ou réessayez dans quelques minutes.",
     };
   }
-
-  if (order.type === "pickup") {
-    const { data: request } = await supabase
-      .from("order_status_history")
-      .select("id")
-      .eq("order_id", orderId)
-      .eq("status", "shipped")
-      .eq("note", PICKUP_RECEIPT_CONFIRMATION_NOTE)
-      .limit(1)
-      .maybeSingle();
-
-    if (!request) {
-      return {
-        ok: false,
-        error: "The restaurant must first request confirmation after handing over your pickup.",
-      };
-    }
-  }
-
   const now = new Date().toISOString();
   const { error: updateError } = await supabase
     .from("orders")
@@ -459,6 +440,25 @@ export async function confirmOwnDelivery(orderId: string): Promise<ActionResult>
           ? "Cette commande est déjà marquée comme reçue."
           : "Vous pourrez confirmer la réception dès que la commande sera en route.",
     };
+  }
+
+
+  if (order.type === "pickup") {
+    const { data: request } = await supabase
+      .from("order_status_history")
+      .select("id")
+      .eq("order_id", orderId)
+      .eq("status", "shipped")
+      .eq("note", PICKUP_RECEIPT_CONFIRMATION_NOTE)
+      .limit(1)
+      .maybeSingle();
+
+    if (!request) {
+      return {
+        ok: false,
+        error: "The restaurant must first request confirmation after handing over your pickup.",
+      };
+    }
   }
 
   const now = new Date().toISOString();
