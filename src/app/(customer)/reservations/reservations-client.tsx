@@ -229,9 +229,14 @@ export function ReservationsClient({
    * charge failed locally while CamerPay is still processing it.
    */
   const startPaymentPolling = useCallback(
-    (attemptId: string, reservationId: string, paymentPhone?: string | null) => {
+    (
+      attemptId: string,
+      reservationId: string,
+      paymentPhone?: string | null,
+      initialInstruction?: PaymentInstruction | null,
+    ) => {
       stopPaymentPolling();
-      setPaymentInstruction(null);
+      setPaymentInstruction(initialInstruction ?? null);
       setPaymentExpiredId(null);
       setPayingId(reservationId);
       setPaymentScreenId(reservationId);
@@ -586,9 +591,13 @@ export function ReservationsClient({
     }
 
     if (result.status === "pending" && result.attemptId) {
-      if (result.instruction) setPaymentInstruction(result.instruction);
       automaticallyPolledAttempts.current.add(result.attemptId);
-      startPaymentPolling(result.attemptId, reservation.id, phone.trim());
+      startPaymentPolling(
+        result.attemptId,
+        reservation.id,
+        phone.trim(),
+        result.instruction,
+      );
       return;
     }
 

@@ -1159,21 +1159,24 @@ export async function confirmTransaction(
       });
       return fromNotification;
     }
+
+    // A pending transaction row and an Orange USSD instruction are expected
+    // to coexist. Keep the report row as evidence that the request exists,
+    // but never discard the handset action the notification report supplied.
+    return { status, amount, rowId, raw: match, instruction: fromNotification.instruction };
   }
 
   // Persist the outcome — and, if this check started from a ledger row, the
   // verdict — so the webhook and any later check carrying only the replyTo
   // reach the same conclusion without the initiating browser session.
-  if (status !== "pending") {
-    await persistResolution(needle, {
-      direction: effective.direction ?? directionFor(match.action),
-      phone: effective.phone ?? rowPhone(match),
-      amount: amount ?? effective.amount,
-      afterId: effective.afterId,
-      startedAt: effective.startedAt,
-      status,
-    });
-  }
+  await persistResolution(needle, {
+    direction: effective.direction ?? directionFor(match.action),
+    phone: effective.phone ?? rowPhone(match),
+    amount: amount ?? effective.amount,
+    afterId: effective.afterId,
+    startedAt: effective.startedAt,
+    status,
+  });
 
   return { status, amount, rowId, raw: match };
 }
