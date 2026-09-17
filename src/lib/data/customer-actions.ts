@@ -179,6 +179,9 @@ export async function respondToDeliveryFee(
   }
 
   const accepted = response === "accept";
+  // The customer now accepts the final price by paying it. This legacy action
+  // must never move an accepted order back to pending and bypass payment.
+  if (accepted) return { ok: false, error: "Pay the accepted total to continue this order." };
   const now = new Date().toISOString();
 
   const patch = accepted
@@ -252,7 +255,7 @@ export async function payOwnOrder(
 
   if (!data) return { ok: false, error: "Commande introuvable." };
   if (data.is_paid) return { ok: true, status: "succeeded" };
-  if (data.payment_method !== "mobile_money" || data.status !== "pending") {
+  if (data.payment_method !== "mobile_money" || data.status !== "awaiting_customer") {
     return { ok: false, error: "Cette commande n'attend pas de paiement en ligne." };
   }
   if (data.type === "delivery" && !data.delivery_fee_set_at) {
@@ -303,6 +306,52 @@ export async function payOwnOrder(
 
   const settled = await settlePayment(initiated.attemptId);
   if (!settled.ok) return { ok: false, error: settled.error ?? "Le paiement n'a pas pu être appliqué." };
+  revalidatePath("/orders");
+  revalidatePath("/orders/" + orderId);
+  revalidatePath("/account");
+  return { ok: true, status: "succeeded" };
+}
+
+/** Pay an accepted order with the signed-in customer's wallet. */
+export async function payOwnOrderWithWallet(
+  orderId: string,
+): Promise<ActionResult & { status?: "succeeded" }> {
+  const user = await requireUser();
+  const supabase = createAdminClient();
+  if (!z.string().uuid().safeParse(orderId).success) return { ok: false, error: "Commande introuvable." };
+
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, reference, restaurant_id, delivery_name, is_paid, payment_method, status")
+    .eq("id", orderId)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+  if (!order) return { ok: false, error: "Commande introuvable." };
+  if (order.is_paid) return { ok: true, status: "succeeded" };
+  if (order.payment_method !== "wallet" || order.status !== "awaiting_customer") {
+    return { ok: false, error: "Cette commande n'attend pas de paiement en ligne." };
+  }
+
+  const { error } = await supabase.rpc("customer_wallet_pay_order", {
+    p_profile_id: user.id,
+    p_order_id: order.id,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error: error.message.includes("insufficient_customer_wallet")
+        ? "Solde du portefeuille insuffisant."
+        : "Le paiement par portefeuille a échoué.",
+    };
+  }
+
+  await notify({
+    event: "new_order",
+    tone: "success",
+    restaurantId: order.restaurant_id,
+    href: "/m/orders/" + order.id,
+    params: { reference: order.reference, customerName: order.delivery_name ?? undefined, paid: true },
+  });
   revalidatePath("/orders");
   revalidatePath("/orders/" + orderId);
   revalidatePath("/account");

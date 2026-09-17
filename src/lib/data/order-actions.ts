@@ -140,7 +140,7 @@ export async function advanceOrder(
   let target: OrderStatus = next;
   let quotedFee: number | undefined;
 
-  if (next === "confirmed" && order.type === "delivery" && order.delivery_fee_set_at === null) {
+  if (next === "awaiting_customer" && order.type === "delivery" && order.delivery_fee_set_at === null) {
     const fee = input.deliveryFee;
     // Zero is a legitimate quote ("we deliver free nearby") — only absence and
     // nonsense are refused. XAF is zero-decimal: whole francs or it is wrong.
@@ -148,20 +148,6 @@ export async function advanceOrder(
       return { ok: false, error: "Quote the delivery fee before confirming." };
     }
 
-    /*
-      THE ADVERTISED CEILING IS ENFORCED HERE, NOT ONLY IN THE DIALOG.
-
-      The restaurant page and checkout now tell the customer "delivery
-      1 000 – 3 000 FCFA" (migration 0035). A promise the customer read
-      before ordering, that the confirmation screen can then ignore, is
-      worse than never having made it — so the refusal lives on the server,
-      where the dialog's own check cannot be the only thing standing between
-      a customer and a fee they were told could not happen.
-
-      Only the CEILING is enforced. Quoting BELOW the advertised minimum is
-      a restaurant choosing to charge a customer less than it promised to,
-      which needs no protection.
-    */
     const { data: band } = await supabase
       .from("restaurants")
       .select("max_delivery_fee")
@@ -172,48 +158,15 @@ export async function advanceOrder(
     if (ceiling > 0 && fee > ceiling) {
       return {
         ok: false,
-        error: `Your advertised maximum is ${ceiling.toLocaleString("fr-CM")} FCFA. The customer saw that before ordering — raise it in your profile first, or quote ${ceiling.toLocaleString("fr-CM")} FCFA or less.`,
+        error: `Your advertised maximum is ${ceiling.toLocaleString("fr-CM")} FCFA. Quote that amount or less.`,
       };
     }
 
     quotedFee = fee;
 
-    /*
-      ─────────────────────────────────────────────────────────────────────
-       A FEE ABOVE ZERO STOPS HERE FOR THE CUSTOMER TO ACCEPT (0040).
-
-       The customer committed to a total that did not include delivery, so
-       raising it is a change to the deal they agreed to. Confirming straight
-       through applied that change unilaterally AND told the kitchen to start
-       — which meant food was cooked for orders customers then cancelled over
-       the price. The refusal and the wasted dish were the same event.
-
-       `awaiting_customer` is where it waits. `acceptDeliveryFee` moves it to
-       `confirmed`, which is still the signal the kitchen starts on, so the
-       kitchen only ever starts on an agreed price.
-
-       A fee of zero skips the gate: "we deliver free" changes nothing the
-       customer agreed to, so there is nothing to accept.
-      ─────────────────────────────────────────────────────────────────────
-    */
-    target = fee > 0 ? "awaiting_customer" : "pending";
-  }
-
-  /*
-    PAYMENT FIRST. A customer's order moves only once their Mobile Money
-    payment is confirmed — accepting, cooking, ready, delivered, every step.
-    The single step allowed before it is the delivery-fee quote above: the
-    customer cannot pay a total nobody has priced yet.
-
-    Keyed on `mobile_money` because that is what every customer order is now
-    placed with; dine-in orders the restaurant takes itself are paid at the
-    table, and older cash orders finish the way they started.
-  */
-  if (order.payment_method === "mobile_money" && !order.is_paid && quotedFee === undefined) {
-    return {
-      ok: false,
-      error: "Waiting for the customer's Mobile Money payment. The order can start once it is confirmed.",
-    };
+    // Restaurant acceptance creates the final payable amount. It never starts
+    // preparation; only a confirmed customer payment moves this order forward.
+    target = "awaiting_customer";
   }
 
   const patch: Record<string, unknown> = { status: target };

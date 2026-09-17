@@ -140,22 +140,46 @@ export function WalletClient({
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">
-      <Card className="border-primary/30">
-        <CardBody className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
-              Solde disponible
-            </p>
-            <p className="tnum mt-1 font-display text-3xl font-bold">
-              {state.balance.toLocaleString("fr-CM")} FCFA
-            </p>
-            <p className="mt-1 text-xs text-text-light">
-              L&apos;argent reçu via la plateforme, disponible pour un retrait immédiat.
-            </p>
-          </div>
-          <Wallet className="size-10 text-primary" aria-hidden />
-        </CardBody>
-      </Card>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card className="border-primary/30 sm:col-span-2">
+          <CardBody className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">Available to withdraw</p>
+              <p className="tnum mt-1 font-display text-3xl font-bold">{state.balance.toLocaleString("fr-CM")} FCFA</p>
+              <p className="mt-1 text-xs text-text-light">Money already settled to this branch wallet.</p>
+            </div>
+            <Wallet className="size-10 text-primary" aria-hidden />
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody>
+            <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">Gross sales collected</p>
+            <p className="tnum mt-1 text-xl font-bold">{state.grossIncome.toLocaleString("fr-CM")} FCFA</p>
+            <p className="mt-1 text-xs text-text-light">Food after discounts, plus delivery where applicable.</p>
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody>
+            <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">Platform payment fees</p>
+            <p className="tnum mt-1 text-xl font-bold text-text-secondary">− {state.paymentFees.toLocaleString("fr-CM")} FCFA</p>
+            <p className="mt-1 text-xs text-text-light">Online payment service fees retained by Resto237.</p>
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody>
+            <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">Commission due</p>
+            <p className="tnum mt-1 text-xl font-bold text-warning">− {state.commissionDue.toLocaleString("fr-CM")} FCFA</p>
+            <p className="mt-1 text-xs text-text-light">Draft and issued statements not yet settled.</p>
+          </CardBody>
+        </Card>
+        <Card>
+          <CardBody>
+            <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">Estimated net after commission</p>
+            <p className="tnum mt-1 text-xl font-bold text-success">{state.estimatedNetIncome.toLocaleString("fr-CM")} FCFA</p>
+            <p className="mt-1 text-xs text-text-light">Available balance less outstanding commission.</p>
+          </CardBody>
+        </Card>
+      </div>
 
       <Panel
         title="Retirer de l'argent"

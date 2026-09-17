@@ -749,107 +749,65 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
     }
   } else if (row.kind === "order" && row.orderId) {
     /*
-     * Claim the unpaid order before crediting it. Only one poll/webhook can
-     * flip false to true, which is the right to move the money once.
+     * The RPC locks the order, credits the restaurant only with the amount it
+     * earned, records the platform payment fee, and marks the order paid in
+     * one database transaction. A callback and a poll can race safely: the
+     * losing caller receives `alreadySettled` and creates no second ledger row.
      */
-    const { data: claimed, error: claimError } = await supabase
+    const { data: order } = await supabase
       .from("orders")
-      .update({ is_paid: true })
+      .select("id, reference, delivery_name, status, payment_method, total, is_paid")
       .eq("id", row.orderId)
       .eq("restaurant_id", row.restaurantId)
-      .eq("status", "pending")
-      .eq("payment_method", "mobile_money")
-      .eq("is_paid", false)
-      .eq("total", row.amount)
-      .select("id, reference, delivery_name")
       .maybeSingle();
 
-    if (claimError) {
-      console.error("[pay:settle:order] claim", claimError.message);
-      error = "Le paiement est confirmé mais la commande n'a pas pu être créditée.";
-      reason = "orderClaimFailed";
-    } else if (!claimed) {
-      const { data: existing } = await supabase
-        .from("orders")
-        .select("id, is_paid")
-        .eq("id", row.orderId)
-        .eq("restaurant_id", row.restaurantId)
-        .maybeSingle();
-      if (existing?.is_paid) ok = true;
-      else {
-        /*
-          The customer's money arrived for an order no longer waiting for it —
-          cancelled while the prompt was still open. Nothing is credited, so
-          the restaurant is not paid for food it will not cook. The attempt is
-          CLOSED with a refund flag instead of being left unsettled: an
-          unsettled success is the reconciler's retry queue, and this one would
-          have been swept on every run, for ever. Support refunds it until
-          payouts are automated.
-        */
-        const stamp = new Date().toISOString();
-        await supabase
-          .from("payment_attempts")
-          .update({
-            settled_at: stamp,
-            raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "orderNotPayable", at: stamp } },
-          })
-          .eq("id", attemptId)
-          .is("settled_at", null);
-        console.error("[pay:settle:order] REFUND DUE — paid for an order no longer payable", attemptId, row.orderId);
-        error = "Cette commande n'attend plus ce paiement.";
-        reason = "orderNotPayable";
-      }
+    if (!order || order.status !== "awaiting_customer" || order.payment_method !== "mobile_money" || Number(order.total) !== row.amount) {
+      const stamp = new Date().toISOString();
+      await supabase
+        .from("payment_attempts")
+        .update({
+          settled_at: stamp,
+          raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "orderNotPayable", at: stamp } },
+        })
+        .eq("id", attemptId)
+        .is("settled_at", null);
+      error = "Cette commande n'attend plus ce paiement.";
+      reason = "orderNotPayable";
     } else {
-      const { error: creditError } = await supabase.rpc("wallet_credit", {
-        p_restaurant_id: row.restaurantId,
-        p_amount: row.amount,
-        p_kind: "payment",
-        p_note: "Commande " + claimed.reference + " (paiement en ligne)",
-        p_reference: claimed.reference,
+      const { data: settlement, error: settlementError } = await supabase.rpc("settle_online_order_payment", {
+        p_order_id: row.orderId,
       });
-
-      if (creditError) {
-        console.error("[pay:settle:order] credit", creditError.message);
-        await supabase
-          .from("orders")
-          .update({ is_paid: false })
-          .eq("id", row.orderId)
-          .eq("status", "pending")
-          .eq("is_paid", true);
-        error = "Le paiement est confirmé mais le crédit du portefeuille a échoué.";
-        reason = "walletCreditFailed";
+      if (settlementError) {
+        console.error("[pay:settle:order] settlement", settlementError.message);
+        error = "Le paiement est confirmé mais la répartition n'a pas pu être enregistrée.";
+        reason = "orderSettlementFailed";
       } else {
-        const { error: receiptError } = await supabase.from("order_payments").insert({
-          order_id: row.orderId,
-          amount: row.amount,
-          method: "mobile_money",
-          collected_by: "camerpay",
-        });
-        if (receiptError) console.error("[pay:settle:order] receipt", receiptError.message);
-        ok = true;
-
-        /*
-          THE KITCHEN'S START SIGNAL. Nothing is cooked before the payment
-          lands, so this is the moment the restaurant hears it may start: a
-          pickup order is first announced here, a delivery order was
-          announced for its fee quote and now hears it is paid. Sent by
-          whichever route settled it — poll, webhook or reconciler.
-        */
-        await notify({
-          event: "new_order",
-          tone: "success",
-          restaurantId: row.restaurantId,
-          href: `/m/orders/${row.orderId}`,
-          params: {
-            reference: claimed.reference as string,
-            customerName: (claimed.delivery_name as string | null) ?? undefined,
+        const alreadySettled = Boolean((settlement as { alreadySettled?: boolean } | null)?.alreadySettled);
+        if (!alreadySettled) {
+          const { error: receiptError } = await supabase.from("order_payments").insert({
+            order_id: row.orderId,
             amount: row.amount,
-            paid: true,
-          },
-        });
+            method: "mobile_money",
+            collected_by: "camerpay",
+          });
+          if (receiptError) console.error("[pay:settle:order] receipt", receiptError.message);
+
+          await notify({
+            event: "new_order",
+            tone: "success",
+            restaurantId: row.restaurantId,
+            href: `/m/orders/${row.orderId}`,
+            params: {
+              reference: order.reference,
+              customerName: order.delivery_name ?? undefined,
+              amount: row.amount,
+              paid: true,
+            },
+          });
+        }
+        ok = true;
       }
-    }
-  } else if (row.kind === "reservation" && row.reservationId) {
+    }  } else if (row.kind === "reservation" && row.reservationId) {
     /**
      * THE CLAIM COMES BEFORE THE MONEY.
      *

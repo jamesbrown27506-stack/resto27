@@ -30,11 +30,11 @@ export const orderStatusDict = defineDict({
     /* ── Shared by every order type ──────────────────────────────────── */
     "ost.pending": "En attente",
     "ost.cancelled": "Annulée",
-    "ost.awaiting_customer": "Frais de livraison à valider",
+    "ost.awaiting_customer": "Paiement à effectuer",
     "ost.desc.pending": "Le restaurant n'a pas encore confirmé votre commande.",
     "ost.desc.cancelled": "Cette commande a été annulée.",
     "ost.desc.awaiting_customer":
-      "Le restaurant a chiffré la livraison. Acceptez ou refusez pour continuer.",
+      "Le restaurant a accepté votre commande. Payez maintenant pour lancer la préparation.",
 
     /* ── Delivery ────────────────────────────────────────────────────── */
     "ost.delivery.confirmed": "Confirmée",
@@ -67,6 +67,7 @@ export const orderStatusDict = defineDict({
     "ost.desc.dine_in.delivered": "Service terminé. Bon appétit !",
 
     /* ── The button that advances an order, keyed by TARGET status ───── */
+    "ost.next.awaiting_customer": "Demander le paiement",
     "ost.next.confirmed": "Confirmer",
     "ost.next.preparing": "Commencer",
     "ost.next.delivery.shipped": "Envoyer",
@@ -80,11 +81,11 @@ export const orderStatusDict = defineDict({
     /* ── Shared by every order type ──────────────────────────────────── */
     "ost.pending": "Pending",
     "ost.cancelled": "Cancelled",
-    "ost.awaiting_customer": "Delivery fee to approve",
+    "ost.awaiting_customer": "Payment required",
     "ost.desc.pending": "The restaurant has not confirmed your order yet.",
     "ost.desc.cancelled": "This order was cancelled.",
     "ost.desc.awaiting_customer":
-      "The restaurant has quoted the delivery. Accept or decline to continue.",
+      "The restaurant accepted your order. Pay now so preparation can start.",
 
     /* ── Delivery ────────────────────────────────────────────────────── */
     "ost.delivery.confirmed": "Confirmed",
@@ -117,6 +118,7 @@ export const orderStatusDict = defineDict({
     "ost.desc.dine_in.delivered": "Service complete. Enjoy!",
 
     /* ── The button that advances an order, keyed by TARGET status ───── */
+    "ost.next.awaiting_customer": "Request payment",
     "ost.next.confirmed": "Confirm",
     "ost.next.preparing": "Start",
     "ost.next.delivery.shipped": "Send out",

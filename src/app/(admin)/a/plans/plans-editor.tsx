@@ -40,6 +40,10 @@ export function PlansEditor({ plans }: { plans: Plan[] }) {
         menuItemLimit: plan.menuItemLimit,
         tableLimit: plan.tableLimit,
         promotionLimit: plan.promotionLimit,
+        includedBranches: plan.includedBranches,
+        staffLimit: plan.staffLimit,
+        scheduledPayouts: plan.scheduledPayouts,
+        prioritySupport: plan.prioritySupport,
         staffManagement: plan.staffManagement,
         analytics: plan.analytics,
         isActive: plan.isActive,
@@ -159,6 +163,15 @@ export function PlansEditor({ plans }: { plans: Plan[] }) {
                   </Field>
                 </div>
 
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Included branches" htmlFor={`branches-${plan.id}`}>
+                    <Input id={`branches-${plan.id}`} inputMode="numeric" min={1} value={String(plan.includedBranches)} onChange={(e) => patch(plan.id, { includedBranches: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
+                  </Field>
+                  <Field label="Staff seats" htmlFor={`staff-limit-${plan.id}`}>
+                    <Input id={`staff-limit-${plan.id}`} inputMode="numeric" min={0} value={String(plan.staffLimit)} onChange={(e) => patch(plan.id, { staffLimit: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+                  </Field>
+                </div>
+
                 <div className="flex flex-col gap-3 border-t border-border pt-4">
                   <Switch
                     label="Staff management"
@@ -169,6 +182,17 @@ export function PlansEditor({ plans }: { plans: Plan[] }) {
                     label="Reports and analytics"
                     checked={plan.analytics}
                     onChange={(e) => patch(plan.id, { analytics: e.target.checked })}
+                  />
+                  <Switch
+                    label="Scheduled payouts"
+                    description="Allows restaurants on this plan to schedule withdrawals."
+                    checked={plan.scheduledPayouts}
+                    onChange={(e) => patch(plan.id, { scheduledPayouts: e.target.checked })}
+                  />
+                  <Switch
+                    label="Priority support"
+                    checked={plan.prioritySupport}
+                    onChange={(e) => patch(plan.id, { prioritySupport: e.target.checked })}
                   />
                   <Switch
                     label="Plan is active"

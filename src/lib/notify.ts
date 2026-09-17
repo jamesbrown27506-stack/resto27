@@ -265,15 +265,14 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
         would bury the only notification in the flow that needs an action.
       */
       if (p.status === "awaiting_customer") {
-        const quoted = p.deliveryFee !== undefined ? money(p.deliveryFee) : "";
         return fr
           ? {
-              title: `Commande ${p.reference ?? ""} — frais de livraison à valider`,
-              body: `${p.restaurantName ?? "Le restaurant"} chiffre la livraison à ${quoted}. Acceptez ou refusez : la préparation ne démarre qu'après votre réponse.`,
+              title: `Commande ${p.reference ?? ""} — paiement demandé`,
+              body: `${p.restaurantName ?? "Le restaurant"} a accepté votre commande. Payez maintenant pour lancer la préparation.`,
             }
           : {
-              title: `Order ${p.reference ?? ""} — delivery fee to approve`,
-              body: `${p.restaurantName ?? "The restaurant"} quotes ${quoted} for delivery. Accept or decline — nothing is cooked until you answer.`,
+              title: `Order ${p.reference ?? ""} — payment requested`,
+              body: `${p.restaurantName ?? "The restaurant"} accepted your order. Pay now so preparation can start.`,
             };
       }
 
@@ -1374,10 +1373,7 @@ function pushActionsFor(
       // links land on the order page with the choice preselected — the page
       // still asks for the confirming tap, signed in.
       if (params.status === "awaiting_customer") {
-        return [
-          { action: "fee-accept", title: fr ? "Accepter" : "Accept", href: `${href}?fee=accept` },
-          { action: "fee-decline", title: fr ? "Refuser" : "Decline", href: `${href}?fee=decline` },
-        ];
+        return [{ action: "pay", title: fr ? "Payer" : "Pay now", href }];
       }
       return undefined;
     case "chat":

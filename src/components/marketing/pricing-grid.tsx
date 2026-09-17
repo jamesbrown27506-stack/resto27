@@ -36,11 +36,14 @@ export function PricingGrid({
         const featured = plan.isFeatured;
 
         const features: { label: string; included: boolean }[] = [
+          { label: `${plan.includedBranches} ${t("plan.branches")}`, included: true },
           { label: `${formatLimit(plan.menuItemLimit)} ${t("plan.menuItems")}`, included: true },
           { label: `${formatLimit(plan.tableLimit)} ${t("plan.tables")}`, included: true },
           { label: `${formatLimit(plan.promotionLimit)} ${t("plan.promotions")}`, included: true },
           { label: t("plan.staff"), included: plan.staffManagement },
           { label: t("plan.analytics"), included: plan.analytics },
+          { label: t("plan.scheduledPayouts"), included: plan.scheduledPayouts },
+          { label: t("plan.prioritySupport"), included: plan.prioritySupport },
           {
             label: `${t("plan.commission")} ${formatPercent(plan.commissionRate)}`,
             included: true,

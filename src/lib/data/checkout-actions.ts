@@ -630,22 +630,8 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     return { ok: false, reason: "failed" };
   }
 
-  if (paymentMethod === "wallet") {
-    const { error: walletError } = await supabase.rpc("customer_wallet_pay_order", {
-      p_profile_id: profile.id,
-      p_order_id: created.id,
-    });
-    if (walletError) {
-      console.error("[checkout:wallet]", walletError.message);
-      await supabase.from("orders").delete().eq("id", created.id);
-      return {
-        ok: false,
-        reason: walletError.message.includes("insufficient_customer_wallet")
-          ? "notEnoughWallet"
-          : "walletUnavailable",
-      };
-    }
-  }
+  // Payment is deliberately deferred until the restaurant confirms that the
+  // requested dishes are available. The selected wallet is charged only then.
 
   // ── Everything below is non-fatal ───────────────────────────────────────
   // The order exists and the customer has been told so. A failed counter or

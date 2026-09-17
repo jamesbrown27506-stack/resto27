@@ -33,7 +33,12 @@ export interface WalletRequestRow {
 }
 
 export interface WalletState {
+  /** Cash currently available for withdrawal. */
   balance: number;
+  grossIncome: number;
+  paymentFees: number;
+  commissionDue: number;
+  estimatedNetIncome: number;
   ledger: WalletLedgerRow[];
   requests: WalletRequestRow[];
 }
@@ -42,7 +47,7 @@ export interface WalletState {
 export async function getWalletState(restaurantId: string): Promise<WalletState> {
   const supabase = createAdminClient();
 
-  const [balanceResult, ledgerResult, requestsResult] = await Promise.all([
+  const [balanceResult, ledgerResult, requestsResult, ordersResult, commissionsResult] = await Promise.all([
     supabase.from("restaurant_wallets").select("balance").eq("restaurant_id", restaurantId).maybeSingle(),
     supabase
       .from("wallet_ledger")
@@ -56,6 +61,8 @@ export async function getWalletState(restaurantId: string): Promise<WalletState>
       .eq("restaurant_id", restaurantId)
       .order("requested_at", { ascending: false })
       .limit(20),
+    supabase.from("orders").select("subtotal, discount_amount, delivery_fee, service_charge").eq("restaurant_id", restaurantId).eq("is_paid", true),
+    supabase.from("commission_statements").select("commission_amount, status").eq("restaurant_id", restaurantId).in("status", ["draft", "issued"]),
   ]);
 
   if (balanceResult.error || ledgerResult.error || requestsResult.error) {
@@ -63,11 +70,21 @@ export async function getWalletState(restaurantId: string): Promise<WalletState>
       "[wallet:getWalletState]",
       balanceResult.error?.message ?? ledgerResult.error?.message ?? requestsResult.error?.message ?? "",
     );
-    return { balance: 0, ledger: [], requests: [] };
+    return { balance: 0, grossIncome: 0, paymentFees: 0, commissionDue: 0, estimatedNetIncome: 0, ledger: [], requests: [] };
   }
 
+  const balance = Number((balanceResult.data as { balance: number } | null)?.balance ?? 0);
+  const paidOrders = (ordersResult.data ?? []) as { subtotal: number; discount_amount: number; delivery_fee: number; service_charge: number }[];
+  const grossIncome = paidOrders.reduce((sum, order) => sum + Math.max(0, Number(order.subtotal) - Number(order.discount_amount)) + Number(order.delivery_fee), 0);
+  const paymentFees = paidOrders.reduce((sum, order) => sum + Number(order.service_charge), 0);
+  const commissionDue = ((commissionsResult.data ?? []) as { commission_amount: number }[]).reduce((sum, statement) => sum + Number(statement.commission_amount), 0);
+
   return {
-    balance: Number((balanceResult.data as { balance: number } | null)?.balance ?? 0),
+    balance,
+    grossIncome,
+    paymentFees,
+    commissionDue,
+    estimatedNetIncome: Math.max(0, balance - commissionDue),
     ledger: ((ledgerResult.data ?? []) as Record<string, unknown>[]).map((r) => ({
       id: String(r.id),
       amount: Number(r.amount),

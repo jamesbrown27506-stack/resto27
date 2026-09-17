@@ -88,6 +88,10 @@ interface DbOrder {
   created_at: string;
 }
 
+function canRevealDeliveryPhone(o: DbOrder): boolean {
+  return o.type === "delivery" && o.is_paid && (["confirmed", "preparing", "shipped"] as string[]).includes(o.status);
+}
+
 function shape(o: DbOrder, items: OrderItemRow[]): ManagerOrder {
   return {
     id: o.id,
@@ -103,7 +107,10 @@ function shape(o: DbOrder, items: OrderItemRow[]): ManagerOrder {
     deliveryFeeSetAt: o.delivery_fee_set_at,
     total: o.total,
     deliveryName: o.delivery_name,
-    deliveryPhone: o.delivery_phone,
+    // Contact is released only for a paid delivery that the restaurant has accepted,
+    // then disappears again after delivery/cancellation. The raw number never reaches
+    // manager client components outside that operational window.
+    deliveryPhone: canRevealDeliveryPhone(o) ? o.delivery_phone : null,
     deliveryAddress: o.delivery_address,
     deliveryQuartier: o.delivery_quartier,
     deliveryLandmark: o.delivery_landmark,

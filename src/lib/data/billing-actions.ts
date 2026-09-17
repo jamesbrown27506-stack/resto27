@@ -29,6 +29,10 @@ export interface PlanInput {
   menuItemLimit: number | null;
   tableLimit: number | null;
   promotionLimit: number | null;
+  includedBranches: number;
+  staffLimit: number;
+  scheduledPayouts: boolean;
+  prioritySupport: boolean;
   staffManagement: boolean;
   analytics: boolean;
   isActive: boolean;
@@ -39,6 +43,12 @@ export async function updatePlan(planId: string, input: PlanInput): Promise<Acti
   const admin = await requireRole("admin");
 
   if (input.monthlyPrice < 0) return { ok: false, error: "Price cannot be negative." };
+  if (!Number.isInteger(input.includedBranches) || input.includedBranches < 1) {
+    return { ok: false, error: "A plan must include at least one branch." };
+  }
+  if (!Number.isInteger(input.staffLimit) || input.staffLimit < 0) {
+    return { ok: false, error: "Staff limit cannot be negative." };
+  }
   if (input.commissionRate < 0 || input.commissionRate > 100) {
     return { ok: false, error: "Commission must be between 0 and 100 %." };
   }
@@ -52,6 +62,10 @@ export async function updatePlan(planId: string, input: PlanInput): Promise<Acti
       menu_item_limit: input.menuItemLimit,
       table_limit: input.tableLimit,
       promotion_limit: input.promotionLimit,
+      included_branches: input.includedBranches,
+      staff_limit: input.staffLimit,
+      scheduled_payouts: input.scheduledPayouts,
+      priority_support: input.prioritySupport,
       staff_management: input.staffManagement,
       analytics: input.analytics,
       is_active: input.isActive,

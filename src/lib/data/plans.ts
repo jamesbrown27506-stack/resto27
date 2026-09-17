@@ -19,6 +19,10 @@ export interface PublicPlan {
   menuItemLimit: number | null;
   tableLimit: number | null;
   promotionLimit: number | null;
+  includedBranches: number;
+  staffLimit: number;
+  scheduledPayouts: boolean;
+  prioritySupport: boolean;
   staffManagement: boolean;
   analytics: boolean;
   isFeatured: boolean;
@@ -49,6 +53,10 @@ export async function listPublicPlans(): Promise<PublicPlan[]> {
     menuItemLimit: p.menu_item_limit,
     tableLimit: p.table_limit,
     promotionLimit: p.promotion_limit,
+    includedBranches: Number(p.included_branches ?? 1),
+    staffLimit: Number(p.staff_limit ?? 0),
+    scheduledPayouts: Boolean(p.scheduled_payouts),
+    prioritySupport: Boolean(p.priority_support),
     staffManagement: p.staff_management,
     analytics: p.analytics,
     isFeatured: p.is_featured,

@@ -3,7 +3,7 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
 /**
  * The order state machine, as the UI sees it.
  *
- *   pending → [awaiting_customer] → confirmed → preparing → shipped → delivered
+ *   pending → awaiting_customer → confirmed → preparing → shipped → delivered
  *      ↓              ↓                 ↓           ↓          ↓
  *                  cancelled (from any non-terminal state)
  *
@@ -13,28 +13,13 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
  * for what button to show.
  *
  * ─────────────────────────────────────────────────────────────────────────
- *  `awaiting_customer` — THE DELIVERY FEE THE CUSTOMER NEVER AGREED TO.
+ *  `awaiting_customer` — ACCEPTED BY THE RESTAURANT, WAITING FOR PAYMENT.
  *
- *  A delivery order is placed before anyone knows what delivering it costs;
- *  the restaurant quotes the fee when it reads the order. That quote used to
- *  be applied unilaterally — the total rose, the order went straight to
- *  `confirmed`, and the customer found out from a notification afterwards.
- *
- *  Which is bad twice over. The customer is charged something they never
- *  accepted, with no remedy but cancelling. And `confirmed` is the signal to
- *  START COOKING — so the kitchen commits food to an order the customer may be
- *  about to refuse over its price. Every disputed fee was a wasted dish.
- *
- *  The order now stops at `awaiting_customer` while they decide. Accepting
- *  moves it to `confirmed`, so the kitchen still starts on exactly the same
- *  signal, and now only ever for an order somebody agreed to pay for.
- *
- *  It is IN the flow, not beside it: the customer's timeline is the honest
- *  place to show that a step is waiting on them.
- *
- *  A fee of zero skips it. "We deliver free" changes nothing the customer
- *  agreed to, so there is nothing to accept.
- * ─────────────────────────────────────────────────────────────────────────
+ *  The restaurant reviews every delivery and pickup order before money is
+ *  requested. For deliveries it sets the delivery fee at that same point.
+ *  The order stops at `awaiting_customer` while the customer pays the final,
+ *  accepted total. Settlement moves it to `confirmed`, which is the kitchen's
+ *  signal to start preparing the food. This applies to pickups as well.
  *
  * This same map renders on /orders/[id], /m/orders, /m/kitchen, /a and every
  * receipt. Defining it once is what stops those five screens drifting apart.
@@ -265,7 +250,6 @@ export function nextStatus(status: OrderStatus): OrderStatus | null {
   if (status === "awaiting_customer") return null;
   const i = ORDER_FLOW.indexOf(status);
   if (i === -1 || i === ORDER_FLOW.length - 1) return null;
-  if (status === "pending") return "confirmed";
   return ORDER_FLOW[i + 1];
 }
 
@@ -281,18 +265,21 @@ export function nextStatus(status: OrderStatus): OrderStatus | null {
  */
 const NEXT_LABEL: Record<OrderType, Partial<Record<OrderStatus, TranslationKey>>> = {
   delivery: {
+    awaiting_customer: "ost.next.awaiting_customer",
     confirmed: "ost.next.confirmed",
     preparing: "ost.next.preparing",
     shipped: "ost.next.delivery.shipped",
     delivered: "ost.next.delivery.delivered",
   },
   pickup: {
+    awaiting_customer: "ost.next.awaiting_customer",
     confirmed: "ost.next.confirmed",
     preparing: "ost.next.preparing",
     shipped: "ost.next.pickup.shipped",
     delivered: "ost.next.pickup.delivered",
   },
   dine_in: {
+    awaiting_customer: "ost.next.awaiting_customer",
     confirmed: "ost.next.confirmed",
     preparing: "ost.next.preparing",
     shipped: "ost.next.dine_in.shipped",
@@ -345,7 +332,7 @@ export function hasRestaurantActions(status: OrderStatus, canAdvance: boolean): 
  * it, so a confirmed pickup order painted the delivery-fee step as done.
  */
 export function orderFlow(type: OrderType): OrderStatus[] {
-  return type === "delivery" ? ORDER_FLOW : ORDER_FLOW.filter((s) => s !== "awaiting_customer");
+  return ORDER_FLOW;
 }
 
 /** Zero-based index into this type's flow; -1 for cancelled. */

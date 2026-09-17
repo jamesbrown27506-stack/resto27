@@ -31,11 +31,11 @@ describe("nextStatus", () => {
     expect(nextStatus("awaiting_customer")).toBeNull();
   });
 
-  it("sends pending to confirmed, not through the new state", () => {
+  it("sends pending to the accepted-and-awaiting-payment state", () => {
     // ORDER_FLOW lists awaiting_customer between the two so the customer's
     // timeline can show it, but advancing is not how you get there —
     // advanceOrder routes a delivery order with a fee above zero into it.
-    expect(nextStatus("pending")).toBe("confirmed");
+    expect(nextStatus("pending")).toBe("awaiting_customer");
   });
 
   it("leaves the rest of the chain alone", () => {
@@ -58,7 +58,7 @@ describe("advanceLabelKey", () => {
   });
 
   it("labels every step the restaurant owns, for delivery", () => {
-    expect(advanceLabelKey("pending", "delivery")).toBe("ost.next.confirmed");
+    expect(advanceLabelKey("pending", "delivery")).toBe("ost.next.awaiting_customer");
     expect(advanceLabelKey("confirmed", "delivery")).toBe("ost.next.preparing");
     expect(advanceLabelKey("preparing", "delivery")).toBe("ost.next.delivery.shipped");
     expect(advanceLabelKey("shipped", "delivery")).toBe("ost.next.delivery.delivered");
@@ -77,22 +77,22 @@ describe("advanceLabelKey", () => {
 
   it("shares the early steps, because they genuinely are the same", () => {
     for (const type of ORDER_TYPES) {
-      expect(advanceLabelKey("pending", type)).toBe("ost.next.confirmed");
+      expect(advanceLabelKey("pending", type)).toBe("ost.next.awaiting_customer");
       expect(advanceLabelKey("confirmed", type)).toBe("ost.next.preparing");
     }
   });
 });
 
 describe("orderFlow", () => {
-  it("keeps the fee step for delivery only", () => {
+  it("keeps the payment step for delivery", () => {
     expect(orderFlow("delivery")).toContain("awaiting_customer");
   });
 
-  it("drops it for pickup and dine-in", () => {
+  it("also includes it for pickup and dine-in", () => {
     // A takeaway has no delivery fee to approve, so showing the step promised
     // a stage that could never arrive.
-    expect(orderFlow("pickup")).not.toContain("awaiting_customer");
-    expect(orderFlow("dine_in")).not.toContain("awaiting_customer");
+    expect(orderFlow("pickup")).toContain("awaiting_customer");
+    expect(orderFlow("dine_in")).toContain("awaiting_customer");
   });
 });
 
@@ -101,7 +101,7 @@ describe("flowIndex", () => {
     // The off-by-one this fixes: with awaiting_customer in the array, a
     // confirmed PICKUP order scored 2 and the timeline painted the
     // delivery-fee step as already done.
-    expect(flowIndex("confirmed", "pickup")).toBe(1);
+    expect(flowIndex("confirmed", "pickup")).toBe(2);
     expect(flowIndex("confirmed", "delivery")).toBe(2);
   });
 

@@ -6,7 +6,7 @@ import { getLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
 import Link from "@/components/layout/public-link";
 import { notFound } from "next/navigation";
-import { BadgeCheck, Bike, CalendarCheck, Clock, MapPin, Phone, Store } from "lucide-react";
+import { BadgeCheck, Bike, CalendarCheck, Clock, MapPin, Store } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
@@ -134,7 +134,6 @@ export default async function RestaurantDetailPage({
     // Every listing carries the "Book a table" button below.
     acceptsReservations: true,
     priceRange,
-    telephone: restaurant.phone,
     address: {
       "@type": "PostalAddress",
       // The quartier belongs in the street address; `addressRegion` is the
@@ -269,15 +268,6 @@ export default async function RestaurantDetailPage({
                   <Clock className="size-3.5 text-primary" aria-hidden />
                   {t("cbr.about", { minutes: restaurant.deliveryEstimateMin })}
                 </span>
-              )}
-              {restaurant.phone && (
-                <a
-                  href={`tel:${restaurant.phone.replace(/\s/g, "")}`}
-                  className="inline-flex items-center gap-1.5 hover:text-primary"
-                >
-                  <Phone className="size-3.5 text-primary" aria-hidden />
-                  {restaurant.phone}
-                </a>
               )}
             </div>
 

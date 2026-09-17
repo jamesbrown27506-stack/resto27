@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Bike, MapPin, PackageCheck, Phone, RotateCcw, Star, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, MapPin, PackageCheck, Phone, RotateCcw, Star, X } from "lucide-react";
 import { OrderStatusBadge } from "@/components/order/order-status-badge";
 import { OrderReceipt, OrderStatusTimeline } from "@/components/order/order-parts";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +21,7 @@ import {
   cancelOwnOrder,
   checkOwnOrderPayment,
   payOwnOrder,
-  respondToDeliveryFee,
+  payOwnOrderWithWallet,
   confirmOwnDelivery,
   rateOwnDelivery,
   submitOwnReview,
@@ -72,8 +72,6 @@ export function OrderDetail({ order }: { order: Order }) {
    */
   const confirmable = order.status === "shipped";
 
-  /** Which fee button is mid-flight, so only that one spins. */
-  const [feeBusy, setFeeBusy] = useState<"accept" | "decline" | null>(null);
 
   /*
     THIS PAGE STAYS LIVE WHILE THE ORDER DOES. Checkout sends people here,
@@ -96,35 +94,19 @@ export function OrderDetail({ order }: { order: Order }) {
     };
   }, [live, router]);
 
-  /*
-    The push banner's Accept / Refuser buttons land here as ?fee=accept or
-    ?fee=decline. The page scrolls to the question and puts focus on the
-    chosen answer — the confirming tap still happens HERE, signed in, with
-    the amount on screen. A notification button must never move money.
-  */
-  const searchParams = useSearchParams();
-  const feeIntent = searchParams.get("fee");
-  const feeCardRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (order.status !== "awaiting_customer") return;
-    if (feeIntent !== "accept" && feeIntent !== "decline") return;
-    feeCardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    feeCardRef.current
-      ?.querySelector<HTMLButtonElement>(`[data-fee="${feeIntent}"]`)
-      ?.focus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const canPay =
-    order.paymentMethod === "mobile_money" &&
     !order.isPaid &&
-    order.status === "pending" &&
-    (order.type !== "delivery" || order.deliveryFeeSetAt !== null);
+    order.status === "awaiting_customer" &&
+    (order.paymentMethod === "mobile_money" || order.paymentMethod === "wallet");
 
   async function startOrderPayment() {
     setPaymentBusy(true);
     setPaymentInstruction(null);
-    const result = await payOwnOrder(order.id, paymentPhone);
+    const result =
+      order.paymentMethod === "wallet"
+        ? await payOwnOrderWithWallet(order.id)
+        : await payOwnOrder(order.id, paymentPhone);
     setPaymentBusy(false);
     if (!result.ok) return toast(result.error, "error");
     if (result.status === "succeeded") {
@@ -132,7 +114,7 @@ export function OrderDetail({ order }: { order: Order }) {
       router.refresh();
       return;
     }
-    if (result.attemptId) {
+    if ("attemptId" in result && result.attemptId) {
       setPaymentAttemptId(result.attemptId);
       setPaymentOpen(true);
     }
@@ -166,15 +148,6 @@ export function OrderDetail({ order }: { order: Order }) {
     }, 4_000);
     return () => clearInterval(timer);
   }, [paymentAttemptId, router, t, toast]);
-  async function respondToFee(response: "accept" | "decline") {
-    setFeeBusy(response);
-    const result = await respondToDeliveryFee(order.id, response);
-    setFeeBusy(null);
-    if (!result.ok) return toast(result.error, "error");
-    toast(t(response === "accept" ? "cor.feeAccepted" : "cor.feeDeclined"), "success");
-    router.refresh();
-  }
-
   async function confirmReceived() {
     setConfirming(true);
     const result = await confirmOwnDelivery(order.id);
@@ -318,60 +291,16 @@ export function OrderDetail({ order }: { order: Order }) {
         ────────────────────────────────────────────────────────────────────
       */}
       {order.status === "awaiting_customer" && (
-        <div ref={feeCardRef} className="mt-6 rounded-lg border-2 border-warning/40 bg-warning-light p-4">
-          <div className="flex items-start gap-4">
-            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-warning text-white">
-              <Bike className="size-5" aria-hidden />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-warning">{t("cor.feeTitle")}</p>
-              <p className="mt-0.5 text-sm leading-relaxed text-text-secondary">
-                {t("cor.feeBody")}
-              </p>
-
-              <dl className="tnum mt-3 flex flex-col gap-1 text-sm">
-                <div className="flex items-baseline justify-between gap-3">
-                  <dt className="text-text-secondary">{t("cor.feeAmount")}</dt>
-                  <dd className="font-semibold">{formatMoney(order.deliveryFee)}</dd>
-                </div>
-                <div className="flex items-baseline justify-between gap-3 border-t border-warning/25 pt-1">
-                  <dt className="font-medium">{t("cor.feeNewTotal")}</dt>
-                  <dd className="font-display text-lg font-bold text-warning">
-                    {formatMoney(order.total)}
-                  </dd>
-                </div>
-              </dl>
-            </div>
-          </div>
-
-          {/* Equal halves that may be narrower than their labels, a 48px
-              floor, and labels allowed to wrap — the same rule the dialog
-              footers follow, so this cannot overflow a 360px screen. */}
-          <div className="mt-4 flex flex-wrap items-stretch gap-3 *:min-h-12 *:min-w-0 *:flex-1">
-            <Button
-              data-fee="decline"
-              variant="outline"
-              disabled={feeBusy !== null}
-              loading={feeBusy === "decline"}
-              onClick={() => void respondToFee("decline")}
-              className="px-4 text-center leading-tight whitespace-normal"
-            >
-              {t("cor.feeDecline")}
-            </Button>
-            <Button
-              data-fee="accept"
-              disabled={feeBusy !== null}
-              loading={feeBusy === "accept"}
-              onClick={() => void respondToFee("accept")}
-              className="px-4 text-center leading-tight whitespace-normal"
-            >
-              {t("cor.feeAccept")}
-            </Button>
-          </div>
-
-          <p className="mt-2 text-center text-xs leading-relaxed text-text-secondary">
-            {t("cor.feeDeclineHint")}
+        <div className="mt-6 rounded-lg border-2 border-info/35 bg-info-light p-4">
+          <p className="font-semibold text-info">{t("cor.paymentRequired")}</p>
+          <p className="mt-1 text-sm leading-relaxed text-text-secondary">
+            {t("ost.desc.awaiting_customer")}
           </p>
+          {order.type === "delivery" && (
+            <p className="tnum mt-3 border-t border-info/20 pt-3 text-sm text-text-secondary">
+              {t("cor.feeAmount")}: <span className="font-semibold text-text">{formatMoney(order.deliveryFee)}</span>
+            </p>
+          )}
         </div>
       )}
 
@@ -381,25 +310,36 @@ export function OrderDetail({ order }: { order: Order }) {
           <p className="mt-1 text-sm leading-relaxed text-text-secondary">
             {t("cor.paymentRequiredBody")}
           </p>
-          <div className="mt-4 grid items-end gap-3 sm:grid-cols-[1fr_auto]">
-            <Field label={t("cor.paymentPhone")} htmlFor="order-payment-phone" required>
-              <Input
-                id="order-payment-phone"
-                type="tel"
-                inputMode="tel"
-                value={paymentPhone}
-                onChange={(event) => setPaymentPhone(event.target.value)}
-              />
-            </Field>
+          {order.paymentMethod === "mobile_money" ? (
+            <div className="mt-4 grid items-end gap-3 sm:grid-cols-[1fr_auto]">
+              <Field label={t("cor.paymentPhone")} htmlFor="order-payment-phone" required>
+                <Input
+                  id="order-payment-phone"
+                  type="tel"
+                  inputMode="tel"
+                  value={paymentPhone}
+                  onChange={(event) => setPaymentPhone(event.target.value)}
+                />
+              </Field>
+              <Button
+                loading={paymentBusy}
+                disabled={paymentBusy || !paymentPhone.trim()}
+                onClick={() => void startOrderPayment()}
+                className="min-h-11"
+              >
+                {t("cor.payNow")}
+              </Button>
+            </div>
+          ) : (
             <Button
               loading={paymentBusy}
-              disabled={paymentBusy || !paymentPhone.trim()}
+              disabled={paymentBusy}
               onClick={() => void startOrderPayment()}
-              className="min-h-11"
+              className="mt-4 min-h-11"
             >
               {t("cor.payNow")}
             </Button>
-          </div>
+          )}
         </div>
       )}
       {confirmable && (

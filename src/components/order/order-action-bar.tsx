@@ -117,20 +117,15 @@ export function OrderActionBar({
     priced. So that one button stays; every other advance becomes a notice
     instead of a button the server would refuse after it was pressed.
   */
-  const quoteStep = next === "confirmed" && order.type === "delivery" && order.deliveryFeeSetAt === null;
   const blockedByPayment =
-    order.paymentMethod === "mobile_money" &&
-    !order.isPaid &&
-    order.status !== "awaiting_customer" &&
-    !isTerminal(order.status) &&
-    !quoteStep;
+    order.status === "awaiting_customer" && !order.isPaid && !isTerminal(order.status);
 
   function advance(fee?: number) {
     if (!next) return;
 
     // The gate. A delivery order cannot reach `confirmed` without a fee.
     if (
-      next === "confirmed" &&
+      next === "awaiting_customer" &&
       order.type === "delivery" &&
       order.deliveryFeeSetAt === null &&
       fee === undefined
