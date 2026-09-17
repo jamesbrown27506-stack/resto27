@@ -50,7 +50,7 @@ function planRows(t: (key: TranslationKey, vars?: Record<string, string | number
     { label: t("mk.pricing.row.staff"), get: (p: PublicPlan) => p.staffManagement },
     { label: t("mk.pricing.row.analytics"), get: (p: PublicPlan) => p.analytics },
     { label: t("mk.pricing.row.kitchen"), get: () => true },
-    { label: t("mk.pricing.row.dineIn"), get: () => true },
+    { label: t("mk.pricing.row.dineIn"), get: (p: PublicPlan) => p.tier !== "starter" },
     { label: t("mk.pricing.row.reservations"), get: () => true },
     { label: t("mk.pricing.row.momo"), get: () => true },
     { label: t("mk.pricing.row.loyalty"), get: () => true },

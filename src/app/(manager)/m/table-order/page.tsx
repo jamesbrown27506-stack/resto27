@@ -6,6 +6,8 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { fetchCategories, fetchMenu, fetchTables } from "@/lib/data/manager";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
+import { onsiteOrdersAllowed } from "@/lib/billing/plan-access";
+import { PlanGateUpsell } from "@/components/billing/plan-gate";
 
 /** The browser tab is a user-visible string too, so it follows the locale. */
 export async function generateMetadata(): Promise<Metadata> {
@@ -16,6 +18,13 @@ export const dynamic = "force-dynamic";
 
 export default async function TableOrderPage() {
   const { active } = await requireCapability("orders.advance");
+  if (!onsiteOrdersAllowed(active)) {
+    return (
+      <ManagerPage titleKey="m.tableOrder.title" descriptionKey="m.tableOrder.subtitle">
+        <PlanGateUpsell feature="mgate.feature.onsiteOrders" plan="mgate.plan.professional" />
+      </ManagerPage>
+    );
+  }
   const supabase = createAdminClient();
 
   const [tables, categories, items, chargeSetting] = await Promise.all([

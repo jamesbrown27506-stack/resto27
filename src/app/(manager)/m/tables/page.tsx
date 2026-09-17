@@ -23,7 +23,7 @@ export default async function TablesPage() {
   ]);
 
   const tier = active.subscriptionState === "locked" ? "starter" : active.planTier;
-  const limit = limits.get(tier)?.tableLimit ?? limits.get("starter")?.tableLimit ?? null;
+  const limit = (limits.get(tier) ?? limits.get("starter"))?.tableLimit ?? null;
 
   const seats = tables.reduce((sum, t) => sum + t.capacity, 0);
 

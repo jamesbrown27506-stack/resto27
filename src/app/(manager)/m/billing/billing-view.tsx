@@ -450,6 +450,8 @@ export function BillingView({
                   key: "commission",
                   label: t("mbl.feat.commission", { rate: formatPercent(plan.commissionRate) }),
                 },
+                { key: "reservations", label: t("mk.pricing.row.reservations") },
+                ...(plan.tier !== "starter" ? [{ key: "onsiteOrders", label: t("mk.pricing.row.dineIn") }] : []),
                 ...(plan.staffManagement ? [{ key: "staff", label: t("mbl.feat.staff") }] : []),
                 ...(plan.analytics ? [{ key: "analytics", label: t("mbl.feat.analytics") }] : []),
               ];

@@ -5,8 +5,6 @@ import { requireCapability } from "@/lib/auth/branch";
 import { can } from "@/lib/capabilities";
 import { createAdminClient } from "@/lib/supabase/server";
 import { fetchReservations, fetchTables } from "@/lib/data/manager";
-import { isFreeMode } from "@/lib/data/billing";
-import { PlanGateUpsell } from "@/components/billing/plan-gate";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { normaliseDepositType } from "@/lib/reservations/deposit";
@@ -19,27 +17,6 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function ReservationsPage() {
   const { active } = await requireCapability("reservations.view");
-
-  /**
-   * TABLE RESERVATIONS ARE A PROFESSIONAL FEATURE (§14.4).
-   *
-   * Same tier rule as reports: a locked tenant drops to Starter (§5), so the
-   * gate holds for them too. Free mode (platform free for now) suppresses the
-   * gate entirely — that is the point of the flag.
-   *
-   * The gate returns BEFORE the queries run, so a Starter tenant browsing the
-   * board costs nothing but the page render.
-   */
-  const tier = active.subscriptionState === "locked" ? "starter" : active.planTier;
-  const freeMode = await isFreeMode();
-
-  if (!freeMode && tier === "starter") {
-    return (
-      <ManagerPage titleKey="m.reservations.title" descriptionKey="m.reservations.subtitle">
-        <PlanGateUpsell feature="mgate.feature.reservations" plan="mgate.plan.professional" />
-      </ManagerPage>
-    );
-  }
 
   /**
    * Today onwards, midnight-anchored.

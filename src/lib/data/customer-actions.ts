@@ -52,6 +52,7 @@ import {
 import { settleReservationRefund } from "@/lib/payments/reservation-refunds";
 import type { CustomerPreferences } from "./customer";
 import type { UploadActionResult } from "./profile-actions";
+import { fetchTableAccess } from "./table-access";
 
 /**
  * Customer-side mutations.
@@ -880,14 +881,12 @@ export async function createOwnReservation(
   */
   const window = slotWindow(when);
 
-  const { data: configuredTables, error: tablesError } = await supabase
-    .from("restaurant_tables")
-    .select("capacity, status")
-    .eq("restaurant_id", restaurantId);
-
-  if (tablesError) return { ok: false, error: "La disponibilité n'a pas pu être vérifiée." };
-
-  const floor = (configuredTables ?? []) as FloorTable[];
+  const tableAccess = await fetchTableAccess(restaurantId).catch(() => null);
+  if (!tableAccess) return { ok: false, error: "La disponibilité n'a pas pu être vérifiée." };
+  const floor: FloorTable[] = tableAccess.tables.map((table) => ({
+    capacity: table.capacity,
+    status: table.planLocked ? "out_of_service" : table.status,
+  }));
 
   // No configured floor means the restaurant manages capacity manually — a
   // walk-in place must not have bookings refused by a floor plan nobody
@@ -1096,13 +1095,12 @@ export async function fetchDayAvailability(input: {
   const { slots } = slotsForDate(hours, date);
   if (slots.length === 0) return { ok: true, slots: [], full: [] };
 
-  const { data: tableRows, error: tablesError } = await supabase
-    .from("restaurant_tables")
-    .select("capacity, status")
-    .eq("restaurant_id", restaurantId);
-
-  if (tablesError) return { ok: false, slots, full: [] };
-  const floor = (tableRows ?? []) as FloorTable[];
+  const tableAccess = await fetchTableAccess(restaurantId).catch(() => null);
+  if (!tableAccess) return { ok: false, slots, full: [] };
+  const floor: FloorTable[] = tableAccess.tables.map((table) => ({
+    capacity: table.capacity,
+    status: table.planLocked ? "out_of_service" : table.status,
+  }));
 
   // An unmanaged floor has no ceiling to enforce, so the second query is
   // pointless — and answering "nothing is full" without it is not a guess,

@@ -107,7 +107,7 @@ export function ReservationBoard({
 
   function row(reservation: Reservation) {
     const seatable = tables.filter(
-      (table) => table.status !== "out_of_service" && table.capacity >= reservation.partySize,
+      (table) => !table.planLocked && table.status !== "out_of_service" && table.capacity >= reservation.partySize,
     );
     const mayCollectDeposit =
       canCollectDeposit &&

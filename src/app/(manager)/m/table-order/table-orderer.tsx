@@ -178,7 +178,7 @@ export function TableOrderer({
           ) : (
             <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
               {tables.map((x) => {
-                const unavailable = x.status === "out_of_service";
+                const unavailable = x.planLocked || x.status === "out_of_service";
                 const selected = tableId === x.id;
 
                 return (
@@ -187,6 +187,7 @@ export function TableOrderer({
                       type="button"
                       disabled={unavailable}
                       aria-pressed={selected}
+                      title={x.planLocked ? t("tbl.frozen") : undefined}
                       onClick={() => {
                         setTableId(x.id);
                         // A new party takes over the table — the old
@@ -207,7 +208,7 @@ export function TableOrderer({
                       <Armchair className="size-4" aria-hidden />
                       <span className="tnum text-sm font-bold">{x.number}</span>
                       <span className="text-[10px] opacity-70">
-                        {t("mt.seatsShort", { count: x.capacity })}
+                        {x.planLocked ? t("tbl.frozen") : t("mt.seatsShort", { count: x.capacity })}
                       </span>
                     </button>
                   </li>

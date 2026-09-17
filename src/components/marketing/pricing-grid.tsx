@@ -48,6 +48,8 @@ export function PricingGrid({
             label: `${t("plan.commission")} ${formatPercent(plan.commissionRate)}`,
             included: true,
           },
+          { label: t("mk.pricing.row.reservations"), included: true },
+          { label: t("mk.pricing.row.dineIn"), included: plan.tier !== "starter" },
           { label: t("plan.kitchen"), included: true },
           { label: t("plan.mobileMoney"), included: true },
         ];

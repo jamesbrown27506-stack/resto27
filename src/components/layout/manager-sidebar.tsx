@@ -97,7 +97,7 @@ export function ManagerSidebar({
                   const blocked = locked && !item.allowLocked;
                   // Free mode means the platform is free for everyone: the
                   // plan locks disappear with the gates that would have shown.
-                  const gated = item.planGated && !planIsPaid && !freeMode;
+                  const gated = item.planGated && !planIsPaid && (!freeMode || item.paidOnly);
 
                   const badgeKind = BADGED_LINKS[item.href];
                   const badgeCount = badgeKind ? navCounts[badgeKind] : 0;

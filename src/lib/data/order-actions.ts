@@ -9,6 +9,10 @@ import { nextStatus, isTerminal, type OrderStatus } from "@/lib/format/order-sta
 import { notify } from "@/lib/notify";
 import { orderPaymentInFlight } from "@/lib/payments/collect";
 import { PICKUP_RECEIPT_CONFIRMATION_NOTE } from "@/lib/orders/pickup-receipt";
+import { onsiteOrdersAllowed } from "@/lib/billing/plan-access";
+import { DICTIONARIES } from "@/lib/i18n/dictionaries";
+import { getLocale } from "@/lib/i18n/locale-server";
+import { fetchTableAccess } from "./table-access";
 
 /**
  * The statuses `notify` has copy for. `awaiting_customer` is included: the
@@ -410,19 +414,20 @@ export async function createTableOrder(input: {
   guests?: number;
 }): Promise<ActionResult & { orderId?: string; reference?: string }> {
   const { active, profile } = await requireCapability("orders.advance");
+  if (!onsiteOrdersAllowed(active)) {
+    return { ok: false, error: DICTIONARIES[await getLocale()]["mgate.onsiteRequired"] };
+  }
   const supabase = createAdminClient();
 
   if (input.lines.length === 0) return { ok: false, error: "The ticket is empty." };
 
   // The table must be this branch's. Its number is snapshotted onto the order.
-  const { data: table } = await supabase
-    .from("restaurant_tables")
-    .select("id, number, status, capacity")
-    .eq("id", input.tableId)
-    .eq("restaurant_id", active.restaurantId)
-    .maybeSingle();
+  const access = await fetchTableAccess(active.restaurantId).catch(() => null);
+  if (!access) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.accessError"] };
+  const table = access.tables.find((table) => table.id === input.tableId);
 
   if (!table) return { ok: false, error: "No such table at this branch." };
+  if (table.planLocked) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.frozenError"] };
   if (table.status === "out_of_service") return { ok: false, error: "That table is out of service." };
 
   const guests = input.guests ?? null;

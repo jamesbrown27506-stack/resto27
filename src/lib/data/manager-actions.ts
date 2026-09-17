@@ -19,6 +19,9 @@ import {
 import type { CustomerReservationStatus } from "@/lib/format/reservation-status";
 import type { BranchRole } from "@/lib/capabilities";
 import type { ActionResult } from "./admin-actions";
+import { fetchTableAccess } from "./table-access";
+import { DICTIONARIES } from "@/lib/i18n/dictionaries";
+import { getLocale } from "@/lib/i18n/locale-server";
 
 /**
  * Restaurant-side mutations.
@@ -1037,14 +1040,11 @@ export async function decideReservation(
   }
 
   if (decision === "confirmed" && input.tableId) {
-    const { data: table } = await supabase
-      .from("restaurant_tables")
-      .select("id, capacity, status")
-      .eq("id", input.tableId)
-      .eq("restaurant_id", active.restaurantId)
-      .maybeSingle();
+    const access = await fetchTableAccess(active.restaurantId).catch(() => null);
+    if (!access) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.accessError"] };
+    const table = access.tables.find((table) => table.id === input.tableId);
 
-    if (!table || table.status === "out_of_service" || table.capacity < booking.party_size) {
+    if (!table || table.planLocked || table.status === "out_of_service" || table.capacity < booking.party_size) {
       return { ok: false, error: "That table is unavailable or too small for this party." };
     }
 
@@ -1359,6 +1359,14 @@ export async function upsertTable(input: {
   }
 
   const supabase = createAdminClient();
+  const access = await fetchTableAccess(active.restaurantId).catch(() => null);
+  if (!access) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.accessError"] };
+  if (input.id) {
+    const table = access.tables.find((table) => table.id === input.id);
+    if (!table || table.planLocked) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.frozenError"] };
+  } else if (access.limit !== null && access.tables.length >= access.limit) {
+    return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.limitError"] };
+  }
 
   const { error } = input.id
     ? await supabase
@@ -1423,17 +1431,12 @@ export async function bulkCreateTables(input: {
 
   const supabase = createAdminClient();
 
-  const { data: existing, error: readError } = await supabase
-    .from("restaurant_tables")
-    .select("number")
-    .eq("restaurant_id", active.restaurantId);
-
-  if (readError) {
-    console.error("[manager:bulkCreateTables] read", readError.message);
-    return { ok: false, error: "Could not read your existing tables." };
+  const access = await fetchTableAccess(active.restaurantId).catch(() => null);
+  if (!access) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.accessError"] };
+  if (access.limit !== null && access.tables.length + input.count > access.limit) {
+    return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.limitError"] };
   }
-
-  const taken = new Set((existing ?? []).map((t) => String(t.number).trim()));
+  const taken = new Set(access.tables.map((table) => String(table.number).trim()));
 
   // Walk upwards from 1, skipping every number already in use, until we have
   // `count` free ones. The bound stops a floor numbered "A1".."A9" (nothing
@@ -1470,6 +1473,10 @@ export async function setTableStatus(
 ): Promise<ActionResult> {
   const { active } = await requireCapability("tables.manage");
   const supabase = createAdminClient();
+  const access = await fetchTableAccess(active.restaurantId).catch(() => null);
+  if (!access) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.accessError"] };
+  const table = access.tables.find((table) => table.id === id);
+  if (!table || table.planLocked) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.frozenError"] };
 
   const { error } = await supabase
     .from("restaurant_tables")

@@ -19,6 +19,8 @@ export interface NavItem {
   capability?: Capability;
   /** Only reachable on a paid plan — rendered with a lock affordance. */
   planGated?: boolean;
+  /** Requires an actual paid tier, even during a platform-wide free period. */
+  paidOnly?: boolean;
   /** Reachable while the tenant is locked out (§5, rule 3). */
   allowLocked?: boolean;
   /** Match child routes too, e.g. /m/orders/123 highlights /m/orders. */
@@ -51,16 +53,15 @@ export const MANAGER_NAV: NavGroup[] = [
         labelKey: "nav.m.tableOrder",
         icon: "ConciergeBell",
         capability: "orders.advance",
+        planGated: true,
+        paidOnly: true,
       },
       {
         href: "/m/reservations",
         labelKey: "nav.m.reservations",
         icon: "CalendarCheck",
         capability: "reservations.view",
-        // Table reservations are a Professional feature on the pricing page;
-        // Starter keeps "basic reservations". The page itself renders the
-        // upgrade prompt — this only shows the lock.
-        planGated: true,
+        // All packages may manage the reservations customers can submit.
       },
       { href: "/m/tables", labelKey: "nav.m.tables", icon: "Armchair", capability: "tables.view" },
       // No capability gate: every active staff member may answer customers.

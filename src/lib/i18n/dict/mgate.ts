@@ -3,7 +3,7 @@ import { defineDict } from "../define";
 /**
  * The plan-gate screens (a shared "upgrade" prompt).
  *
- * Shown by /m/reports, /m/reservations and /m/staff when the tenant's plan
+ * Shown by /m/reports, /m/table-order and /m/staff when the tenant's plan
  * does not include the feature — and suppressed entirely while the platform
  * is in free mode. The copy leans into what the tenant is missing rather
  * than what they have: "unlock" language, not "you are blocked" language.
@@ -21,6 +21,8 @@ export const mgateDict = defineDict({
     "mgate.cta": "Voir les formules",
 
     "mgate.feature.reservations": "Les réservations de tables",
+    "mgate.feature.onsiteOrders": "Les commandes sur place",
+    "mgate.onsiteRequired": "Les commandes sur place nécessitent une formule Professional ou Enterprise.",
     "mgate.feature.reports": "Les rapports et l'analytique",
     "mgate.feature.staff": "La gestion du personnel",
 
@@ -34,6 +36,8 @@ export const mgateDict = defineDict({
     "mgate.cta": "See the plans",
 
     "mgate.feature.reservations": "Table reservations",
+    "mgate.feature.onsiteOrders": "On-site orders",
+    "mgate.onsiteRequired": "On-site orders require a Professional or Enterprise plan.",
     "mgate.feature.reports": "Reports and analytics",
     "mgate.feature.staff": "Staff management",
 

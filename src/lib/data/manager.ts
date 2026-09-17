@@ -2,6 +2,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { BranchRole } from "@/lib/capabilities";
 import type { CustomerReservationStatus } from "@/lib/format/reservation-status";
+import { fetchTableAccess } from "./table-access";
 
 /**
  * Reads for the restaurant dashboard.
@@ -400,23 +401,19 @@ export interface RestaurantTable {
   /** People sitting right now, from the newest open dine-in order on the
    *  table. Null when nobody is seated (or the waiter never said). */
   activePartySize: number | null;
+  /** Frozen by the package cap; the stored floor status remains unchanged. */
+  planLocked: boolean;
 }
 
 export async function fetchTables(restaurantId: string): Promise<RestaurantTable[]> {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase
-    .from("restaurant_tables")
-    .select("id, number, capacity, status")
-    .eq("restaurant_id", restaurantId)
-    .order("number");
-
-  if (error) {
-    console.error("[manager:fetchTables]", error.message);
-    return [];
-  }
-
-  const tables = (data ?? []) as Omit<RestaurantTable, "activePartySize">[];
+  const access = await fetchTableAccess(restaurantId).catch((error) => {
+    console.error("[manager:fetchTables]", error);
+    return null;
+  });
+  if (!access) return [];
+  const tables = access.tables;
 
   // Occupancy comes from the open dine-in orders, not from a join: orders
   // carry the table NUMBER as a snapshot (the waiter could rename the table

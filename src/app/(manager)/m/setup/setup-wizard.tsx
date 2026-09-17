@@ -174,7 +174,7 @@ export function SetupWizard({
       // current for the pages navigated to afterwards.
       setTables((prev) => [
         ...prev,
-        { id: crypto.randomUUID(), number, capacity, status: "available", activePartySize: null },
+        { id: crypto.randomUUID(), number, capacity, status: "available", activePartySize: null, planLocked: false },
       ]);
       router.refresh();
       toast(t("stp.tables.suggest.added"), "success");
@@ -212,6 +212,7 @@ export function SetupWizard({
             capacity: seats,
             status: "available",
             activePartySize: null,
+            planLocked: false,
           });
         }
         return [...prev, ...created];

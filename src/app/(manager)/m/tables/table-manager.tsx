@@ -64,9 +64,8 @@ export function TableManager({
         </div>
       )}
 
-      {/* At the ceiling, existing tables keep working and only creation is
-          refused (§5). Breaking a restaurant's floor plan because a renewal is
-          late is how you lose a tenant mid-service. */}
+      {/* Excess tables are preserved, but unavailable for new activity until
+          the restaurant upgrades to a package that includes them. */}
       {atLimit && (
         <div
           role="status"
@@ -77,7 +76,7 @@ export function TableManager({
             <span className="font-semibold">
               {t("tbl.limitReached", { used: tables.length, limit: limit ?? 0 })}
             </span>{" "}
-            <span className="opacity-85">{t("tbl.limitBody")}</span>
+            <span className="opacity-85">{t("tbl.limitBody", { limit: limit ?? 0 })}</span>
           </p>
           <Link href="/m/billing" className={buttonClasses({ size: "sm" })}>
             {t("tbl.changePlan")}
@@ -101,6 +100,7 @@ export function TableManager({
               className={cn(
                 "rounded-lg border border-border bg-surface p-5",
                 table.status === "out_of_service" && "opacity-70",
+                table.planLocked && "border-dashed bg-surface-2 opacity-55 grayscale",
               )}
             >
               <div className="flex items-start justify-between gap-3">
@@ -124,12 +124,16 @@ export function TableManager({
                     </p>
                   )}
                 </div>
-                <Armchair className="size-5 shrink-0 text-primary" aria-hidden />
+                {table.planLocked ? (
+                  <Lock className="size-5 shrink-0 text-text-light" aria-hidden />
+                ) : (
+                  <Armchair className="size-5 shrink-0 text-primary" aria-hidden />
+                )}
               </div>
 
               <div className="mt-4">
-                <Badge tone={STATUS_TONE[table.status]}>
-                  {t(`tbl.status.${table.status}` as TranslationKey)}
+                <Badge tone={table.planLocked ? "neutral" : STATUS_TONE[table.status]}>
+                  {table.planLocked ? t("tbl.frozen") : t(`tbl.status.${table.status}` as TranslationKey)}
                 </Badge>
               </div>
 
@@ -141,7 +145,7 @@ export function TableManager({
                   <Select
                     id={`status-${table.id}`}
                     value={table.status}
-                    disabled={pending}
+                    disabled={pending || table.planLocked}
                     onChange={(e) =>
                       run(
                         () => setTableStatus(table.id, e.target.value as RestaurantTable["status"]),
@@ -160,6 +164,7 @@ export function TableManager({
                     variant="ghost"
                     size="icon-sm"
                     aria-label={`${t("common.edit")} ${table.number}`}
+                    disabled={table.planLocked}
                     onClick={() => setEditing({ id: table.id, number: table.number, capacity: table.capacity })}
                   >
                     <Pencil className="size-3.5" aria-hidden />
