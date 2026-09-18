@@ -716,7 +716,7 @@ export async function deleteOption(optionId: string): Promise<ActionResult> {
  * If the address already has an account, the staff row is linked to it
  * immediately and they can simply sign in — no invitation to accept. If it
  * does not, a token is issued and the row waits at `invited` until they
- * register. Both paths end in a row on this branch's roster, which is what the
+ * register and accept the invitation. Both paths end in a row on this branch's roster, which is what the
  * person doing the inviting expects to see.
  */
 export async function inviteStaff(input: {
@@ -744,6 +744,7 @@ export async function inviteStaff(input: {
     .is("deleted_at", null)
     .maybeSingle();
 
+  let invitationPath = "/login?next=%2Fm";
   if (existingProfile) {
     const { data: already } = await supabase
       .from("restaurant_staff")
@@ -783,10 +784,10 @@ export async function inviteStaff(input: {
       return { ok: false, error: "Could not add them to the team." };
     }
   } else {
-    // randomUUID, not Math.random: this token is a credential — anyone holding
-    // it joins the payroll. It is single-use and expires in seven days,
-    // because invite links get forwarded.
+    // Single-use, seven-day token. Acceptance also requires the verified
+    // invited email, so forwarding this link does not grant staff access.
     const token = randomUUID();
+    invitationPath = `/invite/${token}`;
     const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     const { error } = await supabase.from("restaurant_staff").insert({
@@ -823,11 +824,13 @@ export async function inviteStaff(input: {
       "",
       `${profile.name} vous invite à rejoindre l'équipe de ${active.restaurantName} sur Resto237.`,
       "",
-      `Créez votre compte avec cette adresse (${email}) pour accéder au tableau de bord.`,
+      existingProfile
+        ? `Connectez-vous avec cette adresse (${email}) pour accéder à votre espace restaurant.`
+        : `Ouvrez votre invitation ci-dessous. Connectez-vous ou créez un compte avec cette adresse (${email}), confirmez votre e-mail, puis acceptez l’invitation dans Mon compte.`,
       "",
       "— Resto237",
     ].join("\n"),
-    action: { label: "Créer mon compte", url: await absoluteUrl("/register") },
+    action: { label: existingProfile ? "Accéder à mon espace" : "Ouvrir mon invitation", url: await absoluteUrl(invitationPath) },
     locale: "fr",
   });
 

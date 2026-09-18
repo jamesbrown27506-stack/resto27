@@ -18,6 +18,7 @@ import {
   signUpRestaurantSchema,
 } from "./schemas";
 import { getManagerRestaurantRejection, type RejectionReason } from "./session";
+import { syncStaffRole } from "./staff-access";
 import { signInFailureReason } from "./sign-in-failure";
 
 /**
@@ -204,6 +205,13 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   if (profile.status === "pending") {
     await supabase.auth.signOut();
     return { ok: false, reason: profile.role === "manager" ? "pending-manager" : "pending" };
+  }
+
+  try {
+    profile.role = await syncStaffRole(profile);
+  } catch {
+    await supabase.auth.signOut();
+    return { ok: false, reason: "unavailable" };
   }
 
   if (profile.role === "manager") {

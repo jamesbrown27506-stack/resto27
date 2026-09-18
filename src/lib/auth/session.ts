@@ -1,3 +1,4 @@
+import { syncStaffRole } from "./staff-access";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
@@ -161,7 +162,7 @@ export const getCurrentProfile = cache(async (): Promise<AuthProfile | null> => 
     email: data.email,
     phone: data.phone,
     avatarUrl: data.avatar_url,
-    role: data.role as UserRole,
+    role: await syncStaffRole(data) as UserRole,
     status: data.status as UserStatus,
     deletedAt: data.deleted_at,
   };

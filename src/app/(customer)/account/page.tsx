@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { fetchMyStaffInvitations } from "@/lib/auth/staff-invitations";
 import { CalendarCheck, Gift, Heart, ReceiptText, ShoppingBag } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { OrderCard } from "@/components/order/order-parts";
@@ -30,6 +31,7 @@ export default async function AccountPage() {
   // client hook, which cannot run here (see lib/i18n/locale-server).
   const t = await getTranslator();
   const locale = await getLocale();
+  const staffInvitations = await fetchMyStaffInvitations();
 
   const [orders, reservations, favoriteIds, restaurants, loyalty] = await Promise.all([
     fetchCustomerOrders(user.id),
@@ -59,6 +61,14 @@ export default async function AccountPage() {
         </Link>
       }
     >
+      {staffInvitations.map((invite) => {
+        const restaurant = Array.isArray(invite.restaurants) ? invite.restaurants[0] : invite.restaurants;
+        return <div key={invite.id} className="mb-4 rounded-md border border-border bg-surface-2 p-4">
+          <p className="mb-3 font-semibold">{locale === "en" ? "Restaurant team invitation" : "Invitation à rejoindre une équipe"} : {restaurant?.name}</p>
+          <Link href={`/invite/${invite.invite_token}`} className={buttonClasses()}>{locale === "en" ? "View and accept invitation" : "Voir et accepter l’invitation"}</Link>
+        </div>;
+      })}
+      {user.role === "manager" && <Link href="/m" className={buttonClasses({ className: "mb-4" })}>{locale === "en" ? "Open my restaurant workspace" : "Ouvrir mon espace restaurant"}</Link>}
       {/* Straight to the figures, like the restaurant and admin dashboards —
           the account menu is the sidebar on desktop and the "Compte" tab on
           a phone, not a grid of links above the content. */}
