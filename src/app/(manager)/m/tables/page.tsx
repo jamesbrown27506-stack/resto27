@@ -32,7 +32,7 @@ export default async function TablesPage() {
       titleKey="m.tables.title"
       description={`${tables.length} table${tables.length > 1 ? "s" : ""} · ${seats} place${seats > 1 ? "s" : ""}`}
     >
-      <TableManager tables={tables} limit={limit} canManage={can(active.role, "tables.manage")} />
+      <TableManager tables={tables} limit={limit} canManage={can(active.role, "tables.manage")} qrEnabled={active.planTier === "enterprise" && active.subscriptionState !== "locked" && tables.some((table) => Boolean(table.publicToken))} />
     </ManagerPage>
   );
 }

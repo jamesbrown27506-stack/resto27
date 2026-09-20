@@ -82,3 +82,6 @@ loadtest.mjs
 # passwords and session storage — never commit them.
 /.chrome-mobile-qa/
 /.edge-mobile-qa*/
+
+# Supabase CLI machine-local project metadata.
+/supabase/.temp/

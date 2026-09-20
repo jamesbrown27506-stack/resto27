@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import { Armchair, Lock, Pencil, Plus, Users } from "lucide-react";
+import { Armchair, Lock, Pencil, Plus, QrCode, Users } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -28,13 +28,15 @@ export function TableManager({
   tables,
   limit,
   canManage,
+  qrEnabled,
 }: {
   tables: RestaurantTable[];
   /** null = unlimited */
   limit: number | null;
   canManage: boolean;
+  qrEnabled: boolean;
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState<{ id?: string; number: string; capacity: number } | null>(null);
@@ -52,7 +54,8 @@ export function TableManager({
   return (
     <>
       {canManage && (
-        <div className="mb-5 flex justify-end">
+        <div className="mb-5 flex flex-wrap justify-end gap-2">
+          {qrEnabled && <Link href="/m/tables/print" className={buttonClasses({ variant: "outline" })}><QrCode className="size-4" /> {locale === "fr" ? "Imprimer les QR codes" : "Print table QR cards"}</Link>}
           <Button
             disabled={atLimit}
             title={atLimit ? t("tbl.planLimit") : undefined}
@@ -137,6 +140,9 @@ export function TableManager({
                 </Badge>
               </div>
 
+              {qrEnabled && !table.planLocked && table.publicToken && (
+                <a href={`/api/table-qr/${table.publicToken}`} download={`table-${table.number}.svg`} className={buttonClasses({ variant: "outline", size: "sm", className: "mt-4 w-full" })}><QrCode className="size-3.5" /> {locale === "fr" ? "Télécharger le QR" : "Download QR"}</a>
+              )}
               {canManage && (
                 <div className="mt-4 flex items-center gap-2 border-t border-border pt-3">
                   <label className="sr-only" htmlFor={`status-${table.id}`}>

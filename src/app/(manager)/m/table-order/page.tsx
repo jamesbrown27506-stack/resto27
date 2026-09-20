@@ -8,6 +8,9 @@ import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { onsiteOrdersAllowed } from "@/lib/billing/plan-access";
 import { PlanGateUpsell } from "@/components/billing/plan-gate";
+import { fetchDiningFloor } from "@/lib/data/dining-actions";
+import { can } from "@/lib/capabilities";
+import { DiningFloor, type DiningFloorSession } from "./dining-floor";
 
 /** The browser tab is a user-visible string too, so it follows the locale. */
 export async function generateMetadata(): Promise<Metadata> {
@@ -27,15 +30,19 @@ export default async function TableOrderPage() {
   }
   const supabase = createAdminClient();
 
-  const [tables, categories, items, chargeSetting] = await Promise.all([
+  const [tables, categories, items, chargeSetting, diningSessions] = await Promise.all([
     fetchTables(active.restaurantId),
     fetchCategories(active.restaurantId),
     fetchMenu(active.restaurantId),
     supabase.from("settings").select("value").eq("key", "service_charge_percent").maybeSingle(),
+    active.planTier === "enterprise" ? fetchDiningFloor(active.restaurantId) : Promise.resolve([]),
   ]);
 
   return (
     <ManagerPage titleKey="m.tableOrder.title" descriptionKey="m.tableOrder.subtitle">
+      {active.planTier === "enterprise" && (
+        <DiningFloor sessions={diningSessions as unknown as DiningFloorSession[]} canFinance={can(active.role, "finance.manage")} />
+      )}
       <TableOrderer
         tables={tables}
         categories={categories}

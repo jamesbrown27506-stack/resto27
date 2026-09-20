@@ -403,6 +403,8 @@ export interface RestaurantTable {
   activePartySize: number | null;
   /** Frozen by the package cap; the stored floor status remains unchanged. */
   planLocked: boolean;
+  /** Opaque locator embedded in this table’s printable QR code. */
+  publicToken?: string | null;
 }
 
 export async function fetchTables(restaurantId: string): Promise<RestaurantTable[]> {
@@ -414,6 +416,14 @@ export async function fetchTables(restaurantId: string): Promise<RestaurantTable
   });
   if (!access) return [];
   const tables = access.tables;
+
+  // Optional until migration 0054 is applied. Keeping it separate prevents an
+  // unapplied QR migration from making the existing floor disappear.
+  const { data: qrRows } = await supabase
+    .from("restaurant_tables")
+    .select("id, public_token")
+    .eq("restaurant_id", restaurantId);
+  const qrById = new Map(((qrRows ?? []) as { id: string; public_token: string }[]).map((row) => [row.id, row.public_token]));
 
   // Occupancy comes from the open dine-in orders, not from a join: orders
   // carry the table NUMBER as a snapshot (the waiter could rename the table
@@ -437,7 +447,7 @@ export async function fetchTables(restaurantId: string): Promise<RestaurantTable
     }
   }
 
-  return tables.map((t) => ({ ...t, activePartySize: byNumber.get(t.number)?.party ?? null }));
+  return tables.map((t) => ({ ...t, publicToken: qrById.get(t.id) ?? null, activePartySize: byNumber.get(t.number)?.party ?? null }));
 }
 
 /* ── Promotions ────────────────────────────────────────────────────────── */

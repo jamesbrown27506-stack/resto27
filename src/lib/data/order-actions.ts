@@ -13,6 +13,7 @@ import { onsiteOrdersAllowed } from "@/lib/billing/plan-access";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { fetchTableAccess } from "./table-access";
+import { canCloseDiningOrder } from "@/lib/dining/access";
 
 /**
  * The statuses `notify` has copy for. `awaiting_customer` is included: the
@@ -141,6 +142,20 @@ export async function advanceOrder(
 
   const next = nextStatus(order.status);
   if (!next) return { ok: false, error: "This order is already finished." };
+
+  if (next === "delivered" && order.type === "dine_in") {
+    // Separate read keeps pre-0054 databases compatible: a missing dining_sessions
+    // table behaves like an ordinary waiter-entered dine-in order.
+    const { data: diningSession } = await supabase
+      .from("dining_sessions")
+      .select("id")
+      .eq("order_id", order.id)
+      .in("status", ["open", "payment_requested"])
+      .maybeSingle();
+    if (!canCloseDiningOrder(Boolean(diningSession), order.is_paid)) {
+      return { ok: false, error: "Collect or request payment before closing this table." };
+    }
+  }
 
   if (next === "delivered" && order.type === "pickup") {
     return {
@@ -494,14 +509,10 @@ export async function createTableOrder(input: {
     });
   }
 
-  // Service charge from settings — the platform rule, not a hardcoded 5.
-  const { data: chargeSetting } = await supabase
-    .from("settings")
-    .select("value")
-    .eq("key", "service_charge_percent")
-    .maybeSingle();
-  const chargePercent = Number(chargeSetting?.value ?? 5) || 0;
-  const serviceCharge = Math.round((subtotal * chargePercent) / 100);
+  // Cash / pay-at-restaurant does not pass through the payment gateway.
+  // The online service fee is added only if staff later requests Mobile Money.
+  const chargePercent = 0;
+  const serviceCharge = 0;
 
   const reference = `CMD-${randomUUID().slice(0, 6).toUpperCase()}`;
 
