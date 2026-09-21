@@ -63,7 +63,6 @@ self.addEventListener("push", (event) => {
   */
   event.waitUntil(
     deliver(data).catch((error) => {
-      // eslint-disable-next-line no-console
       console.error("[sw] deliver failed", error);
       return self.registration.showNotification(data.title, {
         body: data.body || "",
@@ -253,57 +252,48 @@ async function refreshAppBadge() {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  // A button tap carries its own deep link; the banner body keeps the main one.
-  const url =
+  const raw =
     (event.action && event.notification.data?.actionUrls?.[event.action]) ||
-    event.notification.data?.url ||
-    "/";
-
-  event.waitUntil(
-    self.clients
-      .matchAll({ type: "window", includeUncontrolled: true })
-      .then(async (windowClients) => {
-        const target = new URL(url, self.location.origin);
-        // Pathname AND query — "/messages?c=abc" is a different place than
-        // "/messages?c=def". Hash stays ignored: navigating over a hash-only
-        // difference would reset scroll for nothing.
-        const targetKey = target.pathname + target.search;
-
-        // First choice: a tab already sitting on the exact target — focus it
-        // and touch nothing, preserving its scroll and state.
-        for (const client of windowClients) {
-          try {
-            const clientUrl = new URL(client.url);
-            if (clientUrl.pathname + clientUrl.search === targetKey && "focus" in client) {
-              await client.focus();
-              await refreshAppBadge();
-              return;
-            }
-          } catch {
-            // An unparsable client URL just isn't the one we want.
-          }
+    event.notification.data?.url || "/";
+  let target;
+  try {
+    target = new URL(raw, self.location.origin);
+    if (target.origin !== self.location.origin) target = new URL("/", self.location.origin);
+  } catch {
+    target = new URL("/", self.location.origin);
+  }
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const key = target.pathname + target.search;
+    for (const client of windows) {
+      try {
+        const current = new URL(client.url);
+        if (current.origin === target.origin && current.pathname + current.search === key) {
+          await client.focus();
+          await refreshAppBadge();
+          return;
         }
-
-        // Otherwise: focus the first focusable tab and send it there.
-        for (const client of windowClients) {
-          if ("focus" in client) {
-            await client.focus();
-            try {
-              const clientUrl = new URL(client.url);
-              if (clientUrl.pathname + clientUrl.search !== targetKey) {
-                await client.navigate(url);
-              }
-            } catch {
-              await client.navigate(url);
-            }
-            await refreshAppBadge();
-            return;
-          }
+      } catch {
+        // A stale or invalid tab must not swallow the notification click.
+      }
+    }
+    for (const client of windows) {
+      try {
+        if (new URL(client.url).origin !== target.origin) continue;
+        const navigated = await client.navigate(target.href);
+        if (navigated) {
+          await navigated.focus();
+          await refreshAppBadge();
+          return;
         }
-        await self.clients.openWindow(url);
-        await refreshAppBadge();
-      }),
-  );
+      } catch {
+        // An installed browser window may reject navigation. Open the exact
+        // product URL in a new window instead of leaving the click unhandled.
+      }
+    }
+    await self.clients.openWindow(target.href);
+    await refreshAppBadge();
+  })());
 });
 
 /**

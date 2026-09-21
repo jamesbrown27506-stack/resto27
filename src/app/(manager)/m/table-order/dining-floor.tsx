@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { Check, Clock3, CreditCard, MessageSquare, ReceiptText, Send, UserCheck, X } from "lucide-react";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Input, Switch } from "@/components/ui/input";
+import { Dialog } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { useLocale } from "@/lib/i18n/use-locale";
@@ -11,7 +12,7 @@ import { formatMoney } from "@/lib/format/currency";
 import {
   closeDiningCash,
   decideDiningGuest,
-  decideDiningRound,
+  decideDiningItem,
   requestDiningPayment,
   sendStaffDiningMessage,
   setMyDiningNotifications,
@@ -19,7 +20,7 @@ import {
 import { useRouter } from "next/navigation";
 
 type Guest = { id: string; display_name: string; status: string; created_at: string };
-type Item = { id: string; name: string; quantity: number; unit_price: number; options_label: string | null };
+type Item = { id: string; name: string; quantity: number; unit_price: number; options_label: string | null; status: string; rejection_reason: string | null };
 type Round = { id: string; guest_id: string; status: string; subtotal: number; notes: string | null; created_at: string; dining_round_items: Item[] };
 type Msg = { id: string; guest_id: string | null; sender_kind: string; kind: string; body: string; created_at: string };
 export type DiningFloorSession = {
@@ -51,6 +52,15 @@ const copy = {
     guest: "Guest",
     kitchen: "Order sent to the kitchen",
     accept: "Accept",
+    rejectDish: "Decline dish",
+    cancel: "Cancel",
+    rejectTitle: "Why is this dish unavailable?",
+    rejectReason: "Reason shown to the guest",
+    rejectHint: "The other dishes in this request stay unchanged.",
+    rejectRequired: "Please give a reason of at least 5 characters.",
+    chooseGuest: "Reply to guest",
+    dishAccepted: "Dish accepted",
+    dishRejected: "Dish declined and guest notified",
     messages: "Table messages",
     staff: "Staff",
     noMessages: "No messages yet.",
@@ -83,6 +93,15 @@ const copy = {
     guest: "Client",
     kitchen: "Commande envoyée en cuisine",
     accept: "Accepter",
+    rejectDish: "Refuser le plat",
+    cancel: "Annuler",
+    rejectTitle: "Pourquoi ce plat est-il indisponible ?",
+    rejectReason: "Motif envoyé au client",
+    rejectHint: "Les autres plats de cette demande ne changent pas.",
+    rejectRequired: "Indiquez un motif d’au moins 5 caractères.",
+    chooseGuest: "Répondre au client",
+    dishAccepted: "Plat accepté",
+    dishRejected: "Plat refusé et client prévenu",
     messages: "Messages de la table",
     staff: "Équipe",
     noMessages: "Aucun message pour le moment.",
@@ -107,6 +126,9 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
   const router = useRouter();
   const [pending, start] = useTransition();
   const [text, setText] = useState<Record<string, string>>({});
+  const [replyGuests, setReplyGuests] = useState<Record<string, string>>({});
+  const [rejectItem, setRejectItem] = useState<{ id: string; name: string } | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
   const [alertsEnabled, setAlertsEnabled] = useState(notificationsEnabled);
 
   useEffect(() => {
@@ -119,6 +141,23 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
       const result = await fn();
       toast(result.ok ? success : result.error ?? "Error", result.ok ? "success" : "error");
       if (result.ok) router.refresh();
+    });
+  }
+
+  function rejectSelectedItem() {
+    if (!rejectItem) return;
+    if (rejectReason.trim().length < 5) {
+      toast(t.rejectRequired, "error");
+      return;
+    }
+    start(async () => {
+      const result = await decideDiningItem(rejectItem.id, false, rejectReason);
+      toast(result.ok ? t.dishRejected : result.error ?? "Error", result.ok ? "success" : "error");
+      if (result.ok) {
+        setRejectItem(null);
+        setRejectReason("");
+        router.refresh();
+      }
     });
   }
 
@@ -182,6 +221,9 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
           const guests = session.dining_guests ?? [];
           const rounds = session.dining_rounds ?? [];
           const messages = session.dining_messages ?? [];
+          const approvedGuests = guests.filter((guest) => guest.status === "approved");
+          const replyGuestId = replyGuests[session.id] ?? approvedGuests[0]?.id ?? "";
+          const guestMessages = messages.filter((message) => !message.guest_id || message.guest_id === replyGuestId);
           return (
             <article key={session.id} className={`min-w-0 overflow-hidden rounded-lg border bg-surface ${session.id === focusSessionId ? "border-primary ring-2 ring-primary/30" : "border-border"}`}>
               <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
@@ -210,30 +252,55 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
 
                 {rounds.filter((round) => round.status === "pending").map((round) => (
                   <div key={round.id} className="rounded-md border border-warning/30 bg-warning-light p-3">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
-                        <p className="font-semibold">{t.newOrder} · {guests.find((guest) => guest.id === round.guest_id)?.display_name ?? t.guest}</p>
-                        <ul className="mt-2 text-sm text-text-secondary">{round.dining_round_items.map((item) => <li key={item.id}>{item.quantity}× {item.name}{item.options_label ? ` · ${item.options_label}` : ""}</li>)}</ul>
-                        {round.notes && <p className="mt-2 break-words text-xs italic">{round.notes}</p>}
-                      </div>
-                      <strong className="shrink-0">{formatMoney(round.subtotal)}</strong>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button size="sm" disabled={pending} onClick={() => run(() => decideDiningRound(round.id, true), t.kitchen)}>{t.accept}</Button>
-                      <Button variant="outline" size="sm" disabled={pending} onClick={() => run(() => decideDiningRound(round.id, false), t.rejected)}>{t.reject}</Button>
-                    </div>
+                    <p className="font-semibold">{t.newOrder} · {guests.find((guest) => guest.id === round.guest_id)?.display_name ?? t.guest}</p>
+                    {round.notes && <p className="mt-1 break-words text-xs italic">{round.notes}</p>}
+                    <ul className="mt-3 space-y-2">
+                      {round.dining_round_items.map((item) => (
+                        <li key={item.id} className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-surface p-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words text-sm font-semibold">{item.quantity}× {item.name}</p>
+                            {item.options_label && <p className="text-xs text-text-secondary">{item.options_label}</p>}
+                            <p className="text-xs text-text-secondary">{formatMoney(item.unit_price * item.quantity)}</p>
+                            {item.rejection_reason && <p className="mt-1 text-xs text-error">{item.rejection_reason}</p>}
+                          </div>
+                          {item.status === "pending" ? (
+                            <div className="flex flex-wrap gap-2">
+                              <Button size="sm" disabled={pending} onClick={() => run(() => decideDiningItem(item.id, true), t.dishAccepted)}>{t.accept}</Button>
+                              <Button variant="outline" size="sm" disabled={pending} onClick={() => { setRejectItem({ id: item.id, name: item.name }); setRejectReason(""); }}>{t.rejectDish}</Button>
+                            </div>
+                          ) : <Badge tone={item.status === "accepted" ? "success" : "error"}>{item.status === "accepted" ? t.accept : t.reject}</Badge>}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
                 ))}
 
                 <div>
                   <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><MessageSquare className="size-4" />{t.messages}</h4>
+                  {approvedGuests.length > 0 && (
+                    <label className="mb-2 block text-xs font-semibold">
+                      {t.chooseGuest}
+                      <select className="mt-1 block w-full rounded-md border border-border bg-surface px-3 py-2 text-sm"
+                        value={replyGuestId}
+                        onChange={(event) => setReplyGuests((value) => ({ ...value, [session.id]: event.target.value }))}>
+                        {approvedGuests.map((guest) => <option key={guest.id} value={guest.id}>{guest.display_name}</option>)}
+                      </select>
+                    </label>
+                  )}
                   <div className="max-h-44 space-y-2 overflow-y-auto rounded-md bg-surface-2 p-3">
-                    {messages.slice(-8).map((message) => <p key={message.id} className="break-words text-sm"><strong>{message.sender_kind === "guest" ? guests.find((guest) => guest.id === message.guest_id)?.display_name ?? t.guest : t.staff}:</strong> {message.body}</p>)}
-                    {!messages.length && <p className="text-sm text-text-light">{t.noMessages}</p>}
+                    {guestMessages.slice(-8).map((message) => <p key={message.id} className="break-words text-sm"><strong>{message.sender_kind === "guest" ? guests.find((guest) => guest.id === message.guest_id)?.display_name ?? t.guest : t.staff}:</strong> {message.body}</p>)}
+                    {!guestMessages.length && <p className="text-sm text-text-light">{t.noMessages}</p>}
                   </div>
                   <div className="mt-2 flex min-w-0 gap-2">
                     <Input className="min-w-0" value={text[session.id] ?? ""} onChange={(event) => setText((value) => ({ ...value, [session.id]: event.target.value }))} placeholder={t.reply} />
-                    <Button size="icon" aria-label={t.sent} disabled={pending || !(text[session.id] ?? "").trim()} onClick={() => { run(() => sendStaffDiningMessage(session.id, text[session.id] ?? ""), t.sent); setText((value) => ({ ...value, [session.id]: "" })); }}><Send className="size-4" /></Button>
+                    <Button size="icon" aria-label={t.sent} disabled={pending || !replyGuestId || !(text[session.id] ?? "").trim()} onClick={() => {
+                      const body = text[session.id] ?? "";
+                      start(async () => {
+                        const result = await sendStaffDiningMessage(session.id, replyGuestId, body);
+                        toast(result.ok ? t.sent : result.error ?? "Error", result.ok ? "success" : "error");
+                        if (result.ok) { setText((value) => ({ ...value, [session.id]: "" })); router.refresh(); }
+                      });
+                    }}><Send className="size-4" /></Button>
                   </div>
                 </div>
 
@@ -253,6 +320,22 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
           );
         })}
       </div>
+      <Dialog
+        open={rejectItem !== null}
+        onClose={() => setRejectItem(null)}
+        title={t.rejectTitle}
+        size="sm"
+        footer={<>
+          <Button variant="outline" disabled={pending} onClick={() => setRejectItem(null)}>{t.cancel}</Button>
+          <Button variant="danger" disabled={pending || rejectReason.trim().length < 5} loading={pending} onClick={rejectSelectedItem}>{t.rejectDish}</Button>
+        </>}
+      >
+        <p className="mb-3 text-sm font-semibold">{rejectItem?.name}</p>
+        <label className="block text-sm font-medium">{t.rejectReason}
+          <Input className="mt-2" value={rejectReason} maxLength={240} onChange={(event) => setRejectReason(event.target.value)} />
+        </label>
+        <p className="mt-2 text-xs text-text-secondary">{t.rejectHint}</p>
+      </Dialog>
     </section>
   );
 }

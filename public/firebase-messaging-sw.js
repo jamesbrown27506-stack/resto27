@@ -13,9 +13,13 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const client of windows) {
-      if (new URL(client.url).origin !== self.location.origin) continue;
-      const navigated = await client.navigate(url);
-      if (navigated) { await navigated.focus(); return; }
+      try {
+        if (new URL(client.url).origin !== self.location.origin) continue;
+        const navigated = await client.navigate(url);
+        if (navigated) { await navigated.focus(); return; }
+      } catch {
+        // Fall through to a new window with the same verified app URL.
+      }
     }
     await self.clients.openWindow(url);
   })());

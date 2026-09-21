@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { activateFromInvoice } from "@/lib/data/invoice-activation";
 import { paymentMode } from "@/lib/data/billing";
 import { notify } from "@/lib/notify";
+import { notifyDiningPaymentSettled } from "@/lib/dining/guest-alerts";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import {
   acceptedTransactionId,
@@ -780,7 +781,7 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
      */
     const { data: order } = await supabase
       .from("orders")
-      .select("id, reference, delivery_name, status, payment_method, total, is_paid")
+      .select("id, reference, delivery_name, status, payment_method, total, is_paid, dining_session_id")
       .eq("id", row.orderId)
       .eq("restaurant_id", row.restaurantId)
       .maybeSingle();
@@ -828,6 +829,7 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
               paid: true,
             },
           });
+          if (order.dining_session_id) await notifyDiningPaymentSettled(row.orderId, row.amount);
         }
         ok = true;
       }

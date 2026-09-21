@@ -490,3 +490,33 @@ export async function sendPush(profileId: string, payload: PushPayload): Promise
     console.error("[push] send failed", error);
   }
 }
+
+/** Push to a temporary QR-table guest without creating a customer account. */
+export async function sendGuestDiningPush(guestId: string, payload: PushPayload): Promise<void> {
+  if (!pushConfigured() || !(await platformPushEnabled())) return;
+  const db = createAdminClient();
+  const { data, error } = await db.from("dining_guest_push_subscriptions")
+    .select("id,endpoint,p256dh,auth").eq("guest_id", guestId);
+  if (error) {
+    console.error("[push:guest] subscriptions", error.message);
+    return;
+  }
+  if (!data?.length) return;
+  setVapidDetails();
+  await Promise.allSettled(data.map(async (row) => {
+    try {
+      await webpush.sendNotification(
+        { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
+        payloadBody(payload),
+        PUSH_OPTIONS,
+      );
+    } catch (cause) {
+      const status = (cause as { statusCode?: number }).statusCode;
+      if (status === 404 || status === 410) {
+        await db.from("dining_guest_push_subscriptions").delete().eq("id", row.id);
+      } else {
+        console.error("[push:guest] delivery", status ?? (cause as Error).message);
+      }
+    }
+  }));
+}
