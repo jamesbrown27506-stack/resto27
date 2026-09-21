@@ -1403,22 +1403,13 @@ export async function cancelOwnReservation(
   if (!canCustomerCancelReservation(reservation.status)) {
     return { ok: false, error: "Cette réservation ne peut plus être annulée." };
   }
-  if (
-    !isUpcomingReservation({
-      status: reservation.status,
-      reservedFor: reservation.reserved_for,
-      durationMin: reservation.duration_min,
-    })
-  ) {
-    return { ok: false, error: "Le créneau de cette réservation est déjà passé." };
-  }
 
   // Do not race a charge still being approved on the customer's handset.
   const { data: openAttempt } = await supabase
     .from("payment_attempts")
     .select("id")
     .eq("reservation_id", reservationId)
-    .eq("status", "pending")
+    .in("status", ["pending", "succeeded"])
     .is("settled_at", null)
     .limit(1)
     .maybeSingle();
@@ -1429,6 +1420,46 @@ export async function cancelOwnReservation(
     };
   }
 
+  // A pending request whose slot passed was never accepted or paid. Let the
+  // customer clear it even after it has moved from Upcoming to History.
+  if (reservation.status === "pending" && !reservation.deposit_paid && Date.parse(reservation.reserved_for) <= Date.now()) {
+    const { data: cleared, error: clearError } = await supabase
+      .from("reservations")
+      .update({ status: "cancelled" })
+      .eq("id", reservationId)
+      .eq("customer_id", user.id)
+      .eq("status", "pending")
+      .eq("deposit_paid", false)
+      .lte("reserved_for", new Date().toISOString())
+      .select("id")
+      .maybeSingle();
+    if (clearError || !cleared) return { ok: false, error: "La demande a changé. Actualisez la page et réessayez." };
+    await notify({
+      event: "reservation",
+      tone: "info",
+      restaurantId: reservation.restaurant_id,
+      href: "/m/reservations",
+      params: {
+        reference: reservation.reference,
+        customerName: reservation.guest_name ?? user.name,
+        status: "cancelled",
+        cancelledBy: "customer",
+      },
+    });
+    revalidatePath("/reservations");
+    revalidatePath("/m/reservations");
+    return { ok: true, status: "cancelled" };
+  }
+
+  if (
+    !isUpcomingReservation({
+      status: reservation.status,
+      reservedFor: reservation.reserved_for,
+      durationMin: reservation.duration_min,
+    })
+  ) {
+    return { ok: false, error: "Le créneau de cette réservation est déjà passé." };
+  }
   const { data: claimData, error: claimError } = await supabase.rpc(
     "cancel_customer_reservation",
     {

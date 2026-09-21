@@ -35,6 +35,10 @@ export const custReservationsDict = defineDict({
     "crs.people": "{count} personne(s)",
     "crs.table": "table {number}",
     "crs.cancel": "Annuler",
+    "crs.expiredPending": "Demande expirée",
+    "crs.withdrawExpired": "Retirer la demande",
+    "crs.cancelPolicyExpired": "Le créneau est passé sans confirmation. Aucun paiement ni frais d’annulation.",
+    "crs.cancelBodyExpired": "Cette demande sera retirée de la liste d’attente et le restaurant sera prévenu.",
 
     "crs.book": "Réserver une table",
     "crs.restaurant": "Restaurant",
@@ -141,6 +145,10 @@ export const custReservationsDict = defineDict({
     "crs.people": "{count} people",
     "crs.table": "table {number}",
     "crs.cancel": "Cancel",
+    "crs.expiredPending": "Request expired",
+    "crs.withdrawExpired": "Withdraw request",
+    "crs.cancelPolicyExpired": "The booking time passed without confirmation. No payment or cancellation fee applies.",
+    "crs.cancelBodyExpired": "This request will be removed from the waiting list and the restaurant will be notified.",
 
     "crs.book": "Book a table",
     "crs.restaurant": "Restaurant",

@@ -360,6 +360,7 @@ export function ReservationsClient({
     cancellingReservation?.reservedFor ?? now,
     now,
   );
+  const expiredPendingCancellation = cancellingReservation?.status === "pending" && !cancellingReservation.depositPaid && Date.parse(cancellingReservation.reservedFor) <= now.getTime();
   const lateCancellation = cancellationQuote.late;
   const cancellationDeposit = cancellationQuote.deposit;
   const cancellationRefund = cancellationQuote.refund;
@@ -836,9 +837,16 @@ export function ReservationsClient({
                       </p>
                     </div>
                     <div className="flex flex-col items-end gap-1.5">
-                      <Badge tone={RESERVATION_STATUS_TONE[r.status]}>
-                        {reservationStatusLabel(r.status, t)}
+                      <Badge tone={r.status === "pending" && !r.depositPaid && Date.parse(r.reservedFor) <= now.getTime() ? "warning" : RESERVATION_STATUS_TONE[r.status]}>
+                        {r.status === "pending" && !r.depositPaid && Date.parse(r.reservedFor) <= now.getTime()
+                          ? t("crs.expiredPending")
+                          : reservationStatusLabel(r.status, t)}
                       </Badge>
+                      {r.status === "pending" && !r.depositPaid && Date.parse(r.reservedFor) <= now.getTime() && (
+                        <Button variant="ghost" size="sm" disabled={busy} onClick={() => setCancelId(r.id)}>
+                          {t("crs.withdrawExpired")}
+                        </Button>
+                      )}
                       {r.refundStatus && (
                         <Badge tone={r.refundStatus === "completed" ? "success" : r.refundStatus === "rejected" ? "error" : "warning"}>
                           {t(
@@ -1185,7 +1193,7 @@ export function ReservationsClient({
       >
         <div className="flex flex-col gap-4">
           <p className="text-sm leading-relaxed text-text-secondary">
-            {t(lateCancellation ? "crs.cancelPolicyLate" : "crs.cancelPolicyFree")}
+            {t(expiredPendingCancellation ? "crs.cancelPolicyExpired" : lateCancellation ? "crs.cancelPolicyLate" : "crs.cancelPolicyFree")}
           </p>
           {cancellationDeposit > 0 && (
             <dl className="divide-y divide-border rounded-md border border-border bg-surface-2 px-4 text-sm">
@@ -1205,7 +1213,7 @@ export function ReservationsClient({
               )}
             </dl>
           )}
-          <p className="text-xs leading-relaxed text-text-light">{t("crs.cancelBody")}</p>
+          <p className="text-xs leading-relaxed text-text-light">{t(expiredPendingCancellation ? "crs.cancelBodyExpired" : "crs.cancelBody")}</p>
         </div>
       </Dialog>
 

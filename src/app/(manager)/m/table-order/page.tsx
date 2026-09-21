@@ -19,7 +19,8 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 export const dynamic = "force-dynamic";
 
-export default async function TableOrderPage() {
+export default async function TableOrderPage({ searchParams }: { searchParams: Promise<{ session?: string }> }) {
+  const { session } = await searchParams;
   const { active } = await requireCapability("orders.advance");
   if (!onsiteOrdersAllowed(active)) {
     return (
@@ -42,7 +43,7 @@ export default async function TableOrderPage() {
   return (
     <ManagerPage titleKey="m.tableOrder.title" descriptionKey="m.tableOrder.subtitle">
       {active.planTier === "enterprise" && (
-        <DiningFloor sessions={diningSessions as unknown as DiningFloorSession[]} canFinance={can(active.role, "finance.manage")} notificationsEnabled={diningNotifications} />
+        <DiningFloor sessions={diningSessions as unknown as DiningFloorSession[]} focusSessionId={session} canFinance={can(active.role, "finance.manage")} notificationsEnabled={diningNotifications} />
       )}
       <TableOrderer
         tables={tables}

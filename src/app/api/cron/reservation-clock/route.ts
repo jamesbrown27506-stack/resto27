@@ -68,7 +68,7 @@ export async function GET(request: Request) {
 
   const supabase = createAdminClient();
   const now = Date.now();
-  const summary = { dayReminders: 0, soonReminders: 0, depositNags: 0, released: 0 };
+  const summary = { dayReminders: 0, soonReminders: 0, depositNags: 0, released: 0, expiredRequests: 0 };
 
   const select =
     "id, reference, customer_id, restaurant_id, party_size, reserved_for, reminder_stage, deposit_amount, guest_name, restaurants ( name )";
@@ -229,6 +229,64 @@ export async function GET(request: Request) {
         .eq("status", "awaiting_payment");
       summary.depositNags++;
     }
+  }
+
+  /* ── 5. An unanswered, unpaid request cannot stay pending forever. ── */
+  const { data: expiredRequests, error: expiredError } = await supabase
+    .from("reservations")
+    .select(select)
+    .eq("status", "pending")
+    .eq("deposit_paid", false)
+    .lt("reserved_for", new Date(now).toISOString())
+    .limit(100);
+
+  if (expiredError) console.error("[reservation-clock] expired requests query failed", expiredError.message);
+
+  for (const row of (expiredRequests ?? []) as unknown as ReservationRow[]) {
+    // Preserve an unsettled payment even if an older workflow created it
+    // before the restaurant accepted the request.
+    const { data: openAttempt, error: attemptError } = await supabase
+      .from("payment_attempts")
+      .select("id")
+      .eq("reservation_id", row.id)
+      .is("settled_at", null)
+      .in("status", ["pending", "succeeded"])
+      .limit(1)
+      .maybeSingle();
+    if (attemptError || openAttempt) continue;
+
+    const { data: cleared, error: clearError } = await supabase
+      .from("reservations")
+      .update({ status: "cancelled" })
+      .eq("id", row.id)
+      .eq("status", "pending")
+      .eq("deposit_paid", false)
+      .lt("reserved_for", new Date(now).toISOString())
+      .select("id")
+      .maybeSingle();
+    if (clearError || !cleared) continue;
+
+    if (row.customer_id) {
+      await notify({
+        event: "reservation_decision",
+        tone: "warning",
+        customerId: row.customer_id,
+        href: "/reservations",
+        params: {
+          reference: row.reference,
+          restaurantName: row.restaurants?.name ?? undefined,
+          status: "expired",
+        },
+      });
+    }
+    await notify({
+      event: "reservation",
+      tone: "info",
+      restaurantId: row.restaurant_id,
+      href: "/m/reservations",
+      params: { reference: row.reference, customerName: row.guest_name ?? undefined, status: "cancelled" },
+    });
+    summary.expiredRequests++;
   }
 
   await stampHeartbeat("reservation-clock", summary);

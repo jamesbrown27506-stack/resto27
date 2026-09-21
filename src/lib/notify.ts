@@ -97,6 +97,7 @@ export interface NotifyParams {
     | "seated"
     | "completed"
     | "no_show"
+    | "expired"
     | "preparing"
     | "shipped"
     | "delivered"
@@ -480,6 +481,18 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
           : {
               title: `Request ${p.reference ?? ""} sent`,
               body: `${p.restaurantName ?? "The restaurant"} will confirm shortly — ${p.partySize ?? 1} people${p.whenLabel ? `, ${p.whenLabel}` : ""}`,
+            };
+      }
+
+      if (p.status === "expired") {
+        return fr
+          ? {
+              title: `Demande ${p.reference ?? ""} expirée`,
+              body: "Le créneau est passé sans confirmation du restaurant. Aucun paiement n’a été prélevé.",
+            }
+          : {
+              title: `Request ${p.reference ?? ""} expired`,
+              body: "The booking time passed without restaurant confirmation. No payment was taken.",
             };
       }
 

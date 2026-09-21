@@ -100,7 +100,7 @@ const copy = {
   },
 } as const;
 
-export function DiningFloor({ sessions, canFinance, notificationsEnabled }: { sessions: DiningFloorSession[]; canFinance: boolean; notificationsEnabled: boolean }) {
+export function DiningFloor({ sessions, focusSessionId, canFinance, notificationsEnabled }: { sessions: DiningFloorSession[]; focusSessionId?: string; canFinance: boolean; notificationsEnabled: boolean }) {
   const { toast } = useToast();
   const { locale } = useLocale();
   const t = copy[locale];
@@ -131,6 +131,10 @@ export function DiningFloor({ sessions, canFinance, notificationsEnabled }: { se
       toast(result.ok ? t.alertsSaved : result.error ?? t.alertsFailed, result.ok ? "success" : "error");
     });
   }
+
+  const orderedSessions = focusSessionId
+    ? [...sessions].sort((a, b) => Number(b.id === focusSessionId) - Number(a.id === focusSessionId))
+    : sessions;
 
   const alertControl = (
     <Switch
@@ -172,14 +176,14 @@ export function DiningFloor({ sessions, canFinance, notificationsEnabled }: { se
         </div>
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
-        {sessions.map((session) => {
+        {orderedSessions.map((session) => {
           const table = Array.isArray(session.restaurant_tables) ? session.restaurant_tables[0] : session.restaurant_tables;
           const order = Array.isArray(session.orders) ? session.orders[0] : session.orders;
           const guests = session.dining_guests ?? [];
           const rounds = session.dining_rounds ?? [];
           const messages = session.dining_messages ?? [];
           return (
-            <article key={session.id} className="min-w-0 overflow-hidden rounded-lg border border-border bg-surface">
+            <article key={session.id} className={`min-w-0 overflow-hidden rounded-lg border bg-surface ${session.id === focusSessionId ? "border-primary ring-2 ring-primary/30" : "border-border"}`}>
               <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
                 <div>
                   <h3 className="font-display text-lg font-bold">{t.table} {table?.number}</h3>

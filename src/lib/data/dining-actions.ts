@@ -34,7 +34,7 @@ async function notifyDiningStaff(
     event: "table_service",
     tone: kind === "access" ? "warning" : "info",
     restaurantId: data.restaurant_id,
-    href: "/m/table-order",
+    href: `/m/table-order?session=${sessionId}`,
     params: { reference: tableNumber ?? "—", customerName: guestName, tableServiceKind: kind, preview },
   });
 }
@@ -148,7 +148,7 @@ export async function setMyDiningNotifications(enabled: boolean): Promise<Dining
   return { ok: true };
 }
 export async function fetchDiningFloor(restaurantId:string){
-  const {data,error}=await createAdminClient().from("dining_sessions").select("id,status,order_id,created_at,payment_requested_at,restaurant_tables(id,number,public_token),dining_guests(id,display_name,status,created_at),dining_rounds(id,guest_id,status,subtotal,notes,created_at,dining_round_items(id,name,quantity,unit_price,options_label)),dining_messages(id,guest_id,sender_kind,kind,body,created_at),orders(id,reference,status,total,is_paid,payment_method)").eq("restaurant_id",restaurantId).in("status",["awaiting_staff","open","payment_requested"]).order("created_at");
+  const {data,error}=await createAdminClient().from("dining_sessions").select("id,status,order_id,created_at,payment_requested_at,restaurant_tables(id,number,public_token),dining_guests(id,display_name,status,created_at),dining_rounds(id,guest_id,status,subtotal,notes,created_at,dining_round_items(id,name,quantity,unit_price,options_label)),dining_messages(id,guest_id,sender_kind,kind,body,created_at),orders!dining_sessions_order_id_fkey(id,reference,status,total,is_paid,payment_method)").eq("restaurant_id",restaurantId).in("status",["awaiting_staff","open","payment_requested"]).order("created_at");
   if(error){console.error("[dining:floor]",error.message);return[];}return data??[];
 }
 
