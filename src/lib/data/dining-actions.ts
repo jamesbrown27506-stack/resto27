@@ -15,6 +15,29 @@ const hash = (token: string) => createHash("sha256").update(token).digest("hex")
 const tokenOk = (token: string) => /^[a-f0-9]{64}$/i.test(token);
 export type DiningAction = { ok: boolean; error?: string };
 
+async function notifyDiningStaff(
+  sessionId: string,
+  kind: "access" | "order" | "message",
+  guestName: string,
+  preview?: string,
+) {
+  const db = createAdminClient();
+  const { data } = await db
+    .from("dining_sessions")
+    .select("restaurant_id,restaurant_tables(number)")
+    .eq("id", sessionId)
+    .maybeSingle();
+  const tableInfo = data?.restaurant_tables as unknown as { number?: string } | { number?: string }[] | null;
+  const tableNumber = Array.isArray(tableInfo) ? tableInfo[0]?.number : tableInfo?.number;
+  if (!data?.restaurant_id) return;
+  await notify({
+    event: "table_service",
+    tone: kind === "access" ? "warning" : "info",
+    restaurantId: data.restaurant_id,
+    href: "/m/table-order",
+    params: { reference: tableNumber ?? "—", customerName: guestName, tableServiceKind: kind, preview },
+  });
+}
 async function enterpriseRestaurant(restaurantId: string): Promise<boolean> {
   const db = createAdminClient();
   const { data } = await db.from("subscription_state").select("plan_id,state").eq("restaurant_id", restaurantId).maybeSingle();
@@ -49,8 +72,10 @@ export async function requestTableAccess(tableToken: string, displayName: string
   const raw=randomBytes(32).toString("hex");
   const {data,error}=await createAdminClient().rpc("request_dining_access",{p_table_token:tableToken,p_token_hash:hash(raw),p_display_name:displayName});
   if(error){console.error("[dining:join]",error.message);return {ok:false,error:"This table cannot accept guests right now."};}
+  const result=data as {status:string;sessionId:string};
+  await notifyDiningStaff(result.sessionId,"access",displayName.trim().slice(0,60)||"Guest");
   revalidatePath("/m/table-order");
-  return {ok:true,guestToken:raw,status:(data as {status:string}).status};
+  return {ok:true,guestToken:raw,status:result.status};
 }
 
 async function guestContext(raw:string){
@@ -76,12 +101,8 @@ export async function submitGuestRound(raw:string,input:{lines:{menuItemId:strin
   const limited=await rateLimit({key:"dining:order",limit:10,windowMs:15*60_000,identifier:hash(raw).slice(0,24)}); if(!limited.ok)return{ok:false,error:"Please wait before sending another order."};
   const {error}=await createAdminClient().rpc("submit_dining_round",{p_token_hash:hash(raw),p_lines:input.lines,p_notes:input.notes??null});
   if(error){console.error("[dining:round]",error.message);return{ok:false,error:error.message.includes("session_not_open")?"This table session is closed.":"The order could not be sent. Check the dishes and try again."};}
-  const ctx=await guestContext(raw); const session=Array.isArray(ctx?.dining_sessions)?ctx?.dining_sessions[0]:ctx?.dining_sessions;
-  if(session) {
-    const tableInfo = session.restaurant_tables as unknown as { number?: string } | { number?: string }[];
-    const tableNumber = Array.isArray(tableInfo) ? tableInfo[0]?.number : tableInfo?.number;
-    await notify({event:"new_order",tone:"info",restaurantId:session.restaurant_id,href:"/m/table-order",params:{reference:"TABLE",customerName:`Table ${tableNumber ?? "—"}`}});
-  }
+  const ctx=await guestContext(raw);
+  if(ctx) await notifyDiningStaff(ctx.session_id,"order",ctx.display_name);
   revalidatePath("/m/table-order"); return{ok:true};
 }
 
@@ -93,9 +114,39 @@ export async function sendGuestDiningMessage(raw:string,kind:keyof typeof REQUES
   const text=(kind==="message"?body:REQUESTS[kind])?.trim().slice(0,500);if(!text)return{ok:false,error:"Write a message first."};
   const limited=await rateLimit({key:"dining:message",limit:12,windowMs:5*60_000,identifier:ctx.id});if(!limited.ok)return{ok:false,error:"Please wait before sending another request."};
   const {error}=await createAdminClient().from("dining_messages").insert({session_id:ctx.session_id,guest_id:ctx.id,sender_kind:"guest",kind,body:text});if(error)return{ok:false,error:"Message not sent."};
+  await notifyDiningStaff(ctx.session_id,"message",ctx.display_name,text);
   revalidatePath("/m/table-order");return{ok:true};
 }
 
+export async function getMyDiningNotifications(): Promise<boolean> {
+  const { active, profile } = await requireCapability("orders.view");
+  const { data } = await createAdminClient().from("notification_preferences")
+    .select("in_app,push")
+    .eq("restaurant_id", active.restaurantId)
+    .eq("profile_id", profile.id)
+    .eq("event_key", "table_service")
+    .maybeSingle();
+  return data ? Boolean(data.in_app || data.push) : true;
+}
+
+export async function setMyDiningNotifications(enabled: boolean): Promise<DiningAction> {
+  const { active, profile } = await requireCapability("orders.view");
+  const { error } = await createAdminClient().from("notification_preferences").upsert({
+    restaurant_id: active.restaurantId,
+    profile_id: profile.id,
+    event_key: "table_service",
+    in_app: enabled,
+    email: false,
+    push: enabled,
+  }, { onConflict: "restaurant_id,profile_id,event_key" });
+  if (error) {
+    console.error("[dining:notifications]", error.message);
+    return { ok: false, error: "Could not save your table alert preference." };
+  }
+  revalidatePath("/m/table-order");
+  revalidatePath("/m/settings");
+  return { ok: true };
+}
 export async function fetchDiningFloor(restaurantId:string){
   const {data,error}=await createAdminClient().from("dining_sessions").select("id,status,order_id,created_at,payment_requested_at,restaurant_tables(id,number,public_token),dining_guests(id,display_name,status,created_at),dining_rounds(id,guest_id,status,subtotal,notes,created_at,dining_round_items(id,name,quantity,unit_price,options_label)),dining_messages(id,guest_id,sender_kind,kind,body,created_at),orders(id,reference,status,total,is_paid,payment_method)").eq("restaurant_id",restaurantId).in("status",["awaiting_staff","open","payment_requested"]).order("created_at");
   if(error){console.error("[dining:floor]",error.message);return[];}return data??[];

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Check, Clock3, CreditCard, MessageSquare, ReceiptText, Send, UserCheck, X } from "lucide-react";
 import { Button, buttonClasses } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, Switch } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { useLocale } from "@/lib/i18n/use-locale";
@@ -14,6 +14,7 @@ import {
   decideDiningRound,
   requestDiningPayment,
   sendStaffDiningMessage,
+  setMyDiningNotifications,
 } from "@/lib/data/dining-actions";
 import { useRouter } from "next/navigation";
 
@@ -60,6 +61,10 @@ const copy = {
     cash: "Paid in cash",
     cashDone: "Cash payment recorded",
     waiting: "Waiting for payment",
+    alerts: "Table alerts for me",
+    alertsHelp: "Access requests, food orders and calls. Push requires notifications to be enabled on this device.",
+    alertsSaved: "Table alert preference saved",
+    alertsFailed: "Could not save the table alert preference",
   },
   fr: {
     empty: "Aucune session de table active",
@@ -88,16 +93,26 @@ const copy = {
     cash: "Payé en espèces",
     cashDone: "Paiement en espèces enregistré",
     waiting: "En attente du paiement",
+    alerts: "Mes alertes de table",
+    alertsHelp: "Demandes d’accès, commandes et appels. Le push doit être activé sur cet appareil.",
+    alertsSaved: "Préférence d’alerte enregistrée",
+    alertsFailed: "Impossible d’enregistrer la préférence d’alerte",
   },
 } as const;
 
-export function DiningFloor({ sessions, canFinance }: { sessions: DiningFloorSession[]; canFinance: boolean }) {
+export function DiningFloor({ sessions, canFinance, notificationsEnabled }: { sessions: DiningFloorSession[]; canFinance: boolean; notificationsEnabled: boolean }) {
   const { toast } = useToast();
   const { locale } = useLocale();
   const t = copy[locale];
   const router = useRouter();
   const [pending, start] = useTransition();
   const [text, setText] = useState<Record<string, string>>({});
+  const [alertsEnabled, setAlertsEnabled] = useState(notificationsEnabled);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => router.refresh(), 5000);
+    return () => window.clearInterval(timer);
+  }, [router]);
 
   function run(fn: () => Promise<{ ok: boolean; error?: string }>, success: string) {
     start(async () => {
@@ -107,24 +122,54 @@ export function DiningFloor({ sessions, canFinance }: { sessions: DiningFloorSes
     });
   }
 
+  function toggleAlerts(enabled: boolean) {
+    const previous = alertsEnabled;
+    setAlertsEnabled(enabled);
+    start(async () => {
+      const result = await setMyDiningNotifications(enabled);
+      if (!result.ok) setAlertsEnabled(previous);
+      toast(result.ok ? t.alertsSaved : result.error ?? t.alertsFailed, result.ok ? "success" : "error");
+    });
+  }
+
+  const alertControl = (
+    <Switch
+      label={t.alerts}
+      description={t.alertsHelp}
+      checked={alertsEnabled}
+      disabled={pending}
+      onChange={(event) => toggleAlerts(event.target.checked)}
+      className="max-w-sm"
+    />
+  );
+
   if (!sessions.length) {
     return (
-      <div className="mb-6 rounded-lg border border-dashed border-border p-6 text-center">
-        <UserCheck className="mx-auto size-7 text-text-light" />
-        <p className="mt-3 font-semibold">{t.empty}</p>
-        <p className="mt-1 text-sm text-text-secondary">{t.emptyHelp}</p>
-      </div>
+      <section className="mb-8">
+        <div className="mb-4 flex flex-col items-start justify-between gap-3 lg:flex-row lg:items-end">
+          <div><h2 className="font-display text-xl font-bold">{t.title}</h2><p className="text-sm text-text-secondary">{t.help}</p></div>
+          <div className="flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">{alertControl}<a href="/m/tables/print" target="_blank" className={buttonClasses({ variant: "outline", size: "sm" })}>{t.print}</a></div>
+        </div>
+        <div className="rounded-lg border border-dashed border-border p-6 text-center">
+          <UserCheck className="mx-auto size-7 text-text-light" />
+          <p className="mt-3 font-semibold">{t.empty}</p>
+          <p className="mt-1 text-sm text-text-secondary">{t.emptyHelp}</p>
+        </div>
+      </section>
     );
   }
 
   return (
     <section className="mb-8">
-      <div className="mb-4 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-end">
+      <div className="mb-4 flex flex-col items-start justify-between gap-3 lg:flex-row lg:items-end">
         <div>
           <h2 className="font-display text-xl font-bold">{t.title}</h2>
           <p className="text-sm text-text-secondary">{t.help}</p>
         </div>
-        <a href="/m/tables/print" target="_blank" className={buttonClasses({ variant: "outline", size: "sm" })}>{t.print}</a>
+        <div className="flex w-full flex-col items-start gap-3 sm:w-auto sm:flex-row sm:items-center">
+          {alertControl}
+          <a href="/m/tables/print" target="_blank" className={buttonClasses({ variant: "outline", size: "sm" })}>{t.print}</a>
+        </div>
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
         {sessions.map((session) => {

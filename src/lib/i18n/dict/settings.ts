@@ -78,6 +78,8 @@ export const settingsDict = defineDict({
       "Bloquées par le navigateur. Autorisez-les dans les réglages du site.",
     "mset.push.failed": "Impossible d'activer les notifications sur cet appareil.",
 
+    "mset.evt.table_service": "Service à table",
+    "mset.evtBody.table_service": "Demandes d’accès, commandes et appels envoyés depuis les QR codes des tables.",
     "mset.evt.new_order": "Nouvelle commande",
     "mset.evtBody.new_order": "Dès qu'une commande arrive.",
     "mset.evt.order_updates": "Suivi de commande",
@@ -155,6 +157,8 @@ export const settingsDict = defineDict({
     "mset.push.denied": "Blocked by the browser. Allow them in the site settings.",
     "mset.push.failed": "Could not enable notifications on this device.",
 
+    "mset.evt.table_service": "Table service",
+    "mset.evtBody.table_service": "Access requests, food orders and calls sent from table QR codes.",
     "mset.evt.new_order": "New order",
     "mset.evtBody.new_order": "The moment an order comes in.",
     "mset.evt.order_updates": "Order updates",

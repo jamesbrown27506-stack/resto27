@@ -20,6 +20,7 @@ import { createAdminClient } from "@/lib/supabase/server";
  */
 
 export const NOTIFICATION_EVENT_KEYS = [
+  "table_service",
   "new_order",
   "order_updates",
   "order_cancelled",
@@ -47,6 +48,7 @@ export interface NotificationEvent {
 }
 
 export const NOTIFICATION_EVENTS: readonly NotificationEvent[] = [
+  { key: "table_service", inApp: true, email: false, push: true, locked: false },
   { key: "new_order", inApp: true, email: true, push: true, locked: true },
   // The customer's answers to an order: fee accepted/declined, "I received
   // it", delivery-delay alerts. Used to fall outside the grid and arrive

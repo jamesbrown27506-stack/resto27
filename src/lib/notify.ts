@@ -42,6 +42,7 @@ import { formatMoney } from "@/lib/format/currency";
 export type NotifyTone = "info" | "success" | "warning" | "error";
 
 export type NotifyEvent =
+  | "table_service" //      → staff   : guest access, table order or service message
   | "new_order" //           → manager : a customer placed an order
   | "order_status" //        → customer: the order advanced a step
   | "order_cancelled" //     → both    : someone cancelled an order
@@ -76,7 +77,7 @@ export type NotifyEvent =
  * an order the kitchen never saw. A customer chat message is the same shape
  * of emergency from the other side. Everything else stays auto-dismissing.
  */
-const REQUIRE_INTERACTION_EVENTS: ReadonlySet<NotifyEvent> = new Set<NotifyEvent>(["new_order", "chat"]);
+const REQUIRE_INTERACTION_EVENTS: ReadonlySet<NotifyEvent> = new Set<NotifyEvent>(["table_service", "new_order", "chat"]);
 
 export interface NotifyParams {
   reference?: string;
@@ -135,6 +136,8 @@ export interface NotifyParams {
   reminder?: boolean;
   /** new_order: the customer's online payment just landed — the order may start. */
   paid?: boolean;
+  /** Which action happened during an anonymous on-site table visit. */
+  tableServiceKind?: "access" | "order" | "message";
   /** reservation_reminder: how far out the slot is. */
   stage?: "day" | "soon";
   /** A pre-formatted, recipient-facing time ("sam. 30 août, 20:00"). */
@@ -202,6 +205,22 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
   const money = (n?: number) => (n === undefined ? "" : formatMoney(n));
 
   switch (event) {
+    case "table_service": {
+      const table = p.reference ?? "—";
+      if (p.tableServiceKind === "access") {
+        return fr
+          ? { title: `Client en attente — table ${table}`, body: `${p.customerName ?? "Un client"} demande l’accès. Vérifiez sa présence puis acceptez son appareil.` }
+          : { title: `Guest waiting — table ${table}`, body: `${p.customerName ?? "A guest"} requests access. Confirm they are present, then approve their device.` };
+      }
+      if (p.tableServiceKind === "message") {
+        return fr
+          ? { title: `La table ${table} vous appelle`, body: p.preview ?? `${p.customerName ?? "Un client"} a envoyé un message.` }
+          : { title: `Table ${table} needs you`, body: p.preview ?? `${p.customerName ?? "A guest"} sent a message.` };
+      }
+      return fr
+        ? { title: `Nouvelle commande à table — ${table}`, body: `${p.customerName ?? "Un client"} a envoyé des plats à valider avant la cuisine.` }
+        : { title: `New table order — ${table}`, body: `${p.customerName ?? "A guest"} sent dishes for approval before they reach the kitchen.` };
+    }
     case "new_order":
       /*
         Three voices for one event, told apart by params:
@@ -914,6 +933,7 @@ const CUSTOMER_PREF_KEY: Partial<Record<NotifyEvent, CustomerTopicKey>> = {
  * TO the account, not messages about the business.
  */
 const MANAGER_PREF_KEY: Partial<Record<NotifyEvent, NotificationEventKey>> = {
+  table_service: "table_service",
   new_order: "new_order",
   order_cancelled: "order_cancelled",
   order_status: "order_updates",
@@ -1379,6 +1399,8 @@ function pushActionsFor(
   const fr = locale === "fr";
 
   switch (event) {
+    case "table_service":
+      return [{ action: "open", title: fr ? "Ouvrir le service à table" : "Open table service", href }];
     case "new_order":
       return [{ action: "view", title: fr ? "Voir la commande" : "View order", href }];
     case "order_status":

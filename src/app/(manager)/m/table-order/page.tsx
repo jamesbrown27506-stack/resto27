@@ -8,7 +8,7 @@ import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { onsiteOrdersAllowed } from "@/lib/billing/plan-access";
 import { PlanGateUpsell } from "@/components/billing/plan-gate";
-import { fetchDiningFloor } from "@/lib/data/dining-actions";
+import { fetchDiningFloor, getMyDiningNotifications } from "@/lib/data/dining-actions";
 import { can } from "@/lib/capabilities";
 import { DiningFloor, type DiningFloorSession } from "./dining-floor";
 
@@ -30,18 +30,19 @@ export default async function TableOrderPage() {
   }
   const supabase = createAdminClient();
 
-  const [tables, categories, items, chargeSetting, diningSessions] = await Promise.all([
+  const [tables, categories, items, chargeSetting, diningSessions, diningNotifications] = await Promise.all([
     fetchTables(active.restaurantId),
     fetchCategories(active.restaurantId),
     fetchMenu(active.restaurantId),
     supabase.from("settings").select("value").eq("key", "service_charge_percent").maybeSingle(),
     active.planTier === "enterprise" ? fetchDiningFloor(active.restaurantId) : Promise.resolve([]),
+    active.planTier === "enterprise" ? getMyDiningNotifications() : Promise.resolve(true),
   ]);
 
   return (
     <ManagerPage titleKey="m.tableOrder.title" descriptionKey="m.tableOrder.subtitle">
       {active.planTier === "enterprise" && (
-        <DiningFloor sessions={diningSessions as unknown as DiningFloorSession[]} canFinance={can(active.role, "finance.manage")} />
+        <DiningFloor sessions={diningSessions as unknown as DiningFloorSession[]} canFinance={can(active.role, "finance.manage")} notificationsEnabled={diningNotifications} />
       )}
       <TableOrderer
         tables={tables}
