@@ -1,35 +1,45 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getManagerNavCounts } from "@/lib/data/notify-actions";
+import { getManagerNavCounts, type ManagerNavCounts } from "@/lib/data/notify-actions";
 import { cn } from "@/lib/utils";
 
-/**
- * The "how many of these need me right now" counts behind the sidebar badges
- * and the mobile tab bar.
- *
- * These are a snapshot on mount and on branch change — the *live* signal is
- * the realtime toast + bell badge. A badge that is a few seconds stale is the
- * right trade: polling here would wake the server on every manager's every
- * tab just to keep a number warm.
- */
+/** Counts refresh during service and immediately when the app regains focus. */
 export function useManagerNavCounts(restaurantId: string | null) {
-  const [counts, setCounts] = useState({ orders: 0, reservations: 0, messages: 0 });
+  const empty: ManagerNavCounts = { orders: 0, kitchen: 0, tableOrder: 0, reservations: 0, messages: 0 };
+  const [snapshot, setSnapshot] = useState<{ restaurantId: string | null; counts: ManagerNavCounts }>({
+    restaurantId: null, counts: empty,
+  });
 
   useEffect(() => {
     if (!restaurantId) return;
     let cancelled = false;
-    getManagerNavCounts(restaurantId)
-      .then((c) => {
-        if (!cancelled) setCounts(c);
-      })
-      .catch(() => {});
+    let inFlight = false;
+    const refresh = () => {
+      if (cancelled || inFlight || document.visibilityState === "hidden") return;
+      inFlight = true;
+      void getManagerNavCounts(restaurantId)
+        .then((next) => { if (!cancelled) setSnapshot({ restaurantId, counts: next }); })
+        .catch((error) => console.error("[nav:refresh]", error))
+        .finally(() => { inFlight = false; });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("resto237:native-notification", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", refresh);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("resto237:native-notification", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      if ("serviceWorker" in navigator) navigator.serviceWorker.removeEventListener("message", refresh);
     };
   }, [restaurantId]);
 
-  return counts;
+  return restaurantId && snapshot.restaurantId === restaurantId ? snapshot.counts : empty;
 }
 
 /** The little number bubble beside a nav link — the tab badge in miniature. */

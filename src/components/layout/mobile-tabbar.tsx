@@ -44,7 +44,7 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
  */
 
 /** The live counts a tab can carry, supplied by whoever mounts the bar. */
-export type TabCountKey = "orders" | "reservations" | "messages";
+export type TabCountKey = "orders" | "kitchen" | "tableOrder" | "reservations" | "messages";
 
 export interface TabItem {
   href: string;
@@ -132,6 +132,16 @@ export function MobileTabBar({
 
   // "More" lights up when the page you are on lives inside it — otherwise the
   // whole account area reads as "nowhere" on the bar.
+  const menuBadgeKeys: Record<string, TabCountKey> = {
+    "/m/orders": "orders", "/m/kitchen": "kitchen", "/m/table-order": "tableOrder",
+    "/m/reservations": "reservations", "/m/messages": "messages",
+  };
+  const moreItems = more?.items.map((item) => ({
+    ...item,
+    badge: item.badge ?? (counts && menuBadgeKeys[item.href] ? counts[menuBadgeKeys[item.href]] : undefined),
+  })) ?? [];
+  const moreCount = moreItems.reduce((sum, item) => sum + (item.badge ?? 0), 0);
+
   const moreActive =
     more?.items.some((item) =>
       item.matchPrefix ? pathname === item.href || pathname.startsWith(`${item.href}/`) : pathname === item.href,
@@ -190,6 +200,7 @@ export function MobileTabBar({
                 <Lit active={moreActive || menuOpen} />
                 <span className={cn("relative rounded-full py-1.5", dense ? "px-3" : "px-3.5")}>
                   <NavIcon name={more.icon ?? "Ellipsis"} className="size-5" />
+                  {moreCount > 0 && <Bubble count={moreCount} />}
                 </span>
                 <span className="max-w-full truncate">
                   {more.labelKey ? t(more.labelKey) : more.label}
@@ -206,7 +217,7 @@ export function MobileTabBar({
           onClose={() => setMenuOpen(false)}
           title={more.titleKey ? t(more.titleKey) : (more.title ?? "")}
           description={more.descriptionKey ? t(more.descriptionKey) : more.description}
-          items={more.items}
+          items={moreItems}
           actions={more.actions}
           header={sheetHeader}
         />

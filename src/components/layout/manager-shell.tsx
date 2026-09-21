@@ -93,6 +93,7 @@ export function ManagerShell({
       brand={brand}
       freeMode={freeMode}
       onSwitchBranch={onSwitchBranch}
+      navCounts={navCounts}
     />
   );
 

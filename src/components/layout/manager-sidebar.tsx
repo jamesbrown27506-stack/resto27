@@ -14,11 +14,14 @@ import { MANAGER_NAV, isActive } from "@/lib/nav";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { Branch } from "@/lib/branch-types";
-import { CountBadge, useManagerNavCounts } from "@/components/notifications/nav-counts";
+import { CountBadge } from "@/components/notifications/nav-counts";
+import type { ManagerNavCounts } from "@/lib/data/notify-actions";
 
 /** Which nav links carry a live "needs you" count. */
-const BADGED_LINKS: Record<string, "orders" | "reservations" | "messages"> = {
+const BADGED_LINKS: Partial<Record<string, keyof ManagerNavCounts>> = {
   "/m/orders": "orders",
+  "/m/kitchen": "kitchen",
+  "/m/table-order": "tableOrder",
   "/m/reservations": "reservations",
   "/m/messages": "messages",
 };
@@ -44,6 +47,7 @@ export function ManagerSidebar({
   brand,
   freeMode,
   onSwitchBranch,
+  navCounts,
 }: {
   branches: Branch[];
   activeBranch: Branch;
@@ -51,12 +55,12 @@ export function ManagerSidebar({
   /** Free mode (platform completely free for now) suppresses the plan locks. */
   freeMode: boolean;
   onSwitchBranch?: (id: string) => void;
+  navCounts: ManagerNavCounts;
 }) {
   const { t } = useLocale();
   const pathname = usePathname();
   const locked = activeBranch.subscriptionState === "locked";
   const planIsPaid = activeBranch.planTier !== "starter";
-  const navCounts = useManagerNavCounts(activeBranch.restaurantId);
 
   return (
     <div className="flex h-full flex-col">

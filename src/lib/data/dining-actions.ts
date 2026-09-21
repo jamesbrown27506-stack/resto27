@@ -120,7 +120,7 @@ export async function requestTableAccess(tableToken: string, displayName: string
   if(!limited.ok) return {ok:false,error:"Too many requests. Ask a waiter for help."};
   const raw=randomBytes(32).toString("hex");
   const {data,error}=await createAdminClient().rpc("request_dining_access",{p_table_token:tableToken,p_token_hash:hash(raw),p_display_name:displayName});
-  if(error){console.error("[dining:join]",error.message);return {ok:false,error:"This table cannot accept guests right now."};}
+  if(error){console.error("[dining:join]",error.message);return {ok:false,error:error.message.includes("table_payment_in_progress")?(locale==="en"?"This table is settling its bill. Ask staff to close the visit before scanning again.":"Cette table règle son addition. Demandez au personnel de clôturer la visite avant de rescanner."):"This table cannot accept guests right now."};}
   const result=data as {status:string;sessionId:string;guestId:string};
   await createAdminClient().from("dining_guests").update({locale}).eq("id",result.guestId);
   await notifyDiningStaff(result.sessionId,"access",displayName.trim().slice(0,60)||"Guest");
@@ -206,7 +206,7 @@ export async function decideDiningGuest(guestId:string,approve:boolean):Promise<
   const {active,profile}=await requireCapability("orders.advance"); if(!(await enterpriseRestaurant(active.restaurantId)))return{ok:false,error:"The 25,000 FCFA package is required."};
   const db=createAdminClient();const {data:guest}=await db.from("dining_guests").select("id,status,session_id,dining_sessions!inner(restaurant_id,table_id)").eq("id",guestId).eq("status","pending").maybeSingle();
   const session=Array.isArray(guest?.dining_sessions)?guest?.dining_sessions[0]:guest?.dining_sessions;if(!guest||session?.restaurant_id!==active.restaurantId)return{ok:false,error:"Request not found."};
-  const {error}=await db.rpc("decide_dining_guest",{p_guest_id:guestId,p_staff_id:profile.id,p_approve:approve});if(error){console.error("[dining:guest]",error.message);return{ok:false,error:"Could not update access."};}
+  const {error}=await db.rpc("decide_dining_guest",{p_guest_id:guestId,p_staff_id:profile.id,p_approve:approve});if(error){console.error("[dining:guest]",error.message);return{ok:false,error:error.message.includes("table_payment_in_progress")?"This table is settling its bill. Close the current visit before approving another guest.":"Could not update access."};}
   await notifyTableGuest(guestId, approve
     ? {
         fr: { title: "Accès à la table accepté", body: "Le restaurant a confirmé votre présence. Vous pouvez consulter le menu et commander." },

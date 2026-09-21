@@ -294,6 +294,16 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
     </main>
   );
 
+  if (state?.guest.status === "pending" && state.session.status === "payment_requested") return (
+    <main className="mx-auto grid min-h-[100dvh] max-w-lg place-items-center px-4 text-center">
+      <div><Clock3 className="mx-auto size-10 text-warning" />
+        <h1 className="mt-4 font-display text-2xl font-bold">{en ? "This table is settling its bill" : "Cette table règle son addition"}</h1>
+        <p className="mt-2 text-text-secondary">{en ? "Ask staff to close the current visit, then scan the QR code again." : "Demandez au personnel de clôturer la visite, puis scannez de nouveau le QR code."}</p>
+        <Button className="mt-4" onClick={resetVisit}>{en ? "Scan again later" : "Réessayer plus tard"}</Button>
+      </div>
+    </main>
+  );
+
   if (!state || state.guest.status === "pending") return (
     <main className="mx-auto grid min-h-[100dvh] max-w-lg place-items-center px-4">
       <div className="text-center">

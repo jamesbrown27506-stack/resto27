@@ -106,7 +106,7 @@ export function managerTabs(role: BranchRole | null): { items: TabItem[]; more: 
   if (has("menu.view")) {
     items.push({ href: "/m/menu", icon: "UtensilsCrossed", labelKey: "nav.m.menu", matchPrefix: true });
   } else if (has("kitchen.display")) {
-    items.push({ href: "/m/kitchen", icon: "ChefHat", labelKey: "nav.m.kitchen" });
+    items.push({ href: "/m/kitchen", icon: "ChefHat", labelKey: "nav.m.kitchen", badgeKey: "kitchen" });
   }
   if (has("orders.view")) {
     items.push({ href: "/m/orders", icon: "ReceiptText", labelKey: "nav.m.orders", matchPrefix: true, badgeKey: "orders" });

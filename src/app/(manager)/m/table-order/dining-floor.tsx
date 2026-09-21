@@ -48,6 +48,7 @@ const copy = {
     reject: "Reject",
     approved: "Guest approved",
     rejected: "Request rejected",
+    settlingAccess: "This table is settling its bill. Decline this request; the guest can scan again after the bill is closed.",
     newOrder: "New order",
     guest: "Guest",
     kitchen: "Order sent to the kitchen",
@@ -89,6 +90,7 @@ const copy = {
     reject: "Refuser",
     approved: "Client accepté",
     rejected: "Demande refusée",
+    settlingAccess: "Cette table règle son addition. Refusez cette demande ; le client pourra rescanner après la clôture de la visite.",
     newOrder: "Nouvelle commande",
     guest: "Client",
     kitchen: "Commande envoyée en cuisine",
@@ -242,9 +244,10 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
                         <span className="min-w-24 flex-1 truncate text-sm font-medium">{guest.display_name}</span>
                         <Badge tone={guest.status === "approved" ? "success" : guest.status === "pending" ? "warning" : "neutral"}>{guest.status}</Badge>
                         {guest.status === "pending" && <>
-                          <Button size="icon-sm" disabled={pending} aria-label={t.approve} onClick={() => run(() => decideDiningGuest(guest.id, true), t.approved)}><Check className="size-4" /></Button>
+                          <Button size="icon-sm" disabled={pending || session.status === "payment_requested"} aria-label={t.approve} onClick={() => run(() => decideDiningGuest(guest.id, true), t.approved)}><Check className="size-4" /></Button>
                           <Button variant="ghost" size="icon-sm" disabled={pending} aria-label={t.reject} onClick={() => run(() => decideDiningGuest(guest.id, false), t.rejected)}><X className="size-4" /></Button>
                         </>}
+                        {guest.status === "pending" && session.status === "payment_requested" && <p className="w-full text-xs text-warning">{t.settlingAccess}</p>}
                       </li>
                     ))}
                   </ul>

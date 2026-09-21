@@ -173,17 +173,19 @@ export async function markAllNotificationsRead(): Promise<{ ok: boolean; error?:
 
 /* ── Nav badges — "how many of these need me right now" ────────────────── */
 
-export async function getManagerNavCounts(restaurantId: string): Promise<{
+export interface ManagerNavCounts {
   orders: number;
+  kitchen: number;
+  tableOrder: number;
   reservations: number;
   messages: number;
-}> {
+}
+
+export async function getManagerNavCounts(restaurantId: string): Promise<ManagerNavCounts> {
   const profile = await requireUser();
   const supabase = createAdminClient();
 
-  // The caller must actually work at that branch — the count is operational
-  // data, and an id from the URL must not resolve another tenant's queue.
-  const { data: staff } = await supabase
+  const { data: staff, error: staffError } = await supabase
     .from("restaurant_staff")
     .select("id, restaurants!inner ( status )")
     .eq("restaurant_id", restaurantId)
@@ -191,47 +193,36 @@ export async function getManagerNavCounts(restaurantId: string): Promise<{
     .eq("status", "active")
     .eq("restaurants.status", "active")
     .maybeSingle();
+  const empty = { orders: 0, kitchen: 0, tableOrder: 0, reservations: 0, messages: 0 };
+  if (staffError) { console.error("[nav:staff]", staffError.message); return empty; }
+  if (!staff) return empty;
 
-  if (!staff) return { orders: 0, reservations: 0, messages: 0 };
-
-  const [orders, reservations, messages, support, announcements] = await Promise.all([
-    supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("restaurant_id", restaurantId)
-      .in("status", ["pending", "confirmed", "preparing", "shipped"]),
-    supabase
-      .from("reservations")
-      .select("*", { count: "exact", head: true })
-      .eq("restaurant_id", restaurantId)
-      .eq("status", "pending"),
-    supabase
-      .from("conversations")
-      .select("*", { count: "exact", head: true })
-      .eq("restaurant_id", restaurantId)
-      .eq("status", "open")
-      .gt("staff_unread", 0),
-    // The other inbox on the same screen: this person's own thread with the
-    // platform, where an admin's reply is unread on the CUSTOMER counter.
-    supabase
-      .from("conversations")
-      .select("*", { count: "exact", head: true })
-      .is("restaurant_id", null)
-      .eq("customer_id", profile.id)
-      .eq("status", "open")
-      .gt("customer_unread", 0),
-    // Broadcasts now live under Messages too, so its nav badge includes unread
-    // announcements instead of leaving discovery solely to the bell.
-    supabase
-      .from("notifications")
-      .select("*", { count: "exact", head: true })
-      .eq("profile_id", profile.id)
-      .eq("href", "/m/messages?tab=announcements")
-      .is("read_at", null),
+  const [orders, kitchen, access, dishes, reservations, messages, support, announcements] = await Promise.all([
+    supabase.from("orders").select("id", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId).in("status", ["pending", "confirmed", "preparing", "shipped"]),
+    supabase.from("orders").select("id", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId).in("status", ["confirmed", "preparing"]),
+    supabase.from("dining_guests").select("id,dining_sessions!inner(restaurant_id)", { count: "exact", head: true })
+      .eq("dining_sessions.restaurant_id", restaurantId).eq("status", "pending"),
+    supabase.from("dining_round_items")
+      .select("id,dining_rounds!inner(dining_sessions!inner(restaurant_id))", { count: "exact", head: true })
+      .eq("dining_rounds.dining_sessions.restaurant_id", restaurantId).eq("status", "pending"),
+    supabase.from("reservations").select("id", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId).eq("status", "pending"),
+    supabase.from("conversations").select("id", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId).eq("status", "open").gt("staff_unread", 0),
+    supabase.from("conversations").select("id", { count: "exact", head: true })
+      .is("restaurant_id", null).eq("customer_id", profile.id).eq("status", "open").gt("customer_unread", 0),
+    supabase.from("notifications").select("id", { count: "exact", head: true })
+      .eq("profile_id", profile.id).eq("href", "/m/messages?tab=announcements").is("read_at", null),
   ]);
-
+  for (const [name, result] of Object.entries({ orders, kitchen, access, dishes, reservations, messages, support, announcements })) {
+    if (result.error) console.error(`[nav:${name}]`, result.error.message);
+  }
   return {
     orders: orders.count ?? 0,
+    kitchen: kitchen.count ?? 0,
+    tableOrder: (access.count ?? 0) + (dishes.count ?? 0),
     reservations: reservations.count ?? 0,
     messages: (messages.count ?? 0) + (support.count ?? 0) + (announcements.count ?? 0),
   };
