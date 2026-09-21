@@ -27,6 +27,7 @@ function announce(data: unknown, fallback?: { title?: string; body?: string }): 
       type: "restolink:notification",
       title: payload.title ?? fallback?.title ?? "",
       body: payload.body ?? fallback?.body ?? "",
+      href: payload.href,
       tone: payload.tone ?? "info",
     },
   }));
@@ -120,7 +121,9 @@ export function NativeRuntime() {
           window.dispatchEvent(new CustomEvent("resto237:native-restored-result", { detail: result }));
         }));
       await keep(FirebaseMessaging.addListener("tokenReceived", ({ token }) => {
-          // Token rotations are persisted through the same authenticated path.
+          // The current table visit also tracks rotations independently of login.
+          window.dispatchEvent(new Event("resto237:native-token"));
+          // Account subscriptions keep using the authenticated path.
           void nativeFirebaseToken().then((previous) => {
             if (token && token !== previous) void syncNativeFirebaseDevice(false);
           }).catch(() => undefined);

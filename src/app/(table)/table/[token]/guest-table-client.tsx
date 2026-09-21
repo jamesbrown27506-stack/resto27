@@ -10,12 +10,11 @@ import { formatMoney } from "@/lib/format/currency";
 import { useLocale } from "@/lib/i18n/use-locale";
 import {
   requestTableAccess, getGuestDiningState, submitGuestRound, sendGuestDiningMessage,
-  payDiningBill, checkDiningPayment, requestGuestDiningPayment, saveGuestDiningPush,
+  payDiningBill, checkDiningPayment, requestGuestDiningPayment,
 } from "@/lib/data/dining-actions";
-import {
-  configuredVapidKey, ensurePushSubscription, registerPushWorker,
-  serializePushSubscription,
-} from "@/lib/notifications/web-push-client";
+import { nativePlatform } from "@/lib/capacitor/platform";
+import { syncGuestPush } from "@/lib/dining/guest-push-client";
+import { playNotificationSound, unlockNotificationSound } from "@/lib/notifications/sound-player";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 
 type Landing = NonNullable<Awaited<ReturnType<typeof import("@/lib/data/dining-actions").getTableLanding>>>;
@@ -51,6 +50,41 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
   const [selectedCategory, setSelectedCategory] = useState(landing.categories[0]?.id ?? "");
   const [pushStatus, setPushStatus] = useState<"idle" | "enabled" | "unavailable">("idle");
   const seenMessages = useRef<Set<string> | null>(null);
+  const lastNativePushAt = useRef(0);
+
+  useEffect(() => {
+    const unlock = () => unlockNotificationSound();
+    window.addEventListener("pointerdown", unlock, { passive: true });
+    window.addEventListener("keydown", unlock);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    let syncing = false;
+    const sync = async () => {
+      if (syncing) return;
+      syncing = true;
+      const result = await syncGuestPush(token, false);
+      syncing = false;
+      if (alive) setPushStatus(result);
+    };
+    const resume = () => { if (document.visibilityState === "visible") void sync(); };
+    void sync();
+    window.addEventListener("resto237:resume", resume);
+    window.addEventListener("resto237:native-token", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      alive = false;
+      window.removeEventListener("resto237:resume", resume);
+      window.removeEventListener("resto237:native-token", resume);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, [token]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setToken(localStorage.getItem(`resto237-table-${landing.table.token}`)), 0);
@@ -71,7 +105,12 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
       if (seenMessages.current) {
         const fresh = next.messages.filter((entry) =>
           !seenMessages.current?.has(entry.id) && entry.sender_kind !== "guest");
-        if (fresh.length) setNotice(fresh[fresh.length - 1].body);
+        if (fresh.length) {
+          setNotice(fresh[fresh.length - 1].body);
+          // Background push uses the OS sound; the open table page supplies its own.
+          if (document.visibilityState === "visible" &&
+              (nativePlatform() !== "ios" || Date.now() - lastNativePushAt.current > 10_000)) void playNotificationSound();
+        }
       }
       seenMessages.current = ids;
       setState(next);
@@ -80,8 +119,22 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
     });
     void refresh();
     const timer = window.setInterval(refresh, 5000);
-    return () => { alive = false; window.clearInterval(timer); };
-  }, [token, en]);
+    const onPush = (event: Event) => {
+      const data = event instanceof MessageEvent ? event.data : (event as CustomEvent).detail;
+      if (data?.type === "restolink:notification" && data.href === `/table/${landing.table.token}`) {
+        if (!(event instanceof MessageEvent)) lastNativePushAt.current = Date.now();
+        void refresh();
+      }
+    };
+    if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", onPush);
+    window.addEventListener("resto237:native-notification", onPush);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+      if ("serviceWorker" in navigator) navigator.serviceWorker.removeEventListener("message", onPush);
+      window.removeEventListener("resto237:native-notification", onPush);
+    };
+  }, [token, en, landing.table.token]);
 
   useEffect(() => {
     if (!token || !attempt) return;
@@ -114,28 +167,17 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
     setState(null);
     setError(null);
     setNotice(null);
+    setPushStatus("idle");
     seenMessages.current = null;
   }
 
   async function enableAlerts(raw: string) {
-    if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
-      setPushStatus("unavailable");
-      return;
-    }
-    try {
-      const permission = Notification.permission === "granted"
-        ? "granted"
-        : await Notification.requestPermission();
-      if (permission !== "granted") { setPushStatus("unavailable"); return; }
-      const key = configuredVapidKey();
-      if (!key) { setPushStatus("unavailable"); return; }
-      const registration = await registerPushWorker();
-      const { subscription, previousEndpoint } = await ensurePushSubscription(registration, key);
-      const serialized = serializePushSubscription(subscription, previousEndpoint);
-      const result = await saveGuestDiningPush(raw, serialized);
-      setPushStatus(result.ok ? "enabled" : "unavailable");
-    } catch {
-      setPushStatus("unavailable");
+    unlockNotificationSound();
+    const result = await syncGuestPush(raw, true);
+    setPushStatus(result);
+    if (result === "enabled") {
+      setNotice(en ? "Table alerts are enabled on this device." : "Les alertes de table sont activées sur cet appareil.");
+      void playNotificationSound();
     }
   }
 
@@ -218,12 +260,14 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
     });
   }
 
-  const alertsControl = token && pushStatus !== "enabled" && (
+  const alertsControl = token && (pushStatus === "enabled" ? (
+    <span className="flex items-center gap-2 text-sm text-success"><Bell className="size-4" />{en ? "Table alerts enabled" : "Alertes de table activées"}</span>
+  ) : (
     <Button variant="outline" size="sm" onClick={() => void enableAlerts(token)}>
       <Bell className="size-4" />
       {en ? "Enable table alerts" : "Activer les alertes"}
     </Button>
-  );
+  ));
 
   if (!token) return (
     <main className="mx-auto min-h-[100dvh] max-w-lg px-4 py-10">

@@ -141,10 +141,10 @@ export async function getGuestDiningState(raw:string){
   const db=createAdminClient();
   const [{data:rounds},{data:messages},{data:order}]=await Promise.all([
     db.from("dining_rounds").select("id,status,subtotal,notes,created_at,dining_round_items(id,name,quantity,unit_price,options_label,status,rejection_reason)").eq("guest_id",ctx.id).order("created_at"),
-    db.from("dining_messages").select("id,guest_id,sender_kind,kind,body,created_at").eq("session_id",ctx.session_id).or(`guest_id.eq.${ctx.id},guest_id.is.null`).order("created_at").limit(100),
+    db.from("dining_messages").select("id,guest_id,sender_kind,kind,body,created_at").eq("session_id",ctx.session_id).or(`guest_id.eq.${ctx.id},guest_id.is.null`).order("created_at", { ascending: false }).limit(100),
     session?.order_id?db.from("orders").select("id,reference,status,total,subtotal,service_charge,is_paid,payment_method,payment_requested_at,order_items(name,quantity,unit_price,options_label)").eq("id",session.order_id).maybeSingle():Promise.resolve({data:null}),
   ]);
-  return {guest:{id:ctx.id,name:ctx.display_name,status:ctx.status},session,rounds:rounds??[],messages:messages??[],order:order??null};
+  return {guest:{id:ctx.id,name:ctx.display_name,status:ctx.status},session,rounds:rounds??[],messages:(messages??[]).reverse(),order:order??null};
 }
 
 export async function submitGuestRound(raw:string,input:{lines:{menuItemId:string;quantity:number;optionIds:string[]}[];notes?:string}):Promise<DiningAction>{
@@ -362,5 +362,27 @@ export async function requestGuestDiningPayment(raw: string): Promise<DiningActi
       : "Could not prepare online payment. Ask a waiter for help." };
   }
   await notifyDiningStaff(session.id, "message", ctx.display_name, "Guest chose online payment.");
+  return { ok: true };
+}
+
+export async function saveGuestDiningNativePush(raw: string, token: string, platform: "android" | "ios"): Promise<DiningAction> {
+  const ctx = await guestContext(raw);
+  const session = Array.isArray(ctx?.dining_sessions) ? ctx.dining_sessions[0] : ctx?.dining_sessions;
+  if (!ctx || !session || !["pending", "approved"].includes(ctx.status) ||
+      !["awaiting_staff", "open", "payment_requested"].includes(session.status)) {
+    return { ok: false, error: "Your table visit is not active." };
+  }
+  if (!["android", "ios"].includes(platform) || !/^[A-Za-z0-9_:.-]{20,4096}$/.test(token)) {
+    return { ok: false, error: "Invalid device subscription." };
+  }
+  const limited = await rateLimit({ key: "dining:native-push", identifier: ctx.id, limit: 20, windowMs: 60 * 60_000 });
+  if (!limited.ok) return { ok: false, error: "Please try again later." };
+  const { error } = await createAdminClient().from("dining_guest_fcm_subscriptions").upsert({
+    guest_id: ctx.id, token, platform, updated_at: new Date().toISOString(),
+  }, { onConflict: "token" });
+  if (error) {
+    console.error("[dining:native-push]", error.message);
+    return { ok: false, error: "Could not enable table alerts." };
+  }
   return { ok: true };
 }

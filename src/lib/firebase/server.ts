@@ -167,3 +167,25 @@ export async function sendFirebasePush(
   }
   return { devices };
 }
+
+/** Send to the app device that joined this visit, independently of account login. */
+export async function sendGuestFirebasePush(guestId: string, payload: PushPayload): Promise<void> {
+  const current = config();
+  if (!current) return;
+  const db = createAdminClient();
+  const { data, error } = await db.from("dining_guest_fcm_subscriptions")
+    .select("id,token,platform").eq("guest_id", guestId);
+  if (error) { console.error("[firebase:guest] subscriptions", error.code); return; }
+  if (!data?.length) return;
+  try {
+    const bearer = await firebaseAccessToken(current);
+    await Promise.allSettled(data.map(async (device) => {
+      const response = await firebaseMessageRequest(current, bearer, device.token, payload, device.platform);
+      if (response.ok) return;
+      const body = await response.json().catch(() => ({}));
+      const expired = body.error?.details?.some((detail: { errorCode?: string }) => detail.errorCode === "UNREGISTERED");
+      if (expired) await db.from("dining_guest_fcm_subscriptions").delete().eq("id", device.id).eq("token", device.token);
+      else console.error("[firebase:guest] delivery", response.status);
+    }));
+  } catch (error) { console.error("[firebase:guest] failed", error instanceof Error ? error.message : "unknown"); }
+}

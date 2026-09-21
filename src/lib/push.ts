@@ -1,7 +1,7 @@
 import "server-only";
 import webpush from "web-push";
 import { createAdminClient } from "@/lib/supabase/server";
-import { sendFirebasePush, firebaseDeliveryConfigured } from "@/lib/firebase/server";
+import { sendFirebasePush, sendGuestFirebasePush, firebaseDeliveryConfigured } from "@/lib/firebase/server";
 import { notificationProvider } from "@/lib/notification-provider";
 
 /**
@@ -493,7 +493,9 @@ export async function sendPush(profileId: string, payload: PushPayload): Promise
 
 /** Push to a temporary QR-table guest without creating a customer account. */
 export async function sendGuestDiningPush(guestId: string, payload: PushPayload): Promise<void> {
-  if (!pushConfigured() || !(await platformPushEnabled())) return;
+  if (!(await platformPushEnabled())) return;
+  await sendGuestFirebasePush(guestId, payload);
+  if (!pushConfigured()) return;
   const db = createAdminClient();
   const { data, error } = await db.from("dining_guest_push_subscriptions")
     .select("id,endpoint,p256dh,auth").eq("guest_id", guestId);

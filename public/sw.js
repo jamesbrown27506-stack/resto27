@@ -141,7 +141,12 @@ async function deliver(data) {
     }
   }
 
-  const anyVisible = clients.some((c) => c.visibilityState === "visible");
+  // A guest on a different page has no table listener to play the sound.
+  const anyVisible = clients.some((c) => {
+    if (c.visibilityState !== "visible") return false;
+    if (!url.startsWith("/table/")) return true;
+    try { return new URL(c.url).pathname === url.split("?")[0]; } catch { return false; }
+  });
 
   /*
     ────────────────────────────────────────────────────────────────────────

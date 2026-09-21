@@ -1,9 +1,9 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ provider: vi.fn(), enabled: vi.fn(), firebase: vi.fn(), configured: vi.fn() }));
+const mocks = vi.hoisted(() => ({ provider: vi.fn(), enabled: vi.fn(), firebase: vi.fn(), guestFirebase: vi.fn(), configured: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/notification-provider", () => ({ notificationProvider: mocks.provider }));
-vi.mock("@/lib/firebase/server", () => ({ sendFirebasePush: mocks.firebase, firebaseDeliveryConfigured: mocks.configured }));
+vi.mock("@/lib/firebase/server", () => ({ sendFirebasePush: mocks.firebase, sendGuestFirebasePush: mocks.guestFirebase, firebaseDeliveryConfigured: mocks.configured }));
 vi.mock("@/lib/supabase/server", () => ({ createAdminClient: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: mocks.enabled }) }) }) }) }));
 
 beforeEach(() => {
@@ -48,5 +48,19 @@ describe("shared push provider routing", () => {
     await sendPushWithReport("admin", { title: "Test" }, undefined, "web_push");
     expect(mocks.firebase).not.toHaveBeenCalled();
     expect(mocks.provider).not.toHaveBeenCalled();
+  });
+});
+
+describe("temporary guest push routing", () => {
+  it("delivers native table alerts even when browser VAPID is unconfigured", async () => {
+    const { sendGuestDiningPush } = await import("./push");
+    await sendGuestDiningPush("guest", { title: "Dish accepted" });
+    expect(mocks.guestFirebase).toHaveBeenCalledWith("guest", { title: "Dish accepted" });
+  });
+  it("honours the master push switch for table devices too", async () => {
+    mocks.enabled.mockResolvedValue({ data: { value: "false" }, error: null });
+    const { sendGuestDiningPush } = await import("./push");
+    await sendGuestDiningPush("guest", { title: "Update" });
+    expect(mocks.guestFirebase).not.toHaveBeenCalled();
   });
 });
