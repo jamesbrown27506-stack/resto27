@@ -23,6 +23,7 @@ type Guest = { id: string; display_name: string; status: string; created_at: str
 type Item = { id: string; name: string; quantity: number; unit_price: number; options_label: string | null; status: string; rejection_reason: string | null };
 type Round = { id: string; guest_id: string; status: string; subtotal: number; notes: string | null; created_at: string; dining_round_items: Item[] };
 type Msg = { id: string; guest_id: string | null; sender_kind: string; kind: string; body: string; created_at: string };
+type DiningOrder = { id: string; reference: string; status: string; total: number; service_charge: number; is_paid: boolean; payment_method: string; order_items: { id: string; name: string; quantity: number; unit_price: number; options_label: string | null }[] };
 export type DiningFloorSession = {
   id: string;
   status: string;
@@ -31,7 +32,7 @@ export type DiningFloorSession = {
   dining_guests: Guest[];
   dining_rounds: Round[];
   dining_messages: Msg[];
-  orders: { id: string; reference: string; status: string; total: number; is_paid: boolean; payment_method: string } | { id: string; reference: string; status: string; total: number; is_paid: boolean; payment_method: string }[] | null;
+  orders: DiningOrder | DiningOrder[] | null;
 };
 
 const copy = {
@@ -71,6 +72,15 @@ const copy = {
     requested: "Payment request sent",
     cash: "Paid in cash",
     cashDone: "Cash payment recorded",
+    commands: "Orders",
+    conversation: "Messages",
+    people: "People at this table",
+    noOrders: "No new orders to decide.",
+    cashTitle: "Confirm payment for the entire table",
+    cashWarning: "This receipt includes every approved guest at this table. Confirm only after you have collected the full cash amount. If guests are paying separately, do not close this bill.",
+    cashConfirm: "I received the full cash amount from everyone on this bill",
+    cashAmount: "Cash to collect",
+    cashChanged: "The bill may have changed. Review it again before confirming.",
     waiting: "Waiting for payment",
     alerts: "Table alerts for me",
     alertsHelp: "Access requests, food orders and calls. Push requires notifications to be enabled on this device.",
@@ -113,6 +123,15 @@ const copy = {
     requested: "Demande de paiement envoyée",
     cash: "Payé en espèces",
     cashDone: "Paiement en espèces enregistré",
+    commands: "Commandes",
+    conversation: "Messages",
+    people: "Personnes à cette table",
+    noOrders: "Aucune nouvelle commande à traiter.",
+    cashTitle: "Confirmer le paiement de toute la table",
+    cashWarning: "Cette addition inclut tous les clients acceptés à cette table. Confirmez uniquement après avoir reçu le montant total en espèces. Si les clients paient séparément, ne clôturez pas cette addition.",
+    cashConfirm: "J’ai reçu le montant total en espèces pour tous les clients de cette addition",
+    cashAmount: "Espèces à encaisser",
+    cashChanged: "L’addition a peut-être changé. Vérifiez-la avant de confirmer.",
     waiting: "En attente du paiement",
     alerts: "Mes alertes de table",
     alertsHelp: "Demandes d’accès, commandes et appels. Le push doit être activé sur cet appareil.",
@@ -132,6 +151,10 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
   const [rejectItem, setRejectItem] = useState<{ id: string; name: string } | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [alertsEnabled, setAlertsEnabled] = useState(notificationsEnabled);
+  const [selectedSessionId, setSelectedSessionId] = useState(focusSessionId ?? sessions[0]?.id ?? "");
+  const [mobileTab, setMobileTab] = useState<"commands" | "messages">("commands");
+  const [cashSessionId, setCashSessionId] = useState<string | null>(null);
+  const [cashAcknowledged, setCashAcknowledged] = useState(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => router.refresh(), 5000);
@@ -177,6 +200,12 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
     ? [...sessions].sort((a, b) => Number(b.id === focusSessionId) - Number(a.id === focusSessionId))
     : sessions;
 
+  const selectedSession = orderedSessions.find((session) => session.id === selectedSessionId) ?? orderedSessions[0];
+  const cashSession = orderedSessions.find((session) => session.id === cashSessionId);
+  const cashOrder = cashSession ? (Array.isArray(cashSession.orders) ? cashSession.orders[0] : cashSession.orders) : null;
+  const cashGuests = cashSession?.dining_guests.filter((guest) => guest.status === "approved") ?? [];
+  const cashAmount = cashOrder ? cashOrder.total - Number(cashOrder.service_charge ?? 0) : 0;
+
   const alertControl = (
     <Switch
       label={t.alerts}
@@ -216,8 +245,26 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
           <a href="/m/tables/print" target="_blank" className={buttonClasses({ variant: "outline", size: "sm" })}>{t.print}</a>
         </div>
       </div>
-      <div className="grid gap-4 xl:grid-cols-2">
-        {orderedSessions.map((session) => {
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]">
+        <aside className="min-w-0 rounded-lg border border-border bg-surface p-2 lg:sticky lg:top-4 lg:self-start" aria-label={t.title}>
+          <div className="flex gap-2 overflow-x-auto lg:flex-col lg:overflow-visible">
+            {orderedSessions.map((session) => {
+              const table = Array.isArray(session.restaurant_tables) ? session.restaurant_tables[0] : session.restaurant_tables;
+              const waiting = session.dining_guests.filter((guest) => guest.status === "pending").length + session.dining_rounds.filter((round) => round.status === "pending").length;
+              return <button key={session.id} type="button" onClick={() => { setSelectedSessionId(session.id); setMobileTab("commands"); }} className={`min-w-32 rounded-md p-3 text-left transition-colors lg:w-full ${selectedSession?.id === session.id ? "bg-primary text-white" : "hover:bg-surface-2"}`}>
+                <span className="flex items-center justify-between gap-2 text-sm font-semibold">{t.table} {table?.number}{waiting > 0 && <span className="grid size-5 shrink-0 place-items-center rounded-full bg-warning text-xs text-black">{waiting}</span>}</span>
+                <span className="mt-1 block truncate text-xs opacity-80">{session.dining_guests.filter((guest) => guest.status === "approved").map((guest) => guest.display_name).join(", ") || t.access}</span>
+              </button>;
+            })}
+          </div>
+          {selectedSession && <div className="mt-2 hidden border-t border-border pt-2 lg:block"><p className="px-2 text-xs font-semibold uppercase text-text-secondary">{t.people}</p>{selectedSession.dining_guests.filter((guest) => guest.status === "approved").map((guest) => <button key={guest.id} type="button" onClick={() => { setReplyGuests((value) => ({ ...value, [selectedSession.id]: guest.id })); setMobileTab("messages"); }} className="block w-full truncate rounded-md px-2 py-2 text-left text-sm hover:bg-surface-2">{guest.display_name}</button>)}</div>}
+        </aside>
+        <div className="min-w-0">
+          <div className="mb-3 grid grid-cols-2 gap-2 lg:hidden" role="tablist" aria-label={t.title}>
+            <button type="button" role="tab" aria-selected={mobileTab === "commands"} onClick={() => setMobileTab("commands")} className={`rounded-full px-3 py-2 text-sm font-semibold ${mobileTab === "commands" ? "bg-primary text-white" : "bg-surface-2"}`}>{t.commands}</button>
+            <button type="button" role="tab" aria-selected={mobileTab === "messages"} onClick={() => setMobileTab("messages")} className={`rounded-full px-3 py-2 text-sm font-semibold ${mobileTab === "messages" ? "bg-primary text-white" : "bg-surface-2"}`}>{t.conversation}</button>
+          </div>
+        {[selectedSession].filter((session): session is DiningFloorSession => Boolean(session)).map((session) => {
           const table = Array.isArray(session.restaurant_tables) ? session.restaurant_tables[0] : session.restaurant_tables;
           const order = Array.isArray(session.orders) ? session.orders[0] : session.orders;
           const guests = session.dining_guests ?? [];
@@ -235,7 +282,8 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
                 </div>
                 <Badge tone={session.status === "payment_requested" ? "warning" : session.status === "open" ? "success" : "neutral"}>{session.status.replaceAll("_", " ")}</Badge>
               </header>
-              <div className="space-y-5 p-4">
+              <div className="grid min-w-0 gap-4 p-4 xl:grid-cols-2">
+                <div className={`min-w-0 space-y-5 ${mobileTab === "commands" ? "block" : "hidden"} lg:block`}>
                 <div>
                   <h4 className="mb-2 text-sm font-semibold">{t.access}</h4>
                   <ul className="space-y-2">
@@ -278,7 +326,8 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
                   </div>
                 ))}
 
-                <div>
+                </div>
+                <div className={`min-w-0 ${mobileTab === "messages" ? "block" : "hidden"} lg:block`}>
                   <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold"><MessageSquare className="size-4" />{t.messages}</h4>
                   {approvedGuests.length > 0 && (
                     <label className="mb-2 block text-xs font-semibold">
@@ -290,8 +339,8 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
                       </select>
                     </label>
                   )}
-                  <div className="max-h-44 space-y-2 overflow-y-auto rounded-md bg-surface-2 p-3">
-                    {guestMessages.slice(-8).map((message) => <p key={message.id} className="break-words text-sm"><strong>{message.sender_kind === "guest" ? guests.find((guest) => guest.id === message.guest_id)?.display_name ?? t.guest : t.staff}:</strong> {message.body}</p>)}
+                  <div className="flex h-80 flex-col gap-2 overflow-y-auto rounded-md bg-surface-2 p-3" aria-live="polite">
+                    {guestMessages.slice(-40).map((message) => <div key={message.id} className={`max-w-[85%] break-words rounded-lg px-3 py-2 text-sm ${message.sender_kind === "guest" ? "self-start bg-surface" : "self-end bg-primary/10"}`}><p className="mb-1 text-xs font-semibold">{message.sender_kind === "guest" ? guests.find((guest) => guest.id === message.guest_id)?.display_name ?? t.guest : t.staff}</p><p>{message.body}</p><time className="mt-1 block text-right text-[11px] text-text-secondary">{new Date(message.created_at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}</time></div>)}
                     {!guestMessages.length && <p className="text-sm text-text-light">{t.noMessages}</p>}
                   </div>
                   <div className="mt-2 flex min-w-0 gap-2">
@@ -314,7 +363,7 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
                       <p className="font-display text-xl font-bold">{formatMoney(order.total)}</p>
                     </div>
                     {canFinance && !order.is_paid && session.status === "open" && <Button className="whitespace-normal" variant="outline" disabled={pending} onClick={() => run(() => requestDiningPayment(session.id), t.requested)}><CreditCard className="size-4 shrink-0" />{t.requestPayment}</Button>}
-                    {canFinance && !order.is_paid && <Button className="whitespace-normal" disabled={pending} onClick={() => run(() => closeDiningCash(session.id), t.cashDone)}><ReceiptText className="size-4 shrink-0" />{t.cash}</Button>}
+                    {canFinance && !order.is_paid && <Button className="whitespace-normal" disabled={pending} onClick={() => { setCashSessionId(session.id); setCashAcknowledged(false); }}><ReceiptText className="size-4 shrink-0" />{t.cash}</Button>}
                     {session.status === "payment_requested" && <span className="flex items-center gap-1 text-sm text-warning"><Clock3 className="size-4" />{t.waiting}</span>}
                   </div>
                 )}
@@ -322,7 +371,23 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
             </article>
           );
         })}
+        </div>
       </div>
+      <Dialog open={cashSessionId !== null} onClose={() => setCashSessionId(null)} title={t.cashTitle} size="md" footer={<>
+        <Button variant="outline" disabled={pending} onClick={() => setCashSessionId(null)}>{t.cancel}</Button>
+        <Button disabled={pending || !cashAcknowledged || !cashOrder || cashAmount <= 0 || !cashOrder.order_items?.length || !cashGuests.length} loading={pending} onClick={() => {
+          if (!cashSession || !cashOrder) return;
+          run(() => closeDiningCash({ sessionId: cashSession.id, orderId: cashOrder.id, amount: cashAmount, itemIds: cashOrder.order_items.map((item) => item.id), guestIds: cashGuests.map((guest) => guest.id), confirmAll: true }), t.cashDone);
+          setCashSessionId(null);
+        }}>{t.cash}</Button>
+      </>}>
+        <p className="mb-3 rounded-md bg-warning-light p-3 text-sm">{t.cashWarning}</p>
+        <p className="text-sm font-semibold">{t.people}</p>
+        <ul className="mb-4 list-inside list-disc text-sm">{cashGuests.map((guest) => <li key={guest.id}>{guest.display_name}</li>)}</ul>
+        <div className="max-h-48 overflow-y-auto rounded-md border border-border p-3"><p className="mb-2 text-sm font-semibold">{cashOrder?.reference}</p>{cashOrder?.order_items?.map((item) => <div key={item.id} className="flex justify-between gap-3 py-1 text-sm"><span className="min-w-0 break-words">{item.quantity}× {item.name}</span><span className="shrink-0">{formatMoney(item.quantity * item.unit_price)}</span></div>)}</div>
+        <p className="mt-3 flex justify-between font-semibold"><span>{t.cashAmount}</span><span>{formatMoney(cashAmount)}</span></p>
+        <label className="mt-4 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={cashAcknowledged} onChange={(event) => setCashAcknowledged(event.target.checked)} /><span>{t.cashConfirm}</span></label>
+      </Dialog>
       <Dialog
         open={rejectItem !== null}
         onClose={() => setRejectItem(null)}

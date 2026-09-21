@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { Bell, Check, Clock3, CreditCard, Droplets, Plus, ReceiptText, Send, ShoppingBag, UtensilsCrossed, WalletCards, X } from "lucide-react";
+import { Bell, Check, Clock3, CreditCard, Droplets, Minus, Plus, ReceiptText, Send, ShoppingBag, Trash2, UtensilsCrossed, WalletCards, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -39,6 +39,7 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
   const [token, setToken] = useState<string | null>(null);
   const [state, setState] = useState<State | null>(null);
   const [cart, setCart] = useState<Line[]>([]);
+  const [cartOpen, setCartOpen] = useState(false);
   const [notes, setNotes] = useState("");
   const [message, setMessage] = useState("");
   const [phone, setPhone] = useState("");
@@ -208,6 +209,11 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
         ? current.map((line) => line.id === item.id ? { ...line, quantity: line.quantity + 1 } : line)
         : [...current, { id: item.id, name: item.name, price, quantity: 1, optionIds }];
     });
+    setCartOpen(true);
+  }
+
+  function changeQuantity(id: string, delta: number) {
+    setCart((current) => current.map((line) => line.id === id ? { ...line, quantity: line.quantity + delta } : line).filter((line) => line.quantity > 0));
   }
 
   function submit() {
@@ -366,7 +372,7 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
       {paymentRequested && (
         <section className="mt-5 rounded-lg border border-warning/30 bg-warning-light p-5">
           <h2 className="font-display text-xl font-bold">{en ? "Online payment is ready" : "Paiement en ligne prêt"}</h2>
-          <p className="mt-2 text-sm text-text-secondary">{en ? "Review your bill, then start Mobile Money from your own phone." : "Vérifiez l’addition, puis lancez Mobile Money depuis votre téléphone."}</p>
+          <p className="mt-2 text-sm text-text-secondary">{en ? "This is the whole-table bill, including other guests. Review it before paying from your phone." : "Il s’agit de l’addition de toute la table, y compris les autres clients. Vérifiez-la avant de payer sur votre téléphone."}</p>
           <p className="mt-3 text-sm">{en ? "Dishes" : "Plats"}: {formatMoney(state.order?.subtotal ?? 0)} · {en ? "Online fee" : "Frais en ligne"}: {formatMoney(state.order?.service_charge ?? 0)}</p>
           <p className="mt-1 text-2xl font-bold text-primary">{formatMoney(state.order?.total ?? 0)}</p>
           <Field label={en ? "Mobile Money number" : "Numéro Mobile Money"} htmlFor="pay-phone">
@@ -381,7 +387,7 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
       <section className="mt-6">
         <h2 className="font-display text-xl font-bold">{en ? "At your table" : "À votre table"}</h2>
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <Button variant="outline" onClick={() => setBillOpen((value) => !value)}><ReceiptText className="size-4" />{en ? "My bill" : "Mon addition"}</Button>
+          <Button variant="outline" onClick={() => setBillOpen((value) => !value)}><ReceiptText className="size-4" />{en ? "Table bill" : "Addition de la table"}</Button>
           <Button variant="outline" onClick={() => quick("call_waiter")}><Bell className="size-4" />{en ? "Call waiter" : "Appeler"}</Button>
           <Button variant="outline" onClick={() => quick("water")}><Droplets className="size-4" />{en ? "Water" : "Eau"}</Button>
           <Button variant="outline" onClick={() => quick("help")}><UtensilsCrossed className="size-4" />{en ? "Help" : "Aide"}</Button>
@@ -390,7 +396,7 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
 
       {billOpen && (
         <section className="mt-4 rounded-lg border border-border bg-surface p-5">
-          <h2 className="font-display text-xl font-bold">{en ? "Your bill so far" : "Votre addition actuelle"}</h2>
+          <h2 className="font-display text-xl font-bold">{en ? "Whole-table bill so far" : "Addition actuelle de la table"}</h2>
           {billItems.length ? (
             <ul className="mt-3 divide-y divide-border">{billItems.map((item, index) => (
               <li key={index} className="flex justify-between gap-3 py-2 text-sm">
@@ -482,10 +488,21 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
       {error && <div role="alert" className="fixed inset-x-4 bottom-24 z-50 mx-auto flex max-w-lg items-start gap-2 rounded-md bg-error px-4 py-3 text-sm text-white">
         <p className="min-w-0 flex-1">{error}</p><button type="button" aria-label={en ? "Dismiss" : "Fermer"} onClick={() => setError(null)}><X className="size-4" /></button>
       </div>}
-      {cart.length > 0 && <aside className="fixed inset-x-0 bottom-0 border-t border-border bg-surface/95 p-3 shadow-lg backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center gap-3">
-          <div className="min-w-0 flex-1"><p className="font-semibold">{cart.reduce((sum, line) => sum + line.quantity, 0)} {en ? "items" : "articles"}</p><p className="font-bold text-primary">{formatMoney(cartTotal)}</p></div>
-          <Button size="lg" onClick={submit} loading={pending}><ShoppingBag className="size-4" />{en ? "Send order" : "Envoyer"}</Button>
+      {cart.length > 0 && <aside className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 p-3 shadow-lg backdrop-blur">
+        <div className="mx-auto max-w-3xl">
+          {cartOpen && <div className="mb-3 max-h-[45dvh] space-y-2 overflow-y-auto" aria-label={en ? "Basket items" : "Articles du panier"}>
+            <div className="flex items-center justify-between"><p className="font-semibold">{en ? "Your basket" : "Votre panier"}</p><button type="button" className="inline-flex items-center gap-1 text-sm text-error" onClick={() => { setCart([]); setCartOpen(false); }}><Trash2 className="size-4" />{en ? "Empty basket" : "Vider le panier"}</button></div>
+            {cart.map((line) => <div key={line.id} className="flex items-center gap-2 rounded-md border border-border p-2">
+              <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{line.name}</p><p className="text-xs text-text-secondary">{formatMoney(line.price * line.quantity)}</p></div>
+              <button type="button" aria-label={`${en ? "Remove one" : "Retirer un"} ${line.name}`} onClick={() => changeQuantity(line.id, -1)} className="grid size-9 place-items-center rounded-full border border-border"><Minus className="size-4" /></button>
+              <span className="w-5 text-center text-sm font-semibold">{line.quantity}</span>
+              <button type="button" aria-label={`${en ? "Add one" : "Ajouter un"} ${line.name}`} onClick={() => changeQuantity(line.id, 1)} className="grid size-9 place-items-center rounded-full border border-border"><Plus className="size-4" /></button>
+            </div>)}
+          </div>}
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => setCartOpen((value) => !value)} aria-expanded={cartOpen} className="min-w-0 flex-1 text-left"><p className="font-semibold">{cart.reduce((sum, line) => sum + line.quantity, 0)} {en ? "items · Edit basket" : "articles · Modifier le panier"}</p><p className="font-bold text-primary">{formatMoney(cartTotal)}</p></button>
+            <Button size="lg" onClick={submit} loading={pending}><ShoppingBag className="size-4" />{en ? "Send order" : "Envoyer"}</Button>
+          </div>
         </div>
       </aside>}
     </main>

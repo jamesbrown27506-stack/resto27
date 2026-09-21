@@ -198,7 +198,7 @@ export async function setMyDiningNotifications(enabled: boolean): Promise<Dining
   return { ok: true };
 }
 export async function fetchDiningFloor(restaurantId:string){
-  const {data,error}=await createAdminClient().from("dining_sessions").select("id,status,order_id,created_at,payment_requested_at,restaurant_tables(id,number,public_token),dining_guests(id,display_name,status,created_at),dining_rounds(id,guest_id,status,subtotal,notes,created_at,dining_round_items(id,name,quantity,unit_price,options_label,status,rejection_reason)),dining_messages(id,guest_id,sender_kind,kind,body,created_at),orders!dining_sessions_order_id_fkey(id,reference,status,total,is_paid,payment_method)").eq("restaurant_id",restaurantId).in("status",["awaiting_staff","open","payment_requested"]).order("created_at");
+  const {data,error}=await createAdminClient().from("dining_sessions").select("id,status,order_id,created_at,payment_requested_at,restaurant_tables(id,number,public_token),dining_guests(id,display_name,status,created_at),dining_rounds(id,guest_id,status,subtotal,notes,created_at,dining_round_items(id,name,quantity,unit_price,options_label,status,rejection_reason)),dining_messages(id,guest_id,sender_kind,kind,body,created_at),orders!dining_sessions_order_id_fkey(id,reference,status,total,service_charge,is_paid,payment_method,order_items(id,name,quantity,unit_price,options_label))").eq("restaurant_id",restaurantId).in("status",["awaiting_staff","open","payment_requested"]).order("created_at");
   if(error){console.error("[dining:floor]",error.message);return[];}return data??[];
 }
 
@@ -279,17 +279,30 @@ export async function requestDiningPayment(sessionId:string):Promise<DiningActio
   revalidatePath("/m/table-order");revalidatePath("/m/orders");return{ok:true};
 }
 
-export async function closeDiningCash(sessionId:string):Promise<DiningAction>{const {active,profile}=await requireCapability("finance.manage");const db=createAdminClient();const {data:s}=await db.from("dining_sessions").select("id").eq("id",sessionId).eq("restaurant_id",active.restaurantId).maybeSingle();if(!s)return{ok:false,error:"Table session not found."};
-  const { data: undecided } = await db.from("dining_round_items")
-    .select("id,dining_rounds!inner(session_id)")
-    .eq("dining_rounds.session_id", sessionId).eq("status", "pending").limit(1).maybeSingle();
-  if (undecided) return { ok: false, error: "Decide every dish before closing the bill." };
-  const {error}=await db.rpc("close_dining_cash",{p_session_id:sessionId,p_staff_id:profile.id});if(error){console.error("[dining:cash]",error.message);return{ok:false,error:"Could not record the cash payment."};}
-  await notifySessionGuests(sessionId, {
+export type DiningCashConfirmation = { sessionId: string; orderId: string; amount: number; itemIds: string[]; guestIds: string[]; confirmAll: true };
+
+export async function closeDiningCash(confirmation: DiningCashConfirmation): Promise<DiningAction> {
+  const { active, profile } = await requireCapability("finance.manage");
+  const db = createAdminClient();
+  const { data: session } = await db.from("dining_sessions").select("id").eq("id", confirmation.sessionId).eq("restaurant_id", active.restaurantId).maybeSingle();
+  if (!session) return { ok: false, error: "Table session not found." };
+  if (confirmation.confirmAll !== true) return { ok: false, error: "Confirm the whole-table receipt first." };
+  const { error } = await db.rpc("close_dining_cash_confirmed", {
+    p_session_id: confirmation.sessionId, p_staff_id: profile.id, p_order_id: confirmation.orderId,
+    p_amount: confirmation.amount, p_item_ids: confirmation.itemIds, p_guest_ids: confirmation.guestIds,
+    p_confirm_all: true,
+  });
+  if (error) {
+    console.error("[dining:cash]", error.message);
+    return { ok: false, error: "The bill changed or payment is in progress. Refresh and review it again." };
+  }
+  await notifySessionGuests(confirmation.sessionId, {
     fr: { title: "Paiement sur place enregistré", body: "Le restaurant a enregistré votre paiement sur place. Merci de votre visite." },
     en: { title: "On-site payment recorded", body: "The restaurant recorded your payment on site. Thank you for visiting." },
   });
-  revalidatePath("/m/table-order");revalidatePath("/m/orders");return{ok:true};}
+  revalidatePath("/m/table-order"); revalidatePath("/m/orders");
+  return { ok: true };
+}
 
 export async function payDiningBill(raw:string,phone:string):Promise<DiningAction&{status?:"pending"|"succeeded";attemptId?:string;instruction?:PaymentInstruction}>{const ctx=await guestContext(raw);const session=Array.isArray(ctx?.dining_sessions)?ctx?.dining_sessions[0]:ctx?.dining_sessions;if(!ctx||ctx.status!=="approved"||session?.status!=="payment_requested"||!session.order_id)return{ok:false,error:"This table is not requesting payment."};const requested=normalisePhone(phone);if(!requested)return{ok:false,error:"Enter a valid Mobile Money number."};const db=createAdminClient();const {data:o}=await db.from("orders").select("id,reference,restaurant_id,total,status,is_paid,payment_method").eq("id",session.order_id).maybeSingle();if(!o)return{ok:false,error:"Bill not found."};if(o.is_paid)return{ok:true,status:"succeeded"};
  const {data:attempts}=await db.from("payment_attempts").select("id,status,transaction_id,phone").eq("raw_response->>orderId",o.id).in("status",["pending","succeeded"]).is("settled_at",null).order("created_at",{ascending:false}).limit(5);const open=(attempts??[]).find(a=>a.status==="succeeded"||Boolean(a.transaction_id));if(open?.status==="succeeded"){const settled=await settlePayment(open.id);return settled.ok?{ok:true,status:"succeeded"}:{ok:false,error:settled.error};}if(open?.transaction_id){const current=await checkPaymentAttempt(open.id);if(current.status==="succeeded")return{ok:true,status:"succeeded"};if(current.status==="pending"){if(normalisePhone(String(open.phone??""))!==requested)return{ok:false,error:"Another Mobile Money request is still active for this bill."};return{ok:true,status:"pending",attemptId:open.id,instruction:current.instruction};}}
