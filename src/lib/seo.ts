@@ -11,7 +11,7 @@ import { getBranding } from "./branding";
  * `summary_large_image` Twitter card, which wants roughly 1200×630. See
  * `app/og/route.tsx` for the generated replacement.
  */
-const FALLBACK_OG_IMAGE = "/og";
+const FALLBACK_OG_IMAGE = "/og?v=logo1";
 
 /**
  * `index: false` keeps a reachable page out of search results while still

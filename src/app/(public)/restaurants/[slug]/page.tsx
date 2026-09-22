@@ -44,7 +44,7 @@ export async function generateMetadata({
   // pattern the directories ranking for those names use — the title says the
   // page has exactly that.
   const title = locale === "fr" ? `${restaurant.name} à ${place} : menu, prix et avis` : `${restaurant.name}, ${place}: menu, prices and reviews`;
-  return publicMetadata("/restaurants/" + restaurant.slug, title, description, restaurant.coverUrl ?? restaurant.logoUrl);
+  return publicMetadata("/restaurants/" + restaurant.slug, title, description, restaurant.logoUrl);
 }
 
 export default async function RestaurantDetailPage({

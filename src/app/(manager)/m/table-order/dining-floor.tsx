@@ -13,6 +13,7 @@ import {
   closeDiningCash,
   decideDiningGuest,
   decideDiningItem,
+  decideDiningItems,
   requestDiningPayment,
   sendStaffDiningMessage,
   setMyDiningNotifications,
@@ -60,6 +61,13 @@ const copy = {
     rejectReason: "Reason shown to the guest",
     rejectHint: "The other dishes in this request stay unchanged.",
     rejectRequired: "Please give a reason of at least 5 characters.",
+    selectAll: "Select all pending dishes",
+    selected: "selected",
+    acceptSelected: "Accept selected",
+    rejectSelected: "Decline selected",
+    bulkRejectTitle: "Why are these dishes unavailable?",
+    bulkAccepted: "Selected dishes accepted",
+    bulkRejected: "Selected dishes declined and guests notified",
     chooseGuest: "Reply to guest",
     dishAccepted: "Dish accepted",
     dishRejected: "Dish declined and guest notified",
@@ -111,6 +119,13 @@ const copy = {
     rejectReason: "Motif envoyé au client",
     rejectHint: "Les autres plats de cette demande ne changent pas.",
     rejectRequired: "Indiquez un motif d’au moins 5 caractères.",
+    selectAll: "Sélectionner tous les plats en attente",
+    selected: "sélectionné(s)",
+    acceptSelected: "Accepter la sélection",
+    rejectSelected: "Refuser la sélection",
+    bulkRejectTitle: "Pourquoi ces plats sont-ils indisponibles ?",
+    bulkAccepted: "Plats sélectionnés acceptés",
+    bulkRejected: "Plats sélectionnés refusés et clients prévenus",
     chooseGuest: "Répondre au client",
     dishAccepted: "Plat accepté",
     dishRejected: "Plat refusé et client prévenu",
@@ -150,6 +165,9 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
   const [replyGuests, setReplyGuests] = useState<Record<string, string>>({});
   const [rejectItem, setRejectItem] = useState<{ id: string; name: string } | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const [bulkReason, setBulkReason] = useState("");
   const [alertsEnabled, setAlertsEnabled] = useState(notificationsEnabled);
   const [selectedSessionId, setSelectedSessionId] = useState(focusSessionId ?? sessions[0]?.id ?? "");
   const [mobileTab, setMobileTab] = useState<"commands" | "messages">("commands");
@@ -183,6 +201,17 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
         setRejectReason("");
         router.refresh();
       }
+    });
+  }
+
+  function runBulk(ids: string[], approve: boolean, reason?: string) {
+    if (!ids.length) return;
+    start(async () => {
+      const result = await decideDiningItems(ids, approve, reason);
+      toast(result.ok ? (approve ? t.bulkAccepted : t.bulkRejected) : result.error ?? "Error", result.ok ? "success" : "error");
+      setSelectedItems(result.failedIds);
+      if (result.ok) { setBulkRejectOpen(false); setBulkReason(""); }
+      router.refresh();
     });
   }
 
@@ -251,7 +280,7 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
             {orderedSessions.map((session) => {
               const table = Array.isArray(session.restaurant_tables) ? session.restaurant_tables[0] : session.restaurant_tables;
               const waiting = session.dining_guests.filter((guest) => guest.status === "pending").length + session.dining_rounds.filter((round) => round.status === "pending").length;
-              return <button key={session.id} type="button" onClick={() => { setSelectedSessionId(session.id); setMobileTab("commands"); }} className={`min-w-32 rounded-md p-3 text-left transition-colors lg:w-full ${selectedSession?.id === session.id ? "bg-primary text-white" : "hover:bg-surface-2"}`}>
+              return <button key={session.id} type="button" onClick={() => { setSelectedSessionId(session.id); setSelectedItems([]); setMobileTab("commands"); }} className={`min-w-32 rounded-md p-3 text-left transition-colors lg:w-full ${selectedSession?.id === session.id ? "bg-primary text-white" : "hover:bg-surface-2"}`}>
                 <span className="flex items-center justify-between gap-2 text-sm font-semibold">{t.table} {table?.number}{waiting > 0 && <span className="grid size-5 shrink-0 place-items-center rounded-full bg-warning text-xs text-black">{waiting}</span>}</span>
                 <span className="mt-1 block truncate text-xs opacity-80">{session.dining_guests.filter((guest) => guest.status === "approved").map((guest) => guest.display_name).join(", ") || t.access}</span>
               </button>;
@@ -273,6 +302,8 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
           const approvedGuests = guests.filter((guest) => guest.status === "approved");
           const replyGuestId = replyGuests[session.id] ?? approvedGuests[0]?.id ?? "";
           const guestMessages = messages.filter((message) => !message.guest_id || message.guest_id === replyGuestId);
+          const pendingItems = rounds.flatMap((round) => round.dining_round_items.filter((item) => item.status === "pending"));
+          const activeSelection = selectedItems.filter((id) => pendingItems.some((item) => item.id === id));
           return (
             <article key={session.id} className={`min-w-0 overflow-hidden rounded-lg border bg-surface ${session.id === focusSessionId ? "border-primary ring-2 ring-primary/30" : "border-border"}`}>
               <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
@@ -301,6 +332,10 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
                   </ul>
                 </div>
 
+                {pendingItems.length > 0 && <div className="rounded-md border border-border bg-surface-2 p-3">
+                  <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={activeSelection.length === pendingItems.length} onChange={(event) => setSelectedItems(event.target.checked ? pendingItems.map((item) => item.id) : [])} />{t.selectAll}</label>
+                  {activeSelection.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2"><span className="text-xs text-text-secondary">{activeSelection.length} {t.selected}</span><Button size="sm" disabled={pending} onClick={() => runBulk(activeSelection, true)}>{t.acceptSelected}</Button><Button variant="outline" size="sm" disabled={pending} onClick={() => { setBulkReason(""); setBulkRejectOpen(true); }}>{t.rejectSelected}</Button></div>}
+                </div>}
                 {rounds.filter((round) => round.status === "pending").map((round) => (
                   <div key={round.id} className="rounded-md border border-warning/30 bg-warning-light p-3">
                     <p className="font-semibold">{t.newOrder} · {guests.find((guest) => guest.id === round.guest_id)?.display_name ?? t.guest}</p>
@@ -308,6 +343,7 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
                     <ul className="mt-3 space-y-2">
                       {round.dining_round_items.map((item) => (
                         <li key={item.id} className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-surface p-3">
+                          {item.status === "pending" && <input type="checkbox" aria-label={`${t.selectAll}: ${item.name}`} checked={activeSelection.includes(item.id)} onChange={(event) => setSelectedItems((current) => event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id))} />}
                           <div className="min-w-0 flex-1">
                             <p className="break-words text-sm font-semibold">{item.quantity}× {item.name}</p>
                             {item.options_label && <p className="text-xs text-text-secondary">{item.options_label}</p>}
@@ -387,6 +423,17 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
         <div className="max-h-48 overflow-y-auto rounded-md border border-border p-3"><p className="mb-2 text-sm font-semibold">{cashOrder?.reference}</p>{cashOrder?.order_items?.map((item) => <div key={item.id} className="flex justify-between gap-3 py-1 text-sm"><span className="min-w-0 break-words">{item.quantity}× {item.name}</span><span className="shrink-0">{formatMoney(item.quantity * item.unit_price)}</span></div>)}</div>
         <p className="mt-3 flex justify-between font-semibold"><span>{t.cashAmount}</span><span>{formatMoney(cashAmount)}</span></p>
         <label className="mt-4 flex items-start gap-2 text-sm"><input type="checkbox" className="mt-1" checked={cashAcknowledged} onChange={(event) => setCashAcknowledged(event.target.checked)} /><span>{t.cashConfirm}</span></label>
+      </Dialog>
+      <Dialog open={bulkRejectOpen} onClose={() => setBulkRejectOpen(false)} title={t.bulkRejectTitle} size="sm" footer={<>
+        <Button variant="outline" disabled={pending} onClick={() => setBulkRejectOpen(false)}>{t.cancel}</Button>
+        <Button variant="danger" disabled={pending || bulkReason.trim().length < 5} loading={pending} onClick={() => {
+          const session = orderedSessions.find((entry) => entry.id === selectedSessionId) ?? orderedSessions[0];
+          const pendingIds = session?.dining_rounds.flatMap((round) => round.dining_round_items.filter((item) => item.status === "pending").map((item) => item.id)) ?? [];
+          runBulk(selectedItems.filter((id) => pendingIds.includes(id)), false, bulkReason);
+        }}>{t.rejectSelected}</Button>
+      </>}>
+        <p className="mb-3 text-sm text-text-secondary">{selectedItems.length} {t.selected}. {t.rejectHint}</p>
+        <label className="block text-sm font-medium">{t.rejectReason}<Input className="mt-2" value={bulkReason} maxLength={240} onChange={(event) => setBulkReason(event.target.value)} /></label>
       </Dialog>
       <Dialog
         open={rejectItem !== null}

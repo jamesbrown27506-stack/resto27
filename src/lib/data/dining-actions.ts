@@ -269,6 +269,23 @@ export async function decideDiningItem(itemId: string, approve: boolean, reason?
   return { ok: true };
 }
 
+export async function decideDiningItems(itemIds: string[], approve: boolean, reason?: string): Promise<DiningAction & { succeeded: number; failedIds: string[] }> {
+  if (!Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > 50 || new Set(itemIds).size !== itemIds.length) {
+    return { ok: false, error: "Select between 1 and 50 different dishes.", succeeded: 0, failedIds: itemIds ?? [] };
+  }
+  if (!approve && (!reason?.trim() || reason.trim().length < 5 || reason.trim().length > 240)) {
+    return { ok: false, error: "Give the customer a reason (5–240 characters).", succeeded: 0, failedIds: itemIds };
+  }
+  let succeeded = 0;
+  const failedIds: string[] = [];
+  for (const id of itemIds) {
+    const result = await decideDiningItem(id, approve, reason);
+    if (result.ok) succeeded++;
+    else failedIds.push(id);
+  }
+  return { ok: failedIds.length === 0, error: failedIds.length ? `${failedIds.length} dish(es) could not be updated. Refresh and review them.` : undefined, succeeded, failedIds };
+}
+
 export async function requestDiningPayment(sessionId:string):Promise<DiningAction>{
   const {active,profile}=await requireCapability("finance.manage");const db=createAdminClient();const {data:s}=await db.from("dining_sessions").select("id,order_id").eq("id",sessionId).eq("restaurant_id",active.restaurantId).eq("status","open").maybeSingle();if(!s?.order_id)return{ok:false,error:"There is no bill to collect."};
   const {data:setting}=await db.from("settings").select("value").eq("key","service_charge_percent").maybeSingle();const pct=Number(setting?.value??0)||0;const {error}=await db.rpc("request_dining_payment",{p_session_id:sessionId,p_staff_id:profile.id,p_service_charge_percent:pct});if(error){console.error("[dining:request-payment]",error.message);return{ok:false,error:"The bill could not be moved to payment. Refresh and try again."};}

@@ -1,5 +1,6 @@
 import { ImageResponse } from "next/og";
 import { getBranding } from "@/lib/branding";
+import { PUBLIC_SITE_URL } from "@/lib/seo-config";
 
 /**
  * The share card, at the size share cards are actually rendered at.
@@ -29,6 +30,7 @@ export const revalidate = 86400;
 
 export async function GET() {
   const brand = await getBranding();
+  const logo = brand.logoUrl ?? brand.iconUrl ?? brand.faviconUrl ?? new URL("/app-icon-512.png", PUBLIC_SITE_URL).href;
 
   return new ImageResponse(
     (
@@ -60,10 +62,14 @@ export async function GET() {
           </div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ fontSize: 88, fontWeight: 700, lineHeight: 1.05 }}>{brand.name}</div>
-          <div style={{ marginTop: 24, fontSize: 40, lineHeight: 1.25, opacity: 0.9, maxWidth: 900 }}>
-            {brand.tagline}
+        <div style={{ display: "flex", alignItems: "center", gap: 56 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 250, height: 250, flexShrink: 0, borderRadius: 40, background: "#ffffff", padding: 18 }}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={logo} alt="" width={214} height={214} style={{ objectFit: "contain", width: 214, height: 214 }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", maxWidth: 690 }}>
+            <div style={{ fontSize: 78, fontWeight: 700, lineHeight: 1.05 }}>{brand.name}</div>
+            <div style={{ marginTop: 20, fontSize: 35, lineHeight: 1.25, opacity: 0.9 }}>{brand.tagline}</div>
           </div>
         </div>
 
