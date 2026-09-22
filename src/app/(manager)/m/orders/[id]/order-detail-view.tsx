@@ -71,8 +71,10 @@ export function OrderDetailView({
     already lives with.
   */
   useEffect(() => {
-    const timer = setInterval(() => router.refresh(), POLL_MS);
-    return () => clearInterval(timer);
+    const refresh = () => { if (document.visibilityState === "visible") router.refresh(); };
+    const timer = window.setInterval(refresh, POLL_MS);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [router]);
 
   const money: { key: TranslationKey; value: number; strike?: boolean }[] = [

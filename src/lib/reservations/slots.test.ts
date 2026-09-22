@@ -131,11 +131,10 @@ describe("slotsForDate", () => {
     expect(slots).not.toContain("00:30");
   });
 
-  it("falls back to a plausible day when no hours are configured at all", () => {
+  it("does not invent service hours when none are configured", () => {
     const day = slotsForDate(NO_HOURS, MONDAY, WELL_BEFORE);
-    expect(day.reason).toBeNull();
-    expect(day.slots[0]).toBe("11:00");
-    expect(day.slots.at(-1)).toBe("21:30");
+    expect(day.reason).toBe("closed");
+    expect(day.slots).toEqual([]);
   });
 
   it("refuses a malformed date outright", () => {

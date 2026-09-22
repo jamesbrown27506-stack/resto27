@@ -10,6 +10,7 @@ import { computeTotals } from "@/lib/orders/totals";
 import { notify } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
+import { canFulfilAt, canTakeAsapOrder, type ServiceHours } from "@/lib/restaurant/service-hours";
 
 
 /**
@@ -120,6 +121,8 @@ export async function getRestaurantOrderCapabilities(
 ): Promise<{
   acceptsDelivery: boolean;
   acceptsPickup: boolean;
+  isAcceptingOrders: boolean;
+  hours: ServiceHours[];
   /** Where pickup customers collect the order (neighbourhood). */
   quartier: string;
   /** Estimated delivery time in minutes, for the delivery hint. */
@@ -139,18 +142,19 @@ export async function getRestaurantOrderCapabilities(
 } | null> {
   const supabase = createAdminClient();
 
-  const { data } = await supabase
-    .from("restaurants")
-    .select(
-      "accepts_delivery, accepts_pickup, status, delivery_estimate_min, minimum_order, min_delivery_fee, max_delivery_fee, quartiers ( name )",
-    )
-    .eq("id", restaurantId)
-    .maybeSingle();
+  const [{ data }, { data: hoursRows }] = await Promise.all([
+    supabase.from("restaurants")
+      .select("accepts_delivery, accepts_pickup, is_accepting_orders, status, delivery_estimate_min, minimum_order, min_delivery_fee, max_delivery_fee, quartiers ( name )")
+      .eq("id", restaurantId).maybeSingle(),
+    supabase.from("restaurant_hours").select("weekday, opens_at, closes_at").eq("restaurant_id", restaurantId),
+  ]);
 
   if (!data || data.status !== "active") return null;
   return {
     acceptsDelivery: Boolean(data.accepts_delivery),
     acceptsPickup: Boolean(data.accepts_pickup),
+    isAcceptingOrders: Boolean(data.is_accepting_orders),
+    hours: ((hoursRows ?? []) as { weekday: number; opens_at: string | null; closes_at: string | null }[]).map((row) => ({ weekday: row.weekday, opensAt: row.opens_at, closesAt: row.closes_at })),
     quartier: (data.quartiers as { name: string }[] | null)?.[0]?.name ?? "",
     deliveryEstimateMin: Number(data.delivery_estimate_min) || 0,
     minimumOrder: Number(data.minimum_order) || 0,
@@ -529,6 +533,21 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     if (when.getTime() <= Date.now() + 60_000) return { ok: false, reason: "scheduleTooSoon" };
     if (when.getTime() > Date.now() + 7 * 86_400_000) return { ok: false, reason: "scheduleTooFar" };
     scheduledFor = when.toISOString();
+  }
+
+  // Validate the service window again on the server; a stale or modified form
+  // must not put an unfulfillable ticket into the restaurant's queue.
+  const { data: hoursRows, error: hoursError } = await supabase.from("restaurant_hours")
+    .select("weekday, opens_at, closes_at").eq("restaurant_id", input.restaurantId);
+  if (hoursError) return { ok: false, reason: "hoursUnavailable" };
+  const hours: ServiceHours[] = ((hoursRows ?? []) as { weekday: number; opens_at: string | null; closes_at: string | null }[])
+    .map((row) => ({ weekday: row.weekday, opensAt: row.opens_at, closesAt: row.closes_at }));
+  // No configured service hours means no order can be fulfilled. The manual
+  // accepting-orders switch is an additional pause, not invented opening hours.
+  if (scheduledFor
+    ? !canFulfilAt(hours, new Date(scheduledFor))
+    : !canTakeAsapOrder(hours)) {
+    return { ok: false, reason: scheduledFor ? "outsideServiceHours" : "restaurantClosed" };
   }
 
   // ── Write ───────────────────────────────────────────────────────────────

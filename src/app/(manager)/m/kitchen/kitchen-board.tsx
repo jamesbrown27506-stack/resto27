@@ -46,8 +46,10 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
-    const timer = window.setInterval(() => router.refresh(), POLL_MS);
-    return () => window.clearInterval(timer);
+    const refresh = () => { if (document.visibilityState === "visible") router.refresh(); };
+    const timer = window.setInterval(refresh, POLL_MS);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [router]);
 
   function advance(order: ManagerOrder) {

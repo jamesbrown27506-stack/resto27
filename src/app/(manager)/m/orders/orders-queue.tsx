@@ -58,8 +58,10 @@ export function OrdersQueue({
   // re-runs the Server Component, so the poll costs one RSC round trip and
   // never loses client state (open dialogs, chosen filter).
   useEffect(() => {
-    const timer = window.setInterval(() => router.refresh(), POLL_MS);
-    return () => window.clearInterval(timer);
+    const refresh = () => { if (document.visibilityState === "visible") router.refresh(); };
+    const timer = window.setInterval(refresh, POLL_MS);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [router]);
 
   const counts = useMemo(

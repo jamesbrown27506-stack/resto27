@@ -40,17 +40,6 @@ export const BOOKING_LEAD_MIN = 30;
  */
 export const LAST_SEATING_BEFORE_CLOSE_MIN = 30;
 
-/**
- * Used only when a restaurant has NO hours configured at all (every weekday
- * null — a profile that was never finished). Offering nothing would make the
- * restaurant unbookable through a form that gives no reason; a plausible day
- * lets the booking through and the restaurant confirms or declines it, which is
- * what `pending` is for. A restaurant with real hours that is closed on the
- * chosen day gets an empty list and a sentence saying so.
- */
-const FALLBACK_OPEN = "11:00";
-const FALLBACK_CLOSE = "22:00";
-
 const MINUTES_IN_DAY = 24 * 60;
 
 /** "HH:MM" or "HH:MM:SS" to minutes past midnight. Null on anything else. */
@@ -124,11 +113,6 @@ export function isTodayOrLater(date: string, now: Date = new Date()): boolean {
   return date >= todayInDisplayTz(now);
 }
 
-/** A restaurant with every weekday null has not configured hours at all. */
-function hasAnyHours(hours: RestaurantHours[]): boolean {
-  return hours.some((h) => toMinutes(h.opensAt) !== null && toMinutes(h.closesAt) !== null);
-}
-
 export interface DaySlots {
   /** The bookable times, "HH:MM", ascending. Empty when none can be offered. */
   slots: string[];
@@ -156,11 +140,10 @@ export function slotsForDate(
   const weekday = weekdayOfDate(date);
   if (weekday === null) return { slots: [], reason: "invalidDate", opensAt: null, closesAt: null };
 
-  const configured = hasAnyHours(hours);
   const today = hours.find((h) => h.weekday === weekday);
 
-  const open = configured ? toMinutes(today?.opensAt) : toMinutes(FALLBACK_OPEN);
-  const close = configured ? toMinutes(today?.closesAt) : toMinutes(FALLBACK_CLOSE);
+  const open = toMinutes(today?.opensAt);
+  const close = toMinutes(today?.closesAt);
 
   if (open === null || close === null) {
     return { slots: [], reason: "closed", opensAt: null, closesAt: null };

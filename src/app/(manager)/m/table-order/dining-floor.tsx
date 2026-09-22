@@ -175,8 +175,10 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
   const [cashAcknowledged, setCashAcknowledged] = useState(false);
 
   useEffect(() => {
-    const timer = window.setInterval(() => router.refresh(), 5000);
-    return () => window.clearInterval(timer);
+    const refresh = () => { if (document.visibilityState === "visible") router.refresh(); };
+    const timer = window.setInterval(refresh, 5000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [router]);
 
   function run(fn: () => Promise<{ ok: boolean; error?: string }>, success: string) {

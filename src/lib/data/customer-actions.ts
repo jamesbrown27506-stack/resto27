@@ -25,6 +25,8 @@ import {
   type FloorTable,
 } from "@/lib/reservations/availability";
 import { slotsForDate } from "@/lib/reservations/slots";
+import { serviceDateAndTime } from "@/lib/restaurant/service-hours";
+import { getLocale } from "@/lib/i18n/locale-server";
 import {
   depositChargedNow,
   normaliseDepositType,
@@ -850,6 +852,22 @@ export async function createOwnReservation(
     return { ok: false, error: "La disponibilité n'a pas pu être vérifiée. Réessayez." };
   }
   if (!restaurant) return { ok: false, error: "Restaurant introuvable." };
+
+  // The form's slot list is advisory; enforce the same opening-hours rule
+  // here so stale tabs and direct Server Action calls cannot reserve a closed time.
+  const { data: hoursRows, error: hoursError } = await supabase.from("restaurant_hours")
+    .select("weekday, opens_at, closes_at").eq("restaurant_id", restaurantId);
+  if (hoursError) return { ok: false, error: (await getLocale()) === "en"
+    ? "Opening hours could not be checked. Please try again."
+    : "Les horaires n’ont pas pu être vérifiés. Réessayez." };
+  const localSlot = serviceDateAndTime(when);
+  const hours = ((hoursRows ?? []) as { weekday: number; opens_at: string | null; closes_at: string | null }[])
+    .map((row) => ({ weekday: row.weekday, opensAt: row.opens_at, closesAt: row.closes_at }));
+  if (!localSlot || !slotsForDate(hours, localSlot.date).slots.includes(localSlot.time)) {
+    return { ok: false, error: (await getLocale()) === "en"
+      ? "This time is outside the restaurant’s available hours. Choose another slot."
+      : "Ce créneau est en dehors des horaires disponibles du restaurant. Choisissez-en un autre." };
+  }
 
   const deposit = await readDepositConfig(supabase, restaurantId);
   const depositType = deposit.type;

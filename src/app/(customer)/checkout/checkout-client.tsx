@@ -3,7 +3,7 @@ import { LocationButton } from "@/components/capacitor/location-button";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Bike,
@@ -36,6 +36,7 @@ import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SessionUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
+import { canFulfilAt, canTakeAsapOrder, nextServiceSlot, serviceDateAndTime, type ServiceHours } from "@/lib/restaurant/service-hours";
 
 export function CheckoutClient({
   user,
@@ -85,6 +86,7 @@ export function CheckoutClient({
   const [schedule, setSchedule] = useState("asap");
   const [scheduleDate, setScheduleDate] = useState("");
   const [scheduleTime, setScheduleTime] = useState("");
+  const [clock, setClock] = useState(() => new Date());
   const [notes, setNotes] = useState("");
   const [placing, setPlacing] = useState(false);
 
@@ -95,6 +97,8 @@ export function CheckoutClient({
   const [caps, setCaps] = useState<{
     acceptsDelivery: boolean;
     acceptsPickup: boolean;
+    isAcceptingOrders: boolean;
+    hours: ServiceHours[];
     quartier: string;
     deliveryEstimateMin: number;
     minimumOrder: number;
@@ -113,6 +117,18 @@ export function CheckoutClient({
       alive = false;
     };
   }, [cartRestaurantId]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const nextSlot = useMemo(() => caps?.hours.length ? nextServiceSlot(caps.hours, clock) : null, [caps, clock]);
+  const closedForAsap = Boolean(caps && !canTakeAsapOrder(caps.hours, clock));
+  const selectedServiceTime = schedule === "later" && scheduleDate && scheduleTime
+    ? new Date(`${scheduleDate}T${scheduleTime}:00+01:00`) : null;
+  const outsideServiceHours = Boolean(caps && selectedServiceTime && !canFulfilAt(caps.hours, selectedServiceTime));
+  const serviceBlocked = Boolean(caps && (!caps.isAcceptingOrders || (schedule === "asap" && closedForAsap) || outsideServiceHours));
 
   // Adjusted during render rather than in an effect (same pattern as the
   // modifier sheet): once we know a mode is unavailable, the dead selection
@@ -272,6 +288,9 @@ export function CheckoutClient({
       badSchedule: "ck-date",
       scheduleTooSoon: "ck-time",
       scheduleTooFar: "ck-date",
+      restaurantClosed: "ck-schedule",
+      outsideServiceHours: "ck-time",
+      hoursUnavailable: "ck-schedule",
     };
     showFieldError(fieldByReason[result.reason] ?? "checkout-form-error", message);
     toast(message, "error");
@@ -550,7 +569,7 @@ export function CheckoutClient({
           )}
 
           {/* ── Schedule ───────────────────────────────────────────────── */}
-          <section className="rounded-lg border border-border bg-surface p-5">
+          <section id="ck-schedule" tabIndex={-1} className="rounded-lg border border-border bg-surface p-5">
             <h2 className="font-display text-lg font-bold">{t("cct.co.when")}</h2>
             <div className="mt-4 flex flex-col gap-2">
               <Radio
@@ -569,6 +588,15 @@ export function CheckoutClient({
               />
             </div>
 
+            {caps && !caps.isAcceptingOrders && <p className="mt-3 rounded-md bg-warning-light p-3 text-sm text-warning">{t("cct.err.notAcceptingOrders")}</p>}
+            {caps?.isAcceptingOrders && schedule === "asap" && closedForAsap && <div className="mt-3 rounded-md bg-warning-light p-3 text-sm text-warning">
+              <p>{t("cct.co.closedNow")}</p>
+              {nextSlot && <Button className="mt-2" variant="outline" size="sm" onClick={() => {
+                const next = serviceDateAndTime(nextSlot);
+                if (!next) return;
+                setScheduleDate(next.date); setScheduleTime(next.time); setSchedule("later");
+              }}>{t("cct.co.chooseNext", { time: new Intl.DateTimeFormat(t("cct.co.dateLocale"), { timeZone: "Africa/Douala", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(nextSlot) })}</Button>}
+            </div>}
             {schedule === "later" && (
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <Field label={t("cct.co.date")} htmlFor="ck-date" error={errors["ck-date"]}>
@@ -589,6 +617,7 @@ export function CheckoutClient({
                 </Field>
               </div>
             )}
+            {schedule === "later" && outsideServiceHours && <p className="mt-3 rounded-md bg-warning-light p-3 text-sm text-warning">{t("cct.err.outsideServiceHours")}</p>}
           </section>
 
           {/* ── Payment ────────────────────────────────────────────────── */}
@@ -663,6 +692,7 @@ export function CheckoutClient({
               size="lg"
               fullWidth
               loading={placing}
+              disabled={placing || serviceBlocked}
               onClick={submit}
               className="rounded-md"
             >
@@ -694,7 +724,7 @@ export function CheckoutClient({
               <span className="flex items-center gap-1 text-xs font-medium text-text-light">{t("cct.co.yourOrder")}<ChevronUp className={cn("size-3.5 transition-transform", !summaryOpen && "rotate-180")} aria-hidden /></span>
               <span className="tnum block text-lg font-bold">{formatMoney(totals.total)}</span>
             </button>
-            <Button size="lg" loading={placing} disabled={placing} onClick={submit} className="min-w-36 px-5">{t("cct.co.pay")}</Button>
+            <Button size="lg" loading={placing} disabled={placing || serviceBlocked} onClick={submit} className="min-w-36 px-5">{t("cct.co.pay")}</Button>
           </div>
         </div>
       </div>

@@ -95,31 +95,36 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
   useEffect(() => {
     if (!token) return;
     let alive = true;
-    const refresh = () => getGuestDiningState(token).then((next) => {
-      if (!alive) return;
-      if (!next) {
-        setError(en ? "This visit is no longer available. Request access again." : "Cette visite n’est plus disponible. Demandez un nouvel accès.");
-        setState(null);
-        return;
-      }
-      const ids = new Set(next.messages.map((entry) => entry.id));
-      if (seenMessages.current) {
-        const fresh = next.messages.filter((entry) =>
-          !seenMessages.current?.has(entry.id) && entry.sender_kind !== "guest");
-        if (fresh.length) {
-          setNotice(fresh[fresh.length - 1].body);
-          // Background push uses the OS sound; the open table page supplies its own.
-          if (document.visibilityState === "visible" &&
-              (nativePlatform() !== "ios" || Date.now() - lastNativePushAt.current > 10_000)) void playNotificationSound();
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      return getGuestDiningState(token).then((next) => {
+        if (!alive) return;
+        if (!next) {
+          setError(en ? "This visit is no longer available. Request access again." : "Cette visite n’est plus disponible. Demandez un nouvel accès.");
+          setState(null);
+          return;
         }
-      }
-      seenMessages.current = ids;
-      setState(next);
-    }).catch(() => {
-      if (alive) setError(en ? "Connection lost. We will try again." : "Connexion perdue. Nouvelle tentative en cours.");
-    });
+        const ids = new Set(next.messages.map((entry) => entry.id));
+        if (seenMessages.current) {
+          const fresh = next.messages.filter((entry) =>
+            !seenMessages.current?.has(entry.id) && entry.sender_kind !== "guest");
+          if (fresh.length) {
+            setNotice(fresh[fresh.length - 1].body);
+            // Background push uses the OS sound; the open table page supplies its own.
+            if (document.visibilityState === "visible" &&
+                (nativePlatform() !== "ios" || Date.now() - lastNativePushAt.current > 10_000)) void playNotificationSound();
+          }
+        }
+        seenMessages.current = ids;
+        setState(next);
+      }).catch(() => {
+        if (alive) setError(en ? "Connection lost. We will try again." : "Connexion perdue. Nouvelle tentative en cours.");
+      });
+    };
     void refresh();
     const timer = window.setInterval(refresh, 5000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
     const onPush = (event: Event) => {
       const data = event instanceof MessageEvent ? event.data : (event as CustomEvent).detail;
       if (data?.type === "restolink:notification" && data.href === `/table/${landing.table.token}`) {
@@ -132,6 +137,7 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
     return () => {
       alive = false;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
       if ("serviceWorker" in navigator) navigator.serviceWorker.removeEventListener("message", onPush);
       window.removeEventListener("resto237:native-notification", onPush);
     };
