@@ -28,6 +28,7 @@ export const managerOpsDict = defineDict({
     "mops.alarm.many": "{count} commandes attendent votre acceptation",
     "mops.alarm.deadline": "Annulation automatique dans {minutes} min ({time})",
     "mops.alarm.view": "Voir",
+    "mops.alarm.paused": "sonnerie en pause, reprise à {time}",
 
     /* ── Alert health ─────────────────────────────────────────────────── */
     "mops.health.sound": "Son bloqué : touchez l'écran une fois pour activer la sonnerie des commandes.",
@@ -158,6 +159,7 @@ export const managerOpsDict = defineDict({
     "mops.alarm.many": "{count} orders are waiting for you to accept them",
     "mops.alarm.deadline": "Cancelled automatically in {minutes} min ({time})",
     "mops.alarm.view": "View",
+    "mops.alarm.paused": "ringing paused, resumes at {time}",
 
     "mops.health.sound": "Sound blocked: tap the screen once to enable the order ring.",
     "mops.health.push": "Push notifications are off on this device: you won't be alerted when the app is closed.",

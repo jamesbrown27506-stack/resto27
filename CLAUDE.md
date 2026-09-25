@@ -65,7 +65,7 @@ Tests are pure unit tests of `src/lib` modules — there is no DB/integration ha
 - Contact between customers and restaurants is **in-app chat only** — never show phone numbers or WhatsApp links to the other side (product decision: it lets both sides bypass the platform). Restaurants may only open a thread with a customer who ordered/booked there.
 
 ### Background jobs
-- `/api/cron/{reconcile,expire,order-nag,delivery-monitor,reservation-clock}` are scheduled by **pg_cron + pg_net in Supabase** (migration `0045_pg_cron_schedule.sql`; reconcile set back to every 10 min in 0059), not by `vercel.json` (there is none). Vercel Hobby CPU is tight: don't add cron routes or fast polling — reuse the existing sweeps, poll only while visible and only while something is pending.
+- `/api/cron/{reconcile,expire,order-nag,delivery-monitor,reservation-clock}` are scheduled by **pg_cron + pg_net in Supabase** (migration `0045_pg_cron_schedule.sql`), not by `vercel.json` (there is none). Since 0065 every job is **gated in the database**: `select net.http_get(…) where public.cron_due_<job>()`, so Vercel is only called when something is due. If you add a sweep to a route, extend its `cron_due_*` function in SQL too, or the new work never triggers a call. Vercel Hobby CPU is tight: don't add cron routes or fast polling — reuse the existing sweeps, poll only while visible and only while something is pending.
 - Each route calls `requireCronAuth()` (`Authorization: Bearer $CRON_SECRET`; unset secret fails closed) and `stampHeartbeat()` into `ops_heartbeats`, which `/a/health` reads.
 - `next.config.ts` redirects alternate hosts to the canonical domain **except `/api/cron/`** — a cross-host redirect drops the bearer header and every sweep 401s. Keep that exemption.
 

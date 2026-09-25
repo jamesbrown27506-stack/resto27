@@ -8,7 +8,10 @@ import { useNotifications } from "./notification-provider";
 import { getPendingOrderAlarm, type PendingAlarmState } from "@/lib/data/pending-order-actions";
 import {
   ORDERS_CHANGED_EVENT,
+  SEEN_PAUSE_MS,
+  audibleOrders,
   isManagerOrderHref,
+  nextRingInterval,
   nextRingStart,
   ringingOrders,
   soonestDeadline,
@@ -17,8 +20,11 @@ import { minutesLeft } from "@/lib/orders/deadline";
 import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
 
-/** One ring every four seconds: continuous without being a single drone. */
-const RING_EVERY_MS = 4_000;
+/**
+ * The ring's clock ticks every second; WHETHER it rings on a tick is the
+ * escalation in lib/orders/pending-alarm (10 s → 5 s → 3 s with the wait).
+ */
+const TICK_MS = 1_000;
 /** The server re-check, and ONLY while something rings. */
 const CHECK_EVERY_MS = 30_000;
 /** A burst of notifications (push + realtime row for one order) is one check. */
@@ -34,10 +40,17 @@ const MAX_TIMER_MS = 2_147_000_000;
  *  WHAT IT DOES.
  *
  *  While at least one order at this branch is `pending` — placed, not yet
- *  accepted — it plays the new-order sound every four seconds and pins a
- *  banner saying how many are waiting and when the first one will be
- *  cancelled automatically (the admin's `order_response_minutes`, via
- *  lib/orders/deadline). The moment nothing is pending it goes silent.
+ *  accepted — it rings and pins a banner saying how many are waiting and
+ *  when the first one will be cancelled automatically (the admin's
+ *  `order_response_minutes`, via lib/orders/deadline). The moment nothing is
+ *  pending it goes silent.
+ *
+ *  THE RHYTHM (owner, Sep 2026): every 10 s for the first 3 minutes, every
+ *  5 s until 10 minutes, then every 3 s until someone answers. OPENING THE
+ *  ORDERS SCREEN pauses the orders on it for 3 minutes ("I have seen it");
+ *  if they are still waiting after that, the ring comes back at the pace
+ *  their age calls for. A new order always rings at once — on the orders
+ *  screen it rings once, then counts as seen.
  *
  *  It uses the provider's ONE unlocked audio element (sound-player.ts), so
  *  it rings in a background tab exactly like a notification does. It cannot
@@ -115,8 +128,10 @@ export function PendingOrderAlarm({
 
   // The page a notification should refresh, read inside a long-lived listener.
   const pathRef = useRef(pathname);
+  const onOrdersScreenRef = useRef(false);
   useEffect(() => {
     pathRef.current = pathname;
+    onOrdersScreenRef.current = (pathname ?? "").startsWith("/m/orders");
   }, [pathname]);
 
   /*
@@ -178,16 +193,61 @@ export function PendingOrderAlarm({
     playRef.current = playSound;
   }, [playSound]);
 
-  // The ring itself, plus the clock that drives the countdown.
+  /*
+    "SEEN" — orders the person has had in front of them on the orders screen.
+    Kept in a ref (the ring clock reads it every second) plus a state copy
+    the banner renders from.
+  */
+  const seenRef = useRef(new Map<string, number>());
+  const playedRef = useRef(new Set<string>());
+  // A render-safe copy of seenRef for the banner (refs are not read in render).
+  const [seenSnapshot, setSeenSnapshot] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const onOrdersScreen = (pathname ?? "").startsWith("/m/orders");
+
+  // Arriving on the orders screen: everything ringing right now is seen.
+  const ringingKey = ringing.map((o) => o.id).join(",");
   useEffect(() => {
-    if (!isRinging) return;
-    playRef.current();
-    const timer = window.setInterval(() => {
-      setNow(Date.now());
-      playRef.current();
-    }, RING_EVERY_MS);
+    if (!onOrdersScreen) return;
+    const t = Date.now();
+    for (const id of ringingKey ? ringingKey.split(",") : []) {
+      if (playedRef.current.has(id)) seenRef.current.set(id, t);
+    }
+    setSeenSnapshot(new Map(seenRef.current));
+    // Only on ARRIVAL (pathname), not on every new ringing list — a new order
+    // must still ring once even while the screen is open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onOrdersScreen, pathname]);
+
+  // The ring clock: one tick a second, a ring when the escalation says so.
+  const lastRingRef = useRef(0);
+  useEffect(() => {
+    if (!isRinging || !current) return;
+    const tick = () => {
+      const t = Date.now();
+      setNow(t);
+      const ringingNow = ringingOrders(current.orders, current.minutes, t);
+      const audible = audibleOrders(ringingNow, seenRef.current, t);
+      const interval = nextRingInterval(audible, current.minutes, t);
+      if (interval === null) return;
+      if (t - lastRingRef.current >= interval) {
+        lastRingRef.current = t;
+        playRef.current();
+        let changed = false;
+        for (const order of audible) {
+          playedRef.current.add(order.id);
+          // Already looking at the orders screen: one ring, then it is seen.
+          if (onOrdersScreenRef.current && !seenRef.current.has(order.id)) {
+            seenRef.current.set(order.id, t);
+            changed = true;
+          }
+        }
+        if (changed) setSeenSnapshot(new Map(seenRef.current));
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, TICK_MS);
     return () => window.clearInterval(timer);
-  }, [isRinging]);
+  }, [isRinging, current]);
 
   // The server re-check — the only poll, and only while ringing.
   useEffect(() => {
@@ -210,6 +270,11 @@ export function PendingOrderAlarm({
   const count = ringing.length;
   const deadline = soonestDeadline(ringing, current.minutes, now);
   const left = minutesLeft(deadline, now);
+  // Everything waiting has been seen: quiet for now, back at this time.
+  const paused = audibleOrders(ringing, seenSnapshot, now).length === 0;
+  const resumeAt = paused
+    ? Math.min(...ringing.map((o) => (seenSnapshot.get(o.id) ?? now) + SEEN_PAUSE_MS))
+    : null;
   const href = count === 1 ? `/m/orders/${ringing[0]!.id}` : "/m/orders";
 
   return (
@@ -229,6 +294,11 @@ export function PendingOrderAlarm({
         {deadline && left !== null && (
           <span className="block text-xs opacity-90 sm:inline sm:before:content-['_·_']">
             {t("mops.alarm.deadline", { minutes: left, time: dates.time(deadline) })}
+          </span>
+        )}
+        {resumeAt !== null && (
+          <span className="block text-xs opacity-90 sm:inline sm:before:content-['_·_']">
+            {t("mops.alarm.paused", { time: dates.time(new Date(resumeAt)) })}
           </span>
         )}
       </p>

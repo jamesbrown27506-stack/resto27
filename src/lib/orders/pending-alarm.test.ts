@@ -43,3 +43,33 @@ describe("pending-order alarm", () => {
     expect(isManagerOrderHref(null)).toBe(false);
   });
 });
+
+import { audibleOrders, nextRingInterval, ringIntervalMs, SEEN_PAUSE_MS } from "./pending-alarm";
+
+describe("ring rhythm", () => {
+  it("escalates 10 s → 5 s → 3 s with the wait", () => {
+    expect(ringIntervalMs(0)).toBe(10_000);
+    expect(ringIntervalMs(2 * 60_000)).toBe(10_000);
+    expect(ringIntervalMs(3 * 60_000)).toBe(5_000);
+    expect(ringIntervalMs(9 * 60_000)).toBe(5_000);
+    expect(ringIntervalMs(10 * 60_000)).toBe(3_000);
+  });
+
+  it("pauses seen orders for three minutes, never new ones", () => {
+    const now = Date.parse("2026-09-25T12:10:00Z");
+    const a = { id: "a", createdAt: "2026-09-25T12:00:00Z", scheduledFor: null };
+    const b = { id: "b", createdAt: "2026-09-25T12:09:00Z", scheduledFor: null };
+    const seen = new Map([["a", now - 60_000]]);
+    expect(audibleOrders([a, b], seen, now).map((o) => o.id)).toEqual(["b"]);
+    expect(audibleOrders([a, b], seen, now - 60_000 + SEEN_PAUSE_MS).map((o) => o.id)).toEqual(["a", "b"]);
+  });
+
+  it("rings at the pace of the longest-waiting audible order", () => {
+    const now = Date.parse("2026-09-25T12:10:00Z");
+    const old = { id: "a", createdAt: "2026-09-25T11:59:00Z", scheduledFor: null };
+    const fresh = { id: "b", createdAt: "2026-09-25T12:09:30Z", scheduledFor: null };
+    expect(nextRingInterval([old, fresh], 15, now)).toBe(3_000);
+    expect(nextRingInterval([fresh], 15, now)).toBe(10_000);
+    expect(nextRingInterval([], 15, now)).toBeNull();
+  });
+});

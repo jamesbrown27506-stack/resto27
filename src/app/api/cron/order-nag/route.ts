@@ -6,6 +6,8 @@ import { orderDeadline } from "@/lib/orders/deadline";
 import { getTimeLimits } from "@/lib/orders/time-limit-settings";
 import { releaseOrderHoldings } from "@/lib/orders/cancellation-effects";
 import { resolveAttemptOutcome, MOBILE_MONEY_CONFIRMATION_WINDOW_MS } from "@/lib/payments/collect";
+import { awardDeliveryPoints } from "@/lib/orders/award-points";
+import { AUTO_CLOSE_HOURS, prepNudgeDue, PAID_NOT_STARTED_MINUTES } from "@/lib/orders/stage-watch";
 
 /**
  * The order watchdog — four sweeps over the states where one side is
@@ -65,7 +67,15 @@ export async function GET(request: Request) {
 
   const supabase = createAdminClient();
   const now = Date.now();
-  const summary = { expired: 0, pendingNags: 0, feeReminders: 0, reviewPrompts: 0, dueAlerts: 0 };
+  const summary = {
+    expired: 0,
+    pendingNags: 0,
+    feeReminders: 0,
+    reviewPrompts: 0,
+    dueAlerts: 0,
+    stageNudges: 0,
+    autoClosed: 0,
+  };
   let schemaMissing = false;
   const { orderMinutes } = await getTimeLimits();
 
@@ -306,7 +316,8 @@ export async function GET(request: Request) {
           event: "order_status",
           tone: "warning",
           customerId: order.customer_id as string,
-          href: `/orders/${order.id}`,
+          // `?pay=1` marks "please pay" for the customer's in-app chime.
+          href: `/orders/${order.id}?pay=1`,
           params: {
             status: "awaiting_customer",
             reference: order.reference as string,
@@ -418,6 +429,153 @@ export async function GET(request: Request) {
           .update({ due_alert_at: new Date().toISOString() })
           .eq("id", order.id);
         summary.dueAlerts++;
+      }
+    }
+  }
+
+  /* ── 5. Forgotten steps: remind, never move forward (0065) ─────────── */
+  {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, reference, restaurant_id, status, type, stage_nudge_status, stage_nudge_count, restaurants ( delivery_estimate_min )")
+      .in("status", ["confirmed", "preparing"])
+      .gt("created_at", new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString())
+      .limit(200);
+
+    if (missingColumn(error)) {
+      console.error("[order-nag] stage_nudge columns missing — run migration 0065. Stage sweep skipped.");
+    } else if (error) {
+      console.error("[order-nag] stage query failed", error.message);
+    } else if ((data ?? []).length > 0) {
+      const ids = (data ?? []).map((o) => o.id as string);
+      const { data: history } = await supabase
+        .from("order_status_history")
+        .select("order_id, status, created_at")
+        .in("order_id", ids)
+        .in("status", ["confirmed", "preparing"])
+        .order("created_at", { ascending: true });
+      // When each order ENTERED its current step (first history row for it).
+      const enteredAt = new Map<string, number>();
+      for (const h of history ?? []) {
+        const key = `${h.order_id}:${h.status}`;
+        if (!enteredAt.has(key)) enteredAt.set(key, Date.parse(h.created_at as string));
+      }
+
+      for (const order of data ?? []) {
+        const status = order.status as "confirmed" | "preparing";
+        const since = enteredAt.get(`${order.id}:${status}`);
+        if (!since) continue;
+        const sentForThisStep = order.stage_nudge_status === status ? Number(order.stage_nudge_count ?? 0) : 0;
+        const estimate = Number((order.restaurants as unknown as { delivery_estimate_min?: number } | null)?.delivery_estimate_min) || 30;
+
+        let nudge: number | null = null;
+        if (status === "confirmed" && sentForThisStep === 0 && now - since >= PAID_NOT_STARTED_MINUTES * 60_000) {
+          nudge = 1;
+        } else if (status === "preparing") {
+          nudge = prepNudgeDue({ enteredAt: since, now, estimateMinutes: estimate, alreadySent: sentForThisStep });
+        }
+        if (nudge === null) continue;
+
+        const minutes = Math.round((now - since) / 60_000);
+        await notify({
+          event: "order_delayed",
+          tone: "warning",
+          restaurantId: order.restaurant_id as string,
+          href: `/m/orders/${order.id}`,
+          params: { reference: order.reference as string, status, audience: "staff", count: minutes },
+        });
+        if (status === "preparing" && nudge >= 2) {
+          await notify({
+            event: "broadcast",
+            tone: "error",
+            admins: true,
+            href: "/a/restaurants",
+            params: {
+              reference: `stuck:${order.id}`,
+              subject: `Order ${order.reference} stuck in preparation`,
+              bodyText: `Order ${order.reference} has been "preparing" for ${minutes} minutes — twice the restaurant's usual time. The customer paid; check with the restaurant.`,
+            },
+          });
+        }
+        await supabase
+          .from("orders")
+          .update({ stage_nudge_status: status, stage_nudge_count: nudge })
+          .eq("id", order.id)
+          .eq("status", status);
+        summary.stageNudges++;
+      }
+    }
+  }
+
+  /* ── 6. Last step never pressed: finish the order (0065) ─────────────── */
+  {
+    const oldestPossible = new Date(now - AUTO_CLOSE_HOURS.paid * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, reference, restaurant_id, customer_id, type, is_paid, subtotal, shipped_at, created_at, table_number, restaurants ( name )")
+      .eq("status", "shipped")
+      .or(`shipped_at.lt.${oldestPossible},and(shipped_at.is.null,created_at.lt.${oldestPossible})`)
+      .limit(100);
+
+    if (error) {
+      console.error("[order-nag] auto-close query failed", error.message);
+    } else {
+      for (const order of data ?? []) {
+        const unpaidTable = order.type === "dine_in" && !order.is_paid;
+        const hours = unpaidTable ? AUTO_CLOSE_HOURS.unpaidTable : AUTO_CLOSE_HOURS.paid;
+        const since = Date.parse((order.shipped_at ?? order.created_at) as string);
+        if (now - since < hours * 60 * 60 * 1000) continue;
+
+        const note = unpaidTable
+          ? "Clôturée automatiquement — paiement non enregistré"
+          : order.type === "dine_in"
+            ? "Clôturée automatiquement (table libérée)"
+            : order.type === "pickup"
+              ? "Marquée récupérée automatiquement"
+              : "Marquée livrée automatiquement";
+        const { data: closed, error: closeError } = await supabase.rpc("auto_close_served_order", {
+          p_order_id: order.id,
+          p_note: note,
+        });
+        if (closeError) {
+          // 42883 / PGRST202: migration 0065 not applied yet.
+          console.error("[order-nag] auto-close failed", order.id, closeError.code, closeError.message);
+          break;
+        }
+        if (!closed) continue;
+
+        await awardDeliveryPoints({
+          id: order.id as string,
+          subtotal: Number(order.subtotal),
+          reference: order.reference as string,
+          customer_id: (order.customer_id as string | null) ?? null,
+          restaurant_id: order.restaurant_id as string,
+        });
+        if (order.customer_id) {
+          await notify({
+            event: "order_status",
+            tone: "info",
+            customerId: order.customer_id as string,
+            href: `/orders/${order.id}`,
+            params: {
+              status: "delivered",
+              reference: order.reference as string,
+              restaurantName: (order.restaurants as unknown as { name?: string } | null)?.name ?? undefined,
+              orderType: order.type as "delivery" | "pickup" | "dine_in",
+              autoClosed: true,
+            },
+          });
+        }
+        if (unpaidTable) {
+          await notify({
+            event: "order_delayed",
+            tone: "warning",
+            restaurantId: order.restaurant_id as string,
+            href: `/m/orders/${order.id}`,
+            params: { reference: order.reference as string, status: "cancelled", audience: "staff", detail: order.table_number ?? undefined },
+          });
+        }
+        summary.autoClosed++;
       }
     }
   }

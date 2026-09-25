@@ -16,6 +16,7 @@ import { accountLinksFor } from "@/lib/account-links";
 import type { BranchRole } from "@/lib/capabilities";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { NotificationProvider } from "@/components/notifications/notification-provider";
+import { PaymentChime } from "@/components/notifications/payment-chime";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 
 const NAV: { href: string; label: TranslationKey }[] = [
@@ -165,6 +166,8 @@ export function SiteHeader({
             <>
               <NotificationProvider>
                 <NotificationBell />
+                {/* "Please pay" rings for a minute (customer orders only). */}
+                <PaymentChime />
               </NotificationProvider>
 
               {/* Who is signed in, their profile, and sign-out — the same

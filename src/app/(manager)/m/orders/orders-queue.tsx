@@ -13,6 +13,7 @@ import { formatMoney } from "@/lib/format/currency";
 import { formatElapsed } from "@/lib/format/datetime";
 import { isTerminal } from "@/lib/format/order-status";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { useDates } from "@/lib/format/use-dates";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { ManagerOrder } from "@/lib/data/orders";
 import { cn } from "@/lib/utils";
@@ -56,6 +57,7 @@ export function OrdersQueue({
   orderMinutes?: number;
 }) {
   const { t } = useLocale();
+  const dates = useDates();
   const router = useRouter();
 
   const [filter, setFilter] = useState("active");
@@ -166,7 +168,10 @@ export function OrdersQueue({
                         )}
                         <span className="text-xs text-text-light">
                           {t(`order.type.${order.type}` as TranslationKey)} ·{" "}
-                          {t("mo.ago", { elapsed: formatElapsed(order.createdAt, new Date(now)) })}
+                          {/* "il y a 91 h" said nothing useful; past 12 h, the date does. */}
+                          {Date.parse(now) - Date.parse(order.createdAt) < 12 * 60 * 60_000
+                            ? t("mo.ago", { elapsed: formatElapsed(order.createdAt, new Date(now)) })
+                            : t("mo.placedOn", { when: dates.dateTime(order.createdAt) })}
                         </span>
                       </div>
 

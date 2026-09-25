@@ -140,6 +140,8 @@ export interface NotifyParams {
   audience?: "customer" | "staff";
   /** True on a watchdog re-send — the copy says "still waiting", not "new". */
   reminder?: boolean;
+  /** order_status delivered: finished by the watchdog, not by a person (0065). */
+  autoClosed?: boolean;
   /** new_order: the customer's online payment just landed — the order may start. */
   paid?: boolean;
   /** Which action happened during an anonymous on-site table visit. */
@@ -320,6 +322,17 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
         forks with it. A pickup order that is ready is the one push in the
         flow that asks the customer to stand up, so it gets its own title.
       */
+      if (p.autoClosed) {
+        return fr
+          ? {
+              title: `Commande ${p.reference ?? ""} terminée`,
+              body: `Nous l'avons marquée ${p.orderType === "pickup" ? "récupérée" : p.orderType === "dine_in" ? "terminée" : "livrée"}. Un problème ? Écrivez au restaurant depuis la commande.`,
+            }
+          : {
+              title: `Order ${p.reference ?? ""} completed`,
+              body: `We marked it ${p.orderType === "pickup" ? "collected" : p.orderType === "dine_in" ? "complete" : "delivered"}. A problem? Message the restaurant from the order.`,
+            };
+      }
       if (p.orderType === "pickup" && p.status === "shipped" && p.pickupReceiptConfirmation) {
         return fr
           ? {
@@ -368,6 +381,44 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
     }
 
     case "order_delayed":
+      /*
+        FORGOTTEN STEPS (0065), staff only. `count` is minutes in the step.
+        A paid order nobody started; one cooking far longer than usual; a
+        table the watchdog had to close with no payment recorded.
+      */
+      if (p.audience === "staff" && p.status === "confirmed") {
+        return fr
+          ? {
+              title: `Commande ${p.reference ?? ""} payée — pas encore commencée`,
+              body: `Payée il y a ${p.count ?? "?"} min. Appuyez sur « Commencer » dès que la cuisine s'y met.`,
+            }
+          : {
+              title: `Order ${p.reference ?? ""} paid — not started yet`,
+              body: `Paid ${p.count ?? "?"} min ago. Press "Start" as soon as the kitchen is on it.`,
+            };
+      }
+      if (p.audience === "staff" && p.status === "preparing") {
+        return fr
+          ? {
+              title: `Commande ${p.reference ?? ""} en préparation depuis ${p.count ?? "?"} min`,
+              body: "Si elle est prête, marquez-la prête ou envoyée : le client suit l'avancement.",
+            }
+          : {
+              title: `Order ${p.reference ?? ""} preparing for ${p.count ?? "?"} min`,
+              body: "If it is ready, mark it ready or sent: the customer is following along.",
+            };
+      }
+      if (p.audience === "staff" && p.status === "cancelled") {
+        return fr
+          ? {
+              title: `Table ${p.detail ?? ""} terminée automatiquement`,
+              body: `Commande ${p.reference ?? ""} servie il y a plus de 12 h sans paiement enregistré. La table est libérée ; vérifiez l'addition.`,
+            }
+          : {
+              title: `Table ${p.detail ?? ""} finished automatically`,
+              body: `Order ${p.reference ?? ""} was served over 12 h ago with no payment recorded. The table is free again; check the bill.`,
+            };
+      }
       // Two audiences, one event: the customer needs reassurance and honesty;
       // the kitchen needs the age of the problem and a nudge to act. The
       // awaiting_customer variant is the fee quote nobody answered — the

@@ -266,7 +266,8 @@ export async function advanceOrder(
           ? "success"
           : "info",
       customerId: order.customer_id,
-      href: `/orders/${order.id}`,
+      // `?pay=1` marks "please pay": the customer's app chimes for a minute.
+      href: target === "awaiting_customer" ? `/orders/${order.id}?pay=1` : `/orders/${order.id}`,
       params: {
         status: target as NotifyOrderStatus,
         reference: order.reference,

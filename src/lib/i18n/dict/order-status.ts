@@ -59,7 +59,7 @@ export const orderStatusDict = defineDict({
     /* ── Dine in ─────────────────────────────────────────────────────── */
     "ost.dine_in.confirmed": "Acceptée",
     "ost.dine_in.preparing": "En cuisine",
-    "ost.dine_in.shipped": "Servie à table",
+    "ost.dine_in.shipped": "Servi — addition à régler",
     "ost.dine_in.delivered": "Terminée",
     "ost.desc.dine_in.confirmed": "Votre commande est passée en cuisine.",
     "ost.desc.dine_in.preparing": "Votre commande est en cuisine.",
@@ -75,7 +75,7 @@ export const orderStatusDict = defineDict({
     "ost.next.pickup.shipped": "Prête à retirer",
     "ost.next.pickup.delivered": "Marquer récupérée",
     "ost.next.dine_in.shipped": "Servir",
-    "ost.next.dine_in.delivered": "Clôturer la table",
+    "ost.next.dine_in.delivered": "Terminer et libérer la table",
   },
   en: {
     /* ── Shared by every order type ──────────────────────────────────── */
@@ -110,7 +110,7 @@ export const orderStatusDict = defineDict({
     /* ── Dine in ─────────────────────────────────────────────────────── */
     "ost.dine_in.confirmed": "Accepted",
     "ost.dine_in.preparing": "Cooking",
-    "ost.dine_in.shipped": "Served",
+    "ost.dine_in.shipped": "Served — bill to settle",
     "ost.dine_in.delivered": "Closed",
     "ost.desc.dine_in.confirmed": "Your order has gone through to the kitchen.",
     "ost.desc.dine_in.preparing": "Your order is in the kitchen.",
@@ -126,6 +126,6 @@ export const orderStatusDict = defineDict({
     "ost.next.pickup.shipped": "Mark ready",
     "ost.next.pickup.delivered": "Mark collected",
     "ost.next.dine_in.shipped": "Serve",
-    "ost.next.dine_in.delivered": "Close the table",
+    "ost.next.dine_in.delivered": "Finish and free the table",
   },
 });

@@ -93,3 +93,51 @@ export function isManagerOrderHref(href: string | null | undefined): boolean {
   if (!href) return false;
   return /^\/m\/orders(?:[/?#]|$)/.test(href);
 }
+
+/* ── Ring rhythm and "seen" pause (owner's rules, Sep 2026) ───────────── */
+
+/** A seen order stays quiet this long, then rings again at its real age. */
+export const SEEN_PAUSE_MS = 3 * 60_000;
+
+/**
+ * THE RING ESCALATES WITH THE WAIT — a steady drone from the first second
+ * was too much for a dining room; silence was too little.
+ *
+ *    0–3 min waiting     every 10 s
+ *    3–10 min            every 5 s
+ *    10 min → answered   every 3 s   (the time limit cancels at 15 min)
+ */
+export function ringIntervalMs(waitedMs: number): number {
+  if (waitedMs < 3 * 60_000) return 10_000;
+  if (waitedMs < 10 * 60_000) return 5_000;
+  return 3_000;
+}
+
+/** How long this order has been waiting on the restaurant (from its window start). */
+export function waitedMs(order: AlarmOrder, minutes: number, now: number): number {
+  const window = windowOf(order, minutes);
+  return window ? Math.max(0, now - window.start) : 0;
+}
+
+/**
+ * Orders that should actually make noise: ringing, and not paused because
+ * someone opened the orders screen within the last SEEN_PAUSE_MS. A new order
+ * is never in `seenAt`, so it always rings at once.
+ */
+export function audibleOrders<T extends AlarmOrder>(
+  ringing: T[],
+  seenAt: ReadonlyMap<string, number>,
+  now: number,
+): T[] {
+  return ringing.filter((order) => {
+    const seen = seenAt.get(order.id);
+    return seen === undefined || now - seen >= SEEN_PAUSE_MS;
+  });
+}
+
+/** The interval for the most urgent audible order (the one waiting longest). */
+export function nextRingInterval(audible: AlarmOrder[], minutes: number, now: number): number | null {
+  if (audible.length === 0) return null;
+  const longest = Math.max(...audible.map((o) => waitedMs(o, minutes, now)));
+  return ringIntervalMs(longest);
+}

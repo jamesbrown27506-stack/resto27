@@ -46,11 +46,25 @@ export async function GET() {
 
   const lastReconcilerRun = await readHeartbeat("reconciler");
 
-  // Stale if the 10-minute sweep has not reported in over 30 minutes —
-  // and "never ran" (or 0044 unapplied) is the stalest answer of all.
-  const reconcilerStale =
+  /*
+    Stale = work has been waiting and the sweep has not reported in over 30
+    minutes. Since 0065 the reconciler is only CALLED when the database says
+    something is due, so a quiet night with no heartbeat is healthy, not
+    dead. The same database check decides: nothing due → idle, fine. Before
+    0065 (no function) it falls back to the old rule: silence is stale.
+  */
+  const silentTooLong =
     lastReconcilerRun === null ||
     Date.now() - new Date(lastReconcilerRun).getTime() > 30 * 60_000;
+  let reconcilerStale = silentTooLong;
+  if (silentTooLong) {
+    try {
+      const { data, error } = await createAdminClient().rpc("cron_due_payments");
+      if (!error && data === false) reconcilerStale = false;
+    } catch {
+      // Keep the conservative answer.
+    }
+  }
 
   const healthy = database.ok && !reconcilerStale;
 
