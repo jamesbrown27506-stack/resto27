@@ -528,6 +528,31 @@ export interface BranchOverview {
   reviewCount: number;
 }
 
+
+/**
+ * The dashboard's "N avis sans réponse" (0066): unanswered AND not marked
+ * read AND not answered by a reaction (a reaction only answers 3★+). Same
+ * rule as lib/reviews/attention. Falls back to "no written reply" before
+ * migration 0066.
+ */
+async function countReviewsNeedingAttention(restaurantId: string): Promise<{ count: number | null }> {
+  const supabase = createAdminClient();
+  const scoped = () =>
+    supabase
+      .from("reviews")
+      .select("*", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId)
+      .is("reply", null)
+      .is("removed_at", null)
+      .eq("is_reported", false);
+  const { count, error } = await scoped()
+    .is("restaurant_seen_at", null)
+    .or("restaurant_reaction.is.null,rating.lte.2");
+  if (!error) return { count };
+  const fallback = await scoped();
+  return { count: fallback.count };
+}
+
 /**
  * The figures on /m.
  *
@@ -558,7 +583,7 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
       count("menu_items"),
       count("menu_items").eq("is_available", false),
       count("restaurant_staff").eq("status", "active"),
-      count("reviews").is("reply", null).is("removed_at", null),
+      countReviewsNeedingAttention(restaurantId),
       supabase.from("restaurants").select("rating, review_count").eq("id", restaurantId).maybeSingle(),
     ]);
 

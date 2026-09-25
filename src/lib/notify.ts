@@ -140,6 +140,8 @@ export interface NotifyParams {
   audience?: "customer" | "staff";
   /** True on a watchdog re-send — the copy says "still waiting", not "new". */
   reminder?: boolean;
+  /** review_reply: a one-tap reaction instead of a written reply (0066). */
+  reaction?: "heart" | "thanks" | "like";
   /** order_status delivered: finished by the watchdog, not by a person (0065). */
   autoClosed?: boolean;
   /** new_order: the customer's online payment just landed — the order may start. */
@@ -767,6 +769,13 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
           };
 
     case "review_reply":
+      // A one-tap reaction (0066) instead of a written reply.
+      if (p.reaction) {
+        const emoji = p.reaction === "heart" ? "❤️" : p.reaction === "thanks" ? "🙏" : "👍";
+        return fr
+          ? { title: `${p.restaurantName ?? "Le restaurant"} a réagi à votre avis ${emoji}`, body: "Merci d'avoir pris le temps de laisser un avis." }
+          : { title: `${p.restaurantName ?? "The restaurant"} reacted to your review ${emoji}`, body: "Thank you for taking the time to leave a review." };
+      }
       return fr
         ? {
             title: "Réponse à votre avis",

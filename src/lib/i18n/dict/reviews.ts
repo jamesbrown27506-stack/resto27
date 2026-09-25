@@ -17,14 +17,14 @@ export const reviewsDict = defineDict({
     /* ── Chiffres d'en-tête ──────────────────────────────────────────── */
     "mrv.stat.average": "Note moyenne",
     "mrv.stat.averageHint": "sur {count} avis",
-    "mrv.stat.unanswered": "Sans réponse",
-    "mrv.stat.unansweredHint": "Les avis signalés ne sont pas comptés.",
+    "mrv.stat.unanswered": "À traiter",
+    "mrv.stat.unansweredHint": "Nouveaux avis ni répondus, ni lus. Une réaction suffit pour un avis 3★ et plus.",
     "mrv.stat.reported": "Signalés",
     "mrv.stat.reportedHint": "En cours d'examen par la plateforme.",
 
     /* ── Filtres ─────────────────────────────────────────────────────── */
     "mrv.filter.all": "Tous",
-    "mrv.filter.unanswered": "Sans réponse",
+    "mrv.filter.unanswered": "À traiter",
     "mrv.filter.answered": "Répondus",
     "mrv.filter.reported": "Signalés",
 
@@ -38,6 +38,14 @@ export const reviewsDict = defineDict({
     "mrv.reportedPending": "La plateforme examine ce signalement. L'avis reste visible en attendant.",
 
     "mrv.action.reply": "Répondre",
+    "mrv.action.markRead": "J'ai lu",
+    "mrv.markAllRead": "Tout marquer comme lu",
+    "mrv.markAllDone": "Tous les avis sont marqués comme lus.",
+    "mrv.new": "Nouveau",
+    "mrv.react": "Réagir",
+    "mrv.reaction.heart": "J'adore",
+    "mrv.reaction.thanks": "Merci",
+    "mrv.reaction.like": "J'aime",
     "mrv.action.editReply": "Modifier la réponse",
     "mrv.action.report": "Signaler",
 
@@ -76,13 +84,13 @@ export const reviewsDict = defineDict({
 
     "mrv.stat.average": "Average rating",
     "mrv.stat.averageHint": "across {count} reviews",
-    "mrv.stat.unanswered": "Awaiting a reply",
-    "mrv.stat.unansweredHint": "Reported reviews are not counted.",
+    "mrv.stat.unanswered": "To handle",
+    "mrv.stat.unansweredHint": "New reviews not answered or read yet. A reaction is enough for 3★ and above.",
     "mrv.stat.reported": "Reported",
     "mrv.stat.reportedHint": "Being looked at by the platform.",
 
     "mrv.filter.all": "All",
-    "mrv.filter.unanswered": "Awaiting a reply",
+    "mrv.filter.unanswered": "To handle",
     "mrv.filter.answered": "Answered",
     "mrv.filter.reported": "Reported",
 
@@ -95,6 +103,14 @@ export const reviewsDict = defineDict({
     "mrv.reportedPending": "The platform is looking at this report. The review stays visible meanwhile.",
 
     "mrv.action.reply": "Reply",
+    "mrv.action.markRead": "Mark as read",
+    "mrv.markAllRead": "Mark all as read",
+    "mrv.markAllDone": "All reviews are marked as read.",
+    "mrv.new": "New",
+    "mrv.react": "React",
+    "mrv.reaction.heart": "Love it",
+    "mrv.reaction.thanks": "Thank you",
+    "mrv.reaction.like": "Like",
     "mrv.action.editReply": "Edit the reply",
     "mrv.action.report": "Report",
 

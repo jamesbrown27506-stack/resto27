@@ -7,6 +7,7 @@ import { requireCapability } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
 import { notify } from "@/lib/notify";
 import type { ActionResult } from "./admin-actions";
+import { isReviewReaction } from "@/lib/reviews/attention";
 
 /**
  * Review moderation, restaurant side.
@@ -85,5 +86,99 @@ export async function reportReview(reviewId: string, reason: string): Promise<Ac
   });
 
   revalidatePath("/m/reviews");
+  return { ok: true };
+}
+
+/* ── "J'ai lu" and quick reactions (0066) ──────────────────────────────── */
+
+function refreshReviewScreens() {
+  revalidatePath("/m/reviews");
+  revalidatePath("/m");
+}
+
+/**
+ * Acknowledge a review without answering it: it leaves the dashboard's
+ * "needs attention" count (lib/reviews/attention). Nobody is notified.
+ */
+export async function markReviewSeen(reviewId: string): Promise<ActionResult> {
+  const t = await getTranslator();
+  const { active } = await requireCapability("reviews.reply");
+  const { data, error } = await createAdminClient()
+    .from("reviews")
+    .update({ restaurant_seen_at: new Date().toISOString() })
+    .eq("id", reviewId)
+    .eq("restaurant_id", active.restaurantId)
+    .is("removed_at", null)
+    .select("id");
+  if (error) {
+    console.error("[reviews:markSeen]", reviewId, error.message);
+    return { ok: false, error: t("est.reviewUpdateFailed") };
+  }
+  if ((data ?? []).length === 0) return { ok: false, error: t("est.reviewGone") };
+  refreshReviewScreens();
+  return { ok: true };
+}
+
+/** "Tout marquer comme lu" — every review of this branch not yet seen. */
+export async function markAllReviewsSeen(): Promise<ActionResult> {
+  const t = await getTranslator();
+  const { active } = await requireCapability("reviews.reply");
+  const { error } = await createAdminClient()
+    .from("reviews")
+    .update({ restaurant_seen_at: new Date().toISOString() })
+    .eq("restaurant_id", active.restaurantId)
+    .is("restaurant_seen_at", null)
+    .is("removed_at", null);
+  if (error) {
+    console.error("[reviews:markAllSeen]", error.message);
+    return { ok: false, error: t("est.reviewUpdateFailed") };
+  }
+  refreshReviewScreens();
+  return { ok: true };
+}
+
+/**
+ * A one-tap public reaction (❤️ 🙏 👍), or `null` to take it back. Shown under
+ * the review on the restaurant's page; the customer is told the first time a
+ * reaction is added (changing it later does not notify again).
+ */
+export async function reactToReview(reviewId: string, reaction: string | null): Promise<ActionResult> {
+  const t = await getTranslator();
+  const { active } = await requireCapability("reviews.reply");
+  if (reaction !== null && !isReviewReaction(reaction)) return { ok: false, error: t("est.reviewUpdateFailed") };
+
+  const supabase = createAdminClient();
+  const { data: before } = await supabase
+    .from("reviews")
+    .select("id, customer_id, restaurant_reaction")
+    .eq("id", reviewId)
+    .eq("restaurant_id", active.restaurantId)
+    .is("removed_at", null)
+    .maybeSingle();
+  if (!before) return { ok: false, error: t("est.reviewGone") };
+
+  const { error } = await supabase
+    .from("reviews")
+    .update({
+      restaurant_reaction: reaction,
+      restaurant_reacted_at: reaction ? new Date().toISOString() : null,
+    })
+    .eq("id", reviewId)
+    .eq("restaurant_id", active.restaurantId);
+  if (error) {
+    console.error("[reviews:react]", reviewId, error.message);
+    return { ok: false, error: t("est.reviewUpdateFailed") };
+  }
+
+  if (reaction && !before.restaurant_reaction && before.customer_id) {
+    await notify({
+      event: "review_reply",
+      tone: "success",
+      customerId: before.customer_id as string,
+      href: "/reviews",
+      params: { restaurantName: active.restaurantName, reaction },
+    });
+  }
+  refreshReviewScreens();
   return { ok: true };
 }

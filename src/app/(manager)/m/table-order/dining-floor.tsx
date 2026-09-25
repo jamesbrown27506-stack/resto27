@@ -1,5 +1,6 @@
 "use client";
 
+import { LIVE_FALLBACK_MS, useRestaurantSignal, useSignalLive } from "@/lib/realtime/restaurant-signal";
 import { useEffect, useState, useTransition } from "react";
 import { Check, Clock3, CreditCard, MessageSquare, ReceiptText, Send, UserCheck, X } from "lucide-react";
 import { Button, buttonClasses } from "@/components/ui/button";
@@ -199,8 +200,15 @@ export function DiningFloor({ sessions, focusSessionId, canCollect, notification
       (session.dining_guests ?? []).some((guest) => guest.status === "pending") ||
       (session.dining_rounds ?? []).some((round) => round.status === "pending"),
   );
+  // LIVE (0066): guest requests, dish approvals and bills bump the branch
+  // signal, so while live the floor refreshes on change and polls only as a
+  // 5-minute net; the 8 s / 30 s clock is the fallback when it is not.
+  const live = useSignalLive();
+  useRestaurantSignal(() => {
+    if (document.visibilityState === "visible") router.refresh();
+  });
   useEffect(() => {
-    const everyMs = hot ? 8_000 : 30_000;
+    const everyMs = live ? LIVE_FALLBACK_MS : hot ? 8_000 : 30_000;
     let timer: number | null = null;
     const start = () => {
       if (timer === null) timer = window.setInterval(() => router.refresh(), everyMs);
@@ -223,7 +231,7 @@ export function DiningFloor({ sessions, focusSessionId, canCollect, notification
       stop();
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [router, hot]);
+  }, [router, hot, live]);
 
   function run(fn: () => Promise<{ ok: boolean; error?: string }>, success: string) {
     start(async () => {

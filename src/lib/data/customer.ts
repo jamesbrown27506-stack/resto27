@@ -8,6 +8,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import type { OrderStatus, OrderType, PaymentMethod } from "@/lib/format/order-status";
 import { orderDeadline } from "@/lib/orders/deadline";
 import { getTimeLimits } from "@/lib/orders/time-limit-settings";
+import { isReviewReaction, type ReviewReaction } from "@/lib/reviews/attention";
 
 /**
  * Customer-side reads — one signed-in diner's orders, reservations, reviews,
@@ -534,19 +535,21 @@ export interface OwnReview {
   reply: string | null;
   repliedAt: string | null;
   createdAt: string;
+  /** The restaurant's one-tap reaction (0066). */
+  reaction: ReviewReaction | null;
 }
 
 /** The reviews this customer wrote, newest first. */
 export async function fetchOwnReviews(profileId: string): Promise<OwnReview[]> {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase
-    .from("reviews")
-    .select(
-      "id, restaurant_id, rating, body, reply, replied_at, created_at, restaurants ( name, slug )",
-    )
-    .eq("customer_id", profileId)
-    .order("created_at", { ascending: false });
+  const base = "id, restaurant_id, rating, body, reply, replied_at, created_at, restaurants ( name, slug )";
+  const query = (columns: string) =>
+    supabase.from("reviews").select(columns).eq("customer_id", profileId).order("created_at", { ascending: false });
+  let { data, error } = await query(`${base}, restaurant_reaction`);
+  if (error && (error.code === "42703" || error.code === "PGRST204")) {
+    ({ data, error } = await query(base));
+  }
 
   if (error) {
     console.error("[customer:fetchOwnReviews]", error.message);
@@ -561,6 +564,7 @@ export async function fetchOwnReviews(profileId: string): Promise<OwnReview[]> {
     reply: string | null;
     replied_at: string | null;
     created_at: string;
+    restaurant_reaction?: string | null;
     restaurants: { name: string; slug: string }[] | null;
   }[]).map((r) => ({
     id: r.id,
@@ -572,6 +576,7 @@ export async function fetchOwnReviews(profileId: string): Promise<OwnReview[]> {
     reply: r.reply,
     repliedAt: r.replied_at,
     createdAt: r.created_at,
+    reaction: isReviewReaction(r.restaurant_reaction) ? r.restaurant_reaction : null,
   }));
 }
 

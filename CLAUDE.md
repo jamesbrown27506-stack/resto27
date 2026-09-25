@@ -72,6 +72,10 @@ Tests are pure unit tests of `src/lib` modules — there is no DB/integration ha
 ### Notifications
 `lib/notify.ts` is the single fan-out point: event + recipients → per-recipient preferences → in-app row, email (`lib/mail.ts`, SMTP via nodemailer, diverted to `MAIL_TEST_INBOX` in test mode), web push (`lib/push.ts`, VAPID) and Firebase/FCM for the native apps (`lib/firebase/*`, `lib/notification-provider.ts`). A missing preference row means "default", not "off". The service worker is `public/sw.js` (served no-cache).
 
+Back-office freshness is **live, not polled** (0066): triggers bump `restaurant_signals.version` when orders, reservations, table requests or chats change; `lib/realtime/restaurant-signal.ts` holds one Realtime channel per branch and screens re-read on change (`useRestaurantSignal`), polling only as a 5-minute net while live. If you add something the back office counts, add a trigger that bumps the signal.
+
+Palettes: `color_palette` setting (`classic` | `ndole`, Admin → Appearance) sets `data-palette` on `<html>`; the Ndolé tokens live in `globals.css`. Use the colour tokens, never raw hex, or a component will ignore the palette.
+
 ### Database & migrations
 - `supabase/migrations/NNNN_*.sql`, plain SQL, applied **by hand in the Supabase SQL editor** (no Supabase CLI config in the repo). Numbers are not unique (two `0045_`, two `0050_`); give new ones the next free number.
 - Production may lag the migrations. Code touching newly-added columns uses migration-tolerant fallbacks: detect a missing column via `isMissingColumn` (Postgres `42703` **or** PostgREST `PGRST204`, see `lib/data/missing-column.test.ts`) and retry without it.

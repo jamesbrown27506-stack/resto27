@@ -128,6 +128,87 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   PALETTE "NDOLÉ" — the appetite palette (admin: Appearance → Palette)
+
+   Chosen on colour psychology for a food app: the colour people act on
+   (buttons, links, active tabs — `--primary`) becomes a warm chilli orange,
+   the hue the big delivery apps use because it reads as warmth, hunger and
+   urgency. The brand keeps its green, deepened for trust and Cameroonian
+   identity, on the surfaces that carry the brand (footer, solid bands) and
+   on success. Every text/background pair below is ≥ 4.5:1 (WCAG AA),
+   including the warning tone, which the classic palette leaves at 2.9:1.
+
+   Applied by [data-palette="ndole"] on <html> (root layout, from the
+   `color_palette` setting). Without it the classic sage palette above is
+   untouched, so switching back is instant and lossless.
+   ═══════════════════════════════════════════════════════════════════════ */
+[data-palette="ndole"] {
+  --bg: #faf6f0;
+  --surface: #ffffff;
+  --border: #e8dfd2;
+  --border-strong: #d6c9b6;
+
+  --text: #1c1a17;
+  --text-secondary: #524c44;
+  --text-light: #6b645a;
+
+  --primary: #c2410c;
+  --primary-hover: #9a3412;
+  --primary-light: #fbede5;
+  --primary-fg: #ffffff;
+  --accent: #1f6b4a;
+  --accent-hover: #17553a;
+  --accent-fg: #ffffff;
+
+  --success: #2e7d4f;
+  --success-light: #e8f4ec;
+  --warning: #93561a;
+  --warning-light: #fbf0e2;
+  --info: #2f6690;
+  --info-light: #e7f0f7;
+  --error: #b42318;
+  --error-light: #fdecea;
+
+  --brand-solid: #1f4d3a;
+  --brand-on-solid: #faf6f0;
+
+  --soft-lo: rgb(122 92 60 / 0.22);
+}
+
+[data-palette="ndole"][data-theme="dark"] {
+  --bg: #14120f;
+  --surface: #1e1a16;
+  --border: #37302a;
+  --border-strong: #4a4139;
+
+  --text: #f4efe7;
+  --text-secondary: #bdb4a6;
+  --text-light: #928a7c;
+
+  --primary: #f28c4e;
+  --primary-hover: #f6a270;
+  --primary-light: #2e1d12;
+  --primary-fg: #1a0f07;
+  --accent: #7cc7a0;
+  --accent-hover: #95d4b3;
+  --accent-fg: #0f1a14;
+
+  --success: #7cc7a0;
+  --success-light: #16241c;
+  --warning: #e7ae69;
+  --warning-light: #2a2217;
+  --info: #86b4d6;
+  --info-light: #17222b;
+  --error: #f27a6e;
+  --error-light: #2d1816;
+
+  --brand-solid: #183a2c;
+  --brand-on-solid: #f4efe7;
+
+  --soft-lo: rgb(0 0 0 / 0.55);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    TAILWIND THEME MAPPING
    `@theme inline` emits var(--token) into the utilities instead of the
    resolved value, which is what lets [data-theme] override them at runtime.

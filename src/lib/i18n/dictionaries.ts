@@ -735,7 +735,7 @@ const baseFr = {
   "m.attention.orders": "{count} commande(s) à traiter",
   "m.attention.reservations": "{count} réservation(s) à confirmer",
   "m.attention.lowStock": "{count} plat(s) en stock bas",
-  "m.attention.reviews": "{count} avis sans réponse",
+  "m.attention.reviews": "{count} avis à traiter",
   "m.attention.empty": "Tout est à jour",
   "m.attention.emptyBody": "Aucune action requise pour le moment.",
 
@@ -1564,7 +1564,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "m.attention.orders": "{count} order(s) to handle",
   "m.attention.reservations": "{count} booking(s) to confirm",
   "m.attention.lowStock": "{count} dish(es) low in stock",
-  "m.attention.reviews": "{count} review(s) awaiting a reply",
+  "m.attention.reviews": "{count} reviews to handle",
   "m.attention.empty": "Everything is up to date",
   "m.attention.emptyBody": "Nothing needs your attention right now.",
 

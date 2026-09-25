@@ -6,6 +6,7 @@ import { requireRole } from "@/lib/auth/session";
 import { writeAudit } from "@/lib/data/platform-actions";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { APPEARANCE_IMAGES, type AppearanceKey } from "@/lib/appearance";
+import { COLOR_PALETTES } from "@/lib/branding";
 import type { ActionResult } from "@/lib/data/admin-actions";
 
 /**
@@ -106,6 +107,45 @@ export async function resetAppearanceImage(key: string): Promise<ActionResult> {
     summary: `Reset the ${key.replace(/_/g, " ")} to the default`,
   });
 
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/* ── Colour palette ─────────────────────────────────────────────────────── */
+
+/**
+ * Switch the whole site between the classic sage palette and "Ndolé", the
+ * appetite palette (globals.css). Validated against the list like the image
+ * keys above; any admin may change it (it is branding, not money), and it is
+ * audited. Upserted so it works before a migration seeds the row.
+ */
+export async function setColorPalette(palette: string): Promise<ActionResult> {
+  const admin = await requireRole("admin");
+  if (!(COLOR_PALETTES as readonly string[]).includes(palette)) {
+    return { ok: false, error: "Unknown palette." };
+  }
+  const supabase = createAdminClient();
+  const { error } = await supabase.from("settings").upsert(
+    {
+      key: "color_palette",
+      value: palette,
+      value_type: "string",
+      category: "appearance",
+      label: "Colour palette",
+      description: "classic = original sage; ndole = appetite palette (chilli orange actions, deep green brand).",
+    },
+    { onConflict: "key" },
+  );
+  if (error) {
+    console.error("[appearance:palette]", error.message);
+    return { ok: false, error: "Could not save the palette." };
+  }
+  await writeAudit(admin, {
+    action: "appearance.palette",
+    entityType: "settings",
+    summary: `Colour palette set to ${palette}`,
+  });
+  // Every page renders the palette attribute from the root layout.
   revalidatePath("/", "layout");
   return { ok: true };
 }

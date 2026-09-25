@@ -19,6 +19,7 @@ import {
 import { minutesLeft } from "@/lib/orders/deadline";
 import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { useRestaurantSignal, useSignalLive } from "@/lib/realtime/restaurant-signal";
 
 /**
  * The ring's clock ticks every second; WHETHER it rings on a tick is the
@@ -249,12 +250,16 @@ export function PendingOrderAlarm({
     return () => window.clearInterval(timer);
   }, [isRinging, current]);
 
-  // The server re-check — the only poll, and only while ringing.
+  // The server re-check — the only poll, and only while ringing. While the
+  // branch signal is live (0066) an accept/cancel anywhere re-checks at once,
+  // so the clock slows to a 2-minute net.
+  const live = useSignalLive();
+  useRestaurantSignal(() => checkRef.current());
   useEffect(() => {
     if (!isRinging) return;
-    const timer = window.setInterval(() => checkRef.current(), CHECK_EVERY_MS);
+    const timer = window.setInterval(() => checkRef.current(), live ? 120_000 : CHECK_EVERY_MS);
     return () => window.clearInterval(timer);
-  }, [isRinging]);
+  }, [isRinging, live]);
 
   // A pre-order whose accept window opens later: one local timer, no server.
   const wakeAt = current && now > 0 ? nextRingStart(current.orders, current.minutes, now) : null;

@@ -30,7 +30,15 @@ export interface Branding {
   supportEmail: string;
   supportPhone: string | null;
   supportAddress: string | null;
+  /**
+   * The site's colour palette (admin: Appearance → Palette). "classic" is the
+   * original sage; "ndole" is the appetite palette in globals.css.
+   */
+  palette: ColorPalette;
 }
+
+export type ColorPalette = "classic" | "ndole";
+export const COLOR_PALETTES: readonly ColorPalette[] = ["classic", "ndole"];
 
 /**
  * What ships before an administrator has set anything.
@@ -47,6 +55,7 @@ export const DEFAULT_BRANDING: Branding = {
   supportEmail: "contact@resto237.online",
   supportPhone: null,
   supportAddress: "Douala, Cameroun",
+  palette: "classic",
 };
 
 /**
@@ -76,5 +85,6 @@ export const getBranding = cache(async (): Promise<Branding> => {
     supportEmail: map.get("support_email")?.trim() || DEFAULT_BRANDING.supportEmail,
     supportPhone: map.get("support_phone")?.trim() || null,
     supportAddress: map.get("support_address")?.trim() || null,
+    palette: map.get("color_palette")?.trim() === "ndole" ? "ndole" : "classic",
   };
 });

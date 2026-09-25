@@ -9,6 +9,7 @@ import { advanceLabelKey, nextStatus } from "@/lib/format/order-status";
 import { advanceOrder } from "@/lib/data/order-actions";
 import { useToast } from "@/components/ui/toast";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { LIVE_FALLBACK_MS, useRestaurantSignal, useSignalLive } from "@/lib/realtime/restaurant-signal";
 import { localizeActionError } from "@/lib/i18n/staff-errors";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { ManagerOrder } from "@/lib/data/orders";
@@ -46,12 +47,18 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
+  // LIVE (0066): refresh when the branch signals a change; the 15 s clock
+  // only while live updates are unavailable, a 5-minute net while live.
+  const live = useSignalLive();
+  useRestaurantSignal(() => {
+    if (document.visibilityState === "visible") router.refresh();
+  });
   useEffect(() => {
     const refresh = () => { if (document.visibilityState === "visible") router.refresh(); };
-    const timer = window.setInterval(refresh, POLL_MS);
+    const timer = window.setInterval(refresh, live ? LIVE_FALLBACK_MS : POLL_MS);
     document.addEventListener("visibilitychange", refresh);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
-  }, [router]);
+  }, [router, live]);
 
   function advance(order: ManagerOrder) {
     startTransition(async () => {

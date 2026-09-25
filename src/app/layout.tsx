@@ -140,6 +140,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html
       lang={locale}
       data-theme={theme}
+      // The admin's palette (Appearance → Palette); CSS in globals.css. Read
+      // from the settings map this layout already loads — no extra query.
+      data-palette={brand.palette}
       suppressHydrationWarning
       className={`${inter.variable} ${playfair.variable}`}
     >

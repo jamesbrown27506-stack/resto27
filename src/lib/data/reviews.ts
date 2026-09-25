@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
+import { isReviewReaction, reviewNeedsAttention, type ReviewReaction } from "@/lib/reviews/attention";
 
 /**
  * Customer reviews for one restaurant.
@@ -39,6 +40,10 @@ export interface RestaurantReview {
   /** Uploaded photos (migration 0026), in the customer's chosen order. */
   photos: string[];
   createdAt: string;
+  /** Staff marked it read (0066) — clears it from "needs attention". */
+  seenAt: string | null;
+  /** The restaurant's one-tap public reaction (0066), shown under the review. */
+  reaction: ReviewReaction | null;
 }
 
 export interface ReviewSummary {
@@ -63,27 +68,35 @@ interface DbReview {
   is_reported: boolean;
   report_reason: string | null;
   created_at: string;
+  restaurant_seen_at?: string | null;
+  restaurant_reaction?: string | null;
 }
 
 /** Every live review, newest first — a review list reads as a timeline. */
 export async function fetchReviews(restaurantId: string): Promise<RestaurantReview[]> {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase
-    .from("reviews")
-    .select(
-      "id, customer_id, order_id, customer_name, rating, body, reply, replied_at, replied_by, is_reported, report_reason, created_at",
-    )
-    .eq("restaurant_id", restaurantId)
-    .is("removed_at", null)
-    .order("created_at", { ascending: false });
+  const base =
+    "id, customer_id, order_id, customer_name, rating, body, reply, replied_at, replied_by, is_reported, report_reason, created_at";
+  const query = (columns: string) =>
+    supabase
+      .from("reviews")
+      .select(columns)
+      .eq("restaurant_id", restaurantId)
+      .is("removed_at", null)
+      .order("created_at", { ascending: false });
+  // 0066 columns first; before that migration, the same read without them.
+  let { data, error } = await query(`${base}, restaurant_seen_at, restaurant_reaction`);
+  if (error && (error.code === "42703" || error.code === "PGRST204")) {
+    ({ data, error } = await query(base));
+  }
 
   if (error) {
     console.error("[reviews:fetchReviews]", error.message);
     return [];
   }
 
-const rows = (data ?? []) as DbReview[];
+  const rows = (data ?? []) as unknown as DbReview[];
 
   // Photos in one round trip, keyed by review id — never N+1.
   const photoByReview = new Map<string, string[]>();
@@ -118,6 +131,8 @@ const rows = (data ?? []) as DbReview[];
     reportReason: r.report_reason,
     photos: photoByReview.get(r.id) ?? [],
     createdAt: r.created_at,
+    seenAt: r.restaurant_seen_at ?? null,
+    reaction: isReviewReaction(r.restaurant_reaction) ? r.restaurant_reaction : null,
   }));
 }
 
@@ -136,7 +151,7 @@ export function reviewSummary(rows: RestaurantReview[]): ReviewSummary {
   for (const row of rows) {
     ratingSum += row.rating;
     if (row.isReported) reported += 1;
-    else if (!row.reply) unanswered += 1;
+    else if (reviewNeedsAttention(row)) unanswered += 1;
   }
 
   return {

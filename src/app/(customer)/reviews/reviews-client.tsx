@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { REACTION_EMOJI } from "@/lib/reviews/attention";
 import { useState } from "react";
 import { Pencil, Star, Trash2 } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
@@ -128,6 +129,13 @@ export function ReviewsClient({
               </div>
 
               <p className="mt-3 leading-relaxed text-text-secondary">{review.body}</p>
+
+              {review.reaction && (
+                <p className="mt-3 text-sm text-text-secondary">
+                  <span aria-hidden>{REACTION_EMOJI[review.reaction]}</span>{" "}
+                  {t("crv.reacted", { name: review.restaurantName })}
+                </p>
+              )}
 
               {review.reply && (
                 <div className="mt-4 rounded-md border-l-2 border-primary bg-primary-light p-3.5">

@@ -181,7 +181,10 @@ export interface ManagerNavCounts {
   messages: number;
 }
 
-export async function getManagerNavCounts(restaurantId: string): Promise<ManagerNavCounts> {
+export async function getManagerNavCounts(
+  restaurantId: string,
+  // `signals`: migration 0066 is in, so the back office can listen live.
+): Promise<ManagerNavCounts & { signals?: boolean }> {
   const profile = await requireUser();
   const supabase = createAdminClient();
 
@@ -197,7 +200,7 @@ export async function getManagerNavCounts(restaurantId: string): Promise<Manager
   if (staffError) { console.error("[nav:staff]", staffError.message); return empty; }
   if (!staff) return empty;
 
-  const [orders, kitchen, access, dishes, reservations, messages, support, announcements] = await Promise.all([
+  const [orders, kitchen, access, dishes, reservations, messages, support, announcements, signal] = await Promise.all([
     supabase.from("orders").select("id", { count: "exact", head: true })
       .eq("restaurant_id", restaurantId).in("status", ["pending", "confirmed", "preparing", "shipped"]),
     supabase.from("orders").select("id", { count: "exact", head: true })
@@ -215,6 +218,9 @@ export async function getManagerNavCounts(restaurantId: string): Promise<Manager
       .is("restaurant_id", null).eq("customer_id", profile.id).eq("status", "open").gt("customer_unread", 0),
     supabase.from("notifications").select("id", { count: "exact", head: true })
       .eq("profile_id", profile.id).eq("href", "/m/messages?tab=announcements").is("read_at", null),
+    // Does the live-signal table exist (0066)? An error means "not yet".
+    supabase.from("restaurant_signals").select("restaurant_id", { count: "exact", head: true })
+      .eq("restaurant_id", restaurantId),
   ]);
   for (const [name, result] of Object.entries({ orders, kitchen, access, dishes, reservations, messages, support, announcements })) {
     if (result.error) console.error(`[nav:${name}]`, result.error.message);
@@ -225,6 +231,7 @@ export async function getManagerNavCounts(restaurantId: string): Promise<Manager
     tableOrder: (access.count ?? 0) + (dishes.count ?? 0),
     reservations: reservations.count ?? 0,
     messages: (messages.count ?? 0) + (support.count ?? 0) + (announcements.count ?? 0),
+    signals: !signal.error,
   };
 }
 

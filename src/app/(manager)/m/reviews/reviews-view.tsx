@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Flag, MessageSquare, Star } from "lucide-react";
+import { Check, CheckCheck, Flag, MessageSquare, Star } from "lucide-react";
 import { FilterChips } from "@/components/data/filter-bar";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,8 @@ import { useToast } from "@/components/ui/toast";
 import { isoAttr } from "@/lib/format/datetime";
 import { useDates } from "@/lib/format/use-dates";
 import { replyToReview } from "@/lib/data/manager-actions";
-import { reportReview } from "@/lib/data/review-actions";
+import { markAllReviewsSeen, markReviewSeen, reactToReview, reportReview } from "@/lib/data/review-actions";
+import { REACTION_EMOJI, REVIEW_REACTIONS, reviewNeedsAttention, type ReviewReaction } from "@/lib/reviews/attention";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { RestaurantReview, ReviewSummary } from "@/lib/data/reviews";
 
@@ -74,7 +75,8 @@ export function ReviewsView({
   }).format(summary.average);
 
   const visible = reviews.filter((review) => {
-    if (filter === "unanswered") return !review.reply && !review.isReported;
+    // "À traiter": what still needs the restaurant (lib/reviews/attention).
+    if (filter === "unanswered") return reviewNeedsAttention(review);
     if (filter === "answered") return Boolean(review.reply);
     if (filter === "reported") return review.isReported;
     return true;
@@ -90,6 +92,33 @@ export function ReviewsView({
       setReplyingId(null);
       setDraft("");
       toast(t("mrv.reply.done"), "success");
+    });
+  }
+
+  /*
+    "J'AI LU" AND ONE-TAP REACTIONS (0066). A review no longer has to be
+    answered in writing to leave the dashboard: reading it, or reacting to a
+    good one, is enough. The server revalidates, so the list re-renders from
+    the database — nothing is faked locally.
+  */
+  function markSeen(id: string) {
+    startTransition(async () => {
+      const result = await markReviewSeen(id);
+      if (!result.ok) toast(result.error, "error");
+    });
+  }
+
+  function markAllSeen() {
+    startTransition(async () => {
+      const result = await markAllReviewsSeen();
+      toast(result.ok ? t("mrv.markAllDone") : result.error, result.ok ? "success" : "error");
+    });
+  }
+
+  function react(id: string, current: ReviewReaction | null, next: ReviewReaction) {
+    startTransition(async () => {
+      const result = await reactToReview(id, current === next ? null : next);
+      if (!result.ok) toast(result.error, "error");
     });
   }
 
@@ -132,7 +161,7 @@ export function ReviewsView({
         />
       </div>
 
-      <div className="mt-6">
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <FilterChips
           items={[
             { value: "all", label: t("mrv.filter.all"), count: summary.total },
@@ -143,6 +172,12 @@ export function ReviewsView({
           value={filter}
           onChange={setFilter}
         />
+        {summary.unanswered > 0 && (
+          <Button size="sm" variant="outline" disabled={pending} onClick={markAllSeen}>
+            <CheckCheck className="size-3.5" aria-hidden />
+            <span>{t("mrv.markAllRead")}</span>
+          </Button>
+        )}
       </div>
 
       <div className="mt-5">
@@ -170,6 +205,11 @@ export function ReviewsView({
                       <time dateTime={isoAttr(review.createdAt)} className="text-xs text-text-light">
                         {dates.date(review.createdAt)}
                       </time>
+                      {reviewNeedsAttention(review) && (
+                        <span className="rounded-full bg-warning-light px-2 py-0.5 text-[11px] font-bold text-warning">
+                          {t("mrv.new")}
+                        </span>
+                      )}
                     </div>
 
                     {review.body.trim() ? (
@@ -235,6 +275,42 @@ export function ReviewsView({
                           {review.reply ? t("mrv.action.editReply") : t("mrv.action.reply")}
                         </span>
                       </Button>
+
+                      {/* One-tap public reactions: tap again to take it back. */}
+                      {!review.isReported && (
+                        <div className="flex items-center gap-1" role="group" aria-label={t("mrv.react")}>
+                          {REVIEW_REACTIONS.map((reaction) => (
+                            <button
+                              key={reaction}
+                              type="button"
+                              disabled={pending}
+                              aria-pressed={review.reaction === reaction}
+                              title={t(`mrv.reaction.${reaction}`)}
+                              onClick={() => react(review.id, review.reaction, reaction)}
+                              className={`grid size-11 place-items-center rounded-md border text-lg transition-colors ${
+                                review.reaction === reaction
+                                  ? "border-primary bg-primary-light"
+                                  : "border-border bg-surface hover:bg-surface-2"
+                              }`}
+                            >
+                              <span aria-hidden>{REACTION_EMOJI[reaction]}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {!review.reply && !review.seenAt && !review.isReported && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={pending}
+                          className="w-full sm:w-auto"
+                          onClick={() => markSeen(review.id)}
+                        >
+                          <Check className="size-3.5" aria-hidden />
+                          <span>{t("mrv.action.markRead")}</span>
+                        </Button>
+                      )}
 
                       {!review.isReported && (
                         <Button

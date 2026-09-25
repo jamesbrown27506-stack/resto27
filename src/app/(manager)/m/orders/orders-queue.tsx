@@ -13,6 +13,7 @@ import { formatMoney } from "@/lib/format/currency";
 import { formatElapsed } from "@/lib/format/datetime";
 import { isTerminal } from "@/lib/format/order-status";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { LIVE_FALLBACK_MS, useRestaurantSignal, useSignalLive } from "@/lib/realtime/restaurant-signal";
 import { useDates } from "@/lib/format/use-dates";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { ManagerOrder } from "@/lib/data/orders";
@@ -65,12 +66,20 @@ export function OrdersQueue({
   // New orders arrive without anyone touching the page. router.refresh()
   // re-runs the Server Component, so the poll costs one RSC round trip and
   // never loses client state (open dialogs, chosen filter).
+  //
+  // LIVE (0066): the branch's signal channel says when something changed, so
+  // the 30 s clock only runs while live updates are unavailable; while live,
+  // a 5-minute safety net.
+  const live = useSignalLive();
+  useRestaurantSignal(() => {
+    if (document.visibilityState === "visible") router.refresh();
+  });
   useEffect(() => {
     const refresh = () => { if (document.visibilityState === "visible") router.refresh(); };
-    const timer = window.setInterval(refresh, POLL_MS);
+    const timer = window.setInterval(refresh, live ? LIVE_FALLBACK_MS : POLL_MS);
     document.addEventListener("visibilitychange", refresh);
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
-  }, [router]);
+  }, [router, live]);
 
   const counts = useMemo(
     () => ({

@@ -9,6 +9,7 @@ import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 import type { RestaurantHours } from "@/lib/data/public";
 import type { RestaurantReview as Review } from "@/lib/data/reviews";
+import { REACTION_EMOJI } from "@/lib/reviews/attention";
 
 const WEEKDAYS_FR = ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
 const WEEKDAYS_EN = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -83,6 +84,12 @@ export function ReviewList({ reviews }: { reviews: Review[] }) {
                     />
                   ))}
                 </div>
+              )}
+
+              {review.reaction && !review.reply && (
+                <p className="mt-3 text-sm text-text-secondary">
+                  <span aria-hidden>{REACTION_EMOJI[review.reaction]}</span> {t("cbr.reacted")}
+                </p>
               )}
 
               {review.reply && (

@@ -2,6 +2,8 @@ import { AdminPage } from "@/components/layout/admin-shell";
 import { AppearanceForm } from "./appearance-form";
 import { requireRole } from "@/lib/auth/session";
 import { getAppearance, APPEARANCE_IMAGES, DEFAULT_APPEARANCE } from "@/lib/appearance";
+import { getBranding } from "@/lib/branding";
+import { PalettePanel } from "./palette-panel";
 
 export const metadata = { title: "Appearance" };
 
@@ -10,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AppearancePage() {
   await requireRole("admin");
-  const appearance = await getAppearance();
+  const [appearance, branding] = await Promise.all([getAppearance(), getBranding()]);
 
   // `current` is what the site renders; `isDefault` is whether that came from
   // a stored row or from the shipped fallback. The screen has to distinguish
@@ -27,8 +29,9 @@ export default async function AppearancePage() {
   return (
     <AdminPage
       title="Appearance"
-      description="The photographs on the public landing page. Changes are live the moment you save."
+      description="The site's colour palette and the photographs on the public landing page. Changes are live the moment you save."
     >
+      <PalettePanel current={branding.palette} />
       <AppearanceForm slots={slots} />
     </AdminPage>
   );

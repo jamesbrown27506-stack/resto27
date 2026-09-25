@@ -13,6 +13,7 @@ import {
   UtensilsCrossed,
 } from "lucide-react";
 import { SetupPanel, WelcomeNudge } from "./setup-panel";
+import { MarkReviewsRead } from "./mark-reviews-read";
 import { ServicePauseToggle } from "@/components/order/service-pause-toggle";
 import { ManagerPage } from "@/components/layout/manager-shell";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
@@ -196,10 +197,13 @@ export function DashboardView({
               />
             )}
             {overview.unrepliedReviews > 0 && (
-              <AttentionLink
-                href="/m/reviews"
-                label={t("m.attention.reviews", { count: overview.unrepliedReviews })}
-              />
+              <>
+                <AttentionLink
+                  href="/m/reviews"
+                  label={t("m.attention.reviews", { count: overview.unrepliedReviews })}
+                />
+                <MarkReviewsRead />
+              </>
             )}
           </ul>
         </div>
