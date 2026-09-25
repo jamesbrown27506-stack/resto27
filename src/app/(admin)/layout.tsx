@@ -34,7 +34,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   return (
     <AdminShell
-      user={{ name: admin.name, email: admin.email, avatarUrl: admin.avatarUrl }}
+      user={{ name: admin.name, email: admin.email, avatarUrl: admin.avatarUrl, isSuperAdmin: admin.isSuperAdmin }}
       brand={{ name: brand.name, logoUrl: brand.logoUrl }}
       // The guard above means this layout is never rendered mid-impersonation;
       // the banner that displays impersonation state lives with the manager

@@ -5,6 +5,7 @@ import { CreditCard, ShieldCheck } from "lucide-react";
 import { FilterBar } from "@/components/data/filter-bar";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { CellStack, DataTable, type Column } from "@/components/ui/data-table";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -24,6 +25,7 @@ const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
 
 export function PaymentsTable({ attempts }: { attempts: PaymentAttemptRow[] }) {
   const { toast } = useToast();
+  const canConfirm = useIsSuperAdmin();
   const [pending, startTransition] = useTransition();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
@@ -100,9 +102,15 @@ export function PaymentsTable({ attempts }: { attempts: PaymentAttemptRow[] }) {
       align: "right",
       cell: (a) =>
         a.status === "pending" ? (
-          <Button size="sm" disabled={pending} onClick={() => setConfirming(a)}>
-            Confirm
-          </Button>
+          // Confirming by hand grants paid service: super admins only (the
+          // action refuses it too).
+          canConfirm ? (
+            <Button size="sm" disabled={pending} onClick={() => setConfirming(a)}>
+              Confirm
+            </Button>
+          ) : (
+            <SuperAdminOnlyHint />
+          )
         ) : null,
     },
   ];

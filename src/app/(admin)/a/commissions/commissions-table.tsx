@@ -1,5 +1,6 @@
 "use client";
 
+import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { useState, useTransition } from "react";
 import { Info, Lock, Percent, RefreshCw } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
@@ -33,6 +34,7 @@ function defaultPeriod(): { start: string; end: string } {
 export function CommissionsTable({ statements }: { statements: CommissionRow[] }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
+  const isSuper = useIsSuperAdmin();
 
   const initial = defaultPeriod();
   const [start, setStart] = useState(initial.start);
@@ -126,7 +128,8 @@ export function CommissionsTable({ statements }: { statements: CommissionRow[] }
               Issue
             </Button>
           )}
-          {s.status === "issued" && (
+          {s.status === "issued" && !isSuper && <SuperAdminOnlyHint />}
+          {s.status === "issued" && isSuper && (
             <>
               <Button
                 variant="outline"

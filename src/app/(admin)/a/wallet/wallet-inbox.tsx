@@ -1,5 +1,6 @@
 "use client";
 
+import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { useEffect, useState, useTransition } from "react";
 import { ArrowUpFromLine, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ export function WalletInbox({
 }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
+  const isSuper = useIsSuperAdmin();
 
   // The credit box — which restaurant, how much, and for what.
   const [creditRestaurant, setCreditRestaurant] = useState("");
@@ -132,13 +134,19 @@ export function WalletInbox({
         <p className="text-sm text-text-secondary">
           Restaurant withdrawals are sent immediately. This page monitors their provider status and wallet funding.
         </p>
-        <Button variant="outline" size="sm" onClick={() => setShowCredit((v) => !v)}>
-          <Wallet className="size-3.5" aria-hidden />
-          <span>{showCredit ? "Hide credit" : "Credit a wallet"}</span>
-        </Button>
+        {/* Choosing whose wallet a collection credits is super-admin only
+            (fundWallet refuses anyone else). */}
+        {isSuper ? (
+          <Button variant="outline" size="sm" onClick={() => setShowCredit((v) => !v)}>
+            <Wallet className="size-3.5" aria-hidden />
+            <span>{showCredit ? "Hide credit" : "Credit a wallet"}</span>
+          </Button>
+        ) : (
+          <SuperAdminOnlyHint />
+        )}
       </div>
 
-      {showCredit && (
+      {showCredit && isSuper && (
         <Card className="border-primary/30">
           <CardBody className="flex flex-col gap-4">
             <p className="text-sm font-semibold">Fund a restaurant wallet through CamerPay</p>

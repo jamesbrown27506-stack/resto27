@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { getNotificationProviderStatus, setNotificationProvider, testNotificationProvider } from "@/lib/data/notification-provider-actions";
 
 type Status = Awaited<ReturnType<typeof getNotificationProviderStatus>>;
@@ -11,6 +12,9 @@ export function NotificationProviderPanel({ initial }: { initial: Status }) {
   const [choice, setChoice] = useState(initial.provider);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  // Switching providers is super-admin only (the action refuses it too);
+  // the tests below stay open — they only ever reach the tester's own devices.
+  const canSwitch = useIsSuperAdmin();
   async function run(test?: "web_push" | "firebase") {
     setBusy(true);
     try {
@@ -28,7 +32,7 @@ export function NotificationProviderPanel({ initial }: { initial: Status }) {
     <p className="text-sm text-text-secondary">Choose the provider for all operational push alerts. In-app and email notifications keep their own preferences. Tests below send only to your administrator account and do not change the active provider.</p>
     <p className="text-sm">Active: <strong>{status.provider === "firebase" ? "Firebase Cloud Messaging" : "Resto237 Web Push"}</strong></p>
     <label className="flex flex-col gap-1 text-sm">Push provider
-      <select className="rounded border border-border bg-surface p-2" value={choice} disabled={busy} onChange={e => setChoice(e.target.value as Status["provider"])}>
+      <select className="rounded border border-border bg-surface p-2" value={choice} disabled={busy || !canSwitch} onChange={e => setChoice(e.target.value as Status["provider"])}>
         <option value="web_push">Resto237 Web Push</option>
         <option value="firebase">Firebase Cloud Messaging</option>
       </select>
@@ -39,7 +43,8 @@ export function NotificationProviderPanel({ initial }: { initial: Status }) {
       {!status.storageReady && "Apply Supabase migration 0045. "}Then redeploy and register a device in notification settings.
     </p>}
     <div className="flex flex-wrap gap-2">
-      <Button size="sm" disabled={busy} onClick={() => void run()}>Save provider</Button>
+      <Button size="sm" disabled={busy || !canSwitch} onClick={() => void run()}>Save provider</Button>
+      {!canSwitch && <SuperAdminOnlyHint className="self-center" />}
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void run("web_push")}>Test Web Push</Button>
       <Button size="sm" variant="outline" disabled={busy} onClick={() => void run("firebase")}>Test Firebase</Button>
     </div>

@@ -163,6 +163,7 @@ export const ADMIN_NAV: NavGroup[] = [
       { href: "/a/commissions", label: "Commissions", icon: "Percent" },
       { href: "/a/refunds", label: "Refunds", icon: "Undo2" },
       { href: "/a/camerpay", label: "CamerPay", icon: "Smartphone" },
+      { href: "/a/saspay", label: "SasPay", icon: "Smartphone" },
       { href: "/a/coupons", label: "Coupons", icon: "TicketPercent" },
       { href: "/a/wallet", label: "Wallet", icon: "Wallet" },
     ],
@@ -180,6 +181,9 @@ export const ADMIN_NAV: NavGroup[] = [
   {
     label: "Operations",
     items: [
+      // Everyone may see who the administrators are; only super admins can
+      // change them (the page greys the controls out for simple admins).
+      { href: "/a/admins", label: "Administrators", icon: "UserCog" },
       { href: "/a/audit", label: "Audit log", icon: "ScrollText" },
       { href: "/a/export", label: "CSV export", icon: "Download" },
       { href: "/a/diagnostics", label: "Diagnostics", icon: "Stethoscope" },

@@ -1,5 +1,6 @@
 "use client";
 
+import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { useState, useTransition } from "react";
 import { Percent, Plus, TicketPercent, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,8 +27,11 @@ import { cn } from "@/lib/utils";
 export function CouponsClient({ coupons }: { coupons: PlatformCouponRow[] }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
+  const isSuper = useIsSuperAdmin();
   const [editing, setEditing] = useState<PlatformCouponRow | null>(null);
-  const [showForm, setShowForm] = useState(coupons.length === 0);
+  // Writing a code is super-admin only (a coupon is a discount on real
+  // orders); any admin can still PAUSE one — see togglePlatformCoupon.
+  const [showForm, setShowForm] = useState(isSuper && coupons.length === 0);
 
   const [code, setCode] = useState("");
   const [discountType, setDiscountType] = useState<"percent" | "fixed">("percent");
@@ -162,11 +166,17 @@ export function CouponsClient({ coupons }: { coupons: PlatformCouponRow[] }) {
         </Panel>
       )}
 
-      {!showForm && (
+      {!showForm && isSuper && (
         <Button variant="outline" className="self-start" onClick={openCreate}>
           <Plus className="size-4" aria-hidden />
           <span>New coupon</span>
         </Button>
+      )}
+      {!isSuper && (
+        <p className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
+          <SuperAdminOnlyHint />
+          Creating, editing and re-activating codes. You can still pause an active code.
+        </p>
       )}
 
       <Panel title="Coupon codes" description="The master switch lives in Settings → Payments.">
@@ -204,13 +214,13 @@ export function CouponsClient({ coupons }: { coupons: PlatformCouponRow[] }) {
                 </div>
 
                 <div className="flex items-center gap-1.5">
-                  <Button variant="outline" size="sm" disabled={pending} onClick={() => openEdit(c)}>
+                  <Button variant="outline" size="sm" disabled={pending || !isSuper} onClick={() => openEdit(c)}>
                     Edit
                   </Button>
                   <Switch
                     label=""
                     checked={c.isActive}
-                    disabled={pending}
+                    disabled={pending || (!isSuper && !c.isActive)}
                     onChange={(e) => toggle(c)}
                     aria-label={`Toggle ${c.code}`}
                   />

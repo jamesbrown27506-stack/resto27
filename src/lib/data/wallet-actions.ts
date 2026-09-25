@@ -5,7 +5,7 @@ import { getTranslator } from "@/lib/i18n/locale-server";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { ordersInProgressHold } from "./wallet";
-import { requireRole, type AuthProfile } from "@/lib/auth/session";
+import { requireRole, superAdminOrError, type AuthProfile } from "@/lib/auth/session";
 import { requireCapability } from "@/lib/auth/branch";
 import { DICTIONARIES, interpolate } from "@/lib/i18n/dictionaries";
 import { writeAudit } from "./platform-actions";
@@ -13,17 +13,10 @@ import { rateLimit } from "@/lib/rate-limit";
 import { getWithdrawalFeeConfig } from "./settings";
 import { paymentMode } from "./billing";
 import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
-import {
-  acceptedTransactionId,
-  isPayableAmount,
-  latestTransactionId,
-  MAX_AMOUNT_XAF,
-  MIN_AMOUNT_XAF,
-  normalisePhone,
-  recordAcceptedRequest,
-  recordWithdrawalFee,
-  sendPayout,
-} from "@/lib/payments/camerpay/client";
+// MIN_AMOUNT_XAF stays the platform floor for a withdrawal REQUEST (500 FCFA),
+// whichever gateway later sends it.
+import { MIN_AMOUNT_XAF, normalisePhone, recordWithdrawalFee } from "@/lib/payments/camerpay/client";
+import { gatewayRange, payoutGateway, sendGatewayPayout } from "@/lib/payments/gateway";
 import type { ActionResult } from "./admin-actions";
 import { checkPaymentAttempt, initiatePaymentAttempt, settlePayment } from "@/lib/payments/collect";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
@@ -76,7 +69,9 @@ export async function creditWallet(
   amount: number,
   note?: string,
 ): Promise<WalletResult & { balance?: number }> {
-  const admin = await requireRole("admin");
+  const gate = await superAdminOrError(); // money in by hand — super admins only
+  if (!gate.ok) return { ...gate, reason: "superAdminOnly" };
+  const admin = gate.admin;
   const value = Math.round(amount);
 
   if (!Number.isInteger(value) || value <= 0) {
@@ -133,7 +128,8 @@ export async function fundWallet(
   attemptId?: string;
   instruction?: PaymentInstruction;
 }> {
-  await requireRole("admin");
+  const gate = await superAdminOrError(); // chooses whose wallet is credited — super admins only
+  if (!gate.ok) return { ...gate, reason: "superAdminOnly" };
   const value = Math.round(amount);
   if (!Number.isInteger(value) || value <= 0) {
     return { ok: false, reason: "badAmount", error: "Amount must be a positive number of francs." };
@@ -183,6 +179,7 @@ export async function fundWallet(
     reference: "Wallet " + restaurant.name,
     phone: normalizedPhone,
     amount: value,
+    returnPath: "/m/wallet",
   });
   if (!initiated.ok || !initiated.attemptId) {
     return { ok: false, reason: initiated.reason, error: initiated.error ?? "CamerPay payment failed." };
@@ -369,8 +366,9 @@ export async function requestWithdrawal(input: {
  * ─────────────────────────────────────────────────────────────────────────
  */
 export async function approveWithdrawal(requestId: string): Promise<WalletResult> {
-  const admin = await requireRole("admin");
-  return executeWithdrawal(requestId, admin, englishT);
+  const gate = await superAdminOrError(); // sends real money out — super admins only
+  if (!gate.ok) return { ...gate, reason: "superAdminOnly" };
+  return executeWithdrawal(requestId, gate.admin, englishT);
 }
 
 /** Start or retry a withdrawal belonging to the manager's active branch. */
@@ -443,23 +441,25 @@ async function executeWithdrawal(
       ? computeWithdrawalFee(gross, feeConfig.percent)
       : { fee: 0, net: gross };
 
-  if (net < MIN_AMOUNT_XAF) {
+  // The payout gateway's own range (CamerPay 500–500 000, SasPay 200–9 999 999).
+  const payoutRange = gatewayRange(await payoutGateway());
+  if (net < payoutRange.min) {
     return {
       ok: false,
       reason: "belowProviderMinimum",
-      error: t("est.netBelowMin", { percent: feeConfig.percent, net, min: MIN_AMOUNT_XAF }),
+      error: t("est.netBelowMin", { percent: feeConfig.percent, net, min: payoutRange.min }),
     };
   }
 
   const mode = await paymentMode();
-  if (mode === "live" && !isPayableAmount(net)) {
+  if (mode === "live" && net > payoutRange.max) {
     return {
       ok: false,
       reason: "outOfProviderRange",
       error: t("est.netOutOfRange", {
         net: net.toLocaleString("fr-CM"),
-        min: MIN_AMOUNT_XAF,
-        max: MAX_AMOUNT_XAF.toLocaleString("fr-CM"),
+        min: payoutRange.min,
+        max: payoutRange.max.toLocaleString("fr-CM"),
       }),
     };
   }
@@ -564,17 +564,20 @@ async function executeWithdrawal(
     // ever asked for. The reference is deliberately unmistakable.
     replyTo = `SANDBOX-${randomUUID().slice(0, 10).toUpperCase()}`;
   } else {
-    // Best effort: the report id just before the transfer, so a later
-    // confirmation can match OUR row.
-    const afterId = await latestTransactionId();
+    // CamerPay or SasPay, per the super admin's payout switch (gateway.ts).
+    // The withdrawal id is the idempotency key: a retried request can never
+    // send the money twice on SasPay.
+    const sent = await sendGatewayPayout({
+      phone,
+      amount: net,
+      idempotencyKey: `withdrawal-${requestId}`,
+      description: `Retrait restaurant ${requestId.slice(0, 8)}`,
+    });
 
-    let response;
-    try {
-      response = await sendPayout(phone, net);
-    } catch (error) {
-      // The request may well have reached CamerPay before this broke.
-      console.error("[wallet:approveWithdrawal] payout call failed", error);
-      await markUnresolved("the payout call failed");
+    if (sent.kind === "unknown") {
+      // The request may well have reached the gateway before this broke.
+      console.error("[wallet:approveWithdrawal] payout outcome unknown", sent.gateway, sent.message);
+      await markUnresolved(`the ${sent.gateway} payout call failed: ${sent.message}`);
       revalidatePath("/a/wallet");
       revalidatePath("/m/wallet");
       return {
@@ -584,9 +587,9 @@ async function executeWithdrawal(
       };
     }
 
-    if (!(response.httpStatus === 202 || response.etat)) {
+    if (sent.kind === "refused") {
       // A refusal is definite: nothing left, so undo and requeue.
-      const refusal = response.message ?? `HTTP ${response.httpStatus}`;
+      const refusal = sent.message;
 
       if (!(await reverseDebit(`refused: ${refusal}`))) {
         // The claim stays: the wallet really is short by the gross, and the
@@ -606,8 +609,8 @@ async function executeWithdrawal(
         action: "wallet.withdrawal_payout_refused",
         entityType: "withdrawal_request",
         entityId: requestId,
-        summary: `CamerPay refused ${net.toLocaleString("fr-CM")} FCFA to ${phone} — ${refusal}`,
-        metadata: { gross, fee, net },
+        summary: `${sent.gateway} refused ${net.toLocaleString("fr-CM")} FCFA to ${phone} — ${refusal}`,
+        metadata: { gross, fee, net, gateway: sent.gateway },
       });
 
       revalidatePath("/a/wallet");
@@ -619,30 +622,7 @@ async function executeWithdrawal(
       };
     }
 
-    const accepted = acceptedTransactionId(response);
-    if (!accepted) {
-      // Accepted, so money may move, but with nothing to track it by.
-      await markUnresolved("accepted without a replyTo");
-      revalidatePath("/a/wallet");
-      revalidatePath("/m/wallet");
-      return {
-        ok: false,
-        reason: "payoutUnknown",
-        error: t("est.payoutNoReplyTo", { phone }),
-      };
-    }
-
-    replyTo = accepted;
-
-    // Ledger the acceptance so the webhook/reconciler can find the report row.
-    await recordAcceptedRequest({
-      replyTo,
-      direction: "payout",
-      phone,
-      amount: net,
-      afterId: afterId ?? null,
-      startedAt: new Date().toISOString(),
-    });
+    replyTo = sent.replyTo;
   }
 
   if (fee > 0) {
@@ -735,7 +715,9 @@ async function checkWithdrawalForScope(
  * has just been sent.
  */
 export async function rejectWithdrawal(requestId: string, reason?: string): Promise<WalletResult> {
-  const admin = await requireRole("admin");
+  const gate = await superAdminOrError(); // a withdrawal decision — super admins only
+  if (!gate.ok) return { ...gate, reason: "superAdminOnly" };
+  const admin = gate.admin;
   const supabase = createAdminClient();
 
   const { data: rejected, error } = await supabase

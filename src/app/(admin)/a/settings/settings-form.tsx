@@ -26,6 +26,8 @@ import { useToast } from "@/components/ui/toast";
 import { updateSettings } from "@/lib/data/platform-actions";
 import { clearBrandingAsset, uploadBrandingAsset } from "@/lib/data/profile-actions";
 import { SoundPicker } from "./sound-picker";
+import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
+import { isCriticalSettingKey, isGatewaySettingKey } from "@/lib/auth/super-admin-rules";
 import type { SettingRow } from "@/lib/data/platform";
 import { cn } from "@/lib/utils";
 import {
@@ -99,6 +101,9 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
   const { toast } = useToast();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  // Money and security keys are greyed out for a simple admin; updateSettings
+  // refuses them server-side regardless (lib/auth/super-admin-rules.ts).
+  const isSuper = useIsSuperAdmin();
 
   /** The text and boolean settings — everything Save is responsible for. */
   const original = useMemo(
@@ -231,7 +236,166 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
     );
   }
 
-  const rows = settings.filter((s) => s.category === active && !ASSET_KEYS.has(s.key));
+  /*
+    The gateway switches never render here — Payments → Gateways owns them,
+    and updateSettings refuses them from this form for everyone.
+  */
+  const rows = settings.filter(
+    (s) => s.category === active && !ASSET_KEYS.has(s.key) && !isGatewaySettingKey(s.key),
+  );
+
+  /**
+   * One setting's control.
+   *
+   * Pulled out of the JSX map so a super-admin-only row can be wrapped whole
+   * (see `LockedSetting`) without every branch below repeating the check.
+   */
+  function renderSetting(setting: SettingRow) {
+    const value = draft[setting.key] ?? "";
+
+    if (setting.key === "notification_sound") {
+      return (
+        <Field
+          key={setting.key}
+          label={setting.label ?? setting.key}
+          htmlFor={`set-${setting.key}`}
+          hint={setting.description ?? undefined}
+        >
+          <SoundPicker
+            value={value}
+            onChange={(next) =>
+              setDraft((prev) => ({ ...prev, [setting.key]: next }))
+            }
+          />
+          <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
+        </Field>
+      );
+    }
+
+    if (setting.key === "payment_mode") {
+      return (
+        <Field
+          key={setting.key}
+          label={setting.label ?? setting.key}
+          htmlFor={`set-${setting.key}`}
+          hint={setting.description ?? undefined}
+        >
+          <Select
+            id={`set-${setting.key}`}
+            value={value}
+            onChange={(e) =>
+              setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
+            }
+          >
+            <option value="sandbox">sandbox — simulated, no money moves</option>
+            <option value="live">live — real charges through CamerPay</option>
+          </Select>
+          <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
+        </Field>
+      );
+    }
+
+    if (setting.key === "platform_delivery_fee") {
+      return (
+        <Field
+          key={setting.key}
+          label={setting.label ?? setting.key}
+          htmlFor={`set-${setting.key}`}
+          hint={setting.description ?? undefined}
+        >
+          <Input
+            id={`set-${setting.key}`}
+            value={value}
+            inputMode="numeric"
+            suffix="XAF"
+            onChange={(e) =>
+              setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
+            }
+          />
+          <p className="mt-1 text-xs text-text-light">
+            Applied to restaurants without their own delivery riders.
+          </p>
+          <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
+        </Field>
+      );
+    }
+
+    if (setting.key === "platform_free_mode_days") {
+      // The countdown ends updated_at + days (migration 0031). The
+      // date is computed here so the admin sees the consequence of
+      // the number they are about to save, not a promise of one.
+      const days = Math.max(0, Number(value) || 0);
+      const endsAt = setting.updatedAt
+        ? new Date(new Date(setting.updatedAt).getTime() + days * 86_400_000)
+        : null;
+      const endLabel = endsAt
+        ? endsAt.toLocaleDateString("en-CM", {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          })
+        : null;
+
+      return (
+        <Field
+          key={setting.key}
+          label={setting.label ?? setting.key}
+          htmlFor={`set-${setting.key}`}
+          hint={
+            days > 0 && endLabel
+              ? `Free mode ends on ${endLabel} (the last save plus ${days} day(s)).`
+              : setting.description ?? undefined
+          }
+        >
+          <Input
+            id={`set-${setting.key}`}
+            value={value}
+            inputMode="numeric"
+            onChange={(e) =>
+              setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
+            }
+          />
+          <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
+        </Field>
+      );
+    }
+
+    if (setting.valueType === "boolean") {
+      return (
+        <Switch
+          key={setting.key}
+          label={setting.label ?? setting.key}
+          description={setting.description ?? undefined}
+          checked={value === "true"}
+          onChange={(e) =>
+            setDraft((prev) => ({
+              ...prev,
+              [setting.key]: e.target.checked ? "true" : "false",
+            }))
+          }
+        />
+      );
+    }
+
+    return (
+      <Field
+        key={setting.key}
+        label={setting.label ?? setting.key}
+        htmlFor={`set-${setting.key}`}
+        hint={setting.description ?? undefined}
+      >
+        <Input
+          id={`set-${setting.key}`}
+          value={value}
+          inputMode={setting.valueType === "integer" ? "numeric" : undefined}
+          onChange={(e) =>
+            setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
+          }
+        />
+        <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
+      </Field>
+    );
+  }
   const activeTab = TABS.find((t) => t.id === active);
 
   return (
@@ -397,152 +561,15 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
         {rows.length > 0 && active !== "social" && (
           <Panel title={activeTab?.label ?? "Settings"}>
             <CardBody className="flex flex-col gap-5">
-              {rows.map((setting) => {
-                const value = draft[setting.key] ?? "";
-
-                if (setting.key === "notification_sound") {
-                  return (
-                    <Field
-                      key={setting.key}
-                      label={setting.label ?? setting.key}
-                      htmlFor={`set-${setting.key}`}
-                      hint={setting.description ?? undefined}
-                    >
-                      <SoundPicker
-                        value={value}
-                        onChange={(next) =>
-                          setDraft((prev) => ({ ...prev, [setting.key]: next }))
-                        }
-                      />
-                      <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
-                    </Field>
-                  );
-                }
-
-                if (setting.key === "payment_mode") {
-                  return (
-                    <Field
-                      key={setting.key}
-                      label={setting.label ?? setting.key}
-                      htmlFor={`set-${setting.key}`}
-                      hint={setting.description ?? undefined}
-                    >
-                      <Select
-                        id={`set-${setting.key}`}
-                        value={value}
-                        onChange={(e) =>
-                          setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
-                        }
-                      >
-                        <option value="sandbox">sandbox — simulated, no money moves</option>
-                        <option value="live">live — real charges through CamerPay</option>
-                      </Select>
-                      <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
-                    </Field>
-                  );
-                }
-
-                if (setting.key === "platform_delivery_fee") {
-                  return (
-                    <Field
-                      key={setting.key}
-                      label={setting.label ?? setting.key}
-                      htmlFor={`set-${setting.key}`}
-                      hint={setting.description ?? undefined}
-                    >
-                      <Input
-                        id={`set-${setting.key}`}
-                        value={value}
-                        inputMode="numeric"
-                        suffix="XAF"
-                        onChange={(e) =>
-                          setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
-                        }
-                      />
-                      <p className="mt-1 text-xs text-text-light">
-                        Applied to restaurants without their own delivery riders.
-                      </p>
-                      <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
-                    </Field>
-                  );
-                }
-
-                if (setting.key === "platform_free_mode_days") {
-                  // The countdown ends updated_at + days (migration 0031). The
-                  // date is computed here so the admin sees the consequence of
-                  // the number they are about to save, not a promise of one.
-                  const days = Math.max(0, Number(value) || 0);
-                  const endsAt = setting.updatedAt
-                    ? new Date(new Date(setting.updatedAt).getTime() + days * 86_400_000)
-                    : null;
-                  const endLabel = endsAt
-                    ? endsAt.toLocaleDateString("en-CM", {
-                        day: "numeric",
-                        month: "long",
-                        year: "numeric",
-                      })
-                    : null;
-
-                  return (
-                    <Field
-                      key={setting.key}
-                      label={setting.label ?? setting.key}
-                      htmlFor={`set-${setting.key}`}
-                      hint={
-                        days > 0 && endLabel
-                          ? `Free mode ends on ${endLabel} (the last save plus ${days} day(s)).`
-                          : setting.description ?? undefined
-                      }
-                    >
-                      <Input
-                        id={`set-${setting.key}`}
-                        value={value}
-                        inputMode="numeric"
-                        onChange={(e) =>
-                          setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
-                        }
-                      />
-                      <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
-                    </Field>
-                  );
-                }
-
-                if (setting.valueType === "boolean") {
-                  return (
-                    <Switch
-                      key={setting.key}
-                      label={setting.label ?? setting.key}
-                      description={setting.description ?? undefined}
-                      checked={value === "true"}
-                      onChange={(e) =>
-                        setDraft((prev) => ({
-                          ...prev,
-                          [setting.key]: e.target.checked ? "true" : "false",
-                        }))
-                      }
-                    />
-                  );
-                }
-
-                return (
-                  <Field
-                    key={setting.key}
-                    label={setting.label ?? setting.key}
-                    htmlFor={`set-${setting.key}`}
-                    hint={setting.description ?? undefined}
-                  >
-                    <Input
-                      id={`set-${setting.key}`}
-                      value={value}
-                      inputMode={setting.valueType === "integer" ? "numeric" : undefined}
-                      onChange={(e) =>
-                        setDraft((prev) => ({ ...prev, [setting.key]: e.target.value }))
-                      }
-                    />
-                    <p className="mt-1 font-mono text-[10px] text-text-light">{setting.key}</p>
-                  </Field>
-                );
-              })}
+              {rows.map((setting) =>
+                !isSuper && isCriticalSettingKey(setting.key) ? (
+                  <LockedSetting key={setting.key}>{renderSetting(setting)}</LockedSetting>
+                ) : (
+                  <div key={setting.key} className="contents">
+                    {renderSetting(setting)}
+                  </div>
+                ),
+              )}
             </CardBody>
           </Panel>
         )}
@@ -578,5 +605,22 @@ export function SettingsForm({ settings }: { settings: SettingRow[] }) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A setting only a super admin may change, shown read-only to everyone else.
+ *
+ * A disabled <fieldset> disables every control inside it — inputs, selects,
+ * switches, the sound picker's buttons — without each branch of
+ * `renderSetting` having to know. The value stays visible: a simple admin
+ * should be able to SEE the service charge, just not move it.
+ */
+function LockedSetting({ children }: { children: React.ReactNode }) {
+  return (
+    <fieldset disabled className="flex min-w-0 flex-col gap-1 opacity-70">
+      {children}
+      <SuperAdminOnlyHint />
+    </fieldset>
   );
 }

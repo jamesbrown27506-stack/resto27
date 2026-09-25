@@ -33,8 +33,28 @@ import {
   type ProbeResult,
 } from "./actions";
 import { TransactionWatcher } from "./transaction-watcher";
+import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { cn } from "@/lib/utils";
 import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
+
+/**
+ * The panels that charge, pay out, register the account, repoint the callback,
+ * reveal the token or send raw calls — super admins only (the actions refuse
+ * a simple admin on the server). Shown disabled rather than hidden, so a
+ * simple admin can see what exists and who to ask.
+ */
+function SuperAdminGate({ children }: { children: React.ReactNode }) {
+  const isSuper = useIsSuperAdmin();
+  if (isSuper) return <>{children}</>;
+  return (
+    <fieldset disabled className="min-w-0 opacity-60">
+      <div className="mb-1 flex justify-end">
+        <SuperAdminOnlyHint />
+      </div>
+      {children}
+    </fieldset>
+  );
+}
 
 function ResultLine({ result }: { result: ProbeResult }) {
   return (
@@ -513,6 +533,7 @@ export function CamerPayConsole({
         </CardBody>
       </Panel>
 
+      <SuperAdminGate>
       <Panel
         title="Open a CamerPay account"
         description="inscription, then validation. The order is not optional."
@@ -684,7 +705,9 @@ export function CamerPayConsole({
           </p>
         </CardBody>
       </Panel>
+      </SuperAdminGate>
 
+      <SuperAdminGate>
       <Panel
         title="Get your token"
         description="Only needed if you want to set CAMERPAY_TOKEN. Login already works without it."
@@ -747,6 +770,7 @@ export function CamerPayConsole({
           )}
         </CardBody>
       </Panel>
+      </SuperAdminGate>
 
         </>
       )}
@@ -754,6 +778,7 @@ export function CamerPayConsole({
       {section === "setup" && (
         <>
 
+      <SuperAdminGate>
       <Panel
         title="Where CamerPay calls back"
         description="Where CamerPay posts transaction outcomes."
@@ -785,6 +810,7 @@ export function CamerPayConsole({
           {results.callback && <ResultLine result={results.callback} />}
         </CardBody>
       </Panel>
+      </SuperAdminGate>
 
         </>
       )}
@@ -822,6 +848,7 @@ export function CamerPayConsole({
         </CardBody>
       </Panel>
 
+      <SuperAdminGate>
       <Panel
         title="Charge a client"
         description="A real collection — `retrait`. Money leaves the wallet above and lands in your CamerPay balance."
@@ -906,6 +933,7 @@ export function CamerPayConsole({
           )}
         </CardBody>
       </Panel>
+      </SuperAdminGate>
 
       <Panel
         title="Check a transaction"
@@ -968,6 +996,7 @@ export function CamerPayConsole({
       {section === "withdraw" && (
         <>
 
+      <SuperAdminGate>
       <Panel
         title="Withdraw to a wallet"
         description="`depot` — the opposite direction. Money leaves YOUR balance."
@@ -1109,6 +1138,7 @@ export function CamerPayConsole({
           )}
         </CardBody>
       </Panel>
+      </SuperAdminGate>
 
         </>
       )}
@@ -1127,6 +1157,7 @@ export function CamerPayConsole({
         </CardBody>
       </Panel>
 
+      <SuperAdminGate>
       <Panel
         title="Send any call by hand"
         description="For actions whose payload CamerPay does not publish."
@@ -1253,6 +1284,7 @@ export function CamerPayConsole({
           {results.raw && <ResultLine result={results.raw} />}
         </CardBody>
       </Panel>
+      </SuperAdminGate>
 
         </>
       )}

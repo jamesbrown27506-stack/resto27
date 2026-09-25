@@ -1,6 +1,6 @@
 import "server-only";
 
-import { confirmTransaction } from "@/lib/payments/camerpay/client";
+import { confirmGatewayPayout } from "@/lib/payments/gateway";
 import { createAdminClient } from "@/lib/supabase/server";
 
 export type WithdrawalSettlementOutcome = {
@@ -43,8 +43,8 @@ export async function settleWithdrawalPayout(
     return { status: "succeeded", ...base };
   }
 
-  const outcome = await confirmTransaction(String(row.reply_to), {
-    direction: "payout",
+  // Back to whichever gateway sent it: "saspay:<id>" or a CamerPay replyTo.
+  const outcome = await confirmGatewayPayout(String(row.reply_to), {
     phone: base.phone,
     amount: base.net,
   });

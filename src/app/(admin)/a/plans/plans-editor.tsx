@@ -1,5 +1,6 @@
 "use client";
 
+import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { useState, useTransition } from "react";
 import { Info, Layers } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +25,7 @@ function toLimit(value: string): number | null {
 export function PlansEditor({ plans }: { plans: Plan[] }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
+  const isSuper = useIsSuperAdmin();
   const [draft, setDraft] = useState<Record<string, Plan>>(() =>
     Object.fromEntries(plans.map((p) => [p.id, p])),
   );
@@ -67,7 +69,9 @@ export function PlansEditor({ plans }: { plans: Plan[] }) {
   }
 
   return (
-    <>
+    // Prices and commission rates are what every tenant pays: super admins
+    // edit them (updatePlan refuses anyone else); everyone else reads them.
+    <fieldset disabled={!isSuper} className="min-w-0">
       {/*
         The reason this page exists at all. In the PHP build the limits were
         hardcoded in code while /pricing rendered its own copy from a template,
@@ -219,6 +223,7 @@ export function PlansEditor({ plans }: { plans: Plan[] }) {
                 >
                   {dirty ? "Save changes" : "No changes"}
                 </Button>
+                {!isSuper && <SuperAdminOnlyHint className="justify-center" />}
               </CardBody>
             </Card>
           );
@@ -228,6 +233,6 @@ export function PlansEditor({ plans }: { plans: Plan[] }) {
       <p className="mt-6 text-sm text-text-light">
         Existing subscribers keep the price they signed up at until their next renewal.
       </p>
-    </>
+    </fieldset>
   );
 }

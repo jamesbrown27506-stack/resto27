@@ -99,11 +99,34 @@ export function PaymentPendingView({
             <ShieldCheck className="size-3.5" aria-hidden />
             {gatewayLabel}
           </dt>
-          <dd className="min-w-0 break-words text-right font-semibold">CamerPay</dd>
+          {/* The gateway (CamerPay or SasPay) is a platform setting; the
+              customer only needs to recognise their own operator. */}
+          <dd className="min-w-0 break-words text-right font-semibold">MTN MoMo · Orange Money</dd>
         </div>
       </dl>
 
-      {instruction && (
+      {/*
+        A HOSTED PAYMENT PAGE (SasPay, usually Orange Money): no prompt reaches
+        the phone, so nothing is charged until the customer opens this page.
+        A new tab, so this screen keeps checking and turns green by itself.
+      */}
+      {instruction?.url && (
+        <div className="mt-4 w-full min-w-0 rounded-lg border border-info/35 bg-info-light p-4 text-left">
+          <p className="font-semibold text-info">{t("sui.pay.pageTitle")}</p>
+          <p className="mt-1 text-sm leading-relaxed text-text-secondary">{instruction.message}</p>
+          <a
+            href={instruction.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-center text-sm font-semibold text-white"
+          >
+            {t("sui.pay.openPage")}
+          </a>
+          <p className="mt-2 text-xs leading-relaxed text-text-secondary">{t("sui.pay.pageHint")}</p>
+        </div>
+      )}
+
+      {instruction && !instruction.url && (
         <div className="mt-4 w-full min-w-0 rounded-lg border border-warning/35 bg-warning-light p-4 text-left">
           <p className="font-semibold text-warning">{t("sui.pay.orangeTitle")}</p>
           <p className="mt-1 text-sm leading-relaxed text-text-secondary">{instruction.message}</p>

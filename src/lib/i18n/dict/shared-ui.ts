@@ -20,6 +20,9 @@ export const sharedUiDict = defineDict({
 
     /* ── Payment pending (Orange USSD step) ───────────────────────── */
     "sui.pay.orangeTitle": "Action Orange requise",
+    "sui.pay.pageTitle": "Paiement à finaliser",
+    "sui.pay.openPage": "Ouvrir la page de paiement",
+    "sui.pay.pageHint": "Payez sur la page qui s'ouvre, puis revenez ici : cet écran se met à jour tout seul.",
     "sui.pay.copy": "Copier le code",
     "sui.pay.copied": "Code copié",
     "sui.pay.openPhone": "Ouvrir le téléphone",
@@ -61,6 +64,9 @@ export const sharedUiDict = defineDict({
     "sui.error.home": "Back to home",
 
     "sui.pay.orangeTitle": "Orange action required",
+    "sui.pay.pageTitle": "Finish your payment",
+    "sui.pay.openPage": "Open the payment page",
+    "sui.pay.pageHint": "Pay on the page that opens, then come back: this screen updates by itself.",
     "sui.pay.copy": "Copy code",
     "sui.pay.copied": "Code copied",
     "sui.pay.openPhone": "Open Phone",

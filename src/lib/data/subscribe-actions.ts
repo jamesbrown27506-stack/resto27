@@ -384,6 +384,7 @@ export async function payInvoice(input: {
     reference: invoice.number,
     phone: input.phone,
     amount: invoice.amount,
+    returnPath: "/m/billing",
   });
 
   if (!initiated.ok || !initiated.attemptId) {

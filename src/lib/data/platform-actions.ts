@@ -3,7 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/server";
-import { requireRole } from "@/lib/auth/session";
+import { requireRole, superAdminOrError } from "@/lib/auth/session";
+import {
+  criticalKeysIn,
+  GATEWAY_SETTING_ERROR,
+  isGatewaySettingKey,
+  SUPER_ADMIN_ONLY_ERROR,
+} from "@/lib/auth/super-admin-rules";
 import {
   clearImpersonationCookie,
   getImpersonation,
@@ -422,7 +428,11 @@ export async function savePlatformCoupon(input: {
   usageLimit?: number | null;
   isActive: boolean;
 }): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // A coupon is a discount on real orders — a 100 % code is free food. Super
+  // admins write them; any admin may still switch one OFF (below).
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
 
   const code = input.code.trim().toUpperCase();
   if (!/^[A-Z0-9_]{3,30}$/.test(code)) {
@@ -474,6 +484,10 @@ export async function savePlatformCoupon(input: {
 /** Flip one coupon's active flag. */
 export async function togglePlatformCoupon(id: string, active: boolean): Promise<ActionResult> {
   const admin = await requireRole("admin");
+  // Switching a code OFF is damage control and stays open to every admin —
+  // a leaked code should not wait for a super admin to wake up. Switching
+  // one ON hands out money again, so that takes a super admin.
+  if (active && !admin.isSuperAdmin) return { ok: false, error: SUPER_ADMIN_ONLY_ERROR };
   const supabase = createAdminClient();
 
   const { error } = await supabase
@@ -500,7 +514,30 @@ export async function updateSettings(changes: Record<string, string>): Promise<A
   const supabase = createAdminClient();
 
   if ("push_provider" in changes) return { ok: false, error: "Use the Notification delivery panel to change providers." };
+  if (Object.keys(changes).some(isGatewaySettingKey)) return { ok: false, error: GATEWAY_SETTING_ERROR };
   if (Object.keys(changes).length === 0) return { ok: true };
+
+  /**
+   * ─────────────────────────────────────────────────────────────────────
+   *  MONEY AND SECURITY KEYS ARE SUPER-ADMIN ONLY — CHECKED HERE, NOT IN
+   *  THE FORM.
+   *
+   *  The settings form greys these out for a simple admin, but this action
+   *  is a POST endpoint anyone with an admin session can call with any
+   *  payload. The list (payment mode, fees, free mode, refund destination,
+   *  cron secret, response timers…) lives in lib/auth/super-admin-rules.ts
+   *  with its reasoning and its tests. The whole save is refused, not the
+   *  critical keys silently dropped: a half-applied save would report
+   *  success for changes that never happened.
+   * ─────────────────────────────────────────────────────────────────────
+   */
+  const critical = criticalKeysIn(changes);
+  if (critical.length > 0 && !admin.isSuperAdmin) {
+    return {
+      ok: false,
+      error: `Only a super administrator can change: ${critical.join(", ")}.`,
+    };
+  }
 
   for (const platform of SOCIAL_PLATFORMS) {
     const key = socialUrlKey(platform.id);
@@ -547,7 +584,11 @@ export async function updateSettings(changes: Record<string, string>): Promise<A
  * things they never did.
  */
 export async function beginImpersonation(restaurantId: string): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // Super admins only — getImpersonation() enforces the same on every
+  // request, so a cookie set any other way is ignored anyway.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
   const supabase = createAdminClient();
 
   const { data: restaurant } = await supabase

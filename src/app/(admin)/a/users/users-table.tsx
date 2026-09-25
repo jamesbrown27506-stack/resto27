@@ -1,5 +1,6 @@
 "use client";
 
+import { useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { useMemo, useState, useTransition } from "react";
 import { Users } from "lucide-react";
 import { FilterBar } from "@/components/data/filter-bar";
@@ -36,6 +37,7 @@ const STATUS_TONE: Record<UserStatus, BadgeTone> = {
 export function UsersTable({ users, currentUserId }: { users: AdminUser[]; currentUserId: string }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
+  const isSuper = useIsSuperAdmin();
 
   const [query, setQuery] = useState("");
   const [role, setRole] = useState("all");
@@ -140,6 +142,14 @@ export function UsersTable({ users, currentUserId }: { users: AdminUser[]; curre
         // without database access, so the controls simply are not offered.
         if (u.id === currentUserId) return <span className="text-xs text-text-light">—</span>;
 
+        // An administrator's account, and deleting any account, are
+        // super-admin decisions (admin-actions re-checks both). Admin rights
+        // themselves are managed on /a/admins.
+        const lockedAdmin = u.role === "admin" && !isSuper;
+        if (lockedAdmin) {
+          return <span className="text-xs text-text-light" title="Ask a super administrator.">Super admin only</span>;
+        }
+
         return (
           <div className="flex justify-end gap-1.5">
             {u.status === "active" && !u.deletedAt && (
@@ -163,7 +173,7 @@ export function UsersTable({ users, currentUserId }: { users: AdminUser[]; curre
                 Reinstate
               </Button>
             )}
-            {!u.deletedAt && (
+            {!u.deletedAt && isSuper && (
               <Button
                 variant="ghost"
                 size="sm"

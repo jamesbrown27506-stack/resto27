@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
-import { requireRole } from "@/lib/auth/session";
+import { requireRole, superAdminOrError, type AuthProfile } from "@/lib/auth/session";
+import { canModerateAccount } from "@/lib/auth/super-admin-rules";
+import { loadAdminSubjects, loadSubject } from "./admins";
 import { writeAudit } from "./platform-actions";
 import { trySendMail } from "@/lib/mail";
 import { notify } from "@/lib/notify";
@@ -274,6 +276,44 @@ export async function setRestaurantStatus(
 
 /* ── Users ─────────────────────────────────────────────────────────────── */
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ *  AN ADMINISTRATOR'S ACCOUNT IS A SUPER-ADMIN MATTER.
+ *
+ *  Suspending customers and restaurant staff is ordinary moderation. But
+ *  these actions never asked WHOSE account it was — so a simple admin could
+ *  suspend every super admin and be left alone with the platform. When the
+ *  target is an admin, the super-admin rule decides (and it never takes out
+ *  the last active super admin). Fails closed if the admin list cannot be
+ *  read: the one fact this protects is not one to guess.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+async function adminTargetGuard(
+  actor: AuthProfile,
+  profileId: string,
+  action: "suspend" | "reinstate" | "anonymise",
+): Promise<ActionResult> {
+  const target = await loadSubject(profileId);
+  if (!target) return { ok: false, error: "User not found." };
+  if (target.role !== "admin") return { ok: true };
+
+  const admins = await loadAdminSubjects();
+  if (!admins) return { ok: false, error: "Could not verify the administrators. Nothing was changed." };
+
+  return canModerateAccount({
+    actor: {
+      id: actor.id,
+      role: actor.role,
+      isSuperAdmin: actor.isSuperAdmin,
+      status: actor.status,
+      deletedAt: actor.deletedAt,
+    },
+    target,
+    action,
+    admins,
+  });
+}
+
 export async function suspendUser(profileId: string): Promise<ActionResult> {
   const admin = await requireRole("admin");
 
@@ -281,6 +321,9 @@ export async function suspendUser(profileId: string): Promise<ActionResult> {
     // Cheap guard against the most annoying possible mistake.
     return { ok: false, error: "Vous ne pouvez pas suspendre votre propre compte." };
   }
+
+  const guard = await adminTargetGuard(admin, profileId, "suspend");
+  if (!guard.ok) return guard;
 
   const supabase = createAdminClient();
 
@@ -339,6 +382,9 @@ export async function suspendUser(profileId: string): Promise<ActionResult> {
 export async function reinstateUser(profileId: string): Promise<ActionResult> {
   const admin = await requireRole("admin");
 
+  const guard = await adminTargetGuard(admin, profileId, "reinstate");
+  if (!guard.ok) return guard;
+
   const supabase = createAdminClient();
   const { error } = await supabase
     .from("profiles")
@@ -371,11 +417,19 @@ export async function reinstateUser(profileId: string): Promise<ActionResult> {
 }
 
 export async function anonymiseUser(profileId: string): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // Deleting an account is irreversible (the auth user is destroyed), so it
+  // is a super-admin action whoever the target is. Suspension is the
+  // reversible tool every admin keeps.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
 
   if (profileId === admin.id) {
     return { ok: false, error: "Vous ne pouvez pas anonymiser votre propre compte." };
   }
+
+  const guard = await adminTargetGuard(admin, profileId, "anonymise");
+  if (!guard.ok) return guard;
 
   const supabase = createAdminClient();
 

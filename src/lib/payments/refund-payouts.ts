@@ -5,15 +5,8 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { paymentMode } from "@/lib/data/billing";
 import { notify } from "@/lib/notify";
 import { refundsGoToWallet } from "@/lib/payments/refund-settings";
-import {
-  acceptedTransactionId,
-  confirmTransaction,
-  isPayableAmount,
-  latestTransactionId,
-  normalisePhone,
-  recordAcceptedRequest,
-  sendPayout,
-} from "@/lib/payments/camerpay/client";
+import { normalisePhone } from "@/lib/payments/camerpay/client";
+import { confirmGatewayPayout, payableOn, payoutGateway, sendGatewayPayout } from "@/lib/payments/gateway";
 
 /**
  * Sending a refund back to the customer's Mobile Money — the saga half of
@@ -29,11 +22,12 @@ import {
  *  cannot join that transaction, so it runs here as three idempotent steps:
  *
  *    1. CLAIM   — a conditional update stamps `raw_response.payoutClaim`.
- *                 Only the caller that wins it may call sendPayout, so the
+ *                 Only the caller that wins it may send the payout, so the
  *                 action, the reconciler and a double-tap can never send the
  *                 same refund twice.
- *    2. SEND    — sendPayout(); the tracking id goes into `reply_to`.
- *    3. CONFIRM — confirmTransaction() (the only trust anchor, as for
+ *    2. SEND    — sendGatewayPayout() (CamerPay or SasPay, per the admin's
+ *                 payout switch); the tracking id goes into `reply_to`.
+ *    3. CONFIRM — confirmGatewayPayout() (the only trust anchor, as for
  *                 collections). Success completes the row; a conclusive
  *                 failure releases the claim so the reconciler retries, up to
  *                 MAX_TRIES, then hands it to the admins.
@@ -215,7 +209,8 @@ export async function startRefundPayout(refundId: string): Promise<RefundPayoutO
 
   const phone = normalisePhone(row.phone ?? "");
   if (!phone) return creditWalletInstead(row, "no valid Mobile Money number");
-  if (!isPayableAmount(row.amount)) return creditWalletInstead(row, "below the Mobile Money minimum");
+  const gateway = await payoutGateway();
+  if (!payableOn(gateway, row.amount)) return creditWalletInstead(row, "outside the Mobile Money payout range");
 
   const supabase = createAdminClient();
   const claim = new Date().toISOString();
@@ -239,51 +234,49 @@ export async function startRefundPayout(refundId: string): Promise<RefundPayoutO
     return (await completeRefund(row, null)) ? "refunded" : "pending";
   }
 
-  const afterId = await latestTransactionId();
-  let response;
-  try {
-    response = await sendPayout(phone, row.amount);
-  } catch (error) {
-    // Transport failure: CamerPay may or may not have accepted. Keep the
-    // claim — CLAIM_STUCK_MS turns it into an admin alert, never a resend.
-    console.error("[refund:payout] transport", row.id, error);
+  // One idempotency key per TRY: a retry after a conclusive failure is a new
+  // intent (SasPay would replay the failed answer for a reused key), while a
+  // network retry of the same try can never pay twice.
+  const sent = await sendGatewayPayout({
+    phone,
+    amount: row.amount,
+    idempotencyKey: `refund-${row.id}-${tries}`,
+    description: `Remboursement ${row.reference}`,
+  });
+
+  if (sent.kind === "unknown") {
+    // May or may not have been sent. Keep the claim — CLAIM_STUCK_MS turns
+    // it into an admin alert, never an automatic resend.
+    console.error("[refund:payout] outcome unknown", row.id, sent.gateway, sent.message);
     await supabase
       .from("refunds")
       .update({
-        raw_response: {
-          ...raw(row), payoutClaim: claim, payoutTries: tries,
-          transportError: error instanceof Error ? error.message : String(error),
-        },
+        raw_response: { ...raw(row), payoutClaim: claim, payoutTries: tries, payoutGateway: sent.gateway, transportError: sent.message },
       })
       .eq("id", row.id);
     return "pending";
   }
 
-  const replyTo = acceptedTransactionId(response);
-  if (!(response.httpStatus === 202 || response.etat) || !replyTo) {
+  if (sent.kind === "refused") {
     // Conclusive refusal: nothing was sent. Release the claim for a retry.
     await supabase
       .from("refunds")
       .update({
-        raw_response: { ...raw(row), payoutTries: tries, lastRefusal: response.message ?? response.httpStatus ?? "refused" },
+        raw_response: { ...raw(row), payoutTries: tries, payoutGateway: sent.gateway, lastRefusal: sent.message },
       })
       .eq("id", row.id)
       .eq("status", "pending");
-    if (tries >= MAX_TRIES) await giveUp(row, "CamerPay refused the payout");
+    if (tries >= MAX_TRIES) await giveUp(row, `${sent.gateway} refused the payout: ${sent.message}`);
     return "pending";
   }
 
-  await recordAcceptedRequest({
-    replyTo,
-    direction: "payout",
-    phone,
-    amount: row.amount,
-    afterId: afterId ?? null,
-    startedAt: claim,
-  });
   await supabase
     .from("refunds")
-    .update({ reply_to: replyTo, phone, raw_response: { ...raw(row), payoutClaim: claim, payoutTries: tries, afterId } })
+    .update({
+      reply_to: sent.replyTo,
+      phone,
+      raw_response: { ...raw(row), payoutClaim: claim, payoutTries: tries, payoutGateway: sent.gateway },
+    })
     .eq("id", row.id)
     .eq("status", "pending");
 
@@ -299,7 +292,7 @@ async function giveUp(row: RefundRow, why: string): Promise<void> {
   await alertAdmins(row, why);
 }
 
-/** Ask CamerPay whether a sent refund landed. */
+/** Ask the gateway that sent it whether a refund landed. */
 export async function settleRefundPayout(refundId: string): Promise<RefundPayoutOutcome> {
   const row = await loadRefund(refundId);
   if (!row) return "not_found";
@@ -308,8 +301,8 @@ export async function settleRefundPayout(refundId: string): Promise<RefundPayout
   if (!row.reply_to) return "pending";
   if (row.reply_to.startsWith("SANDBOX-")) return (await completeRefund(row, null)) ? "refunded" : "pending";
 
-  const outcome = await confirmTransaction(row.reply_to, {
-    direction: "payout",
+  // Back to whichever gateway sent it (the reply_to says which).
+  const outcome = await confirmGatewayPayout(row.reply_to, {
     phone: row.phone ?? undefined,
     amount: Number(row.amount),
   });
@@ -319,7 +312,7 @@ export async function settleRefundPayout(refundId: string): Promise<RefundPayout
     const tries = Number(raw(row).payoutTries ?? 1);
     const supabase = createAdminClient();
     if (tries >= MAX_TRIES) {
-      await giveUp(row, "CamerPay reported the payout failed " + tries + " times");
+      await giveUp(row, "the payout gateway reported the payout failed " + tries + " times");
       return "failed";
     }
     // Release for another try: clear the tracking id and the claim.

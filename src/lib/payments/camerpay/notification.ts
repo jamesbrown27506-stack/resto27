@@ -11,6 +11,11 @@ export interface PaymentNotification {
   date?: string;
   message: string;
   code?: string;
+  /**
+   * A hosted payment page the customer must open (SasPay: Orange Money and
+   * other operators that settle off-phone). Nothing is charged until they do.
+   */
+  url?: string;
   status: "instruction" | "success" | "failed";
 }
 

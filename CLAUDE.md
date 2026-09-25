@@ -36,7 +36,7 @@ Tests are pure unit tests of `src/lib` modules — there is no DB/integration ha
 
 ### Auth is layered — the proxy is not authorization
 - `src/proxy.ts` (Next 16's renamed middleware) only refreshes the Supabase session and bounces anonymous users off protected prefixes. It cannot see profile status, role or capabilities.
-- `lib/auth/session.ts` — `getCurrentProfile` / `requireRole`. Always `supabase.auth.getUser()`, never `getSession()`. Profile `status` (and, for managers, the restaurant's status) is re-checked on every request so suspension takes effect immediately.
+- `lib/auth/session.ts` — `getCurrentProfile` / `requireRole` / `requireSuperAdmin` / `superAdminOrError`. Admins are simple or super (`profiles.is_super_admin`, 0063); critical switches (money, gateways, fees, admins, impersonation) are super-only, enforced in the actions. Always `supabase.auth.getUser()`, never `getSession()`. Profile `status` (and, for managers, the restaurant's status) is re-checked on every request so suspension takes effect immediately.
 - **Two-level permissions:** `profiles.role = 'manager'` only means "works at a restaurant". Real permission is `restaurant_staff.role` (owner/manager/kitchen/cashier/waiter) **per branch**, resolved by `lib/auth/branch.ts` (`requireCapability`). The active branch comes from a cookie/session, never from an action argument. Pages and UI check **capabilities** (`lib/capabilities.ts`), never roles.
 - **Every Server Action re-checks auth itself** — an action is a POST endpoint that never passes through the layout guarding its page.
 - Admin impersonation of a tenant lives in `lib/auth/impersonation.ts`; the audit log records both actor and impersonator.
@@ -55,8 +55,9 @@ Tests are pure unit tests of `src/lib` modules — there is no DB/integration ha
 - Paid orders can be cancelled by the restaurant or admin: `cancel_paid_order` (0059) debits the restaurant and writes a pending `refunds` row; `lib/payments/refund-payouts.ts` sends it to Mobile Money (claim → send → confirm, retried by the reconciler). The restaurant's share of undelivered paid orders and online deposits of upcoming bookings is held back from withdrawals (`ordersInProgressHold`).
 - Order/reservation/snapshot columns (prices, commission rates, actor email/role) are deliberate snapshots — don't "normalise" them away. Loyalty is an append-only ledger (balance = SUM), not a counter.
 
-### Payments (CamerPay)
-- `lib/payments/camerpay/client.ts` talks to the gateway; `lib/payments/collect.ts` initiates and settles attempts for subscription / reservation / order / wallet kinds.
+### Payments (CamerPay or SasPay — Cameroon only)
+- Two gateways: `lib/payments/camerpay/client.ts` and `lib/payments/saspay/client.ts` (docs in `docs/SASPAY.md`). A super admin picks the collection and payout gateway separately (settings `payment_provider_collect` / `payment_provider_payout`, Payments → Gateways, `lib/payments/gateway.ts`). Each attempt stores its `provider` and SasPay payouts store `reply_to = "saspay:<id>"`, so confirmation always returns to the gateway that took the money. Everything is pinned to CM / XAF / MTN+Orange numbers.
+- `lib/payments/collect.ts` initiates and settles attempts for subscription / reservation / order / wallet kinds.
 - `payment_mode` setting: `sandbox` (attempts succeed instantly, no money moves) vs `live`.
 - Three paths reach a pending attempt — browser poll, webhook, reconciler cron — and all funnel into the same resolver using conditional (compare-and-swap) updates so racing paths credit exactly once. The verdict comes only from `confirmTransaction()`; the webhook body is treated as a hint (CamerPay callbacks are unsigned).
 - `settled_at` means "finished, nothing owed" — a success is stamped only after the subscription is extended / wallet credited, so "succeeded and unsettled" is the reconciler's work queue.

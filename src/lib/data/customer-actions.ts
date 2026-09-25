@@ -280,6 +280,9 @@ export async function payOwnOrder(
     reference: data.reference,
     phone: requestedPhone,
     amount: Number(data.total),
+    // A hosted payment page (SasPay) brings the customer back to this order.
+    returnPath: `/orders/${data.id}`,
+    customer: { name: user.name, email: user.email },
   });
 
   if (!initiated.ok || !initiated.attemptId) {
@@ -1351,6 +1354,8 @@ export async function payReservationDeposit(
     reference: booking.reference,
     phone: requestedPhone,
     amount,
+    returnPath: "/reservations",
+    customer: { name: user.name, email: user.email },
   });
 
   if (!initiated.ok || !initiated.attemptId) {

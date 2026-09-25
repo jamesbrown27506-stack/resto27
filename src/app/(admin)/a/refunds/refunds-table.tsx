@@ -1,5 +1,6 @@
 "use client";
 
+import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { useState, useTransition } from "react";
 import { Ban, Info, Plus, RotateCcw, Undo2 } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
@@ -30,6 +31,7 @@ export function RefundsTable({
 }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
+  const isSuper = useIsSuperAdmin();
 
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<"refund" | "chargeback">("refund");
@@ -91,7 +93,8 @@ export function RefundsTable({
           <span className="inline-flex items-center gap-2">
             <Badge tone={meta.tone}>{meta.label}</Badge>
             {/* A customer payout the saga gave up on: check CamerPay, then requeue. */}
-            {r.customerRefund && r.status === "rejected" && (
+            {r.customerRefund && r.status === "rejected" && !isSuper && <SuperAdminOnlyHint />}
+            {r.customerRefund && r.status === "rejected" && isSuper && (
               <Button
                 size="sm"
                 variant="outline"
@@ -129,10 +132,14 @@ export function RefundsTable({
           <Ban className="size-4" aria-hidden />
           <span>Cancel &amp; refund an order</span>
         </Button>
-        <Button onClick={() => setOpen(true)} disabled={pending || restaurants.length === 0}>
+        {/* Cancel & refund stays open to every admin (support work, the
+            refund amount is the order's own); a free-form refund entry is
+            money out by hand, so that button is super-admin only. */}
+        <Button onClick={() => setOpen(true)} disabled={pending || restaurants.length === 0 || !isSuper}>
           <Plus className="size-4" aria-hidden />
           <span>New refund</span>
         </Button>
+        {!isSuper && <SuperAdminOnlyHint />}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">

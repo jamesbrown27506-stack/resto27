@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
-import { requireRole } from "@/lib/auth/session";
+import { requireRole, superAdminOrError } from "@/lib/auth/session";
+import { SUPER_ADMIN_ONLY_ERROR } from "@/lib/auth/super-admin-rules";
 import { writeAudit } from "./platform-actions";
 import { notify } from "@/lib/notify";
 import { activateFromInvoice } from "./invoice-activation";
@@ -43,7 +44,10 @@ export interface PlanInput {
 }
 
 export async function updatePlan(planId: string, input: PlanInput): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // Prices and commission rates are what every tenant pays — super admins only.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
 
   if (input.monthlyPrice < 0) return { ok: false, error: "Price cannot be negative." };
   if (!Number.isInteger(input.includedBranches) || input.includedBranches < 1) {
@@ -160,7 +164,10 @@ export async function extendSubscription(
   restaurantId: string,
   days: number,
 ): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // Extending is paid service handed out for free — super admins only.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
 
   if (!Number.isInteger(days) || days < 1 || days > 365) {
     return { ok: false, error: "Choose between 1 and 365 days." };
@@ -228,7 +235,11 @@ export async function changeSubscriptionPlan(
   restaurantId: string,
   planId: string,
 ): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // Moving a tenant onto a paid tier without an invoice is free service —
+  // super admins only.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
 
   const supabase = createAdminClient();
 
@@ -321,7 +332,10 @@ export async function changeSubscriptionPlan(
  * invoice you think it does).
  */
 export async function confirmPaymentAttempt(attemptId: string): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // Declaring money received that no gateway confirmed — super admins only.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
   const supabase = createAdminClient();
 
   const { data: attempt, error: readError } = await supabase
@@ -416,6 +430,11 @@ export async function setCommissionStatus(
   status: "issued" | "settled" | "written_off",
 ): Promise<ActionResult> {
   const admin = await requireRole("admin");
+
+  // Issuing a statement only tells the tenant what they owe — any admin.
+  // Marking it SETTLED (money received) or WRITTEN OFF (money forgiven)
+  // changes what the platform is owed, so that takes a super admin.
+  if (status !== "issued" && !admin.isSuperAdmin) return { ok: false, error: SUPER_ADMIN_ONLY_ERROR };
   const supabase = createAdminClient();
 
   const { data: statement } = await supabase
@@ -589,7 +608,10 @@ export async function createRefund(input: {
   reason: string;
   type: "refund" | "chargeback";
 }): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // A manual refund ledger entry is money out — super admins only.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
 
   if (!Number.isInteger(input.amount) || input.amount <= 0) {
     return { ok: false, error: "Enter a whole amount in francs." };
@@ -729,7 +751,10 @@ export async function adminCancelOrder(input: { reference: string; reason: strin
  * checked CamerPay and fixed the cause, e.g. topped up the payout balance).
  */
 export async function adminRetryRefund(refundId: string): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // Re-sends a Mobile Money payout — super admins only.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
   const supabase = createAdminClient();
   const { data: refund } = await supabase
     .from("refunds")

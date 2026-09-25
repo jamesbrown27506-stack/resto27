@@ -7,6 +7,11 @@ import {
   managerRestaurantRejection,
   type RestaurantAccessStatus,
 } from "./restaurant-access";
+import {
+  effectiveSuperAdmin,
+  superAdminColumnMissing,
+  SUPER_ADMIN_ONLY_ERROR,
+} from "./super-admin-rules";
 
 /**
  * The session layer.
@@ -38,6 +43,12 @@ export interface AuthProfile {
   role: UserRole;
   status: UserStatus;
   deletedAt: string | null;
+  /**
+   * A super administrator (migration 0063): holds the switches that move
+   * money or change how the platform works. Always false unless role is
+   * "admin". See lib/auth/super-admin-rules.ts for what it unlocks.
+   */
+  isSuperAdmin: boolean;
 }
 
 /** Why a session was rejected — drives the reason shown on /login (§14.2). */
@@ -130,11 +141,30 @@ export const getCurrentProfile = cache(async (): Promise<AuthProfile | null> => 
 
   const supabase = await createClient();
 
-  const { data, error } = await supabase
+  const BASE_COLUMNS = "id, auth_user_id, name, email, phone, avatar_url, role, status, deleted_at";
+
+  /**
+   * `is_super_admin` arrives with migration 0063, which production may not
+   * have yet. Selecting a missing column fails the WHOLE read — and a failed
+   * read here is "no profile", i.e. everybody signed out. So a missing column
+   * retries without it, and `effectiveSuperAdmin` treats every admin as super
+   * until the SQL runs (which is exactly what the migration then sets).
+   */
+  let result = await supabase
     .from("profiles")
-    .select("id, auth_user_id, name, email, phone, avatar_url, role, status, deleted_at")
+    .select(`${BASE_COLUMNS}, is_super_admin`)
     .eq("auth_user_id", user.id)
     .maybeSingle();
+
+  if (superAdminColumnMissing(result.error)) {
+    result = (await supabase
+      .from("profiles")
+      .select(BASE_COLUMNS)
+      .eq("auth_user_id", user.id)
+      .maybeSingle()) as typeof result;
+  }
+
+  const { data, error } = result;
 
   if (error || !data) {
     /**
@@ -155,6 +185,8 @@ export const getCurrentProfile = cache(async (): Promise<AuthProfile | null> => 
     return null;
   }
 
+  const role = (await syncStaffRole(data)) as UserRole;
+
   return {
     id: data.id,
     authUserId: data.auth_user_id,
@@ -162,9 +194,13 @@ export const getCurrentProfile = cache(async (): Promise<AuthProfile | null> => 
     email: data.email,
     phone: data.phone,
     avatarUrl: data.avatar_url,
-    role: await syncStaffRole(data) as UserRole,
+    role,
     status: data.status as UserStatus,
     deletedAt: data.deleted_at,
+    isSuperAdmin: effectiveSuperAdmin(
+      role,
+      (data as { is_super_admin?: boolean | null }).is_super_admin,
+    ),
   };
 });
 
@@ -244,6 +280,40 @@ export async function requireRole(...roles: UserRole[]): Promise<AuthProfile> {
   }
 
   return profile;
+}
+
+/**
+ * Guard for a PAGE only a super administrator may use.
+ *
+ * Same 404 as `requireRole`: a simple admin who types the URL learns nothing
+ * about what is behind it. Server Actions should prefer `superAdminOrError`,
+ * which returns an ActionResult the form can show instead of navigating away
+ * mid-submit.
+ */
+export async function requireSuperAdmin(): Promise<AuthProfile> {
+  const profile = await requireRole("admin");
+  if (!profile.isSuperAdmin) redirect("/not-found");
+  return profile;
+}
+
+/**
+ * The Server Action form of `requireSuperAdmin`.
+ *
+ * Still redirects anyone who is not an active admin at all (that is
+ * `requireRole`, and a customer has no business getting a polite error), but
+ * a SIMPLE admin gets `{ ok: false, error }` — the ActionResult shape of
+ * lib/data/admin-actions.ts — so the button they pressed can say why.
+ *
+ *   const gate = await superAdminOrError();
+ *   if (!gate.ok) return gate;
+ *   const admin = gate.admin;
+ */
+export async function superAdminOrError(): Promise<
+  { ok: true; admin: AuthProfile } | { ok: false; error: string }
+> {
+  const admin = await requireRole("admin");
+  if (!admin.isSuperAdmin) return { ok: false, error: SUPER_ADMIN_ONLY_ERROR };
+  return { ok: true, admin };
 }
 
 /** True when nobody is signed in. Cheap enough for layout-level branching. */

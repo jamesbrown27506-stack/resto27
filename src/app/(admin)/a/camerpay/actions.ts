@@ -1,6 +1,7 @@
 "use server";
 
 import { requireRole } from "@/lib/auth/session";
+import { SUPER_ADMIN_ONLY_ERROR } from "@/lib/auth/super-admin-rules";
 import { MIN_AMOUNT_XAF } from "@/lib/payments/camerpay/client";
 import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 import { getWithdrawalFeeConfig } from "@/lib/data/settings";
@@ -70,6 +71,22 @@ export interface ProbeResult {
   fee?: { gross: number; fee: number; net: number };
 }
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE CONSOLE'S WRITE HALF IS SUPER-ADMIN ONLY.
+ *
+ *  Charging a number, paying one out, sending a raw API call, registering or
+ *  validating the gateway account, repointing the callback URL and revealing
+ *  the session token all move money or hand over a live credential. Those
+ *  refuse a simple admin here, on the server. The read-only probes (balance,
+ *  identify, confirm, reports, the transaction watcher) stay open: they are
+ *  how any admin answers "did this customer's payment go through?".
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+function refusedToSimpleAdmin(label: string): ProbeResult {
+  return { ok: false, label, detail: SUPER_ADMIN_ONLY_ERROR };
+}
+
 function fail(label: string, error: unknown): ProbeResult {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`[camerpay:${label}]`, message);
@@ -103,6 +120,7 @@ export async function probeRaw(input: {
   token?: string;
 }): Promise<ProbeResult> {
   const admin = await requireRole("admin");
+  if (!admin.isSuperAdmin) return refusedToSimpleAdmin("Raw call");
 
   const allowed: CamerPayService[] = ["authentification", "account", "transaction", "rapport"];
   if (!allowed.includes(input.service as CamerPayService)) {
@@ -261,6 +279,7 @@ export async function checkTransaction(
  */
 export async function probePayout(phone: string, amount: number): Promise<ProbeResult> {
   const admin = await requireRole("admin");
+  if (!admin.isSuperAdmin) return refusedToSimpleAdmin("Payout");
   try {
     // The fee is read on the server, at send time — never trusted from the
     // client. It may have been switched on or off since the page loaded.
@@ -384,6 +403,7 @@ export async function submitRegistration(input: {
   pass: string;
 }): Promise<RegistrationResult> {
   const admin = await requireRole("admin");
+  if (!admin.isSuperAdmin) return refusedToSimpleAdmin("Registration");
   try {
     const response = await registerAccount(input);
 
@@ -438,6 +458,7 @@ export async function submitValidation(input: {
   provisionalToken: string;
 }): Promise<RegistrationResult> {
   const admin = await requireRole("admin");
+  if (!admin.isSuperAdmin) return refusedToSimpleAdmin("Validation");
   try {
     const response = await validateAccount(input);
 
@@ -495,7 +516,10 @@ export async function submitValidation(input: {
  * environment.
  */
 export async function probeLogin(reveal = false): Promise<RegistrationResult> {
-  await requireRole("admin");
+  const admin = await requireRole("admin");
+  // Masked login is a harmless health check; the REVEALED token is a live
+  // credential for the platform's gateway account.
+  if (reveal && !admin.isSuperAdmin) return refusedToSimpleAdmin("Login");
   try {
     const token = await login();
     return {
@@ -581,7 +605,9 @@ export async function probeIdentify(phone: string): Promise<ProbeResult> {
 }
 
 export async function registerCallback(url: string): Promise<ProbeResult> {
-  await requireRole("admin");
+  const admin = await requireRole("admin");
+  // Repointing the callback redirects every payment notification.
+  if (!admin.isSuperAdmin) return refusedToSimpleAdmin("Callback URL");
   try {
     const response = await setCallbackUrl(url.trim());
     return {
@@ -620,6 +646,7 @@ async function latestNotificationId(): Promise<number | undefined> {
 
 export async function probeCollection(phone: string, amount: number): Promise<ProbeResult> {
   const admin = await requireRole("admin");
+  if (!admin.isSuperAdmin) return refusedToSimpleAdmin("Collection");
   try {
     // Read the counter BEFORE charging. The row this creates is the first one
     // above it, which identifies it without trusting a timezone-less date.

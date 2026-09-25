@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/server";
-import { MOBILE_MONEY_CONFIRMATION_WINDOW_MS, resolveAttemptOutcome, settlePayment } from "@/lib/payments/collect";
+import { confirmationWindowMs, MOBILE_MONEY_CONFIRMATION_WINDOW_MS, resolveAttemptOutcome, settlePayment } from "@/lib/payments/collect";
 import { sweepRefunds } from "@/lib/payments/refund-payouts";
 import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
 
@@ -79,7 +79,7 @@ export async function runReconciliation(): Promise<ReconciliationSummary> {
 
   const { data: pending, error: pendingError } = await supabase
     .from("payment_attempts")
-    .select("id, created_at, raw_response")
+    .select("id, created_at, raw_response, provider")
     .eq("status", "pending")
     .lt("created_at", new Date(now - STALE_AFTER_MS).toISOString())
     // Oldest first: the ones closest to abandonment are the ones a bounded run
@@ -114,7 +114,8 @@ export async function runReconciliation(): Promise<ReconciliationSummary> {
     }
 
     const startedAt = new Date(row.created_at as string).getTime();
-    if (now - startedAt > ABANDON_AFTER_MS) {
+    // Each gateway keeps its own window (SasPay's hosted pages take longer).
+    if (now - startedAt > Math.max(ABANDON_AFTER_MS, confirmationWindowMs(String(row.provider ?? "camerpay")))) {
       const abandoned = await abandon(attemptId, row.raw_response, outcome.error ?? "unresolved");
       if (abandoned) summary.failed += 1;
       else summary.stillPending += 1;

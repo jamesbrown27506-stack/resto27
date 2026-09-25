@@ -1,5 +1,6 @@
 "use client";
 
+import { useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { useMemo, useState, useTransition } from "react";
 import { CalendarClock, CalendarPlus } from "lucide-react";
 import { FilterBar } from "@/components/data/filter-bar";
@@ -40,6 +41,7 @@ export function SubscriptionsTable({
 }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
+  const isSuper = useIsSuperAdmin();
 
   const [query, setQuery] = useState("");
   const [state, setState] = useState("all");
@@ -90,7 +92,10 @@ export function SubscriptionsTable({
           <Select
             id={`plan-${s.restaurantId}`}
             value={plans.find((p) => p.name === s.planName)?.id ?? ""}
-            disabled={pending}
+            // Moving a tenant between plans (and extending, below) hands out
+            // paid service without an invoice — super admins only.
+            disabled={pending || !isSuper}
+            title={isSuper ? undefined : "Super admin only"}
             onChange={(e) =>
               act(
                 () => changeSubscriptionPlan(s.restaurantId, e.target.value),
@@ -165,8 +170,14 @@ export function SubscriptionsTable({
         <Button
           variant="outline"
           size="sm"
-          disabled={pending || s.endDate === null}
-          title={s.endDate === null ? "This subscription never expires" : undefined}
+          disabled={pending || s.endDate === null || !isSuper}
+          title={
+            !isSuper
+              ? "Super admin only"
+              : s.endDate === null
+                ? "This subscription never expires"
+                : undefined
+          }
           onClick={() => {
             setExtending(s);
             setDays("30");

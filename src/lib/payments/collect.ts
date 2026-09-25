@@ -7,12 +7,15 @@ import { paymentMode } from "@/lib/data/billing";
 import { notify } from "@/lib/notify";
 import { notifyDiningPaymentSettled } from "@/lib/dining/guest-alerts";
 import { refundUnpayableAttempt, startRefundPayout } from "@/lib/payments/refund-payouts";
+import { collectionGateway, gatewayRange, payableOn } from "@/lib/payments/gateway";
+import { cameroonNetwork } from "@/lib/payments/saspay/cameroon";
+import { startSaspayPayment, verifySaspayPayment } from "@/lib/payments/saspay/client";
+import { siteUrl } from "@/lib/site-url";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import { PROVIDER_REFUSED_FALLBACK } from "@/lib/payments/payment-error";
 import {
   acceptedTransactionId,
   confirmTransaction,
-  isPayableAmount,
   latestNotificationId,
   latestTransactionId,
   normalisePhone,
@@ -164,22 +167,34 @@ function attemptRow(row: Record<string, unknown>): PaymentAttemptRow {
 export const MOBILE_MONEY_CONFIRMATION_WINDOW_MS = 5 * 60_000;
 
 /**
+ * SasPay can hand the customer a hosted page (Orange Money often settles
+ * there) instead of a USSD prompt: opening it, choosing, confirming takes
+ * longer than a PIN, so its attempts get a wider window.
+ */
+export const SASPAY_CONFIRMATION_WINDOW_MS = 15 * 60_000;
+
+export function confirmationWindowMs(provider: string): number {
+  return provider === "saspay" ? SASPAY_CONFIRMATION_WINDOW_MS : MOBILE_MONEY_CONFIRMATION_WINDOW_MS;
+}
+
+/**
  * Atomically close an unconfirmed CamerPay request after the customer-facing
  * five-minute window. The created-at predicate matters: a concurrent callback
  * or poll can settle first, but a late report can never revive an expired
  * request and credit money twice.
  */
 async function expireUnconfirmedMobileMoneyAttempt(row: PaymentAttemptRow): Promise<boolean> {
-  if (row.provider !== "camerpay") return false;
+  if (row.provider !== "camerpay" && row.provider !== "saspay") return false;
+  const windowMs = confirmationWindowMs(row.provider);
 
   const createdAt = Date.parse(row.createdAt);
-  if (!Number.isFinite(createdAt) || Date.now() - createdAt < MOBILE_MONEY_CONFIRMATION_WINDOW_MS) {
+  if (!Number.isFinite(createdAt) || Date.now() - createdAt < windowMs) {
     return false;
   }
 
   const supabase = createAdminClient();
   const now = new Date().toISOString();
-  const cutoff = new Date(Date.now() - MOBILE_MONEY_CONFIRMATION_WINDOW_MS).toISOString();
+  const cutoff = new Date(Date.now() - windowMs).toISOString();
   const { data, error } = await supabase
     .from("payment_attempts")
     .update({ status: "failed", settled_at: now })
@@ -217,6 +232,13 @@ export async function initiatePaymentAttempt(input: {
   reference: string;
   phone: string;
   amount: number;
+  /**
+   * Where a customer sent to a hosted payment page (SasPay) comes back to,
+   * e.g. "/orders/<id>". Same-site path; the site origin is added here.
+   */
+  returnPath?: string;
+  /** Shown on SasPay's hosted page; placeholders are used when absent. */
+  customer?: { name?: string | null; email?: string | null };
 }): Promise<PaymentOutcome> {
   const mode = await paymentMode();
 
@@ -234,13 +256,18 @@ export async function initiatePaymentAttempt(input: {
     return { ok: false, reason: "badAmount", error: "Montant invalide." };
   }
 
+  // Which gateway takes this payment (super admin's switch, 0063). Sandbox
+  // never reaches a gateway, whichever is selected.
+  const gateway = mode === "live" ? await collectionGateway() : "camerpay";
+
   // Provider constraint, checked before sending so a live charge is never
-  // refused by CamerPay after we told the customer everything was fine.
-  if (mode === "live" && !isPayableAmount(amount)) {
+  // refused by the gateway after we told the customer everything was fine.
+  if (mode === "live" && !payableOn(gateway, amount)) {
+    const { min, max } = gatewayRange(gateway);
     return {
       ok: false,
       reason: "amountOutOfRange",
-      error: `Montant hors plage CamerPay (500 – 500 000 FCFA).`,
+      error: `Montant hors plage (${min.toLocaleString("fr-CM")} – ${max.toLocaleString("fr-CM")} FCFA).`,
     };
   }
 
@@ -282,6 +309,10 @@ export async function initiatePaymentAttempt(input: {
     }
 
     return { ok: true, status: "succeeded", attemptId: data.id };
+  }
+
+  if (gateway === "saspay") {
+    return initiateSaspayAttempt({ input, base, phone, amount });
   }
 
   /* ── Live: record the INTENT, then charge ───────────────────────────── */
@@ -431,6 +462,174 @@ export async function initiatePaymentAttempt(input: {
 }
 
 /**
+ * Start a collection through SasPay (Cameroon: MTN / Orange, XAF).
+ *
+ * Same discipline as the CamerPay path: the attempt row exists BEFORE the
+ * customer's phone is asked, the attempt id is SasPay's Idempotency-Key (a
+ * network retry can never push a second charge), and a transport failure
+ * leaves the row pending for the resolver instead of asserting a failure.
+ *
+ * SasPay may answer with a `checkout_url` instead of pushing a prompt (the
+ * normal case for Orange Money): nothing is charged until the customer opens
+ * it, so it travels back as `instruction.url` for the pending screen.
+ */
+async function initiateSaspayAttempt(args: {
+  input: Parameters<typeof initiatePaymentAttempt>[0];
+  base: Record<string, unknown>;
+  phone: string;
+  amount: number;
+}): Promise<PaymentOutcome> {
+  const { input, base, phone, amount } = args;
+  if (!cameroonNetwork(phone)) {
+    return {
+      ok: false,
+      reason: "unsupportedNetwork",
+      error: "Seuls les numéros MTN et Orange Cameroun sont acceptés.",
+    };
+  }
+
+  const supabase = createAdminClient();
+  const startedAt = new Date().toISOString();
+  const rawBase = { requested_at: startedAt, orderId: input.orderId, walletFunding: input.kind === "wallet" };
+  const { data: created, error: createError } = await supabase
+    .from("payment_attempts")
+    .insert({ ...base, provider: "saspay", status: "pending", raw_response: rawBase })
+    .select("id")
+    .single();
+  if (createError || !created) {
+    console.error("[pay:initiate:saspay] attempt row", createError?.message);
+    return { ok: false, reason: "recordFailed", error: "Impossible d'enregistrer le paiement." };
+  }
+  const attemptId = created.id as string;
+
+  const [first, ...rest] = (input.customer?.name ?? "").trim().split(/\s+/).filter(Boolean);
+  const origin = await siteUrl().catch(() => "https://resto237.online");
+  const returnPath = input.returnPath && input.returnPath.startsWith("/") && !input.returnPath.startsWith("//")
+    ? input.returnPath
+    : "/";
+
+  let started;
+  try {
+    started = await startSaspayPayment({
+      phone,
+      amount,
+      idempotencyKey: attemptId,
+      description: input.reference,
+      returnUrl: origin.replace(/\/+$/, "") + returnPath,
+      customer: { firstName: first, lastName: rest.join(" ") || undefined, email: input.customer?.email ?? undefined },
+      metadata: { attemptId, reference: input.reference, kind: input.kind },
+    });
+  } catch (error) {
+    // Unknown, not refused: SasPay may have pushed the prompt. Left pending
+    // with no transaction id, the resolver expires it after its window.
+    console.error("[pay:initiate:saspay]", attemptId, error);
+    await supabase
+      .from("payment_attempts")
+      .update({ raw_response: { ...rawBase, transport_error: error instanceof Error ? error.message : String(error) } })
+      .eq("id", attemptId);
+    return { ok: false, reason: "providerUnavailable", error: "Le service de paiement est indisponible, réessayez dans un instant." };
+  }
+
+  if (!started.ok) {
+    if (started.error.status >= 500 || started.error.status === 0) {
+      console.error("[pay:initiate:saspay] ambiguous", attemptId, started.error);
+      return { ok: false, reason: "providerUnavailable", error: "Le service de paiement est indisponible, réessayez dans un instant." };
+    }
+    // A 4xx is a refusal before anything moved.
+    console.error("[pay:initiate:saspay] refused", attemptId, started.error);
+    await claimAttempt(attemptId, "failed");
+    return {
+      ok: false,
+      reason: started.error.code === "invalid_method" ? "unsupportedNetwork" : "providerRefused",
+      error: started.error.message || "Le paiement a été refusé par l'opérateur.",
+    };
+  }
+
+  const instruction = saspayInstruction(started.data.checkoutUrl, started.data.instructions);
+  await supabase
+    .from("payment_attempts")
+    .update({
+      transaction_id: started.data.id,
+      raw_response: { ...rawBase, checkoutUrl: started.data.checkoutUrl, instructions: started.data.instructions },
+    })
+    .eq("id", attemptId);
+
+  return { ok: true, status: "pending", attemptId, instruction };
+}
+
+function saspayInstruction(checkoutUrl: string | null | undefined, instructions: string | null | undefined): PaymentInstruction | undefined {
+  if (checkoutUrl) {
+    return {
+      message: "Terminez le paiement sur la page sécurisée de votre opérateur, puis revenez ici.",
+      url: checkoutUrl,
+    };
+  }
+  if (instructions) return { message: instructions };
+  return undefined;
+}
+
+/** The SasPay half of resolveAttemptOutcome(): verify, claim, settle. */
+async function resolveSaspayAttempt(row: PaymentAttemptRow): Promise<AttemptResolution> {
+  const stored = saspayInstruction(
+    typeof row.rawResponse?.checkoutUrl === "string" ? row.rawResponse.checkoutUrl : null,
+    typeof row.rawResponse?.instructions === "string" ? row.rawResponse.instructions : null,
+  );
+
+  if (!row.transactionId) {
+    if (await expireUnconfirmedMobileMoneyAttempt(row)) {
+      return { status: "failed", settled: false, error: "confirmationExpired" };
+    }
+    return { status: "pending", settled: false, error: "notConfirmable" };
+  }
+
+  let verified;
+  try {
+    verified = await verifySaspayPayment(row.transactionId);
+  } catch (error) {
+    console.error("[pay:resolve:saspay]", row.id, error);
+    return { status: "pending", settled: false, error: "providerUnavailable", instruction: stored };
+  }
+
+  if (!verified.ok) {
+    if (verified.error.status === 404) {
+      await claimAttempt(row.id, "failed");
+      return { status: "failed", settled: false, error: "providerNotFound" };
+    }
+    return { status: "pending", settled: false, error: "providerUnavailable", instruction: stored };
+  }
+
+  const v = verified.data;
+  if (v.verdict === "failed") {
+    await claimAttempt(row.id, "failed");
+    return { status: "failed", settled: false };
+  }
+  if (v.verdict === "pending") {
+    if (await expireUnconfirmedMobileMoneyAttempt(row)) {
+      return { status: "failed", settled: false, error: "confirmationExpired" };
+    }
+    return { status: "pending", settled: false, instruction: stored };
+  }
+
+  if (Number.isFinite(v.requested) && v.requested !== row.amount) {
+    // Ours is the amount we asked for; SasPay echoing another is worth an
+    // alarm but never a reason to drop money that really arrived.
+    console.error("[pay:resolve:saspay] amount mismatch", row.id, v.requested, row.amount);
+  }
+
+  const claim = await claimAttempt(row.id, "succeeded", `saspay:${v.id || row.transactionId}`);
+  if (claim === "rowTaken") return { status: "pending", settled: false, error: "providerRowTaken" };
+  if (claim === "lost") {
+    const { data: after } = await createAdminClient()
+      .from("payment_attempts")
+      .select("status")
+      .eq("id", row.id)
+      .maybeSingle();
+    if (after?.status !== "succeeded") return { status: "failed", settled: false, error: "claimLost" };
+  }
+  return settledResolution(row.id);
+}
+
+/**
  * Ask the provider whether a pending attempt resolved, and settle it if so.
  *
  * `scopedRestaurantId` scopes the read when the caller is a tenant — an attempt
@@ -481,6 +680,10 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
   // its money side — an earlier settlement can have failed halfway.
   if (row.status === "succeeded") return settledResolution(row.id);
   if (row.status !== "pending") return { status: "failed", settled: false };
+
+  // An attempt is always confirmed by the gateway that took it, whatever the
+  // switch says now.
+  if (row.provider === "saspay") return resolveSaspayAttempt(row);
 
   // A pending sandbox attempt, or one whose 202 never came back with a
   // tracking id, has nothing to ask: past the window it is simply expired.
@@ -1055,12 +1258,12 @@ const IN_FLIGHT_MS = MOBILE_MONEY_CONFIRMATION_WINDOW_MS;
  */
 export async function orderPaymentInFlight(orderId: string): Promise<boolean> {
   const supabase = createAdminClient();
-  const { count, error } = await supabase
+  const { data, error } = await supabase
     .from("payment_attempts")
-    .select("id", { count: "exact", head: true })
+    .select("provider, created_at")
     .eq("raw_response->>orderId", orderId)
     .eq("status", "pending")
-    .gt("created_at", new Date(Date.now() - IN_FLIGHT_MS).toISOString());
+    .gt("created_at", new Date(Date.now() - SASPAY_CONFIRMATION_WINDOW_MS).toISOString());
 
   if (error) {
     // Unknown is treated as "maybe": refusing a cancellation for a minute is
@@ -1068,7 +1271,10 @@ export async function orderPaymentInFlight(orderId: string): Promise<boolean> {
     console.error("[pay:inFlight]", orderId, error.message);
     return true;
   }
-  return (count ?? 0) > 0;
+  // Each attempt is "in flight" for its own gateway's window.
+  return ((data ?? []) as { provider: string; created_at: string }[]).some(
+    (a) => Date.now() - Date.parse(a.created_at) < Math.max(IN_FLIGHT_MS, confirmationWindowMs(a.provider)),
+  );
 }
 
 async function notifyReservationPaid(input: {

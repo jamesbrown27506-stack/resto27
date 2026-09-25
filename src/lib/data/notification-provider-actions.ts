@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireRole } from "@/lib/auth/session";
+import { requireRole, superAdminOrError } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/server";
 import { firebaseDeliveryConfigured } from "@/lib/firebase/server";
 import { notificationProvider, type NotificationProvider } from "@/lib/notification-provider";
@@ -22,7 +22,11 @@ export async function getNotificationProviderStatus() {
 }
 
 export async function setNotificationProvider(provider: NotificationProvider) {
-  const admin = await requireRole("admin");
+  // Switching the delivery provider can silence every order alert on the
+  // platform at once — a super-admin switch, like push_provider in settings.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
   if (provider !== "firebase" && provider !== "web_push") return { ok: false, error: "Invalid provider." };
   const status = await getNotificationProviderStatus();
   if (provider === "firebase" && (!status.firebaseConfigured || !status.storageReady || !status.firebaseDevices)) {

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext } from "react";
-import { ShieldCheck } from "lucide-react";
+import { Lock, ShieldCheck } from "lucide-react";
 import { NavIcon } from "./icon";
 import { BrandMark } from "./brand-mark";
 import { MobileTabBar } from "./mobile-tabbar";
@@ -28,6 +28,8 @@ export interface AdminIdentity {
   name: string;
   email: string;
   avatarUrl: string | null;
+  /** Migration 0063 — see lib/auth/super-admin-rules.ts for what it unlocks. */
+  isSuperAdmin: boolean;
 }
 
 /** The platform's own name and logo, from /a/settings. */
@@ -43,6 +45,49 @@ export function useAdminUser(): AdminIdentity {
   const user = useContext(AdminUserContext);
   if (!user) throw new Error("useAdminUser must be used inside <AdminShell>");
   return user;
+}
+
+/**
+ * Whether the signed-in admin is a SUPER admin — for greying out buttons.
+ *
+ * Display only. Every super-admin action re-checks on the server
+ * (superAdminOrError in lib/auth/session.ts); hiding a button protects
+ * nothing, it just spares a simple admin an error message.
+ */
+export function useIsSuperAdmin(): boolean {
+  return useContext(AdminUserContext)?.isSuperAdmin ?? false;
+}
+
+/**
+ * A whole page (or panel) a simple admin may not use — shown instead of the
+ * controls, so the screen explains itself rather than 404ing someone who
+ * followed a link from the menu.
+ */
+export function SuperAdminOnlyNotice({ children }: { children?: React.ReactNode }) {
+  return (
+    <div className="flex max-w-2xl items-start gap-3 rounded-lg border border-border bg-surface p-5">
+      <Lock className="mt-0.5 size-5 shrink-0 text-text-light" aria-hidden />
+      <div className="text-sm">
+        <p className="font-semibold">Super admin only</p>
+        <p className="mt-1 text-text-secondary">
+          {children ?? "This area moves money or changes how the platform works. Ask a super administrator."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** The short hint shown in place of (or beside) a super-admin-only control. */
+export function SuperAdminOnlyHint({ className }: { className?: string }) {
+  return (
+    <span
+      className={cn("inline-flex items-center gap-1 text-xs font-medium text-text-light", className)}
+      title="Ask a super administrator to make this change."
+    >
+      <Lock className="size-3" aria-hidden />
+      Super admin only
+    </span>
+  );
 }
 
 function AdminNav({ brand }: { brand: BrandIdentity }) {
@@ -214,6 +259,21 @@ export function AdminShell({
                   <p className="truncate text-sm leading-tight font-semibold">{user.name}</p>
                   <p className="truncate text-xs leading-tight text-text-light">{user.email}</p>
                 </div>
+                {/* The level is part of "who am I right now": a simple admin
+                    should know before clicking why a money switch is grey. */}
+                <span
+                  className={cn(
+                    "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase",
+                    user.isSuperAdmin ? "bg-accent/15 text-accent-hover" : "bg-surface-2 text-text-secondary",
+                  )}
+                  title={
+                    user.isSuperAdmin
+                      ? "Super administrator: money, gateways, fees and administrators."
+                      : "Administrator: day-to-day operations. Money switches need a super administrator."
+                  }
+                >
+                  {user.isSuperAdmin ? "Super admin" : "Admin"}
+                </span>
               </Link>
 
               {/*

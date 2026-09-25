@@ -48,8 +48,19 @@ export const getImpersonation = cache(async (): Promise<ImpersonationContext | n
   if (!restaurantId) return null;
 
   // Re-verified every request. This is the actual protection.
+  //
+  // SUPER admins only (migration 0063): acting as a tenant reaches their
+  // wallet, withdrawals and staff — every money switch a restaurant has. A
+  // super admin demoted mid-session stops impersonating on the next request,
+  // exactly like a suspended one.
   const profile = await getCurrentProfile();
-  if (!profile || profile.role !== "admin" || profile.status !== "active" || profile.deletedAt) {
+  if (
+    !profile ||
+    profile.role !== "admin" ||
+    !profile.isSuperAdmin ||
+    profile.status !== "active" ||
+    profile.deletedAt
+  ) {
     return null;
   }
 
