@@ -97,6 +97,16 @@ function refreshReviewScreens() {
 }
 
 /**
+ * The columns these actions write (restaurant_seen_at, restaurant_reaction)
+ * arrive with migration 0066. Without it Postgres answers 42703 and
+ * PostgREST PGRST204 — say THAT, instead of a generic "try again" that no
+ * retry can ever fix (or, worse, "this review is gone" when it is not).
+ */
+function schemaMissing(error: { code?: string } | null): boolean {
+  return Boolean(error && (error.code === "42703" || error.code === "PGRST204"));
+}
+
+/**
  * Acknowledge a review without answering it: it leaves the dashboard's
  * "needs attention" count (lib/reviews/attention). Nobody is notified.
  */
@@ -111,8 +121,8 @@ export async function markReviewSeen(reviewId: string): Promise<ActionResult> {
     .is("removed_at", null)
     .select("id");
   if (error) {
-    console.error("[reviews:markSeen]", reviewId, error.message);
-    return { ok: false, error: t("est.reviewUpdateFailed") };
+    console.error("[reviews:markSeen]", reviewId, error.code, error.message);
+    return { ok: false, error: t(schemaMissing(error) ? "est.reviewSchemaMissing" : "est.reviewUpdateFailed") };
   }
   if ((data ?? []).length === 0) return { ok: false, error: t("est.reviewGone") };
   refreshReviewScreens();
@@ -130,17 +140,17 @@ export async function markAllReviewsSeen(): Promise<ActionResult> {
     .is("restaurant_seen_at", null)
     .is("removed_at", null);
   if (error) {
-    console.error("[reviews:markAllSeen]", error.message);
-    return { ok: false, error: t("est.reviewUpdateFailed") };
+    console.error("[reviews:markAllSeen]", error.code, error.message);
+    return { ok: false, error: t(schemaMissing(error) ? "est.reviewSchemaMissing" : "est.reviewUpdateFailed") };
   }
   refreshReviewScreens();
   return { ok: true };
 }
 
 /**
- * A one-tap public reaction (❤️ 🙏 👍), or `null` to take it back. Shown under
- * the review on the restaurant's page; the customer is told the first time a
- * reaction is added (changing it later does not notify again).
+ * A one-tap public reaction (heart / thanks / like), or `null` to take it
+ * back. Shown under the review on the restaurant's page; the customer is
+ * told the first time a reaction is added (changing it does not notify again).
  */
 export async function reactToReview(reviewId: string, reaction: string | null): Promise<ActionResult> {
   const t = await getTranslator();
@@ -148,13 +158,19 @@ export async function reactToReview(reviewId: string, reaction: string | null): 
   if (reaction !== null && !isReviewReaction(reaction)) return { ok: false, error: t("est.reviewUpdateFailed") };
 
   const supabase = createAdminClient();
-  const { data: before } = await supabase
+  const { data: before, error: readError } = await supabase
     .from("reviews")
     .select("id, customer_id, restaurant_reaction")
     .eq("id", reviewId)
     .eq("restaurant_id", active.restaurantId)
     .is("removed_at", null)
     .maybeSingle();
+  // A failed READ is not "the review is gone" — that message used to hide a
+  // missing column behind a claim that was simply false.
+  if (readError) {
+    console.error("[reviews:react:read]", reviewId, readError.code, readError.message);
+    return { ok: false, error: t(schemaMissing(readError) ? "est.reviewSchemaMissing" : "est.reviewUpdateFailed") };
+  }
   if (!before) return { ok: false, error: t("est.reviewGone") };
 
   const { error } = await supabase
@@ -166,8 +182,8 @@ export async function reactToReview(reviewId: string, reaction: string | null): 
     .eq("id", reviewId)
     .eq("restaurant_id", active.restaurantId);
   if (error) {
-    console.error("[reviews:react]", reviewId, error.message);
-    return { ok: false, error: t("est.reviewUpdateFailed") };
+    console.error("[reviews:react]", reviewId, error.code, error.message);
+    return { ok: false, error: t(schemaMissing(error) ? "est.reviewSchemaMissing" : "est.reviewUpdateFailed") };
   }
 
   if (reaction && !before.restaurant_reaction && before.customer_id) {

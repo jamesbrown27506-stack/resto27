@@ -180,6 +180,10 @@ values ('color_palette', 'classic', 'string', 'appearance', 'Colour palette',
         'classic = original sage; ndole = appetite palette (chilli orange actions, deep green brand). Change it in Appearance → Palette.')
 on conflict (key) do nothing;
 
+-- The API (PostgREST) caches the column list: without a reload it can keep
+-- answering "column not found" (PGRST204) for the new review columns.
+notify pgrst, 'reload schema';
+
 -- Verify:
 --   select tablename from pg_publication_tables where pubname = 'supabase_realtime';  -- includes restaurant_signals
 --   select column_name from information_schema.columns where table_name = 'reviews' and column_name like 'restaurant_%';
