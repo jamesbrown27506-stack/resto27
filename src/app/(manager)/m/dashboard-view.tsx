@@ -13,6 +13,7 @@ import {
   UtensilsCrossed,
 } from "lucide-react";
 import { SetupPanel, WelcomeNudge } from "./setup-panel";
+import { ServicePauseToggle } from "@/components/order/service-pause-toggle";
 import { ManagerPage } from "@/components/layout/manager-shell";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
@@ -51,6 +52,7 @@ export function DashboardView({
     branchLabel: string;
     status: "active" | "pending" | "suspended";
     role: BranchRole;
+    isAcceptingOrders: boolean;
   };
   planLabel: string;
   planTone: BadgeTone;
@@ -59,6 +61,7 @@ export function DashboardView({
     revenueToday: number;
     awaitingConfirmation: number;
     pendingOrders: number;
+    waitingOrders: number;
     pendingReservations: number;
     lowStockItems: number;
     unrepliedReviews: number;
@@ -82,7 +85,14 @@ export function DashboardView({
       description={`${branch.restaurantName}${
         branch.branchLabel && branch.branchLabel !== "Principal" ? ` — ${branch.branchLabel}` : ""
       }`}
-      action={<Badge tone={planTone}>{planLabel}</Badge>}
+      action={
+        <>
+          {can(branch.role, "service.pause") && (
+            <ServicePauseToggle accepting={branch.isAcceptingOrders} />
+          )}
+          <Badge tone={planTone}>{planLabel}</Badge>
+        </>
+      }
     >
       <WelcomeNudge />
 
@@ -126,7 +136,13 @@ export function DashboardView({
          than left to find red boxes.
         ────────────────────────────────────────────────────────────────────
       */}
-      {overview.pendingOrders + overview.pendingReservations > 0 && (
+      {/*
+        URGENT MEANS "WAITING ON US": `waitingOrders` is `pending` only. It
+        used to be pending + confirmed + preparing, so the red box was on for
+        the whole service — the kitchen cooking is not a customer waiting for
+        an answer, and a box that is always red is a box nobody reads.
+      */}
+      {overview.waitingOrders + overview.pendingReservations > 0 && (
         <div
           role="alert"
           className="mb-4 overflow-hidden rounded-lg border-2 border-error bg-error-light"
@@ -148,11 +164,11 @@ export function DashboardView({
           </div>
 
           <ul className="flex flex-col gap-2 p-3 sm:flex-row sm:flex-wrap sm:gap-3">
-            {overview.pendingOrders > 0 && (
+            {overview.waitingOrders > 0 && (
               <AttentionLink
                 urgent
                 href="/m/orders"
-                label={t("m.attention.orders", { count: overview.pendingOrders })}
+                label={t("mops.attention.accept", { count: overview.waitingOrders })}
               />
             )}
             {overview.pendingReservations > 0 && (
@@ -196,17 +212,22 @@ export function DashboardView({
           icon={<Package />}
         />
         {/* The hint explains the gap between "orders today" and this number.
-            Without it, a morning of unanswered orders looks like a bug. */}
-        <StatTile
-          label={t("m.stat.revenueToday")}
-          value={formatMoney(overview.revenueToday)}
-          icon={<Banknote />}
-          hint={
-            overview.awaitingConfirmation > 0
-              ? t("m.stat.revenuePending", { count: overview.awaitingConfirmation })
-              : t("m.stat.revenueHint")
-          }
-        />
+            Without it, a morning of unanswered orders looks like a bug.
+
+            Only for `reports.view`: the day's takings are the owner's
+            business, not something every waiter's phone should display. */}
+        {can(branch.role, "reports.view") && (
+          <StatTile
+            label={t("m.stat.revenueToday")}
+            value={formatMoney(overview.revenueToday)}
+            icon={<Banknote />}
+            hint={
+              overview.awaitingConfirmation > 0
+                ? t("m.stat.revenuePending", { count: overview.awaitingConfirmation })
+                : t("m.stat.revenueHint")
+            }
+          />
+        )}
         <StatTile
           label={t("m.stat.inProgress")}
           value={String(overview.pendingOrders)}

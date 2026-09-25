@@ -40,6 +40,16 @@ export const custAccountDict = defineDict({
     "cac.points.body": "Utilisables dès votre prochaine commande, soit {amount} de réduction.",
     "cac.points.history": "Voir mon historique de points →",
 
+    "cac.wallet.title": "Portefeuille Resto237",
+    "cac.wallet.body": "Les remboursements de commandes payées en ligne arrivent ici. Utilisez ce solde pour payer vos prochaines commandes.",
+    "cac.wallet.empty": "Aucun mouvement pour l’instant.",
+    "cac.wallet.unavailable": "Le portefeuille n’est pas encore disponible sur votre compte.",
+    "cac.wallet.recent": "Derniers mouvements",
+    "cac.wallet.kind.refund": "Remboursement",
+    "cac.wallet.kind.payment": "Paiement de commande",
+    "cac.wallet.kind.adjustment": "Ajustement",
+    "cac.wallet.balanceAfter": "Solde : {amount}",
+
     "cac.favorites.title": "Vos favoris",
     "cac.favorites.empty": "Aucun favori pour l'instant",
     "cac.favorites.emptyBody": "Touchez le cœur sur un restaurant pour le retrouver ici.",
@@ -73,6 +83,16 @@ export const custAccountDict = defineDict({
     "cac.points.unit": "pts",
     "cac.points.body": "Usable on your next order — {amount} off.",
     "cac.points.history": "See my points history →",
+
+    "cac.wallet.title": "Resto237 wallet",
+    "cac.wallet.body": "Refunds for orders paid online land here. Use this balance to pay for your next orders.",
+    "cac.wallet.empty": "No movements yet.",
+    "cac.wallet.unavailable": "The wallet is not available on your account yet.",
+    "cac.wallet.recent": "Latest movements",
+    "cac.wallet.kind.refund": "Refund",
+    "cac.wallet.kind.payment": "Order payment",
+    "cac.wallet.kind.adjustment": "Adjustment",
+    "cac.wallet.balanceAfter": "Balance: {amount}",
 
     "cac.favorites.title": "Your favourites",
     "cac.favorites.empty": "No favourites yet",

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getTranslator } from "@/lib/i18n/locale-server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
@@ -37,11 +38,12 @@ import type { ActionResult } from "./admin-actions";
  * ─────────────────────────────────────────────────────────────────────────
  */
 export async function reportReview(reviewId: string, reason: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("reviews.reply");
 
   const trimmed = reason.trim();
   if (trimmed.length < 5) {
-    return { ok: false, error: "Say what the problem is — a moderator reads this." };
+    return { ok: false, error: t("est.reportReasonRequired") };
   }
 
   const supabase = createAdminClient();
@@ -57,12 +59,12 @@ export async function reportReview(reviewId: string, reason: string): Promise<Ac
 
   if (error) {
     console.error("[reviews:reportReview]", reviewId, error.message);
-    return { ok: false, error: "Could not report the review." };
+    return { ok: false, error: t("est.reportFailed") };
   }
 
   // Nothing matched: wrong branch, or removed while the dialog was open.
   // Reporting that as a success is the exact lie this action exists to end.
-  if ((data ?? []).length === 0) return { ok: false, error: "That review is no longer available." };
+  if ((data ?? []).length === 0) return { ok: false, error: t("est.reviewGone") };
 
   // Never throws (§9): losing the trail must not undo the report it records.
   await writeAudit(profile, {

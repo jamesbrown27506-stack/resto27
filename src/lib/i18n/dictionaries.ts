@@ -18,6 +18,8 @@ import { custAccountDict } from "./dict/cust-account";
 import { custAddressesDict } from "./dict/cust-addresses";
 import { custBrowseDict } from "./dict/cust-browse";
 import { custCartDict } from "./dict/cust-cart";
+import { sharedUiDict } from "./dict/shared-ui";
+import { tableGuestDict } from "./dict/table-guest";
 import { custFavoritesDict } from "./dict/cust-favorites";
 import { custLoyaltyDict } from "./dict/cust-loyalty";
 import { custOrdersDict } from "./dict/cust-orders";
@@ -33,6 +35,7 @@ import { mgateDict } from "./dict/mgate";
 import { modifiersDict } from "./dict/modifiers";
 import { notificationsDict } from "./dict/notifications";
 import { orderActionsDict } from "./dict/order-actions";
+import { managerOpsDict } from "./dict/manager-ops";
 import { orderStatusDict } from "./dict/order-status";
 import { profileDict } from "./dict/profile";
 import { promotionsDict } from "./dict/promotions";
@@ -41,6 +44,9 @@ import { reviewsDict } from "./dict/reviews";
 import { settingsDict } from "./dict/settings";
 import { setupDict } from "./dict/setup";
 import { staffDict } from "./dict/staff";
+import { mReservationsDict } from "./dict/m-reservations";
+import { errCustomerDict } from "./dict/err-customer";
+import { errStaffDict } from "./dict/err-staff";
 
 export const LOCALES = ["fr", "en"] as const;
 export type Locale = (typeof LOCALES)[number];
@@ -1736,6 +1742,7 @@ const fr = {
   ...chatDict.fr,
   ...notificationsDict.fr,
   ...orderActionsDict.fr,
+  ...managerOpsDict.fr,
   ...orderStatusDict.fr,
   ...menuDict.fr,
   ...modifiersDict.fr,
@@ -1744,6 +1751,7 @@ const fr = {
   ...reviewsDict.fr,
   ...reportsDict.fr,
   ...staffDict.fr,
+  ...mReservationsDict.fr,
   ...profileDict.fr,
   ...promotionsDict.fr,
   ...settingsDict.fr,
@@ -1762,8 +1770,12 @@ const fr = {
   ...custSettingsDict.fr,
   ...custBrowseDict.fr,
   ...custCartDict.fr,
+  ...sharedUiDict.fr,
+  ...tableGuestDict.fr,
   ...marketingDict.fr,
   ...legalDict.fr,
+  ...errCustomerDict.fr,
+  ...errStaffDict.fr,
 } as const;
 
 export type TranslationKey = keyof typeof fr;
@@ -1775,6 +1787,7 @@ const en: Record<TranslationKey, string> = {
   ...chatDict.en,
   ...notificationsDict.en,
   ...orderActionsDict.en,
+  ...managerOpsDict.en,
   ...orderStatusDict.en,
   ...menuDict.en,
   ...modifiersDict.en,
@@ -1783,6 +1796,7 @@ const en: Record<TranslationKey, string> = {
   ...reviewsDict.en,
   ...reportsDict.en,
   ...staffDict.en,
+  ...mReservationsDict.en,
   ...profileDict.en,
   ...promotionsDict.en,
   ...settingsDict.en,
@@ -1800,8 +1814,12 @@ const en: Record<TranslationKey, string> = {
   ...custSettingsDict.en,
   ...custBrowseDict.en,
   ...custCartDict.en,
+  ...sharedUiDict.en,
+  ...tableGuestDict.en,
   ...marketingDict.en,
   ...legalDict.en,
+  ...errCustomerDict.en,
+  ...errStaffDict.en,
 };
 
 export const DICTIONARIES: Record<Locale, Record<TranslationKey, string>> = { fr, en };

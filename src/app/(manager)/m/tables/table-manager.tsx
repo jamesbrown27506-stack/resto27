@@ -14,6 +14,16 @@ import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { RestaurantTable } from "@/lib/data/manager";
 import { cn } from "@/lib/utils";
+import { useDates } from "@/lib/format/use-dates";
+
+/** A live booking holding a table right now (computed by the page). */
+export interface TableHold {
+  guestName: string;
+  reservedFor: string;
+  endsAt: string;
+  /** The party is already at the table — the floor status says occupied. */
+  seated: boolean;
+}
 
 const STATUSES = ["available", "occupied", "reserved", "out_of_service"] as const;
 
@@ -26,17 +36,24 @@ const STATUS_TONE: Record<RestaurantTable["status"], BadgeTone> = {
 
 export function TableManager({
   tables,
+  holds = {},
   limit,
   canManage,
+  canSetStatus = canManage,
   qrEnabled,
 }: {
   tables: RestaurantTable[];
+  /** Table id → the booking holding it now (0060, read-time only). */
+  holds?: Record<string, TableHold>;
   /** null = unlimited */
   limit: number | null;
   canManage: boolean;
+  /** Change a table's status (free / occupied…) — floor staff too (reservations.seat). */
+  canSetStatus?: boolean;
   qrEnabled: boolean;
 }) {
   const { t, locale } = useLocale();
+  const dates = useDates();
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState<{ id?: string; number: string; capacity: number } | null>(null);
@@ -134,16 +151,41 @@ export function TableManager({
                 )}
               </div>
 
-              <div className="mt-4">
-                <Badge tone={table.planLocked ? "neutral" : STATUS_TONE[table.status]}>
-                  {table.planLocked ? t("tbl.frozen") : t(`tbl.status.${table.status}` as TranslationKey)}
-                </Badge>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                {/* A booking's hold shows as "Réservée" over a free table; a
+                    table the waiter marked occupied or out of service keeps
+                    that word — it is the truer one right now. */}
+                {(() => {
+                  const hold = holds[table.id];
+                  const showHold =
+                    hold && !table.planLocked && (table.status === "available" || table.status === "reserved");
+                  return (
+                    <>
+                      <Badge tone={table.planLocked ? "neutral" : showHold ? "info" : STATUS_TONE[table.status]}>
+                        {table.planLocked
+                          ? t("tbl.frozen")
+                          : showHold
+                            ? t("mres.floor.reserved")
+                            : t(`tbl.status.${table.status}` as TranslationKey)}
+                      </Badge>
+                      {hold && !table.planLocked && (
+                        <span className="tnum text-xs text-text-secondary">
+                          {t("mres.floor.heldBy", {
+                            name: hold.guestName,
+                            start: dates.time(hold.reservedFor),
+                            end: dates.time(hold.endsAt),
+                          })}
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               {qrEnabled && !table.planLocked && table.publicToken && (
                 <a href={`/api/table-qr/${table.publicToken}`} download={`table-${table.number}.svg`} className={buttonClasses({ variant: "outline", size: "sm", className: "mt-4 w-full" })}><QrCode className="size-3.5" /> {locale === "fr" ? "Télécharger le QR" : "Download QR"}</a>
               )}
-              {canManage && (
+              {canSetStatus && (
                 <div className="mt-4 flex items-center gap-2 border-t border-border pt-3">
                   <label className="sr-only" htmlFor={`status-${table.id}`}>
                     {t("tbl.statusOf")} {table.number}
@@ -166,15 +208,17 @@ export function TableManager({
                       </option>
                     ))}
                   </Select>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`${t("common.edit")} ${table.number}`}
-                    disabled={table.planLocked}
-                    onClick={() => setEditing({ id: table.id, number: table.number, capacity: table.capacity })}
-                  >
-                    <Pencil className="size-3.5" aria-hidden />
-                  </Button>
+                  {canManage && (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`${t("common.edit")} ${table.number}`}
+                      disabled={table.planLocked}
+                      onClick={() => setEditing({ id: table.id, number: table.number, capacity: table.capacity })}
+                    >
+                      <Pencil className="size-3.5" aria-hidden />
+                    </Button>
+                  )}
                 </div>
               )}
             </li>

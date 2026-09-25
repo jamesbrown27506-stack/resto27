@@ -1,4 +1,5 @@
 import type { CustomerReservationStatus } from "@/lib/format/reservation-status";
+import { canMarkNoShowYet } from "./timing";
 
 /** States that still represent a live table booking. */
 export const ACTIVE_RESERVATION_STATUSES: readonly CustomerReservationStatus[] = [
@@ -85,6 +86,35 @@ export function canSetReservationStatus(
 ): boolean {
   if (next === "seated" || next === "no_show") return current === "confirmed";
   return current === "seated";
+}
+
+/**
+ * A no-show is a verdict with money attached (the deposit stays with the
+ * restaurant), so it needs both the right state AND the grace period: a
+ * party booked for 20:00 is not absent at 20:01. See timing.ts.
+ */
+export function canMarkReservationNoShow(
+  booking: { status: CustomerReservationStatus; reservedFor: string | number | Date },
+  now: string | number | Date = Date.now(),
+): boolean {
+  return canSetReservationStatus(booking.status, "no_show") && canMarkNoShowYet(booking.reservedFor, now);
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE RESTAURANT CAN WITHDRAW A CONFIRMED BOOKING — AND PAYS FOR IT.
+ *
+ *  `canDecideReservation` stops at `awaiting_payment` on purpose: once a
+ *  deposit has landed, "cancel" is no longer a decision, it is a refund. That
+ *  left a restaurant with a flooded kitchen or a private event no way out of
+ *  a paid booking except asking the guest to cancel (and eat the late fee).
+ *  Now it can, from `confirmed` only — a seated party is being served, not
+ *  cancelled — and restaurant_cancel_reservation (0060) returns the WHOLE
+ *  deposit to the customer, debited from the restaurant, in one transaction.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export function canRestaurantCancelReservation(current: CustomerReservationStatus): boolean {
+  return current === "confirmed";
 }
 
 export function canManagerCollectReservationDeposit(input: {

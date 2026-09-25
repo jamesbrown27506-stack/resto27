@@ -23,6 +23,9 @@ import type { Branch } from "@/lib/branch-types";
 import { NotificationProvider } from "@/components/notifications/notification-provider";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { useManagerNavCounts } from "@/components/notifications/nav-counts";
+import { PendingOrderAlarm } from "@/components/notifications/pending-order-alarm";
+import { AlertHealth } from "@/components/notifications/alert-health";
+import { can } from "@/lib/capabilities";
 
 /**
  * Manager chrome: sidebar, branch context, subscription banner.
@@ -104,20 +107,43 @@ export function ManagerShell({
       channel was actually connected. See the admin shell for the full note.
     */
     <NotificationProvider>
-      <div className="flex min-h-dvh bg-bg">
-      <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 border-r border-border bg-surface lg:block">
+      {/*
+        ─────────────────────────────────────────────────────────────────────
+         EVERY PIECE OF CHROME CARRIES `no-print`.
+
+         The 80 mm ticket and the QR sheet render INSIDE this shell — a nested
+         layout cannot escape its parent's, whatever the ticket layout's
+         comment hoped — so printing a ticket used to print the sidebar, the
+         header and the tab bar around it, three receipts long. Hiding the
+         chrome in print (globals.css) leaves only the page itself.
+        ─────────────────────────────────────────────────────────────────────
+      */}
+      <div className="flex min-h-dvh bg-bg print:block print:min-h-0 print:bg-white">
+      <aside className="no-print sticky top-0 hidden h-dvh w-64 shrink-0 border-r border-border bg-surface lg:block">
         {sidebar}
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0">
+      <div className="flex min-w-0 flex-1 flex-col pb-20 lg:pb-0 print:block print:pb-0">
+        {/* Ring until accepted: rendered first so it sits above everything,
+            and only for people who can accept (orders.advance). */}
+        <PendingOrderAlarm
+          restaurantId={active.restaurantId}
+          enabled={can(active.role, "orders.advance")}
+          ordersBadge={navCounts.orders}
+        />
+
         {impersonating && (
-          <ImpersonationBanner
-            adminName={impersonating.adminName}
-            targetName={impersonating.targetName}
-          />
+          <div className="no-print">
+            <ImpersonationBanner
+              adminName={impersonating.adminName}
+              targetName={impersonating.targetName}
+            />
+          </div>
         )}
 
-        <SubscriptionBanner state={active.subscriptionState} endDate={active.expiresAt} freeModeEndsAt={freeModeEndsAt} />
+        <div className="no-print">
+          <SubscriptionBanner state={active.subscriptionState} endDate={active.expiresAt} freeModeEndsAt={freeModeEndsAt} />
+        </div>
 
         {/* The restaurant's own pause, not the platform's. Shown here rather
             than only on settings, because a kitchen that forgets it is paused
@@ -125,12 +151,15 @@ export function ManagerShell({
         {!active.isAcceptingOrders && (
           <div
             role="status"
-            className="flex items-center gap-2 border-b border-warning/30 bg-warning-light px-4 py-2 text-sm font-semibold text-warning"
+            className="no-print flex items-center gap-2 border-b border-warning/30 bg-warning-light px-4 py-2 text-sm font-semibold text-warning"
           >
             <PauseCircle className="size-4 shrink-0" aria-hidden />
             <span>{t("m.paused.body")}</span>
           </div>
         )}
+
+        {/* Sound blocked / push off / live channel down — see alert-health. */}
+        <AlertHealth />
 
         {/*
           On EVERY breakpoint, not just mobile.
@@ -140,7 +169,7 @@ export function ManagerShell({
           "who am I and where am I" is worth a permanent corner of the screen —
           the same reasoning as the admin shell.
         */}
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border px-4">
+        <header className="no-print sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border px-4">
           {/* The frosted fill is a CHILD, not the header — an element with a
               backdrop-filter becomes the containing block for its fixed
               descendants, which trapped the bell's dropdown inside this 56px
@@ -208,14 +237,16 @@ export function ManagerShell({
       </div>
 
       {/* Phone-app navigation below lg; the sidebar is the desktop way in. */}
-      <MobileTabBar
-        items={tabItems}
-        more={more}
-        counts={navCounts}
-        sheetHeader={
-          <BranchSwitcher branches={branches} activeId={active.restaurantId} onSwitch={onSwitchBranch} />
-        }
-      />
+      <div className="no-print">
+        <MobileTabBar
+          items={tabItems}
+          more={more}
+          counts={navCounts}
+          sheetHeader={
+            <BranchSwitcher branches={branches} activeId={active.restaurantId} onSwitch={onSwitchBranch} />
+          }
+        />
+      </div>
       </div>
     </NotificationProvider>
   );
@@ -258,8 +289,10 @@ export function ManagerPage({
   const sub = descriptionKey ? t(descriptionKey) : description;
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8">
-      <PageBackLink home="/m" />
+    <div className="p-4 sm:p-6 lg:p-8 print:p-0">
+      <div className="no-print">
+        <PageBackLink home="/m" />
+      </div>
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold sm:text-3xl">{heading}</h1>

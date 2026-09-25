@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getTranslator } from "@/lib/i18n/locale-server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import type { ActionResult } from "./admin-actions";
@@ -42,22 +43,23 @@ export async function updateOptionGroup(
   groupId: string,
   input: { name: string; minSelect: number; maxSelect: number; isRequired: boolean },
 ): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
 
   // The same four rules createOptionGroup enforces. Duplicated on purpose: a
   // group that could only be born valid and then edited into "min 3, max 1"
   // would be a checkout nobody can complete.
-  if (input.name.trim().length < 2) return { ok: false, error: "Group name is too short." };
-  if (input.maxSelect < 1) return { ok: false, error: "Maximum must be at least 1." };
+  if (input.name.trim().length < 2) return { ok: false, error: t("est.groupNameShort") };
+  if (input.maxSelect < 1) return { ok: false, error: t("est.maxAtLeastOne") };
   if (input.maxSelect < input.minSelect) {
-    return { ok: false, error: "Maximum cannot be below minimum — nobody could submit that." };
+    return { ok: false, error: t("est.maxBelowMin") };
   }
   if (input.isRequired && input.minSelect < 1) {
-    return { ok: false, error: "A required group needs a minimum of at least 1." };
+    return { ok: false, error: t("est.requiredGroupMin") };
   }
 
   if (!(await ownsGroup(active.restaurantId, groupId))) {
-    return { ok: false, error: "That option group is not on this branch's menu." };
+    return { ok: false, error: t("est.groupNotOnMenu") };
   }
 
   const supabase = createAdminClient();
@@ -73,7 +75,7 @@ export async function updateOptionGroup(
 
   if (error) {
     console.error("[modifiers:updateOptionGroup]", error.message);
-    return { ok: false, error: "Could not save the option group." };
+    return { ok: false, error: t("est.groupSaveFailed") };
   }
 
   revalidatePath("/m/menu");

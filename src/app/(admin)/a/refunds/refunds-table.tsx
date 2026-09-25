@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Info, Plus, Undo2 } from "lucide-react";
+import { Ban, Info, Plus, RotateCcw, Undo2 } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CellStack, DataTable, type Column } from "@/components/ui/data-table";
@@ -12,7 +12,7 @@ import { StatTile } from "@/components/ui/stat-tile";
 import { useToast } from "@/components/ui/toast";
 import { formatMoney } from "@/lib/format/currency";
 import { formatDate } from "@/lib/format/datetime";
-import { createRefund } from "@/lib/data/billing-actions";
+import { adminCancelOrder, adminRetryRefund, createRefund } from "@/lib/data/billing-actions";
 import type { RefundRow } from "@/lib/data/billing";
 
 const STATUS: Record<string, { label: string; tone: BadgeTone }> = {
@@ -36,6 +36,9 @@ export function RefundsTable({
   const [restaurantId, setRestaurantId] = useState(restaurants[0]?.id ?? "");
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [orderRef, setOrderRef] = useState("");
+  const [cancelReason, setCancelReason] = useState("");
 
   const completed = refunds
     .filter((r) => r.status === "completed")
@@ -84,7 +87,28 @@ export function RefundsTable({
       header: "Status",
       cell: (r) => {
         const meta = STATUS[r.status] ?? STATUS.pending;
-        return <Badge tone={meta.tone}>{meta.label}</Badge>;
+        return (
+          <span className="inline-flex items-center gap-2">
+            <Badge tone={meta.tone}>{meta.label}</Badge>
+            {/* A customer payout the saga gave up on: check CamerPay, then requeue. */}
+            {r.customerRefund && r.status === "rejected" && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const result = await adminRetryRefund(r.id);
+                    toast(result.ok ? "Refund requeued." : result.error, result.ok ? "success" : "error");
+                  })
+                }
+              >
+                <RotateCcw className="size-3.5" aria-hidden />
+                Retry
+              </Button>
+            )}
+          </span>
+        );
       },
     },
     {
@@ -98,7 +122,13 @@ export function RefundsTable({
 
   return (
     <>
-      <div className="mb-6 flex justify-end">
+      <div className="mb-6 flex flex-wrap justify-end gap-3">
+        {/* Support's exit for a paid order that went wrong: cancel it and the
+            customer's money goes back automatically (0059). */}
+        <Button variant="outline" onClick={() => setCancelOpen(true)} disabled={pending}>
+          <Ban className="size-4" aria-hidden />
+          <span>Cancel &amp; refund an order</span>
+        </Button>
         <Button onClick={() => setOpen(true)} disabled={pending || restaurants.length === 0}>
           <Plus className="size-4" aria-hidden />
           <span>New refund</span>
@@ -149,6 +179,63 @@ export function RefundsTable({
           }
         />
       </div>
+
+      <Sheet
+        open={cancelOpen}
+        onClose={() => setCancelOpen(false)}
+        title="Cancel & refund an order"
+        footer={
+          <div className="flex gap-3">
+            <Button variant="outline" fullWidth onClick={() => setCancelOpen(false)}>
+              Close
+            </Button>
+            <Button
+              fullWidth
+              variant="danger"
+              disabled={!orderRef.trim() || cancelReason.trim().length < 5 || pending}
+              loading={pending}
+              onClick={() =>
+                startTransition(async () => {
+                  const result = await adminCancelOrder({ reference: orderRef, reason: cancelReason });
+                  if (result.ok) {
+                    setCancelOpen(false);
+                    setOrderRef("");
+                    setCancelReason("");
+                    toast(result.note ?? "Order cancelled.", "success");
+                  } else {
+                    toast(result.error, "error");
+                  }
+                })
+              }
+            >
+              Cancel order
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-5">
+          <p className="text-sm text-text-secondary">
+            Paid online orders are refunded in full to the customer&apos;s Mobile Money (or wallet), and the
+            restaurant&apos;s wallet is debited. Unpaid orders are simply cancelled. The customer reads the reason.
+          </p>
+          <Field label="Order reference" htmlFor="cancel-order-ref" required>
+            <Input
+              id="cancel-order-ref"
+              placeholder="CMD-A1B2C3"
+              value={orderRef}
+              onChange={(e) => setOrderRef(e.target.value)}
+            />
+          </Field>
+          <Field label="Reason" htmlFor="cancel-order-reason" required>
+            <Textarea
+              id="cancel-order-reason"
+              rows={3}
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+            />
+          </Field>
+        </div>
+      </Sheet>
 
       <Sheet
         open={open}

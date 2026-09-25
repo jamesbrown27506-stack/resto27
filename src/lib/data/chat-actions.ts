@@ -1,10 +1,28 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/server";
+import { getTranslator } from "@/lib/i18n/locale-server";
 import { getCurrentProfile, requireUser } from "@/lib/auth/session";
 import { notify } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import { getBranding } from "@/lib/branding";
+import { getBranchContext } from "@/lib/auth/branch";
+import { can, type Capability } from "@/lib/capabilities";
+import {
+  contextFromSubject,
+  contextHref,
+  isUntouchedThread,
+  type ChatContextRef,
+} from "@/lib/chat/context";
+import {
+  createPairThread,
+  fetchContextRow,
+  findOpenPairThread,
+  hasCustomerRelationship,
+  isMissingContextColumn,
+  resolveThreadContexts,
+  type ContextRow,
+} from "@/lib/data/chat-context";
 
 /**
  * In-app messaging — threaded conversations.
@@ -37,8 +55,15 @@ import { getBranding } from "@/lib/branding";
  *   · staff membership is re-verified against restaurant_staff on every
  *     call — a role removed from the team loses access immediately,
  *   · admins only reach restaurant_id IS NULL threads,
- *   · a manager may only open a PLATFORM thread — they cannot write to
- *     another restaurant by passing its id.
+ *   · a manager may only open a PLATFORM thread through startConversation —
+ *     they cannot write to another restaurant by passing its id;
+ *   · a BRANCH may open a thread with a customer (openCustomerConversation),
+ *     but only one linked to that branch by an order or a reservation, and
+ *     the branch is the session's active one. The row is the same
+ *     customer↔restaurant thread a customer would have opened — customer_id
+ *     is the customer, restaurant_id the branch — so RLS, unread counters and
+ *     notifications need no new case: staff are the "staff" side, and their
+ *     first message reaches the customer as a chat_reply.
  *
  *  RATE LIMITED — a conversation that can be abused is a spam engine with
  *  a mail relay attached (each message notifies + emails the other side).
@@ -80,9 +105,10 @@ function schemaMissing(error: { code?: string; message?: string } | null | undef
 function chatError(
   error: { code?: string; message?: string } | null | undefined,
   fallback: string,
+  t: Awaited<ReturnType<typeof getTranslator>>,
 ): string {
   if (schemaMissing(error)) {
-    return `La messagerie n'est pas installée sur cette base de données — exécutez la migration ${CHAT_MIGRATION} dans Supabase.`;
+    return t("ecu.chatMigrationMissing", { migration: CHAT_MIGRATION });
   }
   return fallback;
 }
@@ -104,7 +130,12 @@ export interface ChatConversationSummary {
   lastMessageAt: string;
   /** MY side's unread count. */
   unread: number;
+  /** The order / reservation the thread is about (0061, or the subject). */
+  context: ChatContextRef | null;
 }
+
+/** A thread's context as the viewer sees it — with a link for THEIR side. */
+export type ChatThreadContext = ChatContextRef & { href: string | null };
 
 export interface ChatMessage {
   id: string;
@@ -123,10 +154,32 @@ export interface ChatThread {
   peerName: string;
   /** True when the caller may still post to this thread. */
   canPost: boolean;
+  /** "Commande CMD-XXXX" / "Réservation RES-XXXX", linked when possible. */
+  context: ChatThreadContext | null;
   messages: ChatMessage[];
 }
 
 type ActionResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * The contact buttons' result. `reason` is the stable machine code the button
+ * maps to a dictionary string (the customer-facing convention, see CLAUDE.md);
+ * `error` is the French fallback.
+ */
+export type OpenChatReason =
+  | "auth"
+  | "role"
+  | "rate_limited"
+  | "unreachable"
+  | "not_found"
+  | "forbidden"
+  | "no_customer"
+  | "no_relationship"
+  | "failed";
+
+export type OpenChatResult =
+  | { ok: true; conversationId: string; href: string }
+  | { ok: false; reason: OpenChatReason; error: string };
 
 function cleanBody(raw: unknown): string {
   return String(raw ?? "").replace(/\r\n/g, "\n").trim().slice(0, MAX_BODY);
@@ -141,26 +194,39 @@ async function loadThread(
   status: string;
   customerId: string;
   restaurantId: string | null;
+  orderId: string | null;
+  reservationId: string | null;
 } | null> {
   const supabase = createAdminClient();
-  const { data } = await supabase
+  const BASE = "id, subject, status, customer_id, restaurant_id";
+  const first = await supabase
     .from("conversations")
-    .select("id, subject, status, customer_id, restaurant_id")
+    .select(`${BASE}, order_id, reservation_id`)
     .eq("id", conversationId)
     .maybeSingle();
-  return (data as unknown as {
+  let data: unknown = first.data;
+  if (first.error && isMissingContextColumn(first.error)) {
+    // Pre-0061: no context columns; the subject still carries the reference.
+    data = (await supabase.from("conversations").select(BASE).eq("id", conversationId).maybeSingle()).data;
+  }
+  const row = data as {
     id: string;
     subject: string;
     status: string;
     customer_id: string;
     restaurant_id: string | null;
-  } | null)
+    order_id?: string | null;
+    reservation_id?: string | null;
+  } | null;
+  return row
     ? {
-        id: data!.id,
-        subject: data!.subject,
-        status: data!.status,
-        customerId: data!.customer_id,
-        restaurantId: data!.restaurant_id,
+        id: row.id,
+        subject: row.subject,
+        status: row.status,
+        customerId: row.customer_id,
+        restaurantId: row.restaurant_id,
+        orderId: row.order_id ?? null,
+        reservationId: row.reservation_id ?? null,
       }
     : null;
 }
@@ -267,19 +333,20 @@ export async function startConversation(input: {
   subject?: string;
   body: string;
 }): Promise<ActionResult & { conversationId?: string }> {
+  const t = await getTranslator();
   const initiator = await requireUser();
   // Admins answer threads, they do not open them — there is no "the platform
   // wrote to itself" inbox for the reply to land in.
   if (initiator.role !== "customer" && initiator.role !== "manager") {
-    return { ok: false, error: "Only customers and restaurants can start conversations." };
+    return { ok: false, error: t("ecu.chatRoleNotAllowed") };
   }
 
   const limited = await rateLimit({ key: "chat:start", limit: 5, windowMs: 60 * 60 * 1000, identifier: initiator.id });
-  if (!limited.ok) return { ok: false, error: "Trop de conversations ouvertes. Réessayez dans une heure." };
+  if (!limited.ok) return { ok: false, error: t("ecu.chatTooManyThreads") };
 
   const body = cleanBody(input.body);
   const subject = String(input.subject ?? "").trim().slice(0, MAX_SUBJECT);
-  if (body.length < 1) return { ok: false, error: "Votre message est vide." };
+  if (body.length < 1) return { ok: false, error: t("ecu.chatEmpty") };
 
   const supabase = createAdminClient();
   // A manager's only correspondent is the platform. Forced server-side rather
@@ -297,7 +364,7 @@ export async function startConversation(input: {
       .eq("id", restaurantId)
       .eq("status", "active")
       .maybeSingle();
-    if (!restaurant) return { ok: false, error: "Ce restaurant n'est pas joignable." };
+    if (!restaurant) return { ok: false, error: t("ecu.chatUnreachable") };
   }
 
   const { data: conversation, error } = await supabase
@@ -308,7 +375,7 @@ export async function startConversation(input: {
 
   if (error || !conversation) {
     console.error("[chat:start]", error?.message);
-    return { ok: false, error: chatError(error, "Impossible d'ouvrir la conversation.") };
+    return { ok: false, error: chatError(error, t("ecu.chatOpenFailed"), t) };
   }
 
   const { error: messageError } = await supabase.from("conversation_messages").insert({
@@ -322,7 +389,7 @@ export async function startConversation(input: {
 
   if (messageError) {
     console.error("[chat:start] first message", messageError.message);
-    return { ok: false, error: chatError(messageError, "Impossible d'envoyer le message.") };
+    return { ok: false, error: chatError(messageError, t("ecu.chatSendFailed"), t) };
   }
 
   // The first message IS the unread signal for the other side.
@@ -336,28 +403,220 @@ export async function startConversation(input: {
   return { ok: true, conversationId: conversation.id };
 }
 
+/* ── Contact buttons: open (or reuse) a thread, then navigate into it ──── */
+
+/**
+ * Open or reuse the pair's thread. Shared tail of both contact actions: the
+ * caller has already proved who it is and that it may talk to this pair.
+ */
+async function openPairThread(input: {
+  customerId: string;
+  restaurantId: string;
+  context: ContextRow | null;
+}): Promise<{ id: string } | { error: string }> {
+  const t = await getTranslator();
+  const existing = await findOpenPairThread(input);
+  if (existing) return { id: existing };
+
+  const created = await createPairThread(input);
+  if ("id" in created) return created;
+  console.error("[chat:open]", created.error?.message);
+  return { error: chatError(created.error, t("ecu.chatOpenFailed"), t) };
+}
+
+/**
+ * CUSTOMER → RESTAURANT. Any active restaurant, from its public page, an
+ * order or a reservation.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE CHAT IS THE ONLY LINE BETWEEN THE TWO SIDES.
+ *
+ *  Phone numbers and WhatsApp links are deliberately not shown between
+ *  customers and restaurants: an order negotiated off-platform is an order
+ *  the platform cannot protect, refund or count. That only holds if reaching
+ *  the restaurant in-app is at least as easy as dialling it — one tap, from
+ *  wherever the question arises, landing in a thread that already says which
+ *  order it is about. Hence no compose form in between: this opens the thread
+ *  and the composer is right there.
+ *
+ *  An order / reservation passed in must be the CALLER'S and at THIS
+ *  restaurant, or the chip would let a customer attach someone else's order
+ *  reference to a conversation.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function openRestaurantConversation(input: {
+  restaurantId: string;
+  orderId?: string | null;
+  reservationId?: string | null;
+}): Promise<OpenChatResult> {
+  const t = await getTranslator();
+  // getActiveProfile semantics without the redirect: an anonymous visitor on
+  // a public restaurant page gets a reason code the button turns into a
+  // sign-in round trip, not a thrown redirect inside a click handler.
+  const profile = await getCurrentProfile();
+  if (!profile || profile.deletedAt || profile.status !== "active") {
+    return { ok: false, reason: "auth", error: t("ecu.chatSignIn") };
+  }
+  if (profile.role !== "customer") {
+    // A restaurant's inbox lists its platform thread only (listMyConversations)
+    // — a thread opened here by a manager account would exist nowhere they
+    // could read it.
+    return { ok: false, reason: "role", error: t("ecu.chatCustomersOnly") };
+  }
+
+  const limited = await rateLimit({ key: "chat:open", limit: 20, windowMs: 60 * 60 * 1000, identifier: profile.id });
+  if (!limited.ok) {
+    return { ok: false, reason: "rate_limited", error: t("ecu.chatTooManyThreads") };
+  }
+
+  const restaurantId = String(input.restaurantId ?? "").trim();
+  if (!restaurantId) return { ok: false, reason: "unreachable", error: t("ecu.chatUnreachable") };
+
+  const supabase = createAdminClient();
+  const { data: restaurant } = await supabase
+    .from("restaurants")
+    .select("id")
+    .eq("id", restaurantId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (!restaurant) return { ok: false, reason: "unreachable", error: t("ecu.chatUnreachable") };
+
+  let context: ContextRow | null = null;
+  const orderId = input.orderId?.trim() || null;
+  const reservationId = orderId ? null : input.reservationId?.trim() || null;
+  if (orderId || reservationId) {
+    context = await fetchContextRow(orderId ? "order" : "reservation", (orderId ?? reservationId)!);
+    if (!context || context.customerId !== profile.id || context.restaurantId !== restaurantId) {
+      return { ok: false, reason: "not_found", error: t("ecu.chatContextNotFound") };
+    }
+  }
+
+  const opened = await openPairThread({ customerId: profile.id, restaurantId, context });
+  if ("error" in opened) return { ok: false, reason: "failed", error: opened.error };
+  return { ok: true, conversationId: opened.id, href: `/messages?c=${opened.id}` };
+}
+
+/**
+ * RESTAURANT → CUSTOMER. Only a customer linked to the ACTIVE branch by an
+ * order or a reservation (see hasCustomerRelationship for why), and only for
+ * staff who can already see that link.
+ *
+ * The branch comes from the session (getBranchContext), never from the call:
+ * a waiter at two branches writes as the branch they are working, and nobody
+ * can open a thread inside another tenant's inbox by posting its id.
+ *
+ * `customerId` may be omitted when an order / reservation is given — the
+ * customer is read from that row, which is also what proves the link. When
+ * both are given they must agree.
+ *
+ * The capability is the one that already shows the staff member the thing
+ * they are writing about: orders.view for an order, reservations.view for a
+ * booking, customers.view for a bare "write to this customer". No new
+ * capability — the matrix is not this feature's to change.
+ */
+export async function openCustomerConversation(input: {
+  customerId?: string | null;
+  orderId?: string | null;
+  reservationId?: string | null;
+}): Promise<OpenChatResult> {
+  const t = await getTranslator();
+  const branch = await getBranchContext();
+  if (!branch) return { ok: false, reason: "auth", error: t("ecu.chatSessionExpired") };
+  if (branch.impersonating) {
+    // The admin is not on the restaurant's staff roster, so participationIn()
+    // would refuse them the thread they just created — and a platform admin
+    // writing to a diner under a restaurant's name is not something to allow
+    // by accident anyway.
+    return { ok: false, reason: "forbidden", error: t("ecu.chatImpersonating") };
+  }
+
+  const restaurantId = branch.active.restaurantId;
+  const orderId = input.orderId?.trim() || null;
+  const reservationId = orderId ? null : input.reservationId?.trim() || null;
+  const capability: Capability = orderId ? "orders.view" : reservationId ? "reservations.view" : "customers.view";
+  if (!can(branch.active.role, capability)) {
+    return { ok: false, reason: "forbidden", error: t("ecu.chatRoleCannotWrite") };
+  }
+
+  const limited = await rateLimit({ key: "chat:open", limit: 30, windowMs: 60 * 60 * 1000, identifier: branch.profile.id });
+  if (!limited.ok) {
+    return { ok: false, reason: "rate_limited", error: t("ecu.chatTooManyThreads") };
+  }
+
+  let context: ContextRow | null = null;
+  let customerId = input.customerId?.trim() || null;
+  if (orderId || reservationId) {
+    context = await fetchContextRow(orderId ? "order" : "reservation", (orderId ?? reservationId)!);
+    // Another branch's order answers exactly like a missing one.
+    if (!context || context.restaurantId !== restaurantId) {
+      return { ok: false, reason: "not_found", error: t("ecu.chatContextNotFound") };
+    }
+    if (!context.customerId) {
+      return { ok: false, reason: "no_customer", error: t("ecu.chatNoAccount") };
+    }
+    if (customerId && customerId !== context.customerId) {
+      return { ok: false, reason: "not_found", error: t("ecu.chatContextNotFound") };
+    }
+    customerId = context.customerId;
+  } else {
+    if (!customerId) {
+      return { ok: false, reason: "no_customer", error: t("ecu.chatCustomerNotFound") };
+    }
+    if (!(await hasCustomerRelationship(restaurantId, customerId))) {
+      return {
+        ok: false,
+        reason: "no_relationship",
+        error: t("ecu.chatOnlyOwnCustomers"),
+      };
+    }
+  }
+
+  // Writing to yourself would make you the initiator of your own staff
+  // thread, and participationIn() would file every reply on the wrong side.
+  if (customerId === branch.profile.id) {
+    return { ok: false, reason: "forbidden", error: t("ecu.chatNotYourself") };
+  }
+
+  // The customer must still be someone who can read the reply.
+  const supabase = createAdminClient();
+  const { data: customer } = await supabase
+    .from("profiles")
+    .select("id, status, deleted_at")
+    .eq("id", customerId)
+    .maybeSingle();
+  const c = customer as { id: string; status: string; deleted_at: string | null } | null;
+  if (!c || c.deleted_at || c.status !== "active") {
+    return { ok: false, reason: "no_customer", error: t("ecu.chatCustomerInactive") };
+  }
+
+  const opened = await openPairThread({ customerId, restaurantId, context });
+  if ("error" in opened) return { ok: false, reason: "failed", error: opened.error };
+  return { ok: true, conversationId: opened.id, href: `/m/messages?c=${opened.id}` };
+}
+
 /* ── Any participant: send a message ───────────────────────────────────── */
 
 export async function sendMessage(input: {
   conversationId: string;
   body: string;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const profile = await requireUser();
 
   const limited = await rateLimit({ key: "chat:send", limit: 15, windowMs: 60_000, identifier: profile.id });
-  if (!limited.ok) return { ok: false, error: "Trop de messages envoyés. Réessayez dans une minute." };
+  if (!limited.ok) return { ok: false, error: t("ecu.chatTooManyMessages") };
 
   const body = cleanBody(input.body);
-  if (body.length < 1) return { ok: false, error: "Votre message est vide." };
+  if (body.length < 1) return { ok: false, error: t("ecu.chatEmpty") };
 
   const supabase = createAdminClient();
   const thread = await loadThread(input.conversationId);
-  if (!thread) return { ok: false, error: "Conversation introuvable." };
+  if (!thread) return { ok: false, error: t("ecu.chatNotFound") };
 
   // ── Who is the caller in this thread? ────────────────────────────────
   const part = await participationIn(thread, profile);
-  if (!part) return { ok: false, error: "Vous ne participez pas à cette conversation." };
-  if (thread.status === "closed") return { ok: false, error: "Cette conversation est fermée." };
+  if (!part) return { ok: false, error: t("ecu.chatNotParticipant") };
+  if (thread.status === "closed") return { ok: false, error: t("ecu.chatClosed") };
 
   const { error } = await supabase.from("conversation_messages").insert({
     conversation_id: thread.id,
@@ -367,7 +626,7 @@ export async function sendMessage(input: {
   });
   if (error) {
     console.error("[chat:send]", error.message);
-    return { ok: false, error: chatError(error, "Impossible d'envoyer le message.") };
+    return { ok: false, error: chatError(error, t("ecu.chatSendFailed"), t) };
   }
 
   // The other side's unread bumps (read-then-write: the raw increment needs
@@ -414,11 +673,19 @@ export async function sendMessage(input: {
         .maybeSingle();
       restaurantName = (restaurant as { name?: string } | null)?.name ?? undefined;
     }
+    /*
+      /m/messages only for a RESTAURANT'S OWN platform thread. A restaurant
+      thread's customer side is always the customer inbox — even when that
+      customer happens to hold a manager account elsewhere and a branch wrote
+      to them first (openCustomerConversation): /m/messages lists their
+      platform threads only, and the banner would open onto nothing.
+    */
+    const toBackOffice = !thread.restaurantId && initiatorRole === "manager";
     await notify({
       event: "chat_reply",
       tone: "info",
       customerId: thread.customerId,
-      href: `${initiatorRole === "manager" ? "/m/messages" : "/messages"}?c=${thread.id}`,
+      href: `${toBackOffice ? "/m/messages" : "/messages"}?c=${thread.id}`,
       params: {
         preview,
         restaurantName,
@@ -452,32 +719,41 @@ type ListScope = "mine" | "minePlatform" | "staff" | "admin";
 async function listFor(scope: ListScope, scopeId: string): Promise<ChatConversationSummary[]> {
   const supabase = createAdminClient();
 
-  let query;
-  if (scope === "mine" || scope === "minePlatform") {
-    query = supabase
-      .from("conversations")
-      .select("id, subject, status, restaurant_id, staff_unread, customer_unread, last_message_at, restaurants ( name )")
-      .eq("customer_id", scopeId);
-    if (scope === "minePlatform") query = query.is("restaurant_id", null);
-  } else if (scope === "staff") {
-    query = supabase
-      .from("conversations")
-      .select("id, subject, status, restaurant_id, staff_unread, customer_unread, last_message_at, profiles!conversations_customer_id_fkey ( name, role )")
-      .eq("restaurant_id", scopeId);
-  } else {
-    query = supabase
-      .from("conversations")
-      .select("id, subject, status, restaurant_id, staff_unread, customer_unread, last_message_at, profiles!conversations_customer_id_fkey ( name, role )")
-      .is("restaurant_id", null);
-  }
+  const COMMON = "id, subject, status, restaurant_id, staff_unread, customer_unread, last_message_at, created_at";
+  // Tried with the 0061 context columns first; a database that has not run
+  // 0061 yet answers 42703 and gets the same list without them (the subject
+  // still carries the reference — see lib/chat/context.ts).
+  const run = (withContext: boolean) => {
+    const cols = withContext ? `${COMMON}, order_id, reservation_id` : COMMON;
+    let query;
+    if (scope === "mine" || scope === "minePlatform") {
+      query = supabase
+        .from("conversations")
+        .select(`${cols}, restaurants ( name )`)
+        .eq("customer_id", scopeId);
+      if (scope === "minePlatform") query = query.is("restaurant_id", null);
+    } else if (scope === "staff") {
+      query = supabase
+        .from("conversations")
+        .select(`${cols}, profiles!conversations_customer_id_fkey ( name, role )`)
+        .eq("restaurant_id", scopeId);
+    } else {
+      query = supabase
+        .from("conversations")
+        .select(`${cols}, profiles!conversations_customer_id_fkey ( name, role )`)
+        .is("restaurant_id", null);
+    }
+    return query.order("last_message_at", { ascending: false }).limit(50);
+  };
 
-  const { data, error } = await query.order("last_message_at", { ascending: false }).limit(50);
+  let { data, error } = await run(true);
+  if (error && isMissingContextColumn(error)) ({ data, error } = await run(false));
   if (error) {
     console.error("[chat:list]", error.message);
     return [];
   }
 
-  const rows = (data ?? []) as unknown as {
+  const rows = ((data ?? []) as unknown as {
     id: string;
     subject: string;
     status: "open" | "closed";
@@ -485,11 +761,27 @@ async function listFor(scope: ListScope, scopeId: string): Promise<ChatConversat
     staff_unread: number;
     customer_unread: number;
     last_message_at: string;
+    created_at: string;
+    order_id?: string | null;
+    reservation_id?: string | null;
     restaurants: { name: string } | null;
     profiles: { name: string; role: string } | null;
-  }[];
+  }[])
+    // A thread opened by a contact button and never written in is nobody's
+    // conversation yet — see isUntouchedThread.
+    .filter((row) => !isUntouchedThread(row));
 
-  const lastByThread = await lastMessageOf(rows.map((r) => r.id));
+  const [lastByThread, contexts] = await Promise.all([
+    lastMessageOf(rows.map((r) => r.id)),
+    resolveThreadContexts(
+      rows.map((r) => ({
+        id: r.id,
+        subject: r.subject,
+        orderId: r.order_id ?? null,
+        reservationId: r.reservation_id ?? null,
+      })),
+    ),
+  ]);
   const mine = scope === "mine" || scope === "minePlatform";
   // "The team" is whatever the platform is called in /a/settings — not the
   // default brand name frozen into a string literal. getBranding is
@@ -510,6 +802,7 @@ async function listFor(scope: ListScope, scopeId: string): Promise<ChatConversat
     lastMessage: lastByThread.get(row.id)?.body ?? null,
     lastMessageAt: lastByThread.get(row.id)?.created_at ?? row.last_message_at,
     unread: mine ? row.customer_unread : row.staff_unread,
+    context: contexts.get(row.id) ?? null,
   }));
 }
 
@@ -576,13 +869,29 @@ export async function getConversation(conversationId: string): Promise<ChatThrea
       ? ((await restaurantName(thread.restaurantId)) ?? (await getBranding()).name)
       : ((await profileName(thread.customerId)) ?? "Client");
 
+  // What the thread is about, linked for MY side: the customer's order page
+  // or the back-office ticket for the same order.
+  const contextRef =
+    thread.orderId || thread.reservationId
+      ? ((await resolveThreadContexts([thread])).get(thread.id) ?? null)
+      : contextFromSubject(thread.subject);
+  const context: ChatThreadContext | null = contextRef
+    ? {
+        ...contextRef,
+        href: thread.restaurantId
+          ? contextHref(contextRef, part.side === "initiator" ? "customer" : "staff")
+          : null,
+      }
+    : null;
+
   return {
     id: thread.id,
     subject: thread.subject,
     status: thread.status as "open" | "closed",
     peerName,
     canPost: thread.status === "open",
-    messages: ((messages ?? []) as unknown as {
+    context,
+    messages:((messages ?? []) as unknown as {
       id: string;
       sender_id: string;
       sender_role: "customer" | "manager" | "admin";
@@ -618,13 +927,14 @@ async function profileName(id: string): Promise<string | null> {
 /* ── Mark read / close ─────────────────────────────────────────────────── */
 
 export async function markConversationRead(conversationId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const profile = await requireUser();
   const supabase = createAdminClient();
   const thread = await loadThread(conversationId);
-  if (!thread) return { ok: false, error: "Conversation introuvable." };
+  if (!thread) return { ok: false, error: t("ecu.chatNotFound") };
 
   const part = await participationIn(thread, profile);
-  if (!part) return { ok: false, error: "Vous ne participez pas à cette conversation." };
+  if (!part) return { ok: false, error: t("ecu.chatNotParticipant") };
 
   // My side's messages become read; my counter zeroes.
   await supabase
@@ -641,13 +951,14 @@ export async function markConversationRead(conversationId: string): Promise<Acti
 }
 
 export async function closeConversation(conversationId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const profile = await requireUser();
   const supabase = createAdminClient();
   const thread = await loadThread(conversationId);
-  if (!thread) return { ok: false, error: "Conversation introuvable." };
+  if (!thread) return { ok: false, error: t("ecu.chatNotFound") };
 
   if (!(await participationIn(thread, profile))) {
-    return { ok: false, error: "Vous ne participez pas à cette conversation." };
+    return { ok: false, error: t("ecu.chatNotParticipant") };
   }
 
   await supabase

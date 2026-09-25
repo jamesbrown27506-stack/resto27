@@ -373,7 +373,9 @@ export async function fetchReservations(
       id: r.id,
       reference: r.reference,
       guestName: r.guest_name,
-      guestPhone: r.guest_phone,
+      // Never sent to the back office: bookings are discussed in the chat;
+      // only a paid delivery in progress releases a customer's number.
+      guestPhone: "",
       guestEmail: r.guest_email,
       partySize: r.party_size,
       reservedFor: r.reserved_for,
@@ -506,7 +508,15 @@ export interface BranchOverview {
   revenueToday: number;
   /** Today's orders still waiting on a yes/no — excluded from revenueToday. */
   awaitingConfirmation: number;
+  /** Orders in progress: waiting on us or the customer, or in the kitchen. */
   pendingOrders: number;
+  /**
+   * Orders waiting on the RESTAURANT to accept (`pending`) — the only ones
+   * that are "urgent" for us. `awaiting_customer` is the customer's move and
+   * confirmed/preparing are the kitchen's normal work; counting them in the
+   * red "customers are waiting for your answer" box cried wolf all service.
+   */
+  waitingOrders: number;
   pendingReservations: number;
   menuItems: number;
   unavailableItems: number;
@@ -535,14 +545,15 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
   const count = (table: string) =>
     supabase.from(table).select("*", { count: "exact", head: true }).eq("restaurant_id", restaurantId);
 
-  const [today, pending, reservations, items, unavailable, staff, unrepliedReviews, restaurant] =
+  const [today, pending, waiting, reservations, items, unavailable, staff, unrepliedReviews, restaurant] =
     await Promise.all([
       supabase
         .from("orders")
         .select("total, status")
         .eq("restaurant_id", restaurantId)
         .gte("created_at", since),
-      count("orders").in("status", ["pending", "confirmed", "preparing"]),
+      count("orders").in("status", ["pending", "awaiting_customer", "confirmed", "preparing"]),
+      count("orders").eq("status", "pending"),
       count("reservations").eq("status", "pending"),
       count("menu_items"),
       count("menu_items").eq("is_available", false),
@@ -605,6 +616,7 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
     revenueToday,
     awaitingConfirmation,
     pendingOrders: pending.count ?? 0,
+    waitingOrders: waiting.count ?? 0,
     pendingReservations: reservations.count ?? 0,
     menuItems: items.count ?? 0,
     unavailableItems: unavailable.count ?? 0,

@@ -50,6 +50,7 @@ export function RestaurantCard({
             src={restaurant.coverUrl}
             alt={`${restaurant.name} — ${[formatQuartier(restaurant.quartier), "Douala"].filter(Boolean).join(", ")}`}
             loading="lazy"
+            decoding="async"
             className="size-full object-cover transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
@@ -68,7 +69,7 @@ export function RestaurantCard({
           <span className="absolute bottom-3 left-3 grid size-12 place-items-center overflow-hidden rounded-md border border-white/70 bg-white p-1 shadow-md">
             {/* Decorative: the restaurant name is the card heading below. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={restaurant.logoUrl} alt="" loading="lazy" className="size-full object-contain" />
+            <img src={restaurant.logoUrl} alt="" loading="lazy" decoding="async" className="size-full object-contain" />
           </span>
         )}
         {action && <div className="absolute top-3 right-3">{action}</div>}

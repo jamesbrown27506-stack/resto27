@@ -7,21 +7,26 @@ import { z } from "zod";
  * matters. Sharing the schema is what stops the two drifting — the classic
  * failure being a client that accepts a 6-character password because someone
  * relaxed the front-end rule and forgot the back-end.
+ *
+ * The custom messages are DICTIONARY KEYS (`ecu.v.*`), not sentences: a schema
+ * is built once at module load and cannot know who is reading, so the action
+ * translates each issue with translateIssueMessage (lib/i18n/issue-message).
+ * Anything rendering these messages must go through that, or it shows a key.
  */
 
 /** Matches the checklist shown by <PasswordStrength>. Keep the two in step. */
 export const passwordSchema = z
   .string()
-  .min(8, "8 caractères minimum")
-  .regex(/[A-ZÀ-Þ]/, "Une majuscule requise")
-  .regex(/\d/, "Un chiffre requis")
-  .regex(/[^\w\s]/, "Un caractère spécial requis");
+  .min(8, "ecu.v.passwordMin")
+  .regex(/[A-ZÀ-Þ]/, "ecu.v.passwordUpper")
+  .regex(/\d/, "ecu.v.passwordDigit")
+  .regex(/[^\w\s]/, "ecu.v.passwordSpecial");
 
 export const emailSchema = z
   .string()
   .trim()
-  .min(1, "Adresse email requise")
-  .email("Adresse email invalide")
+  .min(1, "ecu.v.emailRequired")
+  .email("ecu.v.emailInvalid")
   .toLowerCase();
 
 /**
@@ -34,7 +39,7 @@ export const phoneSchema = z
   .transform((v) => v.replace(/[\s.-]/g, ""))
   .refine(
     (v) => /^(\+?237)?6\d{8}$/.test(v),
-    "Numéro camerounais invalide (ex. +237 6 99 12 34 56)",
+    "ecu.v.phoneInvalid",
   )
   .transform((v) => (v.startsWith("+237") ? v : `+237${v.replace(/^237/, "")}`));
 
@@ -43,16 +48,16 @@ export const signInSchema = z.object({
   // Deliberately NOT passwordSchema. Validating an existing password against
   // the current policy would lock out anyone whose password predates a policy
   // change — and it leaks the policy to an attacker probing the form.
-  password: z.string().min(1, "Mot de passe requis"),
+  password: z.string().min(1, "ecu.v.passwordRequired"),
   remember: z.coerce.boolean().optional(),
 });
 
 export const signUpCustomerSchema = z.object({
-  name: z.string().trim().min(2, "Nom complet requis").max(120),
+  name: z.string().trim().min(2, "ecu.v.fullNameRequired").max(120),
   email: emailSchema,
   phone: phoneSchema,
   password: passwordSchema,
-  terms: z.literal(true, { message: "Vous devez accepter les conditions" }),
+  terms: z.literal(true, { message: "ecu.v.acceptTerms" }),
 });
 
 /**
@@ -70,15 +75,15 @@ export const signUpCustomerSchema = z.object({
  * from all three.
  */
 export const signUpRestaurantSchema = z.object({
-  ownerName: z.string().trim().min(2, "Nom du responsable requis").max(120),
+  ownerName: z.string().trim().min(2, "ecu.v.ownerNameRequired").max(120),
   email: emailSchema,
   phone: phoneSchema,
   password: passwordSchema,
-  restaurantName: z.string().trim().min(2, "Nom du restaurant requis").max(160),
+  restaurantName: z.string().trim().min(2, "ecu.v.restaurantNameRequired").max(160),
   description: z.string().trim().max(2000).optional(),
-  serviceAreaId: z.string().uuid("Ville requise"),
-  quartier: z.string().trim().min(1, "Quartier requis").max(120),
-  address: z.string().trim().min(4, "Adresse requise").max(300),
+  serviceAreaId: z.string().uuid("ecu.v.cityRequired"),
+  quartier: z.string().trim().min(1, "ecu.v.quartierRequired").max(120),
+  address: z.string().trim().min(4, "ecu.v.addressRequired").max(300),
   restaurantPhone: phoneSchema,
 });
 
@@ -94,7 +99,7 @@ export const resetCodeSchema = z.object({
   code: z
     .string()
     .transform((v) => v.replace(/\s/g, ""))
-    .refine((v) => /^\d{6,10}$/.test(v), "Saisissez le code à chiffres reçu par email"),
+    .refine((v) => /^\d{6,10}$/.test(v), "ecu.v.resetCode"),
 });
 
 export const resetPasswordSchema = z
@@ -103,7 +108,7 @@ export const resetPasswordSchema = z
     confirm: z.string(),
   })
   .refine((d) => d.password === d.confirm, {
-    message: "Les deux mots de passe ne correspondent pas",
+    message: "ecu.v.passwordMismatch",
     path: ["confirm"],
   });
 

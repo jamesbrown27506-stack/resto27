@@ -142,7 +142,11 @@ const nextConfig: NextConfig = {
           // Clickjacking: even with frame-ancestors 'none' in the CSP, this
           // covers the legacy browsers that ignore it.
           { key: "X-Frame-Options", value: "SAMEORIGIN" },
-          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          // geolocation=(self), not (): the checkout's "Ajouter ma position au
+          // repère" button now works in phone browsers too (it was app-only),
+          // and `()` disables navigator.geolocation for our own pages as well.
+          // Third-party frames stay blocked.
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
           {
             key: "Content-Security-Policy",
             value: contentSecurityPolicy(process.env.NODE_ENV === "production"),

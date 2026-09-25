@@ -15,6 +15,7 @@ import { NotificationSettings } from "@/components/notifications/notification-se
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { NotificationEventKey, NotificationPreference } from "@/lib/data/settings";
+import { ReservationDurationPanel } from "./reservation-duration-panel";
 
 /**
  * Settings, on stored values.
@@ -33,10 +34,13 @@ export function SettingsView({
   preferences,
   acceptingOrders,
   pausedReason,
+  reservationDuration,
 }: {
   preferences: NotificationPreference[];
   acceptingOrders: boolean;
   pausedReason: string | null;
+  /** Minutes a booking holds its table (0060). */
+  reservationDuration: number;
 }) {
   const { t } = useLocale();
   const { toast } = useToast();
@@ -158,6 +162,9 @@ export function SettingsView({
           </p>
         </div>
       </Panel>
+
+      {/* ── Reservations: how long a booking holds its table (0060) ─────── */}
+      <ReservationDurationPanel durationMin={reservationDuration} />
 
       {/* ── Channels — the master switches, above the per-event grid ───── */}
       <NotificationSettings />

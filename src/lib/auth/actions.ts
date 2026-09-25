@@ -1,6 +1,8 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { getTranslator } from "@/lib/i18n/locale-server";
+import { translateIssueMessage } from "@/lib/i18n/issue-message";
 import { revalidatePath } from "next/cache";
 import type { z } from "zod";
 import { removeFirebaseDevice } from "@/lib/data/firebase-actions";
@@ -20,6 +22,7 @@ import {
 import { getManagerRestaurantRejection, type RejectionReason } from "./session";
 import { syncStaffRole } from "./staff-access";
 import { signInFailureReason } from "./sign-in-failure";
+import { safeNextPath } from "./safe-next";
 
 /**
  * The profile behind a sign-in that just succeeded, read with the SERVER's
@@ -48,6 +51,8 @@ async function loadSignInProfile(
   return "unavailable";
 }
 
+type Translate = Awaited<ReturnType<typeof getTranslator>>;
+
 /** What every auth action returns, so forms can render errors uniformly. */
 export interface AuthState {
   ok: boolean;
@@ -61,12 +66,17 @@ export interface AuthState {
   done?: boolean;
 }
 
-/** Flatten a Zod error into the shape the forms expect. */
-function fieldErrorsFrom(error: z.ZodError): Record<string, string> {
+/**
+ * Flatten a Zod error into the shape the forms expect.
+ *
+ * The schemas carry dictionary keys as their messages (see ./schemas), so each
+ * one is translated here into the reader’s language.
+ */
+function fieldErrorsFrom(error: z.ZodError, t: Translate): Record<string, string> {
   const out: Record<string, string> = {};
   for (const issue of error.issues) {
     const key = String(issue.path[0] ?? "form");
-    out[key] ??= issue.message;
+    out[key] ??= translateIssueMessage(issue.message, t);
   }
   return out;
 }
@@ -84,7 +94,11 @@ function fieldErrorsFrom(error: z.ZodError): Record<string, string> {
  * see the note in `signUpCustomer` — but when Supabase does surface it we may
  * as well say so rather than let someone retry the same address forever.
  */
-function describeAuthError(error: { message?: string; status?: number }, context: string): string {
+function describeAuthError(
+  error: { message?: string; status?: number },
+  context: string,
+  t: Translate,
+): string {
   const raw = error.message ?? "";
 
   // Always log. Server-side only — never reaches the browser.
@@ -93,30 +107,30 @@ function describeAuthError(error: { message?: string; status?: number }, context
   const lower = raw.toLowerCase();
 
   if (lower.includes("already registered") || lower.includes("already been registered")) {
-    return "Un compte existe déjà avec cette adresse. Connectez-vous ou réinitialisez votre mot de passe.";
+    return t("ecu.authAlreadyRegistered");
   }
 
   if (lower.includes("database error")) {
     // Almost always the handle_new_user() trigger failing — usually because
     // the migration has not been run, or was run partially.
-    return "Erreur de base de données à la création du compte. La migration 0001_auth_profiles.sql a-t-elle été exécutée ?";
+    return t("ecu.authDatabaseError");
   }
 
   if (lower.includes("rate limit") || error.status === 429) {
-    return "Trop de tentatives. Réessayez dans quelques minutes.";
+    return t("ecu.authTooManyAttempts");
   }
 
   if (lower.includes("signups not allowed") || lower.includes("signup is disabled")) {
-    return "Les inscriptions sont désactivées sur ce projet Supabase (Authentication → Sign In / Providers).";
+    return t("ecu.authSignupsDisabled");
   }
 
   if (lower.includes("password")) {
-    return "Mot de passe refusé par le serveur : " + raw;
+    return t("ecu.authPasswordRejected", { detail: raw });
   }
 
   // Nothing matched. Show the real message rather than a shrug — this is a
   // pre-launch build, and an opaque failure costs more than the detail leaks.
-  return raw || "Impossible de créer le compte. Réessayez.";
+  return raw || t("ecu.authCreateFailed");
 }
 
 /**
@@ -141,6 +155,7 @@ function describeAuthError(error: { message?: string; status?: number }, context
  * we lost their registration.
  */
 export async function signIn(_prev: AuthState, formData: FormData): Promise<AuthState> {
+  const t = await getTranslator();
   // Brute force on the password field, throttled per IP before Supabase is
   // even reached. 10 attempts in 5 minutes is generous for a human and a
   // wall for a script.
@@ -148,7 +163,7 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   if (!limited.ok) {
     return {
       ok: false,
-      error: "Trop de tentatives. Réessayez dans quelques minutes.",
+      error: t("ecu.authTooManyAttempts"),
     };
   }
 
@@ -159,7 +174,7 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   });
 
   if (!parsed.success) {
-    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error) };
+    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error, t) };
   }
 
   const supabase = await createClient();
@@ -230,12 +245,10 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
    * `next` comes from a query string the proxy wrote, but a query string is
    * attacker-controllable — a crafted `?next=https://evil.example` on a login
    * link would send a freshly authenticated user straight off our domain.
-   * Only same-site paths are honoured, and `//` is rejected because
-   * `//evil.example` is protocol-relative, not a path.
+   * Only same-site paths are honoured — see lib/auth/safe-next for the
+   * exact rule, shared with sign-up so the two can never disagree.
    */
-  const requested = String(formData.get("next") ?? "");
-  const safeNext =
-    requested.startsWith("/") && !requested.startsWith("//") ? requested : null;
+  const safeNext = safeNextPath(formData.get("next"));
 
   redirect(
     safeNext ??
@@ -249,11 +262,12 @@ export async function signUpCustomer(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  const t = await getTranslator();
   // Account-creation spam: a handful of real people can register in an hour;
   // a botnet can register thousands. Per IP, per hour.
   const limited = await rateLimit({ key: "auth:signup-customer", limit: 5, windowMs: 60 * 60_000 });
   if (!limited.ok) {
-    return { ok: false, error: "Trop d'inscriptions depuis cette adresse. Réessayez dans une heure." };
+    return { ok: false, error: t("ecu.authTooManySignups") };
   }
 
   const parsed = signUpCustomerSchema.safeParse({
@@ -265,15 +279,36 @@ export async function signUpCustomer(
   });
 
   if (!parsed.success) {
-    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error) };
+    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error, t) };
   }
+
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     SIGN-UP USED TO LOSE THE CHECKOUT.
+
+     A guest with a full basket reaches /checkout, the proxy sends them to
+     /login?next=/checkout, they have no account, they tap "Créer un compte" —
+     and `next` was dropped right there. Sign-up then landed them on /account
+     (or on a login link with no destination), and the basket they came to pay
+     for was one navigation they had to rediscover on their own.
+
+     `next` now rides the whole way: the register form posts it, a live
+     session redirects to it, and the confirmation email's callback carries it
+     so the click in the inbox returns them to the checkout too. It is
+     re-validated here, because a hidden form field is as forgeable as a URL.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const safeNext = safeNextPath(formData.get("next"));
+  const callback = safeNext
+    ? `${await siteUrl()}/auth/callback?next=${encodeURIComponent(safeNext)}`
+    : `${await siteUrl()}/auth/callback`;
 
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
     options: {
-      emailRedirectTo: `${await siteUrl()}/auth/callback`,
+      emailRedirectTo: callback,
       // Read by the handle_new_user() trigger. `role` is floored to
       // customer|manager there — an 'admin' arriving here is not trusted.
       data: {
@@ -285,7 +320,7 @@ export async function signUpCustomer(
   });
 
   if (error) {
-    return { ok: false, error: describeAuthError(error, "signup-customer") };
+    return { ok: false, error: describeAuthError(error, "signup-customer", t) };
   }
 
   /**
@@ -303,7 +338,7 @@ export async function signUpCustomer(
    */
   if (data.session) {
     revalidatePath("/", "layout");
-    redirect("/account");
+    redirect(safeNext ?? "/account");
   }
 
   return { ok: true, done: true };
@@ -339,12 +374,13 @@ export async function signUpRestaurant(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  const t = await getTranslator();
   // Each application creates an auth user AND a restaurant row — expensive
   // writes an attacker could use to exhaust storage or flood the admin
   // approval queue. Same budget as customer signup.
   const limited = await rateLimit({ key: "auth:signup-restaurant", limit: 5, windowMs: 60 * 60_000 });
   if (!limited.ok) {
-    return { ok: false, error: "Trop d'inscriptions depuis cette adresse. Réessayez dans une heure." };
+    return { ok: false, error: t("ecu.authTooManySignups") };
   }
 
   const parsed = signUpRestaurantSchema.safeParse({
@@ -361,7 +397,7 @@ export async function signUpRestaurant(
   });
 
   if (!parsed.success) {
-    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error) };
+    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error, t) };
   }
 
   const input = parsed.data;
@@ -379,7 +415,7 @@ export async function signUpRestaurant(
   if (!area || !area.accepting_signups) {
     return {
       ok: false,
-      fieldErrors: { serviceAreaId: "Cette ville n'accepte pas d'inscriptions pour le moment." },
+      fieldErrors: { serviceAreaId: t("ecu.authCityClosed") },
     };
   }
 
@@ -394,7 +430,7 @@ export async function signUpRestaurant(
   });
 
   if (error || !data.user) {
-    return { ok: false, error: describeAuthError(error ?? {}, "signup-restaurant") };
+    return { ok: false, error: describeAuthError(error ?? {}, "signup-restaurant", t) };
   }
 
   /**
@@ -420,7 +456,7 @@ export async function signUpRestaurant(
       // admin can delete the user by hand, and silence would hide it.
       console.error("[auth:signup-restaurant] ROLLBACK FAILED for", authUserId);
     });
-    return { ok: false, error: "Impossible d'enregistrer l'établissement. Réessayez." };
+    return { ok: false, error: t("ecu.authRestaurantSaveFailed") };
   }
 
   // The profile is created by the handle_new_user() trigger, not by us. Read
@@ -528,7 +564,7 @@ export async function requestPasswordReset(
   const parsed = forgotPasswordSchema.safeParse({ email: formData.get("email") });
 
   if (!parsed.success) {
-    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error) };
+    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error, await getTranslator()) };
   }
 
   const supabase = await createClient();
@@ -559,7 +595,7 @@ export async function verifyResetCode(_prev: AuthState, formData: FormData): Pro
     code: formData.get("code"),
   });
   if (!parsed.success) {
-    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error) };
+    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error, await getTranslator()) };
   }
 
   const supabase = await createClient();
@@ -586,20 +622,21 @@ export async function updatePassword(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
+  const t = await getTranslator();
   const parsed = resetPasswordSchema.safeParse({
     password: formData.get("password"),
     confirm: formData.get("confirm"),
   });
 
   if (!parsed.success) {
-    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error) };
+    return { ok: false, fieldErrors: fieldErrorsFrom(parsed.error, t) };
   }
 
   // A stolen reset link is a password-change oracle: anyone holding one can
   // keep submitting new passwords until one sticks. Throttle per IP.
   const limited = await rateLimit({ key: "auth:update-password", limit: 5, windowMs: 60 * 60_000 });
   if (!limited.ok) {
-    return { ok: false, error: "Trop de tentatives. Réessayez dans une heure." };
+    return { ok: false, error: t("ecu.authTooManyAttemptsHour") };
   }
 
   const supabase = await createClient();
@@ -617,7 +654,7 @@ export async function updatePassword(
   const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
 
   if (error) {
-    return { ok: false, error: "Impossible de modifier le mot de passe. Réessayez." };
+    return { ok: false, error: t("ecu.authPasswordChangeFailed") };
   }
 
   await supabase.auth.signOut();

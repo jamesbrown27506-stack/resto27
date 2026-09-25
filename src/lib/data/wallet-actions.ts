@@ -1,10 +1,13 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { getTranslator } from "@/lib/i18n/locale-server";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
+import { ordersInProgressHold } from "./wallet";
 import { requireRole, type AuthProfile } from "@/lib/auth/session";
 import { requireCapability } from "@/lib/auth/branch";
+import { DICTIONARIES, interpolate } from "@/lib/i18n/dictionaries";
 import { writeAudit } from "./platform-actions";
 import { rateLimit } from "@/lib/rate-limit";
 import { getWithdrawalFeeConfig } from "./settings";
@@ -38,15 +41,25 @@ import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
  */
 
 /**
- * Every failure carries a stable code as well as its prose: the strings here
- * are still English-only and a later pass translates them, so callers key off
- * `reason`, never off the sentence. Same convention as checkout-actions.
+ * Every failure carries a stable code as well as its prose: callers key off
+ * `reason`, never off the sentence. Same convention as checkout-actions. The
+ * prose follows the viewer's language on the restaurant side; the admin-only
+ * functions stay English, per the admin-area convention.
  */
 type WalletResult = ActionResult & {
   reason?: string;
   status?: "pending" | "succeeded" | "failed";
   requestId?: string;
 };
+
+type Translate = Awaited<ReturnType<typeof getTranslator>>;
+
+/**
+ * The admin paths share executeWithdrawal / checkWithdrawalForScope with the
+ * manager's own, and the admin area answers in English whatever the viewer's
+ * cookie says. They hand these helpers this instead of the viewer's translator.
+ */
+const englishT: Translate = (key, vars) => interpolate(DICTIONARIES.en[key] ?? key, vars);
 
 /* ── Credit ────────────────────────────────────────────────────────────── */
 
@@ -218,11 +231,12 @@ export async function requestWithdrawal(input: {
   phone: string;
   note?: string;
 }): Promise<WalletResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("finance.manage");
 
   const amount = Math.round(input.amount);
   if (!Number.isInteger(amount) || amount < MIN_AMOUNT_XAF) {
-    return { ok: false, reason: "belowMinimum", error: `Minimum withdrawal is ${MIN_AMOUNT_XAF} FCFA.` };
+    return { ok: false, reason: "belowMinimum", error: t("est.withdrawMin", { amount: MIN_AMOUNT_XAF }) };
   }
 
   const phone = normalisePhone(input.phone);
@@ -230,7 +244,7 @@ export async function requestWithdrawal(input: {
     return {
       ok: false,
       reason: "badPhone",
-      error: "That phone is not valid — 9 digits starting with 6, no +237.",
+      error: t("est.withdrawPhoneInvalid"),
     };
   }
 
@@ -244,7 +258,7 @@ export async function requestWithdrawal(input: {
     return {
       ok: false,
       reason: "rateLimited",
-      error: "Too many requests from this restaurant. Try again in an hour.",
+      error: t("est.withdrawRateLimited"),
     };
   }
 
@@ -274,15 +288,29 @@ export async function requestWithdrawal(input: {
     (sum, row) => sum + Number(row.amount),
     0,
   );
-  const available = balance - queued;
+  // Paid orders still in progress are refundable, so their share stays in
+  // the wallet until delivered (ordersInProgressHold).
+  const held = await ordersInProgressHold(active.restaurantId);
+  const available = balance - queued - held;
 
   if (available < amount) {
     return {
       ok: false,
       reason: "insufficientBalance",
-      error: queued
-        ? `The wallet has ${balance.toLocaleString("fr-CM")} FCFA with ${queued.toLocaleString("fr-CM")} FCFA already awaiting approval — only ${Math.max(0, available).toLocaleString("fr-CM")} FCFA can be requested.`
-        : `The wallet has ${balance.toLocaleString("fr-CM")} FCFA — this request needs ${amount.toLocaleString("fr-CM")} FCFA.`,
+      error:
+        held > 0
+          ? t("est.withdrawHeld", {
+              balance: balance.toLocaleString("fr-CM"),
+              held: held.toLocaleString("fr-CM"),
+              available: Math.max(0, available).toLocaleString("fr-CM"),
+            })
+          : queued
+            ? t("est.withdrawQueued", {
+                balance: balance.toLocaleString("fr-CM"),
+                queued: queued.toLocaleString("fr-CM"),
+                available: Math.max(0, available).toLocaleString("fr-CM"),
+              })
+            : t("est.withdrawShort", { balance: balance.toLocaleString("fr-CM"), amount: amount.toLocaleString("fr-CM") }),
     };
   }
 
@@ -300,10 +328,10 @@ export async function requestWithdrawal(input: {
 
   if (error || !created) {
     console.error("[wallet:requestWithdrawal]", error?.message ?? "missing row");
-    return { ok: false, reason: "insertFailed", error: "Could not start the withdrawal." };
+    return { ok: false, reason: "insertFailed", error: t("est.withdrawStartFailed") };
   }
 
-  return executeWithdrawal(String(created.id), profile, active.restaurantId);
+  return executeWithdrawal(String(created.id), profile, t, active.restaurantId);
 }
 
 /**
@@ -342,11 +370,12 @@ export async function requestWithdrawal(input: {
  */
 export async function approveWithdrawal(requestId: string): Promise<WalletResult> {
   const admin = await requireRole("admin");
-  return executeWithdrawal(requestId, admin);
+  return executeWithdrawal(requestId, admin, englishT);
 }
 
 /** Start or retry a withdrawal belonging to the manager's active branch. */
 export async function processOwnWithdrawal(requestId: string): Promise<WalletResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("finance.manage");
   const limited = await rateLimit({
     key: "wallet:withdraw-retry",
@@ -355,14 +384,15 @@ export async function processOwnWithdrawal(requestId: string): Promise<WalletRes
     identifier: active.restaurantId,
   });
   if (!limited.ok) {
-    return { ok: false, reason: "rateLimited", error: "Too many payout attempts. Try again in an hour." };
+    return { ok: false, reason: "rateLimited", error: t("est.payoutRateLimited") };
   }
-  return executeWithdrawal(requestId, profile, active.restaurantId);
+  return executeWithdrawal(requestId, profile, t, active.restaurantId);
 }
 
 async function executeWithdrawal(
   requestId: string,
   actor: AuthProfile,
+  t: Translate,
   scopedRestaurantId?: string,
 ): Promise<WalletResult> {
   const supabase = createAdminClient();
@@ -383,10 +413,10 @@ async function executeWithdrawal(
   } | null;
 
   if (!request || (scopedRestaurantId && request.restaurant_id !== scopedRestaurantId)) {
-    return { ok: false, reason: "notFound", error: "Request not found." };
+    return { ok: false, reason: "notFound", error: t("est.requestNotFound") };
   }
   if (request.status !== "pending") {
-    return { ok: false, reason: "alreadyDecided", error: "That request has already been decided." };
+    return { ok: false, reason: "alreadyDecided", error: t("est.requestDecided") };
   }
 
   const restaurantId = request.restaurant_id;
@@ -401,7 +431,7 @@ async function executeWithdrawal(
     return {
       ok: false,
       reason: "badPhone",
-      error: `The recipient number "${request.phone}" is not a valid MoMo number — reject this request.`,
+      error: t("est.recipientInvalid", { phone: request.phone }),
     };
   }
 
@@ -417,7 +447,7 @@ async function executeWithdrawal(
     return {
       ok: false,
       reason: "belowProviderMinimum",
-      error: `After the ${feeConfig.percent}% fee, the recipient would get ${net} FCFA — below CamerPay's ${MIN_AMOUNT_XAF} FCFA minimum.`,
+      error: t("est.netBelowMin", { percent: feeConfig.percent, net, min: MIN_AMOUNT_XAF }),
     };
   }
 
@@ -426,7 +456,11 @@ async function executeWithdrawal(
     return {
       ok: false,
       reason: "outOfProviderRange",
-      error: `${net.toLocaleString("fr-CM")} FCFA is outside CamerPay's ${MIN_AMOUNT_XAF}–${MAX_AMOUNT_XAF.toLocaleString("fr-CM")} FCFA range — split the request.`,
+      error: t("est.netOutOfRange", {
+        net: net.toLocaleString("fr-CM"),
+        min: MIN_AMOUNT_XAF,
+        max: MAX_AMOUNT_XAF.toLocaleString("fr-CM"),
+      }),
     };
   }
 
@@ -443,10 +477,10 @@ async function executeWithdrawal(
 
   if (claimError) {
     console.error("[wallet:approveWithdrawal] claim failed", claimError.message);
-    return { ok: false, reason: "claimFailed", error: "Could not take the request — nothing was sent." };
+    return { ok: false, reason: "claimFailed", error: t("est.claimFailed") };
   }
   if (!claimed) {
-    return { ok: false, reason: "alreadyDecided", error: "That request has already been decided." };
+    return { ok: false, reason: "alreadyDecided", error: t("est.requestDecided") };
   }
 
   /** Hand the request back to the queue — guarded, so only our own claim. */
@@ -512,12 +546,12 @@ async function executeWithdrawal(
       ? {
           ok: false,
           reason: "insufficientBalance",
-          error: "The wallet no longer covers this amount — nothing was sent.",
+          error: t("est.walletNoLongerCovers"),
         }
       : {
           ok: false,
           reason: "debitFailed",
-          error: "The wallet could not be debited — nothing was sent.",
+          error: t("est.walletDebitFailed"),
         };
   }
 
@@ -546,7 +580,7 @@ async function executeWithdrawal(
       return {
         ok: false,
         reason: "payoutUnknown",
-        error: `The payout call failed and the outcome is unknown. The request is held as paid and ${gross.toLocaleString("fr-CM")} FCFA is debited — check CamerPay for ${phone} before doing anything else.`,
+        error: t("est.payoutUnknown", { amount: gross.toLocaleString("fr-CM"), phone }),
       };
     }
 
@@ -563,7 +597,7 @@ async function executeWithdrawal(
         return {
           ok: false,
           reason: "reversalFailed",
-          error: `CamerPay refused the payout (${refusal}) but the wallet debit could not be reversed — credit ${gross.toLocaleString("fr-CM")} FCFA back by hand.`,
+          error: t("est.payoutRefusedNoReversal", { refusal, amount: gross.toLocaleString("fr-CM") }),
         };
       }
 
@@ -581,7 +615,7 @@ async function executeWithdrawal(
       return {
         ok: false,
         reason: "payoutRefused",
-        error: `CamerPay refused the payout: ${refusal}. The wallet was credited back and the request is pending again.`,
+        error: t("est.payoutRefused", { refusal }),
       };
     }
 
@@ -594,7 +628,7 @@ async function executeWithdrawal(
       return {
         ok: false,
         reason: "payoutUnknown",
-        error: `CamerPay accepted the payout without a replyTo, so it cannot be tracked. The request is held as paid — check CamerPay for ${phone} before resending.`,
+        error: t("est.payoutNoReplyTo", { phone }),
       };
     }
 
@@ -641,8 +675,8 @@ async function executeWithdrawal(
   revalidatePath("/a/wallet");
   revalidatePath("/m/wallet");
 
-  const feeNote = fee > 0 ? `Fee of ${fee.toLocaleString("fr-CM")} FCFA withheld.` : "";
-  const modeNote = mode === "sandbox" ? "Sandbox mode — the transfer was simulated, no money moved." : "";
+  const feeNote = fee > 0 ? t("est.withdrawFeeNote", { fee: fee.toLocaleString("fr-CM") }) : "";
+  const modeNote = mode === "sandbox" ? t("est.withdrawSandboxNote") : "";
   const note = [modeNote, feeNote].filter(Boolean).join(" ");
   return mode === "sandbox"
     ? { ok: true, status: "succeeded", requestId, note: note || undefined }
@@ -650,24 +684,26 @@ async function executeWithdrawal(
         ok: true,
         status: "pending",
         requestId,
-        note: "CamerPay accepted the payout. Waiting for confirmation.",
+        note: t("est.withdrawAcceptedPending"),
       };
 }
 
 /** Poll an accepted payout until CamerPay reports its final outcome. */
 export async function checkWithdrawalPayout(requestId: string): Promise<WalletResult> {
   await requireRole("admin");
-  return checkWithdrawalForScope(requestId);
+  return checkWithdrawalForScope(requestId, englishT);
 }
 
 /** Poll a payout owned by the manager's active branch. */
 export async function checkOwnWithdrawalPayout(requestId: string): Promise<WalletResult> {
   const { active } = await requireCapability("finance.manage");
-  return checkWithdrawalForScope(requestId, active.restaurantId);
+  const t = await getTranslator();
+  return checkWithdrawalForScope(requestId, t, active.restaurantId);
 }
 
 async function checkWithdrawalForScope(
   requestId: string,
+  t: Translate,
   scopedRestaurantId?: string,
 ): Promise<WalletResult> {
   const supabase = createAdminClient();
@@ -677,14 +713,16 @@ async function checkWithdrawalForScope(
     .eq("id", requestId);
   if (scopedRestaurantId) query = query.eq("restaurant_id", scopedRestaurantId);
   const { data: owned } = await query.maybeSingle();
-  if (!owned) return { ok: false, reason: "notFound", error: "Withdrawal not found." };
+  if (!owned) return { ok: false, reason: "notFound", error: t("est.withdrawalNotFound") };
 
   const outcome = await settleWithdrawalPayout(requestId);
   revalidatePath("/a/wallet");
   revalidatePath("/m/wallet");
-  if (outcome.error) return { ok: false, reason: "reversalFailed", error: outcome.error };
+  // withdrawals.ts sets `error` in exactly one case — the payout failed and
+  // the wallet refund could not be recorded — so it maps to that one key.
+  if (outcome.error) return { ok: false, reason: "reversalFailed", error: t("est.payoutRefundNotRecorded") };
   if (outcome.status === "not_found") {
-    return { ok: false, reason: "notFound", error: "Withdrawal not found." };
+    return { ok: false, reason: "notFound", error: t("est.withdrawalNotFound") };
   }
   return { ok: true, status: outcome.status, requestId };
 }

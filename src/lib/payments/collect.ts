@@ -6,7 +6,9 @@ import { activateFromInvoice } from "@/lib/data/invoice-activation";
 import { paymentMode } from "@/lib/data/billing";
 import { notify } from "@/lib/notify";
 import { notifyDiningPaymentSettled } from "@/lib/dining/guest-alerts";
+import { refundUnpayableAttempt, startRefundPayout } from "@/lib/payments/refund-payouts";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
+import { PROVIDER_REFUSED_FALLBACK } from "@/lib/payments/payment-error";
 import {
   acceptedTransactionId,
   confirmTransaction,
@@ -71,7 +73,9 @@ import {
  *
  *  Every failure also carries a `reason` — a stable machine code, mapped to
  *  the dictionaries by the caller, the same convention as checkout-actions.ts.
- *  The French `error` string is the fallback for callers that do not map it.
+ *  The French `error` string is the fallback for callers that do not map it;
+ *  customer and restaurant actions map it through paymentErrorMessage
+ *  (./payment-error.ts), so a new code needs a key there too.
  */
 
 export type AttemptKind = "subscription" | "reservation" | "order" | "wallet";
@@ -359,7 +363,7 @@ export async function initiatePaymentAttempt(input: {
     return {
       ok: false,
       reason: "providerRefused",
-      error: accepted.message ?? "Le paiement a été refusé par l'opérateur.",
+      error: accepted.message ?? PROVIDER_REFUSED_FALLBACK,
     };
   }
 
@@ -478,15 +482,26 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
   if (row.status === "succeeded") return settledResolution(row.id);
   if (row.status !== "pending") return { status: "failed", settled: false };
 
-  if (await expireUnconfirmedMobileMoneyAttempt(row)) {
-    return { status: "failed", settled: false, error: "confirmationExpired" };
-  }
-
   // A pending sandbox attempt, or one whose 202 never came back with a
-  // tracking id, has nothing to ask. It stays pending until it is abandoned.
+  // tracking id, has nothing to ask: past the window it is simply expired.
   if (row.provider !== "camerpay" || !row.transactionId) {
+    if (await expireUnconfirmedMobileMoneyAttempt(row)) {
+      return { status: "failed", settled: false, error: "confirmationExpired" };
+    }
     return { status: "pending", settled: false, error: "notConfirmable" };
   }
+
+  /*
+    ASK BEFORE EXPIRING (0059).
+
+    This used to expire any attempt older than the five-minute window BEFORE
+    asking CamerPay. An Orange USSD payment approved at minute four and
+    reported at minute six was therefore marked failed and never credited —
+    the customer paid, the order lapsed, and nothing noticed. The provider is
+    now asked first; only an answer that is still "pending" lets the window
+    close the attempt. A success that arrives for an order no longer waiting
+    for it is refunded automatically in settlePayment().
+  */
 
   let confirmed;
   try {
@@ -522,6 +537,9 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
   }
 
   if (confirmed.status !== "success") {
+    if (await expireUnconfirmedMobileMoneyAttempt(row)) {
+      return { status: "failed", settled: false, error: "confirmationExpired" };
+    }
     return { status: "pending", settled: false, instruction: confirmed.instruction };
   }
 
@@ -787,16 +805,35 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
       .maybeSingle();
 
     if (!order || order.status !== "awaiting_customer" || order.payment_method !== "mobile_money" || Number(order.total) !== row.amount) {
+      /*
+        THE MONEY ARRIVED FOR AN ORDER NO LONGER WAITING FOR IT — cancelled
+        by the time limit, already paid by another attempt, total changed.
+        It was never credited to anyone, so it goes straight back: a refund
+        row keyed on this attempt (idempotent), and the payout starts now.
+        `refund_due` used to be written here and read by nothing, which
+        charged the customer for a cancelled order in silence.
+      */
       const stamp = new Date().toISOString();
+      const refundId = await refundUnpayableAttempt({
+        attemptId,
+        orderId: row.orderId,
+        restaurantId: row.restaurantId,
+        amount: row.amount,
+        phone: row.phone,
+        reason: `Paiement reçu pour une commande qui ne l'attendait plus (${order?.reference ?? row.reference})`,
+      });
       await supabase
         .from("payment_attempts")
         .update({
           settled_at: stamp,
-          raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "orderNotPayable", at: stamp } },
+          raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "orderNotPayable", at: stamp, refundId } },
         })
         .eq("id", attemptId)
         .is("settled_at", null);
-      error = "Cette commande n'attend plus ce paiement.";
+      if (refundId) {
+        await startRefundPayout(refundId).catch((err) => console.error("[pay:settle:order] refund", refundId, err));
+      }
+      error = "Cette commande n'attend plus ce paiement ; il vous est remboursé.";
       reason = "orderNotPayable";
     } else {
       const { data: settlement, error: settlementError } = await supabase.rpc("settle_online_order_payment", {

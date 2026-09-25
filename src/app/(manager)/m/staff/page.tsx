@@ -30,7 +30,7 @@ export default async function StaffPage() {
   const { active, profile } = await requireCapability("staff.manage");
 
   /**
-   * STAFF ACCOUNTS ARE AN ENTERPRISE FEATURE (§14.4), AND THE FLAG COMES FROM
+   * STAFF ACCOUNTS ARE A PAID-PLAN FEATURE (§14.4), AND THE FLAG COMES FROM
    * THE DATABASE.
    *
    * Same rule as reports: the entitlement is read, never hardcoded — which
@@ -50,7 +50,10 @@ export default async function StaffPage() {
   if (!includesStaff) {
     return (
       <ManagerPage titleKey="mst.title" descriptionKey="mst.subtitle">
-        <PlanGateUpsell feature="mgate.feature.staff" plan="mgate.plan.enterprise" />
+        {/* Professional is the first tier with staff (0053: staff_management
+            for every tier but Starter). Naming only Enterprise sent a
+            restaurant to a plan three times the price it needed. */}
+        <PlanGateUpsell feature="mgate.feature.staff" plan="mgate.plan.professional" />
       </ManagerPage>
     );
   }

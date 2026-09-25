@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/server";
 
 /**
@@ -101,11 +102,14 @@ export async function fetchCustomers(restaurantId: string): Promise<RestaurantCu
     const phone = (r.phone ?? "").trim();
 
     return {
-      id: r.customer_id ?? phone,
+      // The phone still groups guest orders (see the view), but it never
+      // leaves the server: the restaurant sees a customer's number only during
+      // a paid delivery (lib/data/orders). A hash keeps the row key stable.
+      id: r.customer_id ?? "guest-" + createHash("sha256").update(phone).digest("hex").slice(0, 16),
       customerId: r.customer_id,
       name: (r.name ?? "").trim(),
       email: (r.email ?? "").trim(),
-      phone,
+      phone: "",
       // Number(), not a cast: `count(*)` and `sum()` are bigint, which arrives
       // as a JSON number today and as a string the day PostgREST's bigint
       // handling is configured differently. Arithmetic on "12" is "012".

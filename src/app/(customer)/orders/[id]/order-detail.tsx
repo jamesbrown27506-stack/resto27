@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, MapPin, PackageCheck, Phone, RotateCcw, Star, X } from "lucide-react";
+import { ArrowLeft, MapPin, PackageCheck, Phone, Star, X } from "lucide-react";
 import { OrderStatusBadge } from "@/components/order/order-status-badge";
 import { OrderReceipt, OrderStatusTimeline } from "@/components/order/order-parts";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonClasses } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/input";
 import { PaymentPendingView } from "@/components/payment/payment-pending";
+import { ContactRestaurantButton } from "@/components/chat/contact-restaurant-button";
+import { ReorderButton } from "@/components/order/reorder-button";
 import { RatingInput } from "@/components/ui/rating-stars";
 import { useToast } from "@/components/ui/toast";
 import { formatMoney } from "@/lib/format/currency";
@@ -90,7 +92,12 @@ export function OrderDetail({ order }: { order: Order }) {
   const live = order.status !== "delivered" && order.status !== "cancelled";
   useEffect(() => {
     if (!live) return;
-    const timer = setInterval(() => router.refresh(), 15_000);
+    // Only while someone is looking: a tab left open in the background used
+    // to refresh every 15 s for as long as the order lived — server work
+    // (Vercel CPU) nobody saw. Coming back to the tab refreshes at once.
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") router.refresh();
+    }, 15_000);
     const onVisible = () => {
       if (document.visibilityState === "visible") router.refresh();
     };
@@ -101,17 +108,68 @@ export function OrderDetail({ order }: { order: Order }) {
     };
   }, [live, router]);
 
+  // A clock for the countdowns only — no server call.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!order.deadline) return;
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [order.deadline]);
+
+  const clock = (iso: string) =>
+    new Intl.DateTimeFormat(dates, { timeZone: "Africa/Douala", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+  const deadlineLabel = order.deadline ? clock(order.deadline) : null;
+  const minutesToDeadline = order.deadline
+    ? Math.max(0, Math.ceil((Date.parse(order.deadline) - now) / 60_000))
+    : null;
+
+  /*
+    ETA, once the food is paid for and moving: the restaurant's advertised
+    delivery estimate counted from the payment (the kitchen's start signal).
+    Delivery only — a pickup "ready" time would be a guess.
+  */
+  const paidAt = [...order.history].reverse().find((h) => h.status === "confirmed")?.at ?? null;
+  const etaLabel =
+    order.type === "delivery" &&
+    paidAt &&
+    order.deliveryEstimateMin &&
+    ["confirmed", "preparing", "shipped"].includes(order.status)
+      ? clock(new Date(Date.parse(paidAt) + order.deliveryEstimateMin * 60_000).toISOString())
+      : null;
+
 
   const canPay =
     !order.isPaid &&
     order.status === "awaiting_customer" &&
     (order.paymentMethod === "mobile_money" || order.paymentMethod === "wallet");
 
+  /*
+    EITHER WAY OF PAYING, WHATEVER WAS PICKED AT CHECKOUT.
+
+    A wallet order whose balance no longer covers it used to have exactly one
+    button — the wallet — and so no way forward. The wallet is offered when it
+    covers the food; Mobile Money always is. The server switches the order's
+    method under a status guard.
+  */
+  const walletBalance = order.walletBalance ?? 0;
+  const walletCovers = walletBalance >= order.total;
+  const [payMethod, setPayMethod] = useState<"mobile_money" | "wallet">(
+    order.paymentMethod === "wallet" && walletCovers ? "wallet" : "mobile_money",
+  );
+
+  /** Reopen the pending view for a prompt already live on the phone (after a reload). */
+  function resumePayment() {
+    if (!order.openPayment) return;
+    if (order.openPayment.phone) setPaymentPhone(order.openPayment.phone);
+    setPaymentAttemptId(order.openPayment.attemptId);
+    setPaymentOpen(true);
+  }
+
   async function startOrderPayment() {
     setPaymentBusy(true);
     setPaymentInstruction(null);
     const result =
-      order.paymentMethod === "wallet"
+      payMethod === "wallet"
         ? await payOwnOrderWithWallet(order.id)
         : await payOwnOrder(order.id, paymentPhone);
     setPaymentBusy(false);
@@ -175,6 +233,7 @@ export function OrderDetail({ order }: { order: Order }) {
     const result = await cancelOwnOrder(order.id);
     setBusy(false);
     toast(result.ok ? t("cor.cancelled") : result.error, result.ok ? "success" : "error");
+    router.refresh();
   }
 
   async function addPhotos(files: FileList | null) {
@@ -249,13 +308,20 @@ export function OrderDetail({ order }: { order: Order }) {
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Link
-            href={`/restaurants/${order.restaurantSlug}`}
-            className={buttonClasses({ variant: "outline", size: "sm" })}
-          >
-            <RotateCcw className="size-3.5" aria-hidden />
-            {t("cor.reorder2")}
-          </Link>
+          {/* Rebuilds this basket from today's menu (what is gone is named),
+              instead of dropping the customer on the restaurant page. */}
+          <ReorderButton
+            restaurantSlug={order.restaurantSlug}
+            lines={order.items.map((item) => ({
+              menuItemId: item.menuItemId,
+              name: item.name,
+              quantity: item.quantity,
+              options: item.optionsLabel,
+              notes: item.notes,
+            }))}
+            variant="outline"
+            size="sm"
+          />
           {cancellable && (
             <Button variant="ghost" size="sm" onClick={() => setCancelOpen(true)}>
               <X className="size-3.5" aria-hidden />
@@ -303,58 +369,159 @@ export function OrderDetail({ order }: { order: Order }) {
          an error.
         ────────────────────────────────────────────────────────────────────
       */}
-      {order.status === "awaiting_customer" && (
-        <div className="mt-6 rounded-lg border-2 border-info/35 bg-info-light p-4">
-          <p className="font-semibold text-info">{t("cor.paymentRequired")}</p>
+      {/*
+        ────────────────────────────────────────────────────────────────────
+         ONE CARD FOR WHAT THE ORDER IS WAITING ON — AND UNTIL WHEN (0059).
+
+         pending            the restaurant is checking the dishes; nothing
+                            is owed yet. The deadline is shown because a
+                            silent restaurant now ends in an automatic
+                            cancellation, not an indefinite wait.
+         awaiting_customer  the restaurant confirmed; pay the FOOD online
+                            before the deadline. The delivery fee is cash to
+                            the rider — stated here so nobody is surprised
+                            at the door.
+
+         This used to be two stacked cards with the same title that
+         contradicted each other ("the restaurant accepted" / "the
+         restaurant can now accept").
+        ────────────────────────────────────────────────────────────────────
+      */}
+      {order.status === "pending" && (
+        <div className="mt-6 rounded-lg border-2 border-warning/35 bg-warning-light p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="font-semibold text-warning">{t("cor.awaitTitle")}</p>
+            {minutesToDeadline !== null && (
+              <span className="tnum text-sm font-semibold text-warning">
+                {t("cor.minutesLeft", { count: minutesToDeadline })}
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-sm leading-relaxed text-text-secondary">
-            {t("ost.desc.awaiting_customer")}
+            {t("cor.awaitBody", { restaurant: order.restaurantName })}
           </p>
-          {order.type === "delivery" && (
-            <p className="tnum mt-3 border-t border-info/20 pt-3 text-sm text-text-secondary">
-              {t("cor.feeAmount")}: <span className="font-semibold text-text">{formatMoney(order.deliveryFee)}</span>
-            </p>
+          {deadlineLabel && (
+            <p className="mt-2 text-xs text-text-secondary">{t("cor.awaitDeadline", { time: deadlineLabel })}</p>
           )}
         </div>
       )}
 
       {canPay && (
         <div className="mt-6 rounded-lg border-2 border-info/35 bg-info-light p-4">
-          <p className="font-semibold text-info">{t("cor.paymentRequired")}</p>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="font-semibold text-info">{t("cor.payTitle")}</p>
+            {minutesToDeadline !== null && (
+              <span className="tnum text-sm font-semibold text-info">
+                {t("cor.minutesLeft", { count: minutesToDeadline })}
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-sm leading-relaxed text-text-secondary">
-            {t("cor.paymentRequiredBody")}
+            {t("cor.payBody", { amount: formatMoney(order.total) })}
           </p>
-          {order.paymentMethod === "mobile_money" ? (
-            <div className="mt-4 grid items-end gap-3 sm:grid-cols-[1fr_auto]">
-              <Field label={t("cor.paymentPhone")} htmlFor="order-payment-phone" required>
-                <Input
-                  id="order-payment-phone"
-                  type="tel"
-                  inputMode="tel"
-                  value={paymentPhone}
-                  onChange={(event) => setPaymentPhone(event.target.value)}
-                />
-              </Field>
-              <Button
-                loading={paymentBusy}
-                disabled={paymentBusy || !paymentPhone.trim()}
-                onClick={() => void startOrderPayment()}
-                className="min-h-11"
-              >
-                {t("cor.payNow")}
+          {order.type === "delivery" && order.deliveryFeeSetAt && order.deliveryFee > 0 && (
+            <p className="tnum mt-1 text-sm text-text-secondary">
+              {t("cor.payCashNote", { fee: formatMoney(order.deliveryFee) })}
+            </p>
+          )}
+          {deadlineLabel && (
+            <p className="mt-1 text-xs text-text-secondary">{t("cor.payDeadline", { time: deadlineLabel })}</p>
+          )}
+
+          {order.openPayment && !paymentAttemptId ? (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-info/30 bg-surface p-3">
+              <p className="text-sm text-text-secondary">
+                {t("cor.payResume", { phone: order.openPayment.phone ?? "" })}
+              </p>
+              <Button size="sm" onClick={resumePayment} className="min-h-11">
+                {t("cor.payResumeAction")}
               </Button>
             </div>
           ) : (
-            <Button
-              loading={paymentBusy}
-              disabled={paymentBusy}
-              onClick={() => void startOrderPayment()}
-              className="mt-4 min-h-11"
-            >
-              {t("cor.payNow")}
-            </Button>
+            <>
+              {walletCovers && (
+                <fieldset className="mt-4">
+                  <legend className="mb-2 text-sm font-semibold">{t("cor.payWith")}</legend>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["mobile_money", "wallet"] as const).map((method) => (
+                      <label
+                        key={method}
+                        className={`flex min-h-11 cursor-pointer items-center justify-center rounded-md border px-3 text-center text-sm font-medium ${
+                          payMethod === method ? "border-primary bg-surface text-primary" : "border-border bg-surface"
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="pay-method"
+                          value={method}
+                          checked={payMethod === method}
+                          onChange={() => setPayMethod(method)}
+                          className="sr-only"
+                        />
+                        {method === "wallet"
+                          ? t("cor.payWallet", { balance: formatMoney(walletBalance) })
+                          : t("cor.payMomo")}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              )}
+              {payMethod === "mobile_money" ? (
+                <div className="mt-4 grid items-end gap-3 sm:grid-cols-[1fr_auto]">
+                  <Field label={t("cor.paymentPhone")} htmlFor="order-payment-phone" required>
+                    <Input
+                      id="order-payment-phone"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      value={paymentPhone}
+                      onChange={(event) => setPaymentPhone(event.target.value)}
+                    />
+                  </Field>
+                  <Button
+                    loading={paymentBusy}
+                    disabled={paymentBusy || !paymentPhone.trim()}
+                    onClick={() => void startOrderPayment()}
+                    className="min-h-11"
+                  >
+                    {t("cor.payNow")} · {formatMoney(order.total)}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  loading={paymentBusy}
+                  disabled={paymentBusy}
+                  onClick={() => void startOrderPayment()}
+                  className="mt-4 min-h-11"
+                >
+                  {t("cor.payNow")} · {formatMoney(order.total)}
+                </Button>
+              )}
+            </>
           )}
         </div>
       )}
+
+      {etaLabel && (
+        <p className="tnum mt-6 rounded-lg border border-border bg-surface-2 px-4 py-3 text-sm font-medium">
+          {t("cor.etaDelivery", { time: etaLabel })}
+        </p>
+      )}
+
+      {order.status === "cancelled" && order.refund && (
+        <div className="mt-6 rounded-lg border-2 border-success/35 bg-success-light p-4">
+          <p className="font-semibold text-success">{t("cor.refundTitle")}</p>
+          <p className="tnum mt-1 text-sm leading-relaxed text-text-secondary">
+            {order.refund.status === "rejected"
+              ? t("cor.refundReview", { amount: formatMoney(order.refund.amount) })
+              : t(order.refund.status === "completed" ? "cor.refundDone" : "cor.refundPending", {
+                  amount: formatMoney(order.refund.amount),
+                  dest: t(order.refund.destination === "customer_wallet" ? "cor.refundDestWallet" : "cor.refundDestMomo"),
+                })}
+          </p>
+        </div>
+      )}
+
       {confirmable && (
         <div className="mt-6 flex flex-wrap items-center gap-4 rounded-lg border-2 border-success/40 bg-success-light p-4">
           <span className="grid size-10 shrink-0 place-items-center rounded-full bg-success text-white">
@@ -459,13 +626,10 @@ export function OrderDetail({ order }: { order: Order }) {
                     </span>
                   </span>
                   {order.deliveryPhone && (
-                    <a
-                      href={`tel:${order.deliveryPhone.replace(/\s/g, "")}`}
-                      className="flex items-center gap-2 text-text-secondary hover:text-primary"
-                    >
+                    <span className="flex items-center gap-2 text-text-secondary">
                       <Phone className="size-3.5 shrink-0 text-primary" aria-hidden />
                       {order.deliveryPhone}
-                    </a>
+                    </span>
                   )}
                 </address>
               </CardBody>
@@ -492,6 +656,25 @@ export function OrderDetail({ order }: { order: Order }) {
                   {t(order.isPaid ? "cor.paid" : "cor.unpaid")}
                 </Badge>
               </div>
+            </CardBody>
+          </Card>
+
+          {/*
+            THE WAY OUT OF A PAID ORDER GONE WRONG: the in-app thread with the
+            restaurant, tied to this order. Never a phone number — contact
+            stays on the platform.
+          */}
+          <Card>
+            <CardBody>
+              <CardTitle>{t("cor.helpTitle")}</CardTitle>
+              <p className="mt-1 text-sm text-text-secondary">{t("cor.helpBody")}</p>
+              <ContactRestaurantButton
+                restaurantId={order.restaurantId}
+                orderId={order.id}
+                label={t("cor.contact")}
+                fullWidth
+                className="mt-3"
+              />
             </CardBody>
           </Card>
 

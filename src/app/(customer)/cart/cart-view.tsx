@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { ArrowRight, ShoppingBag, Store } from "lucide-react";
+import { getRestaurantOrderCapabilities } from "@/lib/data/checkout-actions";
+import { formatMoney } from "@/lib/format/currency";
 import { useCart } from "@/components/cart/cart-provider";
 import { CartLineRow, CartSummary, LoyaltyRedeem, PromoInput } from "@/components/cart/cart-parts";
 import { buttonClasses } from "@/components/ui/button";
@@ -26,6 +29,51 @@ export function CartView({
 }) {
   const { lines, itemCount, totals } = useCart();
   const { t } = useLocale();
+
+  /*
+    THE MINIMUM, SHOWN WHERE THE BASKET IS BUILT.
+
+    The restaurant's delivery minimum was only ever mentioned on the checkout
+    screen (and there only on desktop), i.e. after the customer had stopped
+    adding dishes. Here it can still change what goes in the basket. One read
+    per basket restaurant — the same capabilities the checkout already asks
+    for — and nothing at all for an empty basket.
+  */
+  const cartRestaurantId = lines[0]?.restaurantId ?? null;
+  const [caps, setCaps] = useState<{
+    restaurantId: string;
+    minimumOrder: number;
+    acceptsDelivery: boolean;
+    minDeliveryFee: number;
+    maxDeliveryFee: number;
+  } | null>(null);
+  useEffect(() => {
+    if (!cartRestaurantId) return;
+    let alive = true;
+    getRestaurantOrderCapabilities(cartRestaurantId)
+      .then((c) => {
+        if (alive && c) {
+          setCaps({
+            restaurantId: cartRestaurantId,
+            minimumOrder: c.minimumOrder,
+            acceptsDelivery: c.acceptsDelivery,
+            minDeliveryFee: c.minDeliveryFee,
+            maxDeliveryFee: c.maxDeliveryFee,
+          });
+        }
+      })
+      .catch(() => null);
+    return () => {
+      alive = false;
+    };
+  }, [cartRestaurantId]);
+  const known = caps && caps.restaurantId === cartRestaurantId ? caps : null;
+  const minimum = known?.acceptsDelivery ? known.minimumOrder : 0;
+  const feeDetail = known && known.maxDeliveryFee > 0
+    ? t("cct.sum.feeBand", { min: formatMoney(known.minDeliveryFee), max: formatMoney(known.maxDeliveryFee) })
+    : known && known.minDeliveryFee > 0
+      ? t("cct.sum.feeFromBand", { min: formatMoney(known.minDeliveryFee) })
+      : null;
 
   // Every line in a basket belongs to one restaurant — you cannot order from
   // two kitchens in one delivery.
@@ -78,7 +126,24 @@ export function CartView({
             <PromoInput />
             <LoyaltyRedeem balance={balance} minRedeem={minRedeem} pointValue={pointValue} />
 
-            <CartSummary>
+            {minimum > 0 && (
+              <p
+                className={
+                  totals.subtotal < minimum
+                    ? "rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning"
+                    : "text-xs text-text-light"
+                }
+              >
+                {totals.subtotal < minimum
+                  ? t("cct.minOrderMissing", {
+                      amount: formatMoney(minimum - totals.subtotal),
+                      min: formatMoney(minimum),
+                    })
+                  : t("cct.minOrder", { amount: formatMoney(minimum) })}
+              </p>
+            )}
+
+            <CartSummary showDeliveryFee={known ? known.acceptsDelivery : true} deliveryFeeDetail={feeDetail}>
               <Link
                 href="/checkout"
                 className={buttonClasses({ size: "lg", fullWidth: true, className: "rounded-md" })}
@@ -90,7 +155,9 @@ export function CartView({
 
             <p className="text-center text-xs text-text-light">
               {t("cct.guestQ")}{" "}
-              <Link href="/login" className="font-semibold text-primary hover:underline">
+              {/* Back to the checkout after signing in (or signing up — the
+                  login page carries `next` on to /register). */}
+              <Link href="/login?next=%2Fcheckout" className="font-semibold text-primary hover:underline">
                 {t("cct.signIn")}
               </Link>{" "}
               — {t("cct.guestKept")}

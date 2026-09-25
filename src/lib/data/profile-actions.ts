@@ -1,11 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getTranslator } from "@/lib/i18n/locale-server";
 import { z } from "zod";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { requireRole, requireUser } from "@/lib/auth/session";
-import { deleteUpload, saveAudioUpload, saveUpload, type UploadKind } from "@/lib/uploads";
+import { deleteUpload, localizeUploadError, saveAudioUpload, saveUpload, type UploadKind } from "@/lib/uploads";
+import { firstIssueMessage } from "@/lib/i18n/issue-message";
 import { isCustomSound } from "@/lib/notification-sound";
 import { writeAudit } from "./platform-actions";
 import type { ActionResult } from "./admin-actions";
@@ -186,15 +188,16 @@ const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
  * ─────────────────────────────────────────────────────────────────────────
  */
 export async function saveOpeningHours(hours: OpeningHourInput[]): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("profile.edit");
 
   const seen = new Set<number>();
 
   for (const day of hours) {
     if (!Number.isInteger(day.weekday) || day.weekday < 0 || day.weekday > 6) {
-      return { ok: false, error: "That is not a day of the week." };
+      return { ok: false, error: t("est.notAWeekday") };
     }
-    if (seen.has(day.weekday)) return { ok: false, error: "The same day was sent twice." };
+    if (seen.has(day.weekday)) return { ok: false, error: t("est.dayTwice") };
     seen.add(day.weekday);
 
     const opens = day.opensAt?.trim() || null;
@@ -203,10 +206,10 @@ export async function saveOpeningHours(hours: OpeningHourInput[]): Promise<Actio
     // One time without the other is not a state the public page can render:
     // "open from 11:00 until we decide" is not opening hours.
     if ((opens === null) !== (closes === null)) {
-      return { ok: false, error: "Set both an opening and a closing time, or mark the day closed." };
+      return { ok: false, error: t("est.setBothTimes") };
     }
     if (opens !== null && (!HHMM.test(opens) || !HHMM.test(closes!))) {
-      return { ok: false, error: "Times must be written as HH:MM." };
+      return { ok: false, error: t("est.timeFormat") };
     }
 
     // A closing time BEFORE the opening time is deliberately allowed: a
@@ -214,7 +217,7 @@ export async function saveOpeningHours(hours: OpeningHourInput[]): Promise<Actio
     // the most common evening service in the city.
   }
 
-  if (seen.size !== 7) return { ok: false, error: "All seven days must be sent together." };
+  if (seen.size !== 7) return { ok: false, error: t("est.allSevenDays") };
 
   const supabase = createAdminClient();
   const { error } = await supabase.from("restaurant_hours").upsert(
@@ -229,7 +232,7 @@ export async function saveOpeningHours(hours: OpeningHourInput[]): Promise<Actio
 
   if (error) {
     console.error("[profile:saveOpeningHours]", error.message);
-    return { ok: false, error: "Could not save the opening hours." };
+    return { ok: false, error: t("est.hoursSaveFailed") };
   }
 
   revalidatePath("/m/profile");
@@ -255,21 +258,23 @@ export async function saveOpeningHours(hours: OpeningHourInput[]): Promise<Actio
  * ─────────────────────────────────────────────────────────────────────────
  */
 export async function uploadRestaurantImage(formData: FormData): Promise<UploadActionResult> {
+  const t = await getTranslator();
   await requireCapability("profile.edit");
 
   const file = formData.get("file");
-  if (!(file instanceof File)) return { ok: false, error: "No file received." };
+  if (!(file instanceof File)) return { ok: false, error: t("ecu.noFile") };
 
   const result = await saveUpload(file, "restaurants" satisfies UploadKind);
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: localizeUploadError(result, t) };
 
   return { ok: true, url: result.url };
 }
 
 /* ── Own profile ───────────────────────────────────────────────────────── */
 
+// The message is a dictionary key, translated by firstIssueMessage below.
 const ProfileSchema = z.object({
-  name: z.string().trim().min(2, "Enter your full name.").max(120),
+  name: z.string().trim().min(2, "ecu.v.profileName").max(120),
   phone: z
     .string()
     .trim()
@@ -289,6 +294,7 @@ const ProfileSchema = z.object({
  * identity and needs a verification round-trip through Supabase Auth.
  */
 export async function updateOwnProfile(formData: FormData): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   const parsed = ProfileSchema.safeParse({
@@ -297,7 +303,7 @@ export async function updateOwnProfile(formData: FormData): Promise<ActionResult
   });
 
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Check the form." };
+    return { ok: false, error: firstIssueMessage(parsed.error, t) };
   }
 
   const supabase = createAdminClient();
@@ -308,7 +314,7 @@ export async function updateOwnProfile(formData: FormData): Promise<ActionResult
 
   if (error) {
     console.error("[profile:updateOwnProfile]", error.message);
-    return { ok: false, error: "Could not save your profile." };
+    return { ok: false, error: t("ecu.profileSaveFailed") };
   }
 
   revalidatePath("/", "layout");
@@ -317,13 +323,14 @@ export async function updateOwnProfile(formData: FormData): Promise<ActionResult
 
 /** Upload your own avatar. */
 export async function uploadOwnAvatar(formData: FormData): Promise<UploadActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   const file = formData.get("file");
-  if (!(file instanceof File)) return { ok: false, error: "No file received." };
+  if (!(file instanceof File)) return { ok: false, error: t("ecu.noFile") };
 
   const result = await saveUpload(file, "avatars" satisfies UploadKind);
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: localizeUploadError(result, t) };
 
   const supabase = createAdminClient();
   const { error } = await supabase
@@ -331,7 +338,7 @@ export async function uploadOwnAvatar(formData: FormData): Promise<UploadActionR
     .update({ avatar_url: result.url })
     .eq("id", user.id);
 
-  if (error) return { ok: false, error: "Uploaded, but could not save it to your profile." };
+  if (error) return { ok: false, error: t("ecu.avatarNotSaved") };
 
   revalidatePath("/", "layout");
   return { ok: true, url: result.url };
@@ -346,16 +353,17 @@ export async function uploadOwnAvatar(formData: FormData): Promise<UploadActionR
  * session alive, which is the opposite of what a password change is for.
  */
 export async function changeOwnPassword(formData: FormData): Promise<ActionResult> {
+  const t = await getTranslator();
   await requireUser();
 
   const password = String(formData.get("password") ?? "");
   const confirm = String(formData.get("confirm") ?? "");
 
-  if (password.length < 8) return { ok: false, error: "At least 8 characters." };
+  if (password.length < 8) return { ok: false, error: t("ecu.passwordLength") };
   if (!/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
-    return { ok: false, error: "Include an uppercase letter and a digit." };
+    return { ok: false, error: t("ecu.passwordStrength") };
   }
-  if (password !== confirm) return { ok: false, error: "The two passwords do not match." };
+  if (password !== confirm) return { ok: false, error: t("ecu.passwordMismatch") };
 
   const supabase = await createClient();
   const { error } = await supabase.auth.updateUser({ password });

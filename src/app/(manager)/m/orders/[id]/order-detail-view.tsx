@@ -10,6 +10,7 @@ import { OrderStatusBadge } from "@/components/order/order-status-badge";
 import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardTitle } from "@/components/ui/card";
+import { MessageCustomerButton } from "@/components/chat/message-customer-button";
 import { formatMoney } from "@/lib/format/currency";
 import { isoAttr } from "@/lib/format/datetime";
 import { useDates } from "@/lib/format/use-dates";
@@ -51,10 +52,22 @@ export function OrderDetailView({
   order,
   canAdvance,
   feeBand,
+  customerId = null,
+  canCancel = false,
+  orderMinutes,
+  now,
 }: {
   order: ManagerOrder & { history: OrderEvent[] };
   /** `orders.advance` — see the note on the page that resolves it. */
   canAdvance: boolean;
+  /** `orders.cancel` — owner, manager, cashier; never the kitchen. */
+  canCancel?: boolean;
+  /** The admin's order time limit, for the accept / pay-by countdown. */
+  orderMinutes?: number;
+  /** Server-stamped render time for that countdown's first paint. */
+  now?: string;
+  /** The ordering customer's account; null = guest / table order (no chat). */
+  customerId?: string | null;
   /** The restaurant's advertised delivery band (migration 0035). */
   feeBand: { min: number; max: number };
 }) {
@@ -77,16 +90,21 @@ export function OrderDetailView({
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
   }, [router]);
 
+  /*
+    THE DELIVERY FEE IS NOT A LINE OF THE ONLINE TOTAL ANY MORE (0059).
+
+    `order.total` is what the customer pays online — the food. The fee is
+    cash the rider collects at the door, so it is shown BELOW the total as
+    its own amount to collect, never added into it.
+  */
   const money: { key: TranslationKey; value: number; strike?: boolean }[] = [
     { key: "mo.subtotal", value: order.subtotal },
     ...(order.discountAmount > 0
       ? [{ key: "mo.discount" as TranslationKey, value: -order.discountAmount }]
       : []),
     { key: "mo.serviceCharge", value: order.serviceCharge },
-    ...(order.type === "delivery"
-      ? [{ key: "mo.deliveryFee" as TranslationKey, value: order.deliveryFee }]
-      : []),
   ];
+  const online = order.paymentMethod === "mobile_money" || order.paymentMethod === "wallet";
 
   return (
     <ManagerPage
@@ -106,6 +124,9 @@ export function OrderDetailView({
             <Printer className="size-4" aria-hidden />
             <span>{t("m.orders.print")}</span>
           </Link>
+          {/* In-app chat is the channel to the customer; the thread carries
+              this order as its context chip. */}
+          <MessageCustomerButton customerId={customerId} orderId={order.id} />
         </>
       }
     >
@@ -126,7 +147,10 @@ export function OrderDetailView({
                 <OrderActionBar
                   order={order}
                   canAdvance={canAdvance}
+                  canCancel={canCancel}
                   feeBand={feeBand}
+                  orderMinutes={orderMinutes}
+                  now={now}
                   size="md"
                 />
               </CardBody>
@@ -167,20 +191,37 @@ export function OrderDetailView({
                   <div key={line.key} className="flex justify-between gap-3">
                     <dt className="text-text-secondary">{t(line.key)}</dt>
                     <dd className="tnum">
-                      {line.key === "mo.deliveryFee" && order.deliveryFeeSetAt === null ? (
-                        <span className="text-warning">{t("mo.feeTBD")}</span>
-                      ) : (
-                        <span>{formatMoney(line.value)}</span>
-                      )}
+                      <span>{formatMoney(line.value)}</span>
                     </dd>
                   </div>
                 ))}
                 <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border pt-2">
-                  <dt className="font-semibold">{t("m.orders.total")}</dt>
+                  <dt className="font-semibold">
+                    {online
+                      ? order.isPaid
+                        ? t("mops.paidOnline")
+                        : t("mops.toPayOnline")
+                      : t("m.orders.total")}
+                  </dt>
                   <dd className="tnum font-display text-lg font-bold text-primary">
                     {formatMoney(order.total)}
                   </dd>
                 </div>
+                {order.type === "delivery" && (
+                  <div className="mt-1 flex items-baseline justify-between gap-3 rounded-md bg-warning-light px-3 py-2">
+                    <dt>
+                      <span className="font-semibold text-warning">{t("mops.toCollect")}</span>
+                      <span className="block text-xs text-text-secondary">{t("mops.toCollectHint")}</span>
+                    </dt>
+                    <dd className="tnum font-display font-bold">
+                      {order.deliveryFeeSetAt === null ? (
+                        <span className="text-warning">{t("mo.feeTBD")}</span>
+                      ) : (
+                        <span>{formatMoney(order.deliveryFee)}</span>
+                      )}
+                    </dd>
+                  </div>
+                )}
               </dl>
 
               {order.notes && (
@@ -227,13 +268,16 @@ export function OrderDetailView({
                 <CardTitle>{t("m.orders.customer")}</CardTitle>
                 <address className="mt-3 flex flex-col gap-2 text-sm not-italic">
                   <span className="font-medium">{order.deliveryName}</span>
+                  {/* The number exists only while a paid delivery is on its way
+                      (lib/data/orders) — for the rider at the gate. Otherwise
+                      contact goes through "Écrire au client". */}
                   {order.deliveryPhone && (
                     <a
                       href={`tel:${order.deliveryPhone.replace(/\s/g, "")}`}
                       className="flex items-center gap-2 text-text-secondary hover:text-primary"
                     >
                       <Phone className="size-3.5 shrink-0 text-primary" aria-hidden />
-                      <span>{order.deliveryPhone}</span>
+                      {order.deliveryPhone}
                     </a>
                   )}
                   {order.deliveryAddress && (

@@ -22,13 +22,16 @@
 export const CAPABILITIES = [
   "orders.view",
   "orders.advance",
+  "orders.cancel",
   "kitchen.display",
   "menu.view",
   "menu.edit",
+  "menu.availability",
   "tables.view",
   "tables.manage",
   "reservations.view",
   "reservations.decide",
+  "reservations.seat",
   "promotions.manage",
   "customers.view",
   "reviews.reply",
@@ -36,6 +39,8 @@ export const CAPABILITIES = [
   "staff.manage",
   "billing.manage",
   "finance.manage",
+  "payments.collect",
+  "service.pause",
   "profile.edit",
   "settings.manage",
 ] as const;
@@ -46,14 +51,13 @@ export type Capability = (typeof CAPABILITIES)[number];
  * ⚠️ OPEN QUESTION — see dev.md §4, question 1.
  *
  * §9 of explanation.md states the matrix is 20 capabilities × 5 branch roles.
- * §14.4 names only the 17 above. The remaining 3 must be READ OUT OF the PHP
- * `functions.php` matrix before P3 ships — inventing them silently grants or
- * withholds access that the old system did not.
- *
- * Until then this file is 17, and that gap is deliberate and visible rather
- * than papered over with three plausible guesses.
+ * §14.4 names only 17. The PHP `functions.php` matrix was never transcribed,
+ * so the list grew from how restaurants actually work instead (Sep 2026):
+ * the five capabilities added then — orders.cancel, menu.availability,
+ * reservations.seat, payments.collect, service.pause — each split a
+ * mid-service gesture away from the back-office power it used to borrow.
  */
-export const KNOWN_CAPABILITY_COUNT = 18;
+export const KNOWN_CAPABILITY_COUNT = CAPABILITIES.length;
 export const EXPECTED_CAPABILITY_COUNT = 20;
 
 export const BRANCH_ROLES = ["owner", "manager", "kitchen", "cashier", "waiter"] as const;
@@ -70,9 +74,9 @@ export const BRANCH_ROLE_LABEL: Record<BranchRole, string> = {
 export const BRANCH_ROLE_DESCRIPTION: Record<BranchRole, string> = {
   owner: "Accès complet, y compris la facturation et le personnel.",
   manager: "Gère le service, le menu et l'équipe. Pas la facturation.",
-  kitchen: "Écran de cuisine et avancement des commandes.",
-  cashier: "Commandes, encaissement et clients.",
-  waiter: "Prise de commande en salle, tables et réservations.",
+  kitchen: "Écran de cuisine, avancement des commandes et plats épuisés.",
+  cashier: "Commandes, encaissement, tables et clients.",
+  waiter: "Prise de commande en salle, tables, encaissement et réservations.",
 };
 
 /**
@@ -81,6 +85,32 @@ export const BRANCH_ROLE_DESCRIPTION: Record<BranchRole, string> = {
  * transcribed before P3. Getting this wrong in either direction is a security
  * bug: too generous grants access, too strict blocks a working restaurant
  * mid-service.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE SEP 2026 SPLIT — SERVICE GESTURES NO LONGER BORROW BACK-OFFICE POWER.
+ *
+ *  Four things staff do dozens of times a night were each gated on a
+ *  capability meant for something much bigger, so the people standing at
+ *  the pass could not do them:
+ *
+ *    · closing a cash bill / asking a table to pay needed `finance.manage` —
+ *      the WITHDRAWAL permission. A cashier could not take cash at a table,
+ *      and the only way to let them was to let them empty the wallet.
+ *      → `payments.collect`; `finance.manage` is withdrawals only now.
+ *    · "we're out of Poulet DG" needed `menu.edit` — the power to reprice
+ *      and delete dishes. The kitchen, who know first, could not say it.
+ *      → `menu.availability`.
+ *    · seating a party / marking a no-show / flipping a table's status
+ *      needed `reservations.decide` or `tables.manage` — accepting bookings
+ *      and redesigning the floor. The waiter at the door could not seat.
+ *      → `reservations.seat`.
+ *    · pausing orders needed `settings.manage`. → `service.pause`, still
+ *      owner/manager only: a pause silently turns every customer away.
+ *
+ *  And one the other way: cancelling an order used to ride on
+ *  `orders.advance`, so the kitchen tablet could cancel (and, from the new
+ *  flow on, refund) a paid order. → `orders.cancel`, not held by kitchen.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 const MATRIX: Record<BranchRole, Capability[]> = {
   owner: [...CAPABILITIES],
@@ -90,18 +120,34 @@ const MATRIX: Record<BranchRole, Capability[]> = {
   // the owner because they are a financial commitment.
   manager: CAPABILITIES.filter((c) => c !== "billing.manage"),
 
-  kitchen: ["orders.view", "orders.advance", "kitchen.display", "menu.view"],
+  // No orders.cancel: a cancellation now refunds the customer, and the pass
+  // is not where that decision is made.
+  kitchen: ["orders.view", "orders.advance", "kitchen.display", "menu.view", "menu.availability"],
 
   cashier: [
+    "orders.view",
+    "orders.advance",
+    "orders.cancel",
+    "menu.view",
+    "menu.availability",
+    "tables.view",
+    "reservations.view",
+    "reservations.seat",
+    "customers.view",
+    "payments.collect",
+  ],
+
+  // Waiters take the money at the table in most Douala restaurants, so they
+  // can request payment and close a cash bill — never withdraw it.
+  waiter: [
     "orders.view",
     "orders.advance",
     "menu.view",
     "tables.view",
     "reservations.view",
-    "customers.view",
+    "reservations.seat",
+    "payments.collect",
   ],
-
-  waiter: ["orders.view", "orders.advance", "menu.view", "tables.view", "reservations.view"],
 };
 
 const SETS: Record<BranchRole, Set<Capability>> = Object.fromEntries(
@@ -125,13 +171,16 @@ export function capabilitiesFor(role: BranchRole): Capability[] {
 export const CAPABILITY_LABEL: Record<Capability, string> = {
   "orders.view": "Voir les commandes",
   "orders.advance": "Faire avancer les commandes",
+  "orders.cancel": "Annuler les commandes",
   "kitchen.display": "Écran de cuisine",
   "menu.view": "Voir le menu",
   "menu.edit": "Modifier le menu",
+  "menu.availability": "Marquer un plat épuisé",
   "tables.view": "Voir les tables",
   "tables.manage": "Gérer les tables",
   "reservations.view": "Voir les réservations",
   "reservations.decide": "Décider des réservations",
+  "reservations.seat": "Installer les clients",
   "promotions.manage": "Gérer les promotions",
   "customers.view": "Voir les clients",
   "reviews.reply": "Répondre aux avis",
@@ -139,6 +188,8 @@ export const CAPABILITY_LABEL: Record<Capability, string> = {
   "staff.manage": "Gérer le personnel",
   "billing.manage": "Gérer la facturation",
   "finance.manage": "Voir le portefeuille et retirer",
+  "payments.collect": "Encaisser à table",
+  "service.pause": "Mettre le service en pause",
   "profile.edit": "Modifier le profil",
   "settings.manage": "Gérer les paramètres",
 };

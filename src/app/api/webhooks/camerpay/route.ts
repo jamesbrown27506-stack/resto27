@@ -4,7 +4,7 @@ import { settleConfirmedAttempt } from "@/lib/payments/collect";
 import { createAdminClient } from "@/lib/supabase/server";
 import { rateLimit } from "@/lib/rate-limit";
 import { notify } from "@/lib/notify";
-import { settleReservationRefundByReplyTo } from "@/lib/payments/reservation-refunds";
+import { settleRefundByReplyTo } from "@/lib/payments/refund-payouts";
 import { settleWithdrawalPayoutByReplyTo } from "@/lib/payments/withdrawals";
 
 /**
@@ -221,7 +221,7 @@ export async function POST(request: NextRequest) {
      * verdict into the request ledger.
      */
     const settled = attempt ? await settleConfirmedAttempt(attempt.id) : null;
-    const refund = attempt ? "not_found" : await settleReservationRefundByReplyTo(replyTo);
+    const refund = attempt ? "not_found" : await settleRefundByReplyTo(replyTo);
     const withdrawal =
       !attempt && refund === "not_found"
         ? await settleWithdrawalPayoutByReplyTo(replyTo)

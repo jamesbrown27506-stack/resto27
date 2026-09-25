@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getTranslator } from "@/lib/i18n/locale-server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { NOTIFICATION_EVENTS } from "./settings";
@@ -34,6 +35,7 @@ export interface NotificationPreferenceInput {
 export async function saveNotificationPreferences(
   prefs: NotificationPreferenceInput[],
 ): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("settings.manage");
   const supabase = createAdminClient();
 
@@ -62,7 +64,7 @@ export async function saveNotificationPreferences(
 
   if (error) {
     console.error("[settings:saveNotificationPreferences]", error.message);
-    return { ok: false, error: "Could not save your notification preferences." };
+    return { ok: false, error: t("est.notifPrefsFailed") };
   }
 
   revalidatePath("/m/settings");

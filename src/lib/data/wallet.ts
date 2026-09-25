@@ -33,14 +33,79 @@ export interface WalletRequestRow {
 }
 
 export interface WalletState {
-  /** Cash currently available for withdrawal. */
+  /** Everything credited to the wallet, including money still held for orders. */
   balance: number;
+  /**
+   * The restaurant's share of online-paid orders not yet delivered. It is in
+   * the balance but cannot be withdrawn until the food arrives — a cancelled
+   * paid order is refunded from it (see ordersInProgressHold).
+   */
+  heldForOrders: number;
   grossIncome: number;
   paymentFees: number;
   commissionDue: number;
   estimatedNetIncome: number;
   ledger: WalletLedgerRow[];
   requests: WalletRequestRow[];
+}
+
+/**
+ * Money credited for orders that are paid but not delivered yet, and for
+ * online deposits on bookings still to come.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  A paid order credits the restaurant at payment (0053), and a paid order
+ *  can now be cancelled with a full refund (0059) — which debits that credit
+ *  back. If the restaurant had already withdrawn it, the refund would fail
+ *  with "insufficient balance" and the customer would be stuck again. So the
+ *  share of every paid order still in the kitchen or on the road is held:
+ *  in the balance, not withdrawable, released the moment it is delivered.
+ *  Computed, not stored — nothing to keep in sync.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function ordersInProgressHold(restaurantId: string): Promise<number> {
+  const { data, error } = await createAdminClient()
+    .from("orders")
+    .select("total, service_charge")
+    .eq("restaurant_id", restaurantId)
+    .eq("is_paid", true)
+    .in("payment_method", ["mobile_money", "wallet"])
+    .in("status", ["confirmed", "preparing", "shipped"]);
+  if (error) {
+    console.error("[wallet:hold]", error.message);
+    return 0;
+  }
+  const orders = ((data ?? []) as { total: number; service_charge: number | null }[]).reduce(
+    (sum, o) => sum + Math.max(0, Number(o.total) - Number(o.service_charge ?? 0)),
+    0,
+  );
+
+  // Same reasoning for a deposit paid ONLINE on a booking still to come: the
+  // restaurant may cancel it (full refund, 0060) or the customer may (0050),
+  // and both debit the wallet. Cash deposits never entered the wallet.
+  const { data: bookings } = await createAdminClient()
+    .from("reservations")
+    .select("id")
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "confirmed")
+    .eq("deposit_paid", true)
+    .gt("reserved_for", new Date().toISOString());
+  const ids = ((bookings ?? []) as { id: string }[]).map((b) => b.id);
+  let deposits = 0;
+  if (ids.length > 0) {
+    const { data: attempts } = await createAdminClient()
+      .from("payment_attempts")
+      .select("reservation_id, amount")
+      .in("reservation_id", ids)
+      .eq("status", "succeeded");
+    const perBooking = new Map<string, number>();
+    for (const a of (attempts ?? []) as { reservation_id: string; amount: number }[]) {
+      perBooking.set(a.reservation_id, Math.max(perBooking.get(a.reservation_id) ?? 0, Number(a.amount)));
+    }
+    deposits = [...perBooking.values()].reduce((sum, n) => sum + n, 0);
+  }
+
+  return orders + deposits;
 }
 
 /** One branch's wallet: the balance and everything that explains it. */
@@ -61,26 +126,31 @@ export async function getWalletState(restaurantId: string): Promise<WalletState>
       .eq("restaurant_id", restaurantId)
       .order("requested_at", { ascending: false })
       .limit(20),
-    supabase.from("orders").select("subtotal, discount_amount, delivery_fee, service_charge").eq("restaurant_id", restaurantId).eq("is_paid", true),
+    // Cancelled paid orders were refunded; they are not income.
+    supabase.from("orders").select("subtotal, discount_amount, service_charge").eq("restaurant_id", restaurantId).eq("is_paid", true).neq("status", "cancelled"),
     supabase.from("commission_statements").select("commission_amount, status").eq("restaurant_id", restaurantId).in("status", ["draft", "issued"]),
   ]);
+  const heldForOrders = await ordersInProgressHold(restaurantId);
 
   if (balanceResult.error || ledgerResult.error || requestsResult.error) {
     console.warn(
       "[wallet:getWalletState]",
       balanceResult.error?.message ?? ledgerResult.error?.message ?? requestsResult.error?.message ?? "",
     );
-    return { balance: 0, grossIncome: 0, paymentFees: 0, commissionDue: 0, estimatedNetIncome: 0, ledger: [], requests: [] };
+    return { balance: 0, heldForOrders: 0, grossIncome: 0, paymentFees: 0, commissionDue: 0, estimatedNetIncome: 0, ledger: [], requests: [] };
   }
 
   const balance = Number((balanceResult.data as { balance: number } | null)?.balance ?? 0);
-  const paidOrders = (ordersResult.data ?? []) as { subtotal: number; discount_amount: number; delivery_fee: number; service_charge: number }[];
-  const grossIncome = paidOrders.reduce((sum, order) => sum + Math.max(0, Number(order.subtotal) - Number(order.discount_amount)) + Number(order.delivery_fee), 0);
+  const paidOrders = (ordersResult.data ?? []) as { subtotal: number; discount_amount: number; service_charge: number }[];
+  // Food only: the delivery fee is paid in cash to the rider and never passes
+  // through the wallet (0059).
+  const grossIncome = paidOrders.reduce((sum, order) => sum + Math.max(0, Number(order.subtotal) - Number(order.discount_amount)), 0);
   const paymentFees = paidOrders.reduce((sum, order) => sum + Number(order.service_charge), 0);
   const commissionDue = ((commissionsResult.data ?? []) as { commission_amount: number }[]).reduce((sum, statement) => sum + Number(statement.commission_amount), 0);
 
   return {
     balance,
+    heldForOrders,
     grossIncome,
     paymentFees,
     commissionDue,

@@ -94,15 +94,6 @@ export function CustomersView({
 
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-text-light">
               {c.email !== "" && <span className="truncate">{c.email}</span>}
-              {c.phone !== "" && (
-                <a
-                  href={`tel:${c.phone.replace(/\s/g, "")}`}
-                  aria-label={t("mcu.call", { name: nameOf(c) })}
-                  className="tnum transition-colors hover:text-primary"
-                >
-                  <span>{c.phone}</span>
-                </a>
-              )}
             </div>
           </div>
         </div>

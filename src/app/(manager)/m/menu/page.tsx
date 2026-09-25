@@ -57,6 +57,8 @@ export default async function MenuPage() {
         items={items}
         limit={limit}
         canEdit={can(active.role, "menu.edit")}
+        // The sold-out switch is its own capability: the kitchen knows first.
+        canToggleAvailability={can(active.role, "menu.availability")}
       />
     </ManagerPage>
   );

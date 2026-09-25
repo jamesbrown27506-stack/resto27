@@ -6,6 +6,9 @@ import { requireRole } from "@/lib/auth/session";
 import { writeAudit } from "./platform-actions";
 import { notify } from "@/lib/notify";
 import { activateFromInvoice } from "./invoice-activation";
+import { cancelPaidOrder } from "@/lib/payments/order-refunds";
+import { startRefundPayout } from "@/lib/payments/refund-payouts";
+import { releaseOrderHoldings } from "@/lib/orders/cancellation-effects";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -635,5 +638,121 @@ export async function createRefund(input: {
 
   revalidatePath("/a/refunds");
   revalidatePath("/a/commissions");
+  return { ok: true };
+}
+
+/* ── Order cancellations with refund (support) ─────────────────────────── */
+
+/**
+ * Cancel a customer's order by reference and refund what they paid online.
+ *
+ * The support path for "the food never came": the same cancelPaidOrder()
+ * the restaurant's own cancel button uses (one transaction, then the Mobile
+ * Money payout), plus an audit row naming the admin. Unpaid orders are simply
+ * cancelled.
+ */
+export async function adminCancelOrder(input: { reference: string; reason: string }): Promise<ActionResult> {
+  const admin = await requireRole("admin");
+  const reference = input.reference.trim().toUpperCase();
+  const reason = input.reason.trim();
+  if (!reference) return { ok: false, error: "Enter the order reference (CMD-…)." };
+  if (reason.length < 5) return { ok: false, error: "Give a reason — the customer reads it." };
+
+  const supabase = createAdminClient();
+  const { data: order } = await supabase
+    .from("orders")
+    .select("id, reference, status, is_paid, payment_method, restaurant_id, customer_id, restaurants ( name )")
+    .eq("reference", reference)
+    .maybeSingle();
+  if (!order) return { ok: false, error: `No order ${reference}.` };
+  if (order.status === "cancelled" || order.status === "delivered") {
+    return { ok: false, error: `Order ${reference} is already ${order.status}.` };
+  }
+
+  const restaurantName = (order.restaurants as unknown as { name?: string } | null)?.name;
+  const paidOnline = order.is_paid && (order.payment_method === "mobile_money" || order.payment_method === "wallet");
+
+  if (paidOnline) {
+    const result = await cancelPaidOrder({
+      orderId: order.id as string,
+      actor: admin.email,
+      reason,
+      restaurantName,
+      by: "admin",
+    });
+    if (!result.ok) {
+      return {
+        ok: false,
+        error:
+          result.reason === "insufficientBalance"
+            ? "The restaurant wallet no longer covers this refund (already withdrawn). Refund by hand and adjust the wallet."
+            : result.reason === "migrationMissing"
+              ? "Run migration 0059 in the Supabase SQL editor first."
+              : "The cancellation could not be recorded.",
+      };
+    }
+  } else {
+    const { data: cancelled } = await supabase
+      .from("orders")
+      .update({ status: "cancelled", cancelled_reason: reason, cancelled_at: new Date().toISOString() })
+      .eq("id", order.id)
+      .eq("status", order.status)
+      .eq("is_paid", false)
+      .select("id")
+      .maybeSingle();
+    if (!cancelled) return { ok: false, error: "The order changed meanwhile — reload and try again." };
+    await supabase.from("order_status_history").insert({ order_id: order.id, status: "cancelled", by_name: "Resto237", note: reason });
+    await releaseOrderHoldings(order.id as string);
+    if (order.customer_id) {
+      await notify({
+        event: "order_cancelled",
+        tone: "error",
+        customerId: order.customer_id as string,
+        href: `/orders/${order.id}`,
+        params: { reference, restaurantName, cancelledBy: "restaurant", reason },
+      });
+    }
+  }
+
+  await writeAudit(admin, {
+    action: "order.cancel",
+    entityType: "order",
+    entityId: order.id as string,
+    summary: `Cancelled ${reference}${paidOnline ? " with refund" : ""} — ${reason}`,
+  });
+  revalidatePath("/a/refunds");
+  return { ok: true, note: paidOnline ? "Cancelled; the refund is on its way to the customer." : "Cancelled." };
+}
+
+/**
+ * Put a refund the payout saga gave up on back in the queue (after the admin
+ * checked CamerPay and fixed the cause, e.g. topped up the payout balance).
+ */
+export async function adminRetryRefund(refundId: string): Promise<ActionResult> {
+  const admin = await requireRole("admin");
+  const supabase = createAdminClient();
+  const { data: refund } = await supabase
+    .from("refunds")
+    .select("id, reference, status, reply_to, raw_response, order_id, reservation_id")
+    .eq("id", refundId)
+    .maybeSingle();
+  if (!refund || (!refund.order_id && !refund.reservation_id)) return { ok: false, error: "Refund not found." };
+  if (refund.status !== "rejected") return { ok: false, error: "Only a refund that gave up can be retried." };
+
+  const raw = { ...((refund.raw_response as Record<string, unknown> | null) ?? {}) };
+  delete raw.payoutClaim;
+  delete raw.gaveUp;
+  raw.payoutTries = 0;
+  raw.retriedBy = admin.email;
+  const { error } = await supabase
+    .from("refunds")
+    .update({ status: "pending", reply_to: null, raw_response: raw })
+    .eq("id", refundId)
+    .eq("status", "rejected");
+  if (error) return { ok: false, error: "Could not requeue the refund." };
+
+  await startRefundPayout(refundId);
+  await writeAudit(admin, { action: "refund.retry", entityType: "refund", entityId: refundId, summary: `Retried ${refund.reference}` });
+  revalidatePath("/a/refunds");
   return { ok: true };
 }

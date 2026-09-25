@@ -8,6 +8,7 @@ import { fetchReservations, fetchTables } from "@/lib/data/manager";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { normaliseDepositType } from "@/lib/reservations/deposit";
+import { getTimeLimits } from "@/lib/orders/time-limit-settings";
 
 /** The browser tab is a user-visible string too, so it follows the locale. */
 export async function generateMetadata(): Promise<Metadata> {
@@ -28,7 +29,7 @@ export default async function ReservationsPage() {
   const from = new Date();
   from.setHours(0, 0, 0, 0);
 
-  const [reservations, tables, depositRow] = await Promise.all([
+  const [reservations, tables, depositRow, limits] = await Promise.all([
     fetchReservations(active.restaurantId, { from }),
     fetchTables(active.restaurantId),
     (async () => {
@@ -43,7 +44,12 @@ export default async function ReservationsPage() {
         type: normaliseDepositType((data as { deposit_type?: string } | null)?.deposit_type),
       };
     })(),
+    getTimeLimits(),
   ]);
+
+  // One server-stamped instant for every "answer before" / "no-show from"
+  // decision on the board, so the server render and the browser agree.
+  const now = new Date().getTime();
 
   return (
     <ManagerPage
@@ -54,9 +60,13 @@ export default async function ReservationsPage() {
         reservations={reservations}
         tables={tables}
         canDecide={can(active.role, "reservations.decide")}
+        canSeat={can(active.role, "reservations.seat")}
         depositAmount={depositRow.amount}
         depositType={depositRow.type}
         canCollectDeposit={can(active.role, "finance.manage")}
+        canTakeDeposit={can(active.role, "payments.collect")}
+        responseMinutes={limits.reservationMinutes}
+        now={now}
       />
     </ManagerPage>
   );

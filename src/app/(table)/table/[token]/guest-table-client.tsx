@@ -3,14 +3,16 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Bell, Check, Clock3, CreditCard, Droplets, Minus, Plus, ReceiptText, Send, ShoppingBag, Trash2, UtensilsCrossed, WalletCards, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Field, Input } from "@/components/ui/input";
+import { Field, Input, Textarea } from "@/components/ui/input";
+import { ModifierSheet } from "@/components/menu/modifier-sheet";
+import type { MenuItem } from "@/lib/data/manager";
 import { Badge } from "@/components/ui/badge";
 import { PaymentPendingView } from "@/components/payment/payment-pending";
 import { formatMoney } from "@/lib/format/currency";
 import { useLocale } from "@/lib/i18n/use-locale";
 import {
   requestTableAccess, getGuestDiningState, submitGuestRound, sendGuestDiningMessage,
-  payDiningBill, checkDiningPayment, requestGuestDiningPayment,
+  payDiningBill, checkDiningPayment, requestGuestDiningPayment, withdrawTableAccess,
 } from "@/lib/data/dining-actions";
 import { nativePlatform } from "@/lib/capacitor/platform";
 import { syncGuestPush } from "@/lib/dining/guest-push-client";
@@ -19,21 +21,64 @@ import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 
 type Landing = NonNullable<Awaited<ReturnType<typeof import("@/lib/data/dining-actions").getTableLanding>>>;
 type State = NonNullable<Awaited<ReturnType<typeof getGuestDiningState>>>;
-type Line = { id: string; name: string; price: number; quantity: number; optionIds: string[] };
+/**
+ * One basket line. `key` is dish + chosen options + note, so "Poulet DG,
+ * sans piment" and "Poulet DG" stay two lines exactly as in the delivery
+ * basket (cart-provider's optionsHash).
+ */
+type Line = {
+  key: string;
+  menuItemId: string;
+  name: string;
+  price: number;
+  quantity: number;
+  optionIds: string[];
+  optionsLabel: string;
+  notes: string | null;
+};
+
+/*
+  ─────────────────────────────────────────────────────────────────────────
+   POLLING: FAST ONLY WHILE SOMETHING IS ABOUT TO CHANGE.
+
+   The page used to call getGuestDiningState every 5 s for as long as it was
+   open — a Server Action invocation (Vercel CPU) per guest per 5 s, all
+   evening, mostly to learn that nothing had happened. Push already wakes the
+   page for every staff decision; polling is the fallback.
+
+   So: 5 s while something is genuinely pending (the access request, a dish
+   awaiting approval, a payment in progress), 25 s otherwise, nothing while
+   the tab is hidden (a visibilitychange refresh catches up on return), and
+   nothing at all once the visit is closed or access was refused.
+  ─────────────────────────────────────────────────────────────────────────
+*/
+const FAST_POLL_MS = 5_000;
+const SLOW_POLL_MS = 25_000;
+
+function lineKey(menuItemId: string, optionIds: string[], notes: string | null): string {
+  return `${menuItemId}::${[...optionIds].sort().join("|")}::${notes ?? ""}`;
+}
 
 function GuestDishPhoto({ src, name }: { src: string | null; name: string }) {
   const [failed, setFailed] = useState(false);
   return <div className="grid size-24 shrink-0 place-items-center overflow-hidden rounded-md bg-surface-2">
     {src && !failed
       // eslint-disable-next-line @next/next/no-img-element
-      ? <img src={src} alt={name} loading="lazy" onError={() => setFailed(true)} className="size-full object-cover" />
+      ? <img src={src} alt={name} loading="lazy" decoding="async" onError={() => setFailed(true)} className="size-full object-cover" />
       : <UtensilsCrossed className="size-7 text-text-light" />}
   </div>;
 }
 
 export function GuestTableClient({ landing }: { landing: Landing }) {
-  const { locale } = useLocale();
+  const { locale, t } = useLocale();
   const en = locale === "en";
+  const [sheetItem, setSheetItem] = useState<MenuItem | null>(null);
+  const pollMs = useRef(FAST_POLL_MS);
+  const pollStopped = useRef(false);
+  // Set by the polling effect: restarts the wait so a switch from slow to
+  // fast (a dish just sent, a payment just started) takes effect now rather
+  // than after the remaining 25 s.
+  const pollRestart = useRef<(() => void) | null>(null);
   const [pending, start] = useTransition();
   const [name, setName] = useState("");
   const [token, setToken] = useState<string | null>(null);
@@ -122,7 +167,22 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
       });
     };
     void refresh();
-    const timer = window.setInterval(refresh, 5000);
+    // A self-rescheduling timeout rather than a fixed interval, so the delay
+    // follows pollMs (set from the state below) without tearing down the
+    // push listeners every time the page moves between fast and slow.
+    let timer = 0;
+    const schedule = () => {
+      timer = window.setTimeout(async () => {
+        if (!alive) return;
+        if (!pollStopped.current) await refresh();
+        if (alive) schedule();
+      }, pollMs.current);
+    };
+    schedule();
+    pollRestart.current = () => {
+      window.clearTimeout(timer);
+      if (alive) schedule();
+    };
     const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
     document.addEventListener("visibilitychange", onVisible);
     const onPush = (event: Event) => {
@@ -136,7 +196,8 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
     window.addEventListener("resto237:native-notification", onPush);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      pollRestart.current = null;
+      window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisible);
       if ("serviceWorker" in navigator) navigator.serviceWorker.removeEventListener("message", onPush);
       window.removeEventListener("resto237:native-notification", onPush);
@@ -168,6 +229,62 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
   const hasPendingDishes = state?.rounds.some((round) =>
     round.dining_round_items.some((item) => item.status === "pending")) ?? false;
 
+  // What the polling effect reads. Refs, updated after render, so the effect
+  // keeps one timer and one set of listeners for the whole visit.
+  const visitOver = Boolean(state && (
+    state.session.status === "closed" || state.session.status === "cancelled" ||
+    state.guest.status === "rejected" || state.guest.status === "expired"));
+  const somethingPending = !state || state.guest.status === "pending" || hasPendingDishes ||
+    Boolean(attempt) || state.session.status === "payment_requested";
+  useEffect(() => {
+    pollStopped.current = visitOver;
+    const next = somethingPending ? FAST_POLL_MS : SLOW_POLL_MS;
+    const sooner = next < pollMs.current;
+    pollMs.current = next;
+    if (sooner) pollRestart.current?.();
+  }, [visitOver, somethingPending]);
+
+  /** The same shape the delivery menu uses, so the ModifierSheet can be reused as is. */
+  const menuItems = useMemo(() => new Map<string, MenuItem>(landing.items.map((item) => [item.id, {
+    id: item.id,
+    restaurantId: "",
+    categoryId: item.category_id ?? null,
+    name: item.name,
+    description: item.description ?? "",
+    price: Number(item.price),
+    imageUrl: item.image_url ?? null,
+    isAvailable: Boolean(item.is_available),
+    isFeatured: false,
+    prepMinutes: 0,
+    trackStock: Boolean(item.track_stock),
+    stockQuantity: item.stock_quantity ?? null,
+    lowStockThreshold: null,
+    dietaryTags: "",
+    allergens: "",
+    sortOrder: item.sort_order ?? 0,
+    optionGroups: landing.groups
+      .filter((group) => group.menu_item_id === item.id)
+      .map((group) => ({
+        id: group.id,
+        menuItemId: group.menu_item_id,
+        name: group.name,
+        minSelect: Number(group.min_select) || 0,
+        maxSelect: Math.max(1, Number(group.max_select) || 1),
+        isRequired: Boolean(group.is_required),
+        sortOrder: group.sort_order ?? 0,
+        options: landing.options
+          .filter((option) => option.group_id === group.id)
+          .map((option) => ({
+            id: option.id,
+            groupId: option.group_id,
+            name: option.name,
+            priceDelta: Number(option.price_delta) || 0,
+            isAvailable: Boolean(option.is_available),
+            sortOrder: option.sort_order ?? 0,
+          })),
+      })),
+  }])), [landing]);
+
   function resetVisit() {
     localStorage.removeItem(`resto237-table-${landing.table.token}`);
     setToken(null);
@@ -176,6 +293,23 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
     setNotice(null);
     setPushStatus("idle");
     seenMessages.current = null;
+  }
+
+  function withdraw() {
+    if (!token) return;
+    start(async () => {
+      const result = await withdrawTableAccess(token);
+      if (!result.ok) {
+        // Most likely a waiter answered in the same moment — show the fresh
+        // state rather than pretending the request is gone.
+        setError(result.error ?? t("tbg.err.cancelFailed"));
+        const next = await getGuestDiningState(token);
+        if (next) setState(next);
+        return;
+      }
+      resetVisit();
+      setNotice(t("tbg.cancelled"));
+    });
   }
 
   async function enableAlerts(raw: string) {
@@ -202,33 +336,63 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
     });
   }
 
-  function add(item: Landing["items"][number]) {
-    const defaults = landing.groups
-      .filter((group) => group.menu_item_id === item.id && group.is_required && group.max_select === 1)
-      .map((group) => landing.options.find((option) => option.group_id === group.id && option.is_available))
-      .filter(Boolean) as Landing["options"];
-    const optionIds = defaults.map((option) => option.id);
-    const price = Number(item.price) + defaults.reduce((sum, option) => sum + Number(option.price_delta), 0);
+  /*
+    ───────────────────────────────────────────────────────────────────────
+     A DISH WITH OPTIONS IS NO LONGER ADDED WITH SILENT DEFAULTS.
+
+     `add()` used to pick the first option of every required single-choice
+     group and skip every other group — so a guest tapping "Poulet braisé"
+     sent "Poulet braisé, frites" to the kitchen without ever being asked
+     about the side, and could never choose the sauce at all. It now opens
+     the same ModifierSheet the delivery menu uses (required groups, caps,
+     price deltas, quantity, and a note for the kitchen). A dish with no
+     options is still one tap.
+    ───────────────────────────────────────────────────────────────────────
+  */
+  function addLine(line: Omit<Line, "key">) {
+    const key = lineKey(line.menuItemId, line.optionIds, line.notes);
     setCart((current) => {
-      const old = current.find((line) => line.id === item.id);
+      const old = current.find((entry) => entry.key === key);
       return old
-        ? current.map((line) => line.id === item.id ? { ...line, quantity: line.quantity + 1 } : line)
-        : [...current, { id: item.id, name: item.name, price, quantity: 1, optionIds }];
+        ? current.map((entry) => entry.key === key ? { ...entry, quantity: Math.min(50, entry.quantity + line.quantity) } : entry)
+        : [...current, { ...line, key }];
     });
     setCartOpen(true);
   }
 
-  function changeQuantity(id: string, delta: number) {
-    setCart((current) => current.map((line) => line.id === id ? { ...line, quantity: line.quantity + delta } : line).filter((line) => line.quantity > 0));
+  function add(item: Landing["items"][number]) {
+    const menuItem = menuItems.get(item.id);
+    if (menuItem && menuItem.optionGroups.length > 0) {
+      setSheetItem(menuItem);
+      return;
+    }
+    addLine({ menuItemId: item.id, name: item.name, price: Number(item.price), quantity: 1, optionIds: [], optionsLabel: "", notes: null });
+  }
+
+  function changeQuantity(key: string, delta: number) {
+    setCart((current) => current.map((line) => line.key === key ? { ...line, quantity: Math.min(50, line.quantity + delta) } : line).filter((line) => line.quantity > 0));
   }
 
   function submit() {
     if (!token) return;
     start(async () => {
       setError(null);
+      /*
+        A dining round carries ONE note, not one per dish (0054's
+        dining_round_items has no notes column). Per-dish notes from the
+        sheet are therefore folded into the round note, each prefixed with
+        its dish, so the waiter reads "2× Poulet DG : sans piment" rather
+        than a note detached from what it is about.
+      */
+      const dishNotes = cart
+        .filter((line) => line.notes)
+        .map((line) => `${line.quantity}× ${line.name}${line.optionsLabel ? ` (${line.optionsLabel})` : ""} : ${line.notes}`);
+      // "; " rather than newlines: the staff floor renders the note in a
+      // plain paragraph, where a newline collapses into a space.
+      const roundNote = [...dishNotes, notes.trim()].filter(Boolean).join(" ; ").slice(0, 500);
       const result = await submitGuestRound(token, {
-        lines: cart.map((line) => ({ menuItemId: line.id, quantity: line.quantity, optionIds: line.optionIds })),
-        notes,
+        lines: cart.map((line) => ({ menuItemId: line.menuItemId, quantity: line.quantity, optionIds: line.optionIds })),
+        notes: roundNote,
       });
       if (!result.ok) { setError(result.error ?? "Not sent"); return; }
       setCart([]);
@@ -283,6 +447,7 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
 
   if (!token) return (
     <main className="mx-auto min-h-[100dvh] max-w-lg px-4 py-10">
+      {notice && <p role="status" className="mb-6 rounded-md border border-success/30 bg-success-light p-3 text-sm text-success">{notice}</p>}
       <p className="text-sm font-semibold text-primary">{landing.restaurant.name}</p>
       <h1 className="mt-2 font-display text-3xl font-bold">{en ? "Welcome to table" : "Bienvenue à la table"} {landing.table.number}</h1>
       <p className="mt-3 text-text-secondary">{en
@@ -324,8 +489,17 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
         <p className="mt-2 text-text-secondary">{en
           ? `Your request for table ${landing.table.number} was sent. Staff must approve this device.`
           : `Votre demande pour la table ${landing.table.number} a été envoyée. Le personnel doit valider cet appareil.`}</p>
+        <p className="mt-3 text-sm leading-relaxed text-text-secondary">{t("tbg.waitHelp")}</p>
         <div className="mt-5 flex justify-center">{alertsControl}</div>
         {pushStatus === "unavailable" && <p className="mt-2 text-xs text-text-secondary">{en ? "Keep this page open for updates." : "Gardez cette page ouverte pour les nouvelles."}</p>}
+        {/* Only while the request is really waiting: a guest held back by a
+            table that is settling its bill has its own screen above. */}
+        {state?.guest.status === "pending" && (
+          <Button variant="ghost" className="mt-6" disabled={pending} loading={pending} onClick={withdraw}>
+            <X className="size-4" />{t("tbg.cancelRequest")}
+          </Button>
+        )}
+        {error && <p role="alert" className="mt-3 text-sm text-error">{error}</p>}
       </div>
     </main>
   );
@@ -460,6 +634,7 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
           <div className="grid gap-3 sm:grid-cols-2">
             {currentGroup.items.map((item) => {
               const sold = !item.is_available || (item.track_stock && item.stock_quantity === 0);
+              const hasOptions = (menuItems.get(item.id)?.optionGroups.length ?? 0) > 0;
               return <button key={item.id} type="button" disabled={sold || paymentRequested}
                 onClick={() => add(item)}
                 className="flex min-h-28 w-full min-w-0 items-center gap-3 rounded-lg border border-border bg-surface p-3 text-left disabled:opacity-45">
@@ -468,6 +643,7 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
                   <p className="break-words font-semibold">{item.name}</p>
                   {item.description && <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{item.description}</p>}
                   <p className="mt-2 font-bold text-primary">{formatMoney(item.price)}</p>
+                  {hasOptions && <p className="mt-0.5 text-xs text-text-light">{t("tbg.options")}</p>}
                 </div>
                 <Plus className="size-5 shrink-0" />
               </button>;
@@ -498,12 +674,20 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
         <div className="mx-auto max-w-3xl">
           {cartOpen && <div className="mb-3 max-h-[45dvh] space-y-2 overflow-y-auto" aria-label={en ? "Basket items" : "Articles du panier"}>
             <div className="flex items-center justify-between"><p className="font-semibold">{en ? "Your basket" : "Votre panier"}</p><button type="button" className="inline-flex items-center gap-1 text-sm text-error" onClick={() => { setCart([]); setCartOpen(false); }}><Trash2 className="size-4" />{en ? "Empty basket" : "Vider le panier"}</button></div>
-            {cart.map((line) => <div key={line.id} className="flex items-center gap-2 rounded-md border border-border p-2">
-              <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{line.name}</p><p className="text-xs text-text-secondary">{formatMoney(line.price * line.quantity)}</p></div>
-              <button type="button" aria-label={`${en ? "Remove one" : "Retirer un"} ${line.name}`} onClick={() => changeQuantity(line.id, -1)} className="grid size-9 place-items-center rounded-full border border-border"><Minus className="size-4" /></button>
+            {cart.map((line) => <div key={line.key} className="flex items-center gap-2 rounded-md border border-border p-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{line.name}</p>
+                {line.optionsLabel && <p className="truncate text-xs text-text-secondary">{line.optionsLabel}</p>}
+                {line.notes && <p className="truncate text-xs italic text-text-light">« {line.notes} »</p>}
+                <p className="text-xs text-text-secondary">{formatMoney(line.price * line.quantity)}</p>
+              </div>
+              <button type="button" aria-label={`${en ? "Remove one" : "Retirer un"} ${line.name}`} onClick={() => changeQuantity(line.key, -1)} className="grid size-9 place-items-center rounded-full border border-border"><Minus className="size-4" /></button>
               <span className="w-5 text-center text-sm font-semibold">{line.quantity}</span>
-              <button type="button" aria-label={`${en ? "Add one" : "Ajouter un"} ${line.name}`} onClick={() => changeQuantity(line.id, 1)} className="grid size-9 place-items-center rounded-full border border-border"><Plus className="size-4" /></button>
+              <button type="button" aria-label={`${en ? "Add one" : "Ajouter un"} ${line.name}`} onClick={() => changeQuantity(line.key, 1)} className="grid size-9 place-items-center rounded-full border border-border"><Plus className="size-4" /></button>
             </div>)}
+            <Field label={t("tbg.basketNote")} htmlFor="guest-round-note">
+              <Textarea id="guest-round-note" rows={2} maxLength={300} value={notes} onChange={(event) => setNotes(event.target.value)} placeholder={t("tbg.basketNotePh")} />
+            </Field>
           </div>}
           <div className="flex items-center gap-3">
             <button type="button" onClick={() => setCartOpen((value) => !value)} aria-expanded={cartOpen} className="min-w-0 flex-1 text-left"><p className="font-semibold">{cart.reduce((sum, line) => sum + line.quantity, 0)} {en ? "items · Edit basket" : "articles · Modifier le panier"}</p><p className="font-bold text-primary">{formatMoney(cartTotal)}</p></button>
@@ -511,6 +695,21 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
           </div>
         </div>
       </aside>}
+      <ModifierSheet
+        item={sheetItem}
+        restaurant={{ id: "", name: landing.restaurant?.name ?? "", slug: "" }}
+        open={sheetItem !== null}
+        onClose={() => setSheetItem(null)}
+        onAddLine={(line) => addLine({
+          menuItemId: line.menuItemId,
+          name: line.name,
+          price: line.unitPrice,
+          quantity: line.quantity,
+          optionIds: line.options.map((option) => option.optionId),
+          optionsLabel: line.options.map((option) => option.optionName).join(" · "),
+          notes: line.notes,
+        })}
+      />
     </main>
   );
 }

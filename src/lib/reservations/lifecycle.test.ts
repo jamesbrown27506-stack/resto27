@@ -4,6 +4,8 @@ import {
   canCustomerPayReservation,
   canDecideReservation,
   canManagerCollectReservationDeposit,
+  canMarkReservationNoShow,
+  canRestaurantCancelReservation,
   canSetReservationStatus,
   isUpcomingReservation,
   partitionCustomerReservations,
@@ -107,5 +109,24 @@ describe("reservation controls", () => {
     expect(
       canManagerCollectReservationDeposit({ status: "seated", depositPercent: 10, depositPaid: false }),
     ).toBe(true);
+  });
+});
+
+describe("restaurant-side verdicts", () => {
+  it("allows a no-show only from confirmed, and only after the 15-minute grace", () => {
+    const booking = { status: "confirmed" as const, reservedFor: "2026-08-25T19:00:00.000Z" };
+    expect(canMarkReservationNoShow(booking, "2026-08-25T19:10:00.000Z")).toBe(false);
+    expect(canMarkReservationNoShow(booking, "2026-08-25T19:15:00.000Z")).toBe(true);
+    expect(
+      canMarkReservationNoShow({ ...booking, status: "seated" }, "2026-08-25T20:00:00.000Z"),
+    ).toBe(false);
+  });
+
+  it("lets the restaurant cancel a confirmed booking, never a seated or finished one", () => {
+    expect(canRestaurantCancelReservation("confirmed")).toBe(true);
+    expect(canRestaurantCancelReservation("seated")).toBe(false);
+    expect(canRestaurantCancelReservation("completed")).toBe(false);
+    // Earlier states go through decideReservation (decline / release).
+    expect(canRestaurantCancelReservation("pending")).toBe(false);
   });
 });

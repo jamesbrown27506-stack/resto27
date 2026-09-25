@@ -2,7 +2,7 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/server";
 import { MOBILE_MONEY_CONFIRMATION_WINDOW_MS, resolveAttemptOutcome, settlePayment } from "@/lib/payments/collect";
-import { settleReservationRefund } from "@/lib/payments/reservation-refunds";
+import { sweepRefunds } from "@/lib/payments/refund-payouts";
 import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
 
 /**
@@ -152,29 +152,16 @@ export async function runReconciliation(): Promise<ReconciliationSummary> {
     else if (!settled.ok) summary.failed += 1;
   }
 
-  /* ── 3. Reservation refunds whose customer closed the page ───────────── */
+  /* ── 3. Refunds owed to customers (orders and bookings) ─────────────── */
 
-  const { data: refunds, error: refundsError } = await supabase
-    .from("refunds")
-    .select("id")
-    .eq("status", "pending")
-    .not("reply_to", "is", null)
-    .lt("created_at", new Date(now - STALE_AFTER_MS).toISOString())
-    .order("created_at", { ascending: true })
-    .limit(BATCH);
+  // Sends the ones nobody sent (the cancelling request died, or a payout
+  // failed and was released for a retry) and confirms the ones in flight.
+  const refunds = await sweepRefunds(BATCH);
+  summary.checked += refunds.refunded + refunds.failed + refunds.pending;
+  summary.settled += refunds.refunded;
+  summary.failed += refunds.failed;
+  summary.stillPending += refunds.pending;
 
-  if (refundsError) {
-    console.error("[pay:reconcile] refund queue", refundsError.message);
-    return summary;
-  }
-
-  for (const row of refunds ?? []) {
-    summary.checked += 1;
-    const outcome = await settleReservationRefund(row.id as string);
-    if (outcome === "refunded") summary.settled += 1;
-    else if (outcome === "failed") summary.failed += 1;
-    else summary.stillPending += 1;
-  }
   /* ── 4. Restaurant payouts awaiting provider confirmation ──────────── */
 
   const { data: withdrawals, error: withdrawalsError } = await supabase

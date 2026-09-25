@@ -253,9 +253,30 @@ export function OrderReceipt({ order }: { order: Order }) {
           <dd className="tnum font-medium">{formatMoney(order.serviceCharge)}</dd>
         </div>
 
+        {order.loyaltyValue > 0 && (
+          <div className="flex justify-between gap-3">
+            <dt className="text-text-secondary">{t("cor.loyalty")}</dt>
+            <dd className="tnum font-medium text-success">−{formatMoney(order.loyaltyValue)}</dd>
+          </div>
+        )}
+
+        <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border pt-3">
+          <dt className="font-display text-base font-bold">
+            {t(order.isPaid ? "cor.totalOnline" : "cor.totalToPay")}
+          </dt>
+          <dd translate="no" className="tnum font-display text-xl font-bold text-primary">
+            {formatMoney(order.total)}
+          </dd>
+        </div>
+
+        {/*
+          THE DELIVERY FEE SITS BELOW THE TOTAL, NOT INSIDE IT (0059).
+          It is paid in cash to the rider; `total` is what is paid online.
+          Listing it above the total line made the arithmetic look wrong.
+        */}
         {order.type === "delivery" && (
           <div className="flex justify-between gap-3">
-            <dt className="text-text-secondary">{t("cor.delivery")}</dt>
+            <dt className="text-text-secondary">{t("cor.deliveryCash")}</dt>
             <dd className="tnum font-medium">
               {order.deliveryFeeSetAt === null ? (
                 <span className="text-text-light">{t("cor.toConfirm")}</span>
@@ -265,20 +286,6 @@ export function OrderReceipt({ order }: { order: Order }) {
             </dd>
           </div>
         )}
-
-        {order.loyaltyValue > 0 && (
-          <div className="flex justify-between gap-3">
-            <dt className="text-text-secondary">{t("cor.loyalty")}</dt>
-            <dd className="tnum font-medium text-success">−{formatMoney(order.loyaltyValue)}</dd>
-          </div>
-        )}
-
-        <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border pt-3">
-          <dt className="font-display text-base font-bold">{t("cor.total")}</dt>
-          <dd translate="no" className="tnum font-display text-xl font-bold text-primary">
-            {formatMoney(order.total)}
-          </dd>
-        </div>
       </dl>
     </div>
   );

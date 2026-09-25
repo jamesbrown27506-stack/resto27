@@ -6,6 +6,8 @@ import {
 } from "@/lib/notifications/customer-topics";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { OrderStatus, OrderType, PaymentMethod } from "@/lib/format/order-status";
+import { orderDeadline } from "@/lib/orders/deadline";
+import { getTimeLimits } from "@/lib/orders/time-limit-settings";
 
 /**
  * Customer-side reads — one signed-in diner's orders, reservations, reviews,
@@ -25,6 +27,8 @@ import type { OrderStatus, OrderType, PaymentMethod } from "@/lib/format/order-s
 
 export interface CustomerOrderItem {
   id: string;
+  /** The live dish this line came from — null when the dish was deleted. Reorder uses it. */
+  menuItemId: string | null;
   /** SNAPSHOT (§3): the dish as it was when ordered, whatever the menu says today. */
   name: string;
   quantity: number;
@@ -70,10 +74,23 @@ export interface CustomerOrder {
   items: CustomerOrderItem[];
   history: { status: string; at: string; byName: string | null; note: string | null }[];
   createdAt: string;
+
+  /** The restaurant's advertised delivery estimate, minutes (ETA after payment). */
+  deliveryEstimateMin: number | null;
+  /**
+   * Filled only by fetchCustomerOrder (the detail page): the time limit this
+   * order's current wait runs out at (0059), the refund of a cancelled paid
+   * order, the payment attempt still live on the customer's phone, and the
+   * wallet balance that decides whether "pay with wallet" is offered.
+   */
+  deadline?: string | null;
+  refund?: { amount: number; status: "pending" | "completed" | "rejected"; destination: "mobile_money" | "customer_wallet" } | null;
+  openPayment?: { attemptId: string; phone: string | null } | null;
+  walletBalance?: number;
 }
 
 const ORDER_COLUMNS =
-  "id, reference, restaurant_id, customer_id, status, type, payment_method, is_paid, subtotal, discount_amount, service_charge_percent, service_charge, delivery_fee, delivery_fee_set_at, loyalty_value, total, delivery_name, delivery_phone, delivery_address, delivery_quartier, delivery_landmark, table_number, notes, promo_code, cancelled_reason, delivery_rating, scheduled_for, created_at, restaurants ( name, slug )";
+  "id, reference, restaurant_id, customer_id, status, type, payment_method, is_paid, subtotal, discount_amount, service_charge_percent, service_charge, delivery_fee, delivery_fee_set_at, loyalty_value, total, delivery_name, delivery_phone, delivery_address, delivery_quartier, delivery_landmark, table_number, notes, promo_code, cancelled_reason, delivery_rating, scheduled_for, created_at, restaurants ( name, slug, delivery_estimate_min )";
 
 interface DbOrder {
   id: string;
@@ -104,7 +121,12 @@ interface DbOrder {
   delivery_rating: number | null;
   scheduled_for: string | null;
   created_at: string;
-  restaurants: { name: string; slug: string }[] | null;
+  restaurants: { name: string; slug: string; delivery_estimate_min?: number | null }[] | { name: string; slug: string; delivery_estimate_min?: number | null } | null;
+}
+
+/** PostgREST returns a to-one embed as an object, older typings as an array. */
+function embedded(o: DbOrder) {
+  return Array.isArray(o.restaurants) ? o.restaurants[0] : o.restaurants;
 }
 
 function shapeOrder(
@@ -116,8 +138,8 @@ function shapeOrder(
     id: o.id,
     reference: o.reference,
     restaurantId: o.restaurant_id,
-    restaurantName: o.restaurants?.[0]?.name ?? "",
-    restaurantSlug: o.restaurants?.[0]?.slug ?? "",
+    restaurantName: embedded(o)?.name ?? "",
+    restaurantSlug: embedded(o)?.slug ?? "",
     status: o.status as OrderStatus,
     type: o.type as OrderType,
     paymentMethod: o.payment_method as CustomerOrder["paymentMethod"],
@@ -144,6 +166,7 @@ function shapeOrder(
     items,
     history,
     createdAt: o.created_at,
+    deliveryEstimateMin: Number(embedded(o)?.delivery_estimate_min) || null,
   };
 }
 
@@ -154,13 +177,14 @@ async function fetchItemsFor(ids: string[]): Promise<Map<string, CustomerOrderIt
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("order_items")
-    .select("id, order_id, name, unit_price, quantity, options_label, notes")
+    .select("id, order_id, menu_item_id, name, unit_price, quantity, options_label, notes")
     .in("order_id", ids)
     .order("created_at");
 
   for (const row of (data ?? []) as {
     id: string;
     order_id: string;
+    menu_item_id: string | null;
     name: string;
     unit_price: number;
     quantity: number;
@@ -170,6 +194,7 @@ async function fetchItemsFor(ids: string[]): Promise<Map<string, CustomerOrderIt
     const list = map.get(row.order_id) ?? [];
     list.push({
       id: row.id,
+      menuItemId: row.menu_item_id,
       name: row.name,
       unitPrice: row.unit_price,
       quantity: row.quantity,
@@ -260,8 +285,53 @@ export async function fetchCustomerOrder(
     fetchHistoryFor([row.id]),
   ]);
 
+  const order = shapeOrder(row, items.get(row.id) ?? [], history.get(row.id) ?? []);
+
+  // ── Detail-only facts: deadline, refund, live payment, wallet ──────────
+  const [limits, refundRow, attemptRow, walletRow] = await Promise.all([
+    getTimeLimits(),
+    supabase
+      .from("refunds")
+      .select("amount, status, raw_response")
+      .eq("order_id", row.id)
+      .eq("type", "refund")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    order.status === "awaiting_customer" && !order.isPaid
+      ? supabase
+          .from("payment_attempts")
+          .select("id, phone, created_at")
+          .eq("raw_response->>orderId", row.id)
+          .eq("status", "pending")
+          .gt("created_at", new Date(Date.now() - 5 * 60_000).toISOString())
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase.from("customer_wallets").select("balance").eq("profile_id", profileId).maybeSingle(),
+  ]);
+
+  const acceptedAt = [...order.history].reverse().find((h) => h.status === "awaiting_customer")?.at ?? null;
+  const deadline = orderDeadline(
+    { status: order.status, createdAt: order.createdAt, scheduledFor: order.scheduledFor, acceptedAt },
+    limits.orderMinutes,
+  );
+  const refund = refundRow.data as { amount: number; status: string; raw_response: { destination?: string } | null } | null;
+  const attempt = attemptRow.data as { id: string; phone: string | null } | null;
+
   return {
-    ...shapeOrder(row, items.get(row.id) ?? [], history.get(row.id) ?? []),
+    ...order,
+    deadline: deadline ? deadline.toISOString() : null,
+    refund: refund
+      ? {
+          amount: Number(refund.amount),
+          status: refund.status as "pending" | "completed" | "rejected",
+          destination: refund.raw_response?.destination === "customer_wallet" ? "customer_wallet" : "mobile_money",
+        }
+      : null,
+    openPayment: attempt ? { attemptId: attempt.id, phone: attempt.phone } : null,
+    walletBalance: Number((walletRow.data as { balance?: number } | null)?.balance ?? 0),
   };
 }
 
@@ -299,6 +369,10 @@ export interface CustomerReservation {
   restaurantCompensation: number;
   platformFee: number;
   refundBalanceAfter: number | null;
+  /** Where the refund went: the customer's wallet (customer cancel) or back to Mobile Money (restaurant cancel). */
+  refundDestination: "customer_wallet" | "mobile_money" | null;
+  /** The restaurant's words when it declined or cancelled the booking. */
+  declineReason: string | null;
   notes: string | null;
   createdAt: string;
 }
@@ -315,7 +389,7 @@ export async function fetchCustomerReservations(
   const { data, error } = await supabase
     .from("reservations")
     .select(
-      "id, reference, restaurant_id, reserved_for, duration_min, party_size, status, deposit_amount, deposit_paid, notes, created_at, restaurants ( name, slug ), restaurant_tables ( number )",
+      "id, reference, restaurant_id, reserved_for, duration_min, party_size, status, deposit_amount, deposit_paid, notes, decline_reason, created_at, restaurants ( name, slug ), restaurant_tables ( number )",
     )
     .eq("customer_id", profileId)
     .order("reserved_for", { ascending: false });
@@ -336,6 +410,7 @@ export async function fetchCustomerReservations(
     deposit_amount: number | null;
     deposit_paid: boolean | null;
     notes: string | null;
+    decline_reason: string | null;
     created_at: string;
     restaurants: { name: string; slug: string }[] | null;
     restaurant_tables: { number: string }[] | null;
@@ -360,6 +435,8 @@ export async function fetchCustomerReservations(
     restaurantCompensation: 0,
     platformFee: 0,
     refundBalanceAfter: null,
+    refundDestination: null,
+    declineReason: r.decline_reason ?? null,
     notes: r.notes,
     createdAt: r.created_at,
   }));
@@ -419,6 +496,10 @@ export async function fetchCustomerReservations(
           balanceAfter: typeof (refund.raw_response as { balanceAfter?: unknown } | null)?.balanceAfter === "number"
             ? Number((refund.raw_response as { balanceAfter: number }).balanceAfter)
             : null,
+          destination:
+            (refund.raw_response as { destination?: string } | null)?.destination === "mobile_money"
+              ? ("mobile_money" as const)
+              : ("customer_wallet" as const),
         },
       ]),
   );
@@ -436,6 +517,7 @@ export async function fetchCustomerReservations(
       restaurantCompensation: refund?.restaurantCompensation ?? 0,
       platformFee: refund?.platformFee ?? 0,
       refundBalanceAfter: refund?.balanceAfter ?? null,
+      refundDestination: refund?.destination ?? null,
     };
   });
 }

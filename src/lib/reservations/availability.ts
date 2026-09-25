@@ -30,17 +30,54 @@
  */
 
 /**
- * A booking holds its table from half an hour before the slot to an hour and
- * a half after — roughly a sitting, plus the turnaround either side.
+ * ─────────────────────────────────────────────────────────────────────────
+ *  A BOOKING IS AN INTERVAL, NOT A POINT (2026-09).
+ *
+ *  The old rule counted bookings STARTING in [T − 30 min, T + 90 min] — a
+ *  lopsided window that ignored how long each sitting actually lasts. A
+ *  two-top booked 17:15 for a long lunch-into-dinner was invisible to a 19:00
+ *  request, and a 20:45 booking blocked 19:00 although the first party would
+ *  be long gone. Both directions of wrong: double bookings on one side, lost
+ *  bookings on the other.
+ *
+ *  Now each booking holds its table for [start, start + its own duration),
+ *  and two bookings collide exactly when those intervals overlap:
+ *
+ *        s < t + d_t   &&   t < s + d_s
+ *
+ *  The duration is the restaurant's sitting length (`reservation_duration_min`,
+ *  default one hour, 0060), snapshotted onto each booking's `duration_min` when
+ *  it is made — so a restaurant shortening its sittings tonight does not
+ *  retroactively shrink the bookings it already accepted.
+ * ─────────────────────────────────────────────────────────────────────────
  */
-export const SLOT_WINDOW_BEFORE_MIN = 30;
-export const SLOT_WINDOW_AFTER_MIN = 90;
+export const DEFAULT_RESERVATION_DURATION_MIN = 60;
+export const MIN_RESERVATION_DURATION_MIN = 15;
+/**
+ * The longest sitting a restaurant may configure. Also the look-back of every
+ * "which bookings could overlap this one" query: nothing that started more
+ * than this long ago can still be at the table.
+ */
+export const MAX_RESERVATION_DURATION_MIN = 480;
+
+/** A stored or submitted duration, clamped to the allowed range. */
+export function normaliseDuration(
+  value: unknown,
+  fallback: number = DEFAULT_RESERVATION_DURATION_MIN,
+): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(MAX_RESERVATION_DURATION_MIN, Math.max(MIN_RESERVATION_DURATION_MIN, Math.round(n)));
+}
 
 /**
  * Statuses that occupy a table.
  *
  * `awaiting_payment` counts: the restaurant has committed the seat and is
  * waiting to be paid for it, so it must not be sold twice meanwhile.
+ * `pending` counts too — a request the restaurant may still accept must not
+ * be accepted on top of another one it accepted a minute earlier; the request
+ * deadline (timing.ts) stops it from blocking the slot for ever.
  * `completed`, `cancelled` and `no_show` release it.
  */
 export const HOLDING_STATUSES = ["pending", "awaiting_payment", "confirmed", "seated"] as const;
@@ -48,6 +85,13 @@ export const HOLDING_STATUSES = ["pending", "awaiting_payment", "confirmed", "se
 export interface FloorTable {
   capacity: number;
   status: string;
+}
+
+/** One booking already holding a table: when it starts and for how long. */
+export interface HoldingBooking {
+  start: Date;
+  /** The booking's own `duration_min`. Missing/invalid → the restaurant's. */
+  durationMin?: number | null;
 }
 
 /**
@@ -74,24 +118,50 @@ export function floorIsUnmanaged(tables: FloorTable[]): boolean {
   return tables.length === 0;
 }
 
-/** The window a booking at this instant occupies, as ISO strings. */
-export function slotWindow(at: Date): { start: string; end: string } {
-  return {
-    start: new Date(at.getTime() - SLOT_WINDOW_BEFORE_MIN * 60_000).toISOString(),
-    end: new Date(at.getTime() + SLOT_WINDOW_AFTER_MIN * 60_000).toISOString(),
-  };
+/** Half-open interval overlap: [aStart, aStart+aMin) ∩ [bStart, bStart+bMin) ≠ ∅. */
+export function intervalsOverlap(aStart: number, aMin: number, bStart: number, bMin: number): boolean {
+  return aStart < bStart + bMin * 60_000 && bStart < aStart + aMin * 60_000;
 }
 
 /**
- * Is this instant already sold out for a party of this size?
+ * The `reserved_for` range a query must read to see every booking that could
+ * overlap [from, to + durationMin). Anything starting before `from − MAX` has
+ * left the table; anything starting at or after the new sitting's end cannot
+ * touch it. Read with `gt(start)` / `lt(end)`.
+ */
+export function overlapQueryRange(from: Date, to: Date, durationMin: number): { start: string; end: string } {
+  return {
+    start: new Date(from.getTime() - MAX_RESERVATION_DURATION_MIN * 60_000).toISOString(),
+    end: new Date(to.getTime() + normaliseDuration(durationMin) * 60_000).toISOString(),
+  };
+}
+
+/** How many holding bookings overlap a sitting of `durationMin` starting at `at`. */
+export function overlappingCount(
+  at: Date,
+  durationMin: number,
+  holding: HoldingBooking[],
+  fallbackDurationMin: number = durationMin,
+): number {
+  const t = at.getTime();
+  const d = normaliseDuration(durationMin);
+  return holding.filter((h) =>
+    intervalsOverlap(h.start.getTime(), normaliseDuration(h.durationMin, fallbackDurationMin), t, d),
+  ).length;
+}
+
+/**
+ * Is a sitting of `durationMin` starting at `at` already sold out for a party
+ * of this size?
  *
- * `holdingAt` is every holding booking's `reserved_for`, for the whole day —
- * the caller reads the day once and asks this question per slot, rather than
- * making one query per half-hour.
+ * `holding` is every holding booking that could overlap — the caller reads the
+ * day once and asks this question per slot, rather than making one query per
+ * half-hour.
  */
 export function slotIsFull(
   at: Date,
-  holdingAt: Date[],
+  durationMin: number,
+  holding: HoldingBooking[],
   tables: FloorTable[],
   partySize: number,
 ): boolean {
@@ -100,14 +170,7 @@ export function slotIsFull(
   const capacity = seatableTables(tables, partySize);
   if (capacity === 0) return true;
 
-  const from = at.getTime() - SLOT_WINDOW_BEFORE_MIN * 60_000;
-  const to = at.getTime() + SLOT_WINDOW_AFTER_MIN * 60_000;
-  const overlapping = holdingAt.filter((h) => {
-    const t = h.getTime();
-    return t >= from && t <= to;
-  }).length;
-
-  return overlapping >= capacity;
+  return overlappingCount(at, durationMin, holding) >= capacity;
 }
 
 /**
@@ -120,10 +183,49 @@ export function slotIsFull(
 export function fullSlots(
   slots: string[],
   toInstant: (slot: string) => Date,
-  holdingAt: Date[],
+  durationMin: number,
+  holding: HoldingBooking[],
   tables: FloorTable[],
   partySize: number,
 ): string[] {
   if (floorIsUnmanaged(tables)) return [];
-  return slots.filter((slot) => slotIsFull(toInstant(slot), holdingAt, tables, partySize));
+  return slots.filter((slot) => slotIsFull(toInstant(slot), durationMin, holding, tables, partySize));
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE CHECK-THEN-INSERT RACE, SETTLED WITHOUT A LOCK.
+ *
+ *  Two customers pressing "Réserver" for the last table at the same instant
+ *  both read "one table left", both insert, and the dining room is sold
+ *  twice. A table lock would fix it at the price of every booking queueing on
+ *  it; instead the server re-reads the overlapping bookings AFTER its insert
+ *  and asks this question. Only the bookings that got in first (by
+ *  `created_at`, then id as the tie-break) count against ours — so of two
+ *  racing requests exactly the later one withdraws, and neither refuses when
+ *  there really was room for both.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export interface InsertedBooking {
+  id: string;
+  createdAt: string;
+}
+
+export function lostInsertRace(
+  mine: InsertedBooking & { start: Date; durationMin: number },
+  others: (InsertedBooking & HoldingBooking)[],
+  tables: FloorTable[],
+  partySize: number,
+): boolean {
+  if (floorIsUnmanaged(tables)) return false;
+  const capacity = seatableTables(tables, partySize);
+  if (capacity === 0) return true;
+
+  const mineAt = Date.parse(mine.createdAt);
+  const earlier = others.filter((o) => {
+    if (o.id === mine.id) return false;
+    const at = Date.parse(o.createdAt);
+    return at < mineAt || (at === mineAt && o.id < mine.id);
+  });
+  return overlappingCount(mine.start, mine.durationMin, earlier, mine.durationMin) >= capacity;
 }

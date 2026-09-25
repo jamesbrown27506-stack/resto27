@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Banknote, CalendarCheck, Check, Phone, Users, X } from "lucide-react";
+import { Ban, Banknote, CalendarCheck, Check, Clock, Users, X } from "lucide-react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { MessageCustomerButton } from "@/components/chat/message-customer-button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
 import { Sheet, SheetActions } from "@/components/ui/sheet";
@@ -11,13 +12,24 @@ import { useToast } from "@/components/ui/toast";
 import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
 import {
+  cancelConfirmedReservation,
   collectReservationDeposit,
   decideReservation,
   setReservationStatus,
   setRestaurantDeposit,
 } from "@/lib/data/manager-actions";
 import { type DepositType } from "@/lib/reservations/deposit";
-import { canManagerCollectReservationDeposit } from "@/lib/reservations/lifecycle";
+import {
+  canManagerCollectReservationDeposit,
+  canMarkReservationNoShow,
+  canRestaurantCancelReservation,
+} from "@/lib/reservations/lifecycle";
+import {
+  deadlinePassed,
+  noShowAllowedFrom,
+  requestAnswerDeadline,
+  sittingEnd,
+} from "@/lib/reservations/timing";
 import type { Reservation, RestaurantTable } from "@/lib/data/manager";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
@@ -54,18 +66,30 @@ export function ReservationBoard({
   reservations,
   tables,
   canDecide,
+  canSeat = canDecide,
   depositAmount,
   depositType: storedDepositType,
   canCollectDeposit,
+  canTakeDeposit = canCollectDeposit,
+  responseMinutes,
+  now,
 }: {
   reservations: Reservation[];
   tables: RestaurantTable[];
   canDecide: boolean;
+  /** Seat / no-show / complete — waiters and cashiers too (reservations.seat). */
+  canSeat?: boolean;
   /** The restaurant's current acompte (migration 0025). */
   depositAmount: number;
   /** How the acompte works (migration 0031): fixed FCFA or % of the bill. */
   depositType: DepositType;
   canCollectDeposit: boolean;
+  /** Record a deposit paid at the counter (payments.collect). */
+  canTakeDeposit?: boolean;
+  /** The admin's booking-request time limit (0059), for "Répondre avant". */
+  responseMinutes: number;
+  /** Server-stamped render instant — never Date.now() in render. */
+  now: number;
 }) {
   const { t } = useLocale();
   const dates = useDates();
@@ -86,6 +110,8 @@ export function ReservationBoard({
   const [depositType, setDepositTypeDraft] = useState<DepositType>(storedDepositType);
   const [collecting, setCollecting] = useState<Reservation | null>(null);
   const [billDraft, setBillDraft] = useState("");
+  const [cancelling, setCancelling] = useState<Reservation | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
 
   // Pending first, whatever the time. A decision waiting is more urgent than a
   // booking already settled, even one that is sooner.
@@ -109,8 +135,19 @@ export function ReservationBoard({
     const seatable = tables.filter(
       (table) => !table.planLocked && table.status !== "out_of_service" && table.capacity >= reservation.partySize,
     );
+    const end = sittingEnd(reservation.reservedFor, reservation.durationMin);
+    const answerBy =
+      reservation.status === "pending"
+        ? requestAnswerDeadline(
+            { createdAt: reservation.createdAt, reservedFor: reservation.reservedFor },
+            responseMinutes,
+          )
+        : null;
+    const answerLate = deadlinePassed(answerBy, now);
+    const noShowReady = canMarkReservationNoShow(reservation, now);
+    const noShowFrom = noShowAllowedFrom(reservation.reservedFor);
     const mayCollectDeposit =
-      canCollectDeposit &&
+      canTakeDeposit &&
       canManagerCollectReservationDeposit({
         status: reservation.status,
         depositPercent: reservation.depositPercent,
@@ -132,23 +169,39 @@ export function ReservationBoard({
             )}
           </div>
 
+          {/* The END of the sitting too (0060): it is what decides whether the
+              table can be given to the next booking. */}
           <p className="tnum mt-0.5 text-sm text-text-secondary">
-            {dates.dateTime(reservation.reservedFor)}
+            {end
+              ? t("mres.window", { start: dates.dateTime(reservation.reservedFor), end: dates.time(end) })
+              : dates.dateTime(reservation.reservedFor)}
           </p>
+
+          {/* The request deadline the reservation clock enforces — shown so
+              the restaurant knows how long it has, not told afterwards. */}
+          {answerBy && (
+            <p
+              className={`mt-1 flex items-center gap-1 text-xs font-semibold ${
+                answerLate ? "text-error" : "text-warning"
+              }`}
+            >
+              <Clock className="size-3" aria-hidden />
+              <span>
+                {answerLate ? t("mres.answerLate") : t("mres.answerBefore", { time: dates.time(answerBy) })}
+              </span>
+            </p>
+          )}
 
           <p className="mt-0.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-text-light">
             <span className="flex items-center gap-1">
               <Users className="size-3" aria-hidden />
               {t("m.people", { count: reservation.partySize })}
             </span>
-            <a
-              href={`tel:${reservation.guestPhone}`}
-              className="flex items-center gap-1 hover:text-primary"
-            >
-              <Phone className="size-3" aria-hidden />
-              {reservation.guestPhone}
-            </a>
+            {/* No guest phone: the only number a restaurant sees is a customer's
+                during a paid delivery (lib/data/orders). Bookings talk in the chat. */}
             <span className="tnum">{reservation.reference}</span>
+            {/* In-app chat about this booking (server checks the link). */}
+            <MessageCustomerButton reservationId={reservation.id} variant="link" size="sm" />
           </p>
 
           {reservation.notes && (
@@ -223,9 +276,9 @@ export function ReservationBoard({
           ) : null}
         </div>
 
-        {canDecide && (
+        {(canDecide || canSeat) && (
           <div className="flex shrink-0 flex-wrap gap-2">
-            {reservation.status === "pending" && (
+            {canDecide && reservation.status === "pending" && (
               <>
                 <Button
                   size="sm"
@@ -265,7 +318,7 @@ export function ReservationBoard({
               available too: a guest who turns up and pays in cash is collected
               there, and that confirms the booking the same way.
             */}
-            {reservation.status === "awaiting_payment" && (
+            {canDecide && reservation.status === "awaiting_payment" && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -281,7 +334,7 @@ export function ReservationBoard({
               </Button>
             )}
 
-            {reservation.status === "confirmed" && (
+            {canSeat && reservation.status === "confirmed" && (
               <>
                 <Button
                   variant="outline"
@@ -293,20 +346,47 @@ export function ReservationBoard({
                 >
                   {t("res.seat")}
                 </Button>
+                {/* FAIR NO-SHOW: greyed, with the time it unlocks, until 15
+                    minutes after the booked time. The action refuses too. */}
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={pending}
+                  disabled={pending || !noShowReady}
+                  title={
+                    !noShowReady && noShowFrom
+                      ? t("mres.noShowFrom", { time: dates.time(noShowFrom) })
+                      : undefined
+                  }
                   onClick={() =>
                     run(() => setReservationStatus(reservation.id, "no_show"), t("res.noShowDone"))
                   }
                 >
                   {t("res.noShow")}
                 </Button>
+                {canDecide && canRestaurantCancelReservation(reservation.status) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-error hover:bg-error-light"
+                    disabled={pending}
+                    onClick={() => {
+                      setCancelling(reservation);
+                      setCancelReason("");
+                    }}
+                  >
+                    <Ban className="size-3.5" aria-hidden />
+                    {t("mres.cancelBooking")}
+                  </Button>
+                )}
+                {!noShowReady && noShowFrom && (
+                  <p className="basis-full text-xs text-text-light">
+                    {t("mres.noShowFrom", { time: dates.time(noShowFrom) })}
+                  </p>
+                )}
               </>
             )}
 
-            {reservation.status === "seated" && (
+            {canSeat && reservation.status === "seated" && (
               <Button
                 variant="outline"
                 size="sm"
@@ -530,6 +610,71 @@ export function ReservationBoard({
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder={t("res.reasonPh")}
+              />
+            </Field>
+          </div>
+        )}
+      </Sheet>
+
+      {/* ── Restaurant cancels a confirmed booking (0060) ──────────────── */}
+      <Sheet
+        open={cancelling !== null}
+        onClose={() => setCancelling(null)}
+        title={t("mres.cancelTitle")}
+        footer={
+          cancelling && (
+            <SheetActions>
+              <Button variant="outline" onClick={() => setCancelling(null)}>
+                <span>{t("common.cancel")}</span>
+              </Button>
+              <Button
+                variant="danger"
+                loading={pending}
+                disabled={!cancelReason.trim()}
+                onClick={() => {
+                  const target = cancelling;
+                  const why = cancelReason;
+                  setCancelling(null);
+                  startTransition(async () => {
+                    const result = await cancelConfirmedReservation(target.id, why);
+                    if (!result.ok) return toast(result.error ?? t("common.error"), "error");
+                    toast(t("mres.cancelDone"), "success");
+                  });
+                }}
+              >
+                <span>{t("mres.cancelConfirm")}</span>
+              </Button>
+            </SheetActions>
+          )
+        }
+      >
+        {cancelling && (
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-text-secondary">
+              <span>{cancelling.guestName}</span>
+              <span> · </span>
+              <span>{t("m.people", { count: cancelling.partySize })}</span>
+              <span> · </span>
+              <span>{dates.dateTime(cancelling.reservedFor)}</span>
+            </p>
+            <p className="text-sm text-text-secondary">
+              <span>{t("mres.cancelBody")}</span>
+            </p>
+            {/* What happens to the money, before the button is pressed. */}
+            <p className="rounded-md bg-warning-light p-3 text-sm text-warning">
+              <span>
+                {cancelling.depositPaid && cancelling.depositPercent <= 0 && cancelling.depositAmount > 0
+                  ? t("mres.cancelRefund", { amount: cancelling.depositAmount.toLocaleString("fr-CM") })
+                  : t("mres.cancelNoRefund")}
+              </span>
+            </p>
+            <Field label={t("res.reason")} htmlFor="cancel-reason" required hint={t("res.reasonHint")}>
+              <Textarea
+                id="cancel-reason"
+                rows={3}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder={t("mres.cancelReasonPh")}
               />
             </Field>
           </div>

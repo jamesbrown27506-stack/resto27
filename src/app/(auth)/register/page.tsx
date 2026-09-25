@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useActionState, useState } from "react";
 import { Mail, Phone, User } from "lucide-react";
 import {
   AuthHeading,
@@ -13,11 +14,13 @@ import {
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Checkbox, Field, Input } from "@/components/ui/input";
 import { signUpCustomer, type AuthState } from "@/lib/auth/actions";
+import { safeNextPath, withNext } from "@/lib/auth/safe-next";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useLocale } from "@/lib/i18n/use-locale";
 
 const INITIAL: AuthState = { ok: false };
 
-export default function RegisterPage() {
+function RegisterForm() {
   /*
     ALL FOUR FIELDS ARE CONTROLLED, NOT JUST THE PASSWORD.
 
@@ -34,6 +37,10 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [state, formAction, pending] = useActionState(signUpCustomer, INITIAL);
   const { t } = useLocale();
+  // Where the customer was going before they had to create an account —
+  // usually /checkout. Validated here for the links, and again server-side
+  // before anything redirects to it.
+  const next = safeNextPath(useSearchParams().get("next"));
 
   if (state.done) {
     return (
@@ -43,8 +50,10 @@ export default function RegisterPage() {
           <p>{t("auth.checkEmailBody")}</p>
         </AuthNotice>
         <p className="mt-5 text-sm leading-relaxed text-text-secondary">{t("auth.checkSpam")}</p>
+        {/* With `next`, confirming in this browser and signing in lands
+            them back on the checkout with their basket still in it. */}
         <Link
-          href="/login"
+          href={withNext("/login", next)}
           className={buttonClasses({ fullWidth: true, size: "lg", className: "mt-6" })}
         >
           {t("auth.goToLogin")}
@@ -64,6 +73,7 @@ export default function RegisterPage() {
       )}
 
       <form action={formAction} className="flex flex-col gap-4">
+        <input type="hidden" name="next" value={next ?? ""} />
         <Field label={t("auth.name")} htmlFor="name" required error={state.fieldErrors?.name}>
           <Input
             id="name"
@@ -170,10 +180,19 @@ export default function RegisterPage() {
 
       <p className="mt-7 text-center text-sm text-text-secondary">
         {t("auth.alreadyHave")}{" "}
-        <Link href="/login" className="font-semibold text-primary hover:underline">
+        <Link href={withNext("/login", next)} className="font-semibold text-primary hover:underline">
           {t("auth.signInLink")}
         </Link>
       </p>
     </>
+  );
+}
+
+export default function RegisterPage() {
+  // useSearchParams needs a Suspense boundary to prerender, exactly as /login.
+  return (
+    <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+      <RegisterForm />
+    </Suspense>
   );
 }

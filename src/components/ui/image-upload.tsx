@@ -30,15 +30,29 @@ import { isNativeApp } from "@/lib/capacitor/native";
 /** Mirrors MAX_BYTES in lib/uploads. The server still enforces it. */
 const MAX_BYTES = 2 * 1024 * 1024;
 
-/** Longest edge kept when an image has to be shrunk. */
-const MAX_EDGE = 1600;
+/**
+ * Longest edge kept. A dish photo is shown at most ~600 CSS px wide (1 200
+ * device px on a dense phone); a cover a little wider. 1 280 covers both.
+ */
+const MAX_EDGE = 1280;
+
+/**
+ * Below this, an image that needs no resizing is left exactly as chosen: the
+ * bytes saved would be a few kilobytes, bought with a generation of JPEG loss.
+ */
+const LEAVE_ALONE_BYTES = 300 * 1024;
 
 function megabytes(bytes: number): string {
-  return (bytes / 1024 / 1024).toFixed(1);
+  // Never "0.0 Mo" for a small, well-compressed photo.
+  return Math.max(0.1, bytes / 1024 / 1024).toFixed(1);
+}
+
+function encode(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
 }
 
 /**
- * Shrink an oversized image in the browser, before it is ever uploaded.
+ * Optimise an image in the browser, before it is ever uploaded.
  *
  * ─────────────────────────────────────────────────────────────────────────
  *  WITHOUT THIS, THE FEATURE DOES NOT WORK FOR ITS ACTUAL USERS.
@@ -53,24 +67,40 @@ function megabytes(bytes: number): string {
  *  customer theirs to download, for no visible difference.
  * ─────────────────────────────────────────────────────────────────────────
  *
- * A file already under the limit is returned UNTOUCHED — no silent
- * re-encoding, no generation loss on an image that was already fine.
+ * ─────────────────────────────────────────────────────────────────────────
+ *  IT NOW OPTIMISES EVERY PHOTO, NOT ONLY THE ONES OVER 2 MB.
  *
- * PNG stays PNG: it is what logos and favicons arrive as, and re-encoding one
- * to JPEG replaces its transparency with black. Everything else becomes JPEG,
- * stepping the quality down until it fits.
+ *  A 1.9 MB, 4 000 px photo used to pass straight through — and then every
+ *  customer scrolling the menu downloaded 1.9 MB for a 300 px thumbnail,
+ *  on prepaid data. We do not run server-side image transforms (they are
+ *  billed per image), so the browser that picks the file is the one place
+ *  to fix it: downscale to MAX_EDGE, re-encode, and keep the result ONLY if
+ *  it is actually smaller than what was chosen.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * WebP first (≈30% smaller than JPEG at the same quality, and it keeps a
+ * logo's transparency). A browser that cannot encode WebP silently hands back
+ * a PNG from toBlob, so the returned type is checked and JPEG — or PNG, for a
+ * PNG source, so transparency never turns black — is the fallback.
+ *
+ * Left untouched: GIFs (re-encoding would drop the animation), icons, and a
+ * small image that needs no resizing (see LEAVE_ALONE_BYTES).
  *
  * Every failure path returns the original file. The server validates by magic
  * bytes regardless, so the worst case is the size error the user would have
  * seen anyway — never a corrupted upload.
  */
-async function shrinkIfNeeded(file: File): Promise<File> {
-  if (file.size <= MAX_BYTES) return file;
+async function optimiseImage(file: File): Promise<File> {
   if (!file.type.startsWith("image/")) return file;
+  if (file.type === "image/gif" || file.type === "image/x-icon" || file.type === "image/svg+xml") return file;
 
   try {
     const bitmap = await createImageBitmap(file);
     const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && file.size <= LEAVE_ALONE_BYTES) {
+      bitmap.close();
+      return file;
+    }
     const width = Math.max(1, Math.round(bitmap.width * scale));
     const height = Math.max(1, Math.round(bitmap.height * scale));
 
@@ -79,26 +109,35 @@ async function shrinkIfNeeded(file: File): Promise<File> {
     canvas.height = height;
 
     const context = canvas.getContext("2d");
-    if (!context) return file;
+    if (!context) {
+      bitmap.close();
+      return file;
+    }
 
     context.drawImage(bitmap, 0, 0, width, height);
     bitmap.close();
 
-    const keepPng = file.type === "image/png";
-    const attempts: (number | undefined)[] = keepPng ? [undefined] : [0.85, 0.7, 0.55];
+    const isPng = file.type === "image/png";
+    let best: Blob | null = null;
 
-    for (const quality of attempts) {
-      const blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, keepPng ? "image/png" : "image/jpeg", quality),
-      );
-      if (blob && blob.size <= MAX_BYTES) {
-        // The name is cosmetic — saveUpload names the file itself from the
-        // bytes it sniffs, because a user-supplied name is attacker-controlled.
-        return new File([blob], keepPng ? "image.png" : "image.jpg", { type: blob.type });
+    for (const quality of [0.8, 0.7, 0.55]) {
+      let blob = await encode(canvas, "image/webp", quality);
+      if (!blob || blob.type !== "image/webp") {
+        // No WebP encoder (older Safari). PNG sources stay PNG — lossless, so
+        // one attempt is enough — everything else becomes JPEG.
+        blob = isPng ? await encode(canvas, "image/png") : await encode(canvas, "image/jpeg", quality);
       }
+      if (blob && (!best || blob.size < best.size)) best = blob;
+      if (best && best.size <= MAX_BYTES) break;
     }
 
-    return file;
+    // Only ever trade the original for something smaller.
+    if (!best || best.size >= file.size) return file;
+
+    // The name is cosmetic — saveUpload names the file itself from the bytes
+    // it sniffs, because a user-supplied name is attacker-controlled.
+    const extension = best.type === "image/webp" ? "webp" : best.type === "image/png" ? "png" : "jpg";
+    return new File([best], `image.${extension}`, { type: best.type });
   } catch {
     return file;
   }
@@ -140,7 +179,7 @@ export function ImageUpload({
     setNote(null);
     setWorking(true);
 
-    const prepared = await shrinkIfNeeded(file);
+    const prepared = await optimiseImage(file);
     setWorking(false);
 
     if (prepared.size > MAX_BYTES) {

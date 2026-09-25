@@ -50,6 +50,7 @@ function DishPhoto({ src, alt, className }: { src: string; alt: string; classNam
       src={src}
       alt={alt}
       loading="lazy"
+      decoding="async"
       onError={() => setFailed(true)}
       className={cn("size-full object-cover", className)}
     />

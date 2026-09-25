@@ -14,14 +14,22 @@ import { normaliseDepositType, type DepositType } from "@/lib/reservations/depos
 import {
   canDecideReservation,
   canManagerCollectReservationDeposit,
+  canRestaurantCancelReservation,
   canSetReservationStatus,
 } from "@/lib/reservations/lifecycle";
+import { canMarkNoShowYet, noShowAllowedFrom, NO_SHOW_GRACE_MIN } from "@/lib/reservations/timing";
+import {
+  MAX_RESERVATION_DURATION_MIN,
+  MIN_RESERVATION_DURATION_MIN,
+} from "@/lib/reservations/availability";
+import { durationColumnMissing } from "@/lib/reservations/duration-server";
+import { startRefundPayout } from "@/lib/payments/refund-payouts";
 import type { CustomerReservationStatus } from "@/lib/format/reservation-status";
 import type { BranchRole } from "@/lib/capabilities";
 import type { ActionResult } from "./admin-actions";
 import { fetchTableAccess } from "./table-access";
-import { DICTIONARIES } from "@/lib/i18n/dictionaries";
-import { getLocale } from "@/lib/i18n/locale-server";
+import { DICTIONARIES, type TranslationKey } from "@/lib/i18n/dictionaries";
+import { getLocale, getTranslator } from "@/lib/i18n/locale-server";
 
 /**
  * Restaurant-side mutations.
@@ -44,8 +52,9 @@ import { getLocale } from "@/lib/i18n/locale-server";
 /* ── Branch switching ──────────────────────────────────────────────────── */
 
 export async function switchBranch(restaurantId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const ok = await setActiveBranch(restaurantId);
-  if (!ok) return { ok: false, error: "You do not work at that branch." };
+  if (!ok) return { ok: false, error: t("est.notAtBranch") };
 
   revalidatePath("/m", "layout");
   return { ok: true };
@@ -62,7 +71,8 @@ export async function switchBranch(restaurantId: string): Promise<ActionResult> 
  * button with no explanation reads as broken.
  */
 export async function setAcceptingOrders(accepting: boolean, reason?: string): Promise<ActionResult> {
-  const { active, profile } = await requireCapability("settings.manage");
+  const t = await getTranslator();
+  const { active, profile } = await requireCapability("service.pause");
   const supabase = createAdminClient();
 
   const { error } = await supabase
@@ -73,7 +83,7 @@ export async function setAcceptingOrders(accepting: boolean, reason?: string): P
     })
     .eq("id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not change the service state." };
+  if (error) return { ok: false, error: t("est.serviceStateFailed") };
 
   await writeAudit(profile, {
     action: accepting ? "restaurant.resumed" : "restaurant.paused",
@@ -89,10 +99,11 @@ export async function setAcceptingOrders(accepting: boolean, reason?: string): P
 /* ── Menu: categories ──────────────────────────────────────────────────── */
 
 export async function createCategory(input: { name: string; icon?: string }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
 
   const name = input.name.trim();
-  if (name.length < 2) return { ok: false, error: "Category name is too short." };
+  if (name.length < 2) return { ok: false, error: t("est.categoryNameShort") };
 
   const supabase = createAdminClient();
 
@@ -116,9 +127,9 @@ export async function createCategory(input: { name: string; icon?: string }): Pr
   if (error) {
     // The unique constraint is (restaurant_id, name), so this is the one
     // failure worth naming — everything else is a bug, not a user mistake.
-    if (error.code === "23505") return { ok: false, error: "You already have a category with that name." };
+    if (error.code === "23505") return { ok: false, error: t("est.categoryExists") };
     console.error("[manager:createCategory]", error.message);
-    return { ok: false, error: "Could not create the category." };
+    return { ok: false, error: t("est.categoryCreateFailed") };
   }
 
   revalidatePath("/m/categories");
@@ -130,6 +141,7 @@ export async function updateCategory(
   id: string,
   input: { name?: string; icon?: string; sortOrder?: number; isActive?: boolean },
 ): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
   const supabase = createAdminClient();
 
@@ -147,7 +159,7 @@ export async function updateCategory(
     // category, because the service-role key bypasses RLS.
     .eq("restaurant_id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not save the category." };
+  if (error) return { ok: false, error: t("est.categorySaveFailed") };
 
   revalidatePath("/m/categories");
   revalidatePath("/m/menu");
@@ -163,6 +175,7 @@ export async function updateCategory(
  * and 23 dishes are now uncategorised" are different pieces of news.
  */
 export async function deleteCategory(id: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
   const supabase = createAdminClient();
 
@@ -178,13 +191,13 @@ export async function deleteCategory(id: string): Promise<ActionResult> {
     .eq("id", id)
     .eq("restaurant_id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not delete the category." };
+  if (error) return { ok: false, error: t("est.categoryDeleteFailed") };
 
   revalidatePath("/m/categories");
   revalidatePath("/m/menu");
 
   return count && count > 0
-    ? { ok: true, note: `Category deleted. ${count} dish${count === 1 ? "" : "es"} are now uncategorised.` }
+    ? { ok: true, note: t(count === 1 ? "est.categoryDeletedOne" : "est.categoryDeletedMany", { count }) }
     : { ok: true };
 }
 
@@ -206,6 +219,7 @@ export async function deleteCategory(id: string): Promise<ActionResult> {
  * permanently empty for want of categories.
  */
 export async function ensureDefaultCategories(): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.view");
   const supabase = createAdminClient();
 
@@ -234,7 +248,7 @@ export async function ensureDefaultCategories(): Promise<ActionResult> {
 
   if (error) {
     console.error("[manager:ensureDefaultCategories]", error.message);
-    return { ok: false, error: "Could not create the default categories." };
+    return { ok: false, error: t("est.defaultCategoriesFailed") };
   }
 
   revalidatePath("/m/categories");
@@ -278,6 +292,7 @@ export interface SeededDish {
 }
 
 export async function seedPopularDishes(selections: SeededDish[]): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.view");
 
   // De-duplicate by id, keeping the LAST price given for each — the picker
@@ -365,7 +380,7 @@ export async function seedPopularDishes(selections: SeededDish[]): Promise<Actio
   const { error } = await supabase.from("menu_items").insert(inserts);
   if (error) {
     console.error("[manager:seedPopularDishes]", error.message);
-    return { ok: false, error: "Could not add the dishes." };
+    return { ok: false, error: t("est.dishesAddFailed") };
   }
 
   revalidatePath("/m/menu");
@@ -391,14 +406,18 @@ export interface MenuItemInput {
   allergens?: string;
 }
 
-/** Shared by create and update, so the two can never validate differently. */
-function validateItem(input: MenuItemInput): string | null {
-  if (input.name.trim().length < 2) return "Dish name is too short.";
+/**
+ * Shared by create and update, so the two can never validate differently.
+ * Returns a dictionary KEY, not a sentence: this helper has no request of its
+ * own, so each caller translates it in the viewer's language.
+ */
+function validateItem(input: MenuItemInput): TranslationKey | null {
+  if (input.name.trim().length < 2) return "est.dishNameShort";
   // XAF is zero-decimal: a price is a whole number of francs or it is wrong.
-  if (!Number.isInteger(input.price) || input.price < 0) return "Price must be a whole number of francs.";
-  if (input.price > 10_000_000) return "That price looks like a mistake.";
+  if (!Number.isInteger(input.price) || input.price < 0) return "est.priceWhole";
+  if (input.price > 10_000_000) return "est.priceMistake";
   if (input.trackStock && (input.stockQuantity ?? null) === null) {
-    return "Set a stock quantity, or turn stock tracking off.";
+    return "est.stockQuantity";
   }
   return null;
 }
@@ -426,10 +445,11 @@ function itemPatch(input: MenuItemInput): Record<string, unknown> {
 }
 
 export async function createMenuItem(input: MenuItemInput): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
 
   const invalid = validateItem(input);
-  if (invalid) return { ok: false, error: invalid };
+  if (invalid) return { ok: false, error: t(invalid) };
 
   const supabase = createAdminClient();
 
@@ -447,7 +467,7 @@ export async function createMenuItem(input: MenuItemInput): Promise<ActionResult
 
   if (error) {
     console.error("[manager:createMenuItem]", error.message);
-    return { ok: false, error: "Could not add the dish." };
+    return { ok: false, error: t("est.dishAddFailed") };
   }
 
   revalidatePath("/m/menu");
@@ -455,10 +475,11 @@ export async function createMenuItem(input: MenuItemInput): Promise<ActionResult
 }
 
 export async function updateMenuItem(id: string, input: MenuItemInput): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
 
   const invalid = validateItem(input);
-  if (invalid) return { ok: false, error: invalid };
+  if (invalid) return { ok: false, error: t(invalid) };
 
   const supabase = createAdminClient();
   const { error } = await supabase
@@ -467,7 +488,7 @@ export async function updateMenuItem(id: string, input: MenuItemInput): Promise<
     .eq("id", id)
     .eq("restaurant_id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not save the dish." };
+  if (error) return { ok: false, error: t("est.dishSaveFailed") };
 
   revalidatePath("/m/menu");
   return { ok: true };
@@ -480,7 +501,8 @@ export async function updateMenuItem(id: string, input: MenuItemInput): Promise<
  * mid-service, on a phone, and must not require opening an edit form.
  */
 export async function setItemAvailability(id: string, available: boolean): Promise<ActionResult> {
-  const { active } = await requireCapability("menu.edit");
+  const t = await getTranslator();
+  const { active } = await requireCapability("menu.availability");
   const supabase = createAdminClient();
 
   const { error } = await supabase
@@ -489,7 +511,7 @@ export async function setItemAvailability(id: string, available: boolean): Promi
     .eq("id", id)
     .eq("restaurant_id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not change availability." };
+  if (error) return { ok: false, error: t("est.availabilityFailed") };
 
   revalidatePath("/m/menu");
   revalidatePath("/m/kitchen");
@@ -505,6 +527,7 @@ export async function setItemAvailability(id: string, available: boolean): Promi
  * the snapshot exists.
  */
 export async function deleteMenuItem(id: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
   const supabase = createAdminClient();
 
@@ -514,7 +537,7 @@ export async function deleteMenuItem(id: string): Promise<ActionResult> {
     .eq("id", id)
     .eq("restaurant_id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not delete the dish." };
+  if (error) return { ok: false, error: t("est.dishDeleteFailed") };
 
   revalidatePath("/m/menu");
   return { ok: true };
@@ -560,19 +583,20 @@ export async function createOptionGroup(input: {
   maxSelect: number;
   isRequired: boolean;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
 
-  if (input.name.trim().length < 2) return { ok: false, error: "Group name is too short." };
-  if (input.maxSelect < 1) return { ok: false, error: "Maximum must be at least 1." };
+  if (input.name.trim().length < 2) return { ok: false, error: t("est.groupNameShort") };
+  if (input.maxSelect < 1) return { ok: false, error: t("est.maxAtLeastOne") };
   if (input.maxSelect < input.minSelect) {
-    return { ok: false, error: "Maximum cannot be below minimum — nobody could submit that." };
+    return { ok: false, error: t("est.maxBelowMin") };
   }
   if (input.isRequired && input.minSelect < 1) {
-    return { ok: false, error: "A required group needs a minimum of at least 1." };
+    return { ok: false, error: t("est.requiredGroupMin") };
   }
 
   if (!(await ownedItemId(active.restaurantId, input.menuItemId))) {
-    return { ok: false, error: "That dish is not on this branch's menu." };
+    return { ok: false, error: t("est.dishNotOnMenu") };
   }
 
   const supabase = createAdminClient();
@@ -595,7 +619,7 @@ export async function createOptionGroup(input: {
 
   if (error) {
     console.error("[manager:createOptionGroup]", error.message);
-    return { ok: false, error: "Could not create the option group." };
+    return { ok: false, error: t("est.groupCreateFailed") };
   }
 
   revalidatePath("/m/menu");
@@ -603,16 +627,17 @@ export async function createOptionGroup(input: {
 }
 
 export async function deleteOptionGroup(groupId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
 
   if (!(await ownedGroupId(active.restaurantId, groupId))) {
-    return { ok: false, error: "That option group is not on this branch's menu." };
+    return { ok: false, error: t("est.groupNotOnMenu") };
   }
 
   const supabase = createAdminClient();
   const { error } = await supabase.from("menu_option_groups").delete().eq("id", groupId);
 
-  if (error) return { ok: false, error: "Could not delete the option group." };
+  if (error) return { ok: false, error: t("est.groupDeleteFailed") };
 
   revalidatePath("/m/menu");
   return { ok: true };
@@ -623,17 +648,18 @@ export async function createOption(input: {
   name: string;
   priceDelta: number;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
 
-  if (input.name.trim().length < 1) return { ok: false, error: "Option name is required." };
+  if (input.name.trim().length < 1) return { ok: false, error: t("est.optionNameRequired") };
   // Negative is legitimate — "sans viande, −500 F" is a real menu line — so
   // only non-integers are rejected here.
   if (!Number.isInteger(input.priceDelta)) {
-    return { ok: false, error: "Price difference must be a whole number of francs." };
+    return { ok: false, error: t("est.priceDiffWhole") };
   }
 
   if (!(await ownedGroupId(active.restaurantId, input.groupId))) {
-    return { ok: false, error: "That option group is not on this branch's menu." };
+    return { ok: false, error: t("est.groupNotOnMenu") };
   }
 
   const supabase = createAdminClient();
@@ -652,7 +678,7 @@ export async function createOption(input: {
     sort_order: (last?.sort_order ?? 0) + 1,
   });
 
-  if (error) return { ok: false, error: "Could not add the option." };
+  if (error) return { ok: false, error: t("est.optionAddFailed") };
 
   revalidatePath("/m/menu");
   return { ok: true };
@@ -675,10 +701,11 @@ async function ownsOption(restaurantId: string, optionId: string): Promise<boole
 }
 
 export async function setOptionAvailability(optionId: string, available: boolean): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
 
   if (!(await ownsOption(active.restaurantId, optionId))) {
-    return { ok: false, error: "That option is not on this branch's menu." };
+    return { ok: false, error: t("est.optionNotOnMenu") };
   }
 
   const supabase = createAdminClient();
@@ -687,22 +714,23 @@ export async function setOptionAvailability(optionId: string, available: boolean
     .update({ is_available: available })
     .eq("id", optionId);
 
-  if (error) return { ok: false, error: "Could not change availability." };
+  if (error) return { ok: false, error: t("est.availabilityFailed") };
 
   revalidatePath("/m/menu");
   return { ok: true };
 }
 
 export async function deleteOption(optionId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.edit");
 
   if (!(await ownsOption(active.restaurantId, optionId))) {
-    return { ok: false, error: "That option is not on this branch's menu." };
+    return { ok: false, error: t("est.optionNotOnMenu") };
   }
 
   const supabase = createAdminClient();
   const { error } = await supabase.from("menu_options").delete().eq("id", optionId);
-  if (error) return { ok: false, error: "Could not delete the option." };
+  if (error) return { ok: false, error: t("est.optionDeleteFailed") };
 
   revalidatePath("/m/menu");
   return { ok: true };
@@ -724,15 +752,16 @@ export async function inviteStaff(input: {
   role: BranchRole;
   name?: string;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("staff.manage");
 
   const email = input.email.trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, error: "That email address is not valid." };
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, error: t("est.emailInvalid") };
 
   // Only an owner may create another owner. A manager promoting someone above
   // themselves is a privilege-escalation path, not a feature.
   if (input.role === "owner" && active.role !== "owner") {
-    return { ok: false, error: "Only the owner can add another owner." };
+    return { ok: false, error: t("est.onlyOwnerAddsOwner") };
   }
 
   const supabase = createAdminClient();
@@ -754,7 +783,7 @@ export async function inviteStaff(input: {
       .maybeSingle();
 
     if (already) {
-      if (already.status === "active") return { ok: false, error: "They already work at this branch." };
+      if (already.status === "active") return { ok: false, error: t("est.alreadyWorksHere") };
 
       // Reinstating a suspended colleague is the same gesture as inviting one.
       const { error } = await supabase
@@ -762,9 +791,9 @@ export async function inviteStaff(input: {
         .update({ status: "active", role: input.role })
         .eq("id", already.id);
 
-      if (error) return { ok: false, error: "Could not reinstate them." };
+      if (error) return { ok: false, error: t("est.reinstateFailed") };
       revalidatePath("/m/staff");
-      return { ok: true, note: "They already had a record here and have been reinstated." };
+      return { ok: true, note: t("est.memberReinstated") };
     }
 
     const { error } = await supabase.from("restaurant_staff").insert({
@@ -781,7 +810,7 @@ export async function inviteStaff(input: {
 
     if (error) {
       console.error("[manager:inviteStaff] link existing", error.message);
-      return { ok: false, error: "Could not add them to the team." };
+      return { ok: false, error: t("est.addToTeamFailed") };
     }
   } else {
     // Single-use, seven-day token. Acceptance also requires the verified
@@ -803,9 +832,9 @@ export async function inviteStaff(input: {
     });
 
     if (error) {
-      if (error.code === "23505") return { ok: false, error: "An invitation is already open for that address." };
+      if (error.code === "23505") return { ok: false, error: t("est.inviteOpen") };
       console.error("[manager:inviteStaff]", error.message);
-      return { ok: false, error: "Could not send the invitation." };
+      return { ok: false, error: t("est.inviteSendFailed") };
     }
   }
 
@@ -841,10 +870,11 @@ export async function inviteStaff(input: {
   // waiting for someone who was never told.
   return mail.sent
     ? { ok: true }
-    : { ok: true, note: `Added, but not emailed (${mail.reason}). Tell ${email} directly.` };
+    : { ok: true, note: t("est.addedNotEmailed", { reason: mail.reason ?? "", email }) };
 }
 
 export async function changeStaffRole(staffId: string, role: BranchRole): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("staff.manage");
   const supabase = createAdminClient();
 
@@ -855,10 +885,10 @@ export async function changeStaffRole(staffId: string, role: BranchRole): Promis
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
-  if (!member) return { ok: false, error: "No such team member at this branch." };
+  if (!member) return { ok: false, error: t("est.noSuchMember") };
 
   if (role === "owner" && active.role !== "owner") {
-    return { ok: false, error: "Only the owner can appoint another owner." };
+    return { ok: false, error: t("est.onlyOwnerAppointsOwner") };
   }
 
   /**
@@ -878,12 +908,12 @@ export async function changeStaffRole(staffId: string, role: BranchRole): Promis
       .eq("status", "active");
 
     if ((count ?? 0) <= 1) {
-      return { ok: false, error: "This is the only owner. Appoint another one first." };
+      return { ok: false, error: t("est.appointAnotherOwnerFirst") };
     }
   }
 
   const { error } = await supabase.from("restaurant_staff").update({ role }).eq("id", staffId);
-  if (error) return { ok: false, error: "Could not change their role." };
+  if (error) return { ok: false, error: t("est.roleChangeFailed") };
 
   await writeAudit(profile, {
     action: "staff.role_changed",
@@ -904,6 +934,7 @@ export async function changeStaffRole(staffId: string, role: BranchRole): Promis
  * into a list of anonymous events.
  */
 export async function suspendStaff(staffId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("staff.manage");
   const supabase = createAdminClient();
 
@@ -914,10 +945,10 @@ export async function suspendStaff(staffId: string): Promise<ActionResult> {
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
-  if (!member) return { ok: false, error: "No such team member at this branch." };
+  if (!member) return { ok: false, error: t("est.noSuchMember") };
 
   if (member.profile_id === profile.id) {
-    return { ok: false, error: "You cannot remove yourself." };
+    return { ok: false, error: t("est.cannotRemoveSelf") };
   }
 
   if (member.role === "owner") {
@@ -928,7 +959,7 @@ export async function suspendStaff(staffId: string): Promise<ActionResult> {
       .eq("role", "owner")
       .eq("status", "active");
 
-    if ((count ?? 0) <= 1) return { ok: false, error: "This is the only owner." };
+    if ((count ?? 0) <= 1) return { ok: false, error: t("est.onlyOwner") };
   }
 
   const { error } = await supabase
@@ -936,7 +967,7 @@ export async function suspendStaff(staffId: string): Promise<ActionResult> {
     .update({ status: "suspended" })
     .eq("id", staffId);
 
-  if (error) return { ok: false, error: "Could not suspend them." };
+  if (error) return { ok: false, error: t("est.suspendFailed") };
 
   await writeAudit(profile, {
     action: "staff.suspended",
@@ -950,6 +981,7 @@ export async function suspendStaff(staffId: string): Promise<ActionResult> {
 }
 
 export async function reinstateStaff(staffId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("staff.manage");
   const supabase = createAdminClient();
 
@@ -959,13 +991,14 @@ export async function reinstateStaff(staffId: string): Promise<ActionResult> {
     .eq("id", staffId)
     .eq("restaurant_id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not reinstate them." };
+  if (error) return { ok: false, error: t("est.reinstateFailed") };
 
   revalidatePath("/m/staff");
   return { ok: true };
 }
 
 export async function cancelInvite(staffId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("staff.manage");
   const supabase = createAdminClient();
 
@@ -978,7 +1011,7 @@ export async function cancelInvite(staffId: string): Promise<ActionResult> {
     .eq("restaurant_id", active.restaurantId)
     .eq("status", "invited");
 
-  if (error) return { ok: false, error: "Could not cancel the invitation." };
+  if (error) return { ok: false, error: t("est.inviteCancelFailed") };
 
   revalidatePath("/m/staff");
   return { ok: true };
@@ -991,12 +1024,13 @@ export async function decideReservation(
   decision: "confirmed" | "cancelled",
   input: { tableId?: string | null; reason?: string } = {},
 ): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("reservations.decide");
 
   if (decision === "cancelled" && !input.reason?.trim()) {
     // A refusal with no reason is the thing guests complain about, so the
     // reason is required rather than optional-in-practice.
-    return { ok: false, error: "Give a reason — the guest is told what it is." };
+    return { ok: false, error: t("est.reasonForGuest") };
   }
 
   const supabase = createAdminClient();
@@ -1020,9 +1054,9 @@ export async function decideReservation(
     deposit_paid: boolean | null;
   } | null;
 
-  if (!booking) return { ok: false, error: "Reservation not found." };
+  if (!booking) return { ok: false, error: t("ecu.reservationNotFound") };
   if (!canDecideReservation(booking.status, decision)) {
-    return { ok: false, error: "This reservation has already moved to another stage. Refresh and try again." };
+    return { ok: false, error: t("est.reservationMoved") };
   }
 
   if (decision === "cancelled" && booking.status === "awaiting_payment") {
@@ -1037,7 +1071,7 @@ export async function decideReservation(
     if (openAttempt) {
       return {
         ok: false,
-        error: "A customer payment is still being confirmed. Wait for its result before releasing the table.",
+        error: t("est.paymentConfirmingTable"),
       };
     }
   }
@@ -1048,7 +1082,7 @@ export async function decideReservation(
     const table = access.tables.find((table) => table.id === input.tableId);
 
     if (!table || table.planLocked || table.status === "out_of_service" || table.capacity < booking.party_size) {
-      return { ok: false, error: "That table is unavailable or too small for this party." };
+      return { ok: false, error: t("est.tableUnavailableOrSmall") };
     }
 
     const { data: assigned } = await supabase
@@ -1066,7 +1100,7 @@ export async function decideReservation(
       const otherEnd = otherStart + Math.max(1, Number(other.duration_min)) * 60_000;
       return otherStart < endsAt && otherEnd > startsAt;
     });
-    if (conflicts) return { ok: false, error: "That table is already assigned during this time." };
+    if (conflicts) return { ok: false, error: t("est.tableAlreadyAssigned") };
   }
 
   /*
@@ -1117,13 +1151,13 @@ export async function decideReservation(
       return {
         ok: false,
         error:
-          "The reservation status list is out of date in the database — run migration 0039.",
+          t("est.migration0039"),
       };
     }
-    return { ok: false, error: "Could not save the decision." };
+    return { ok: false, error: t("est.decisionSaveFailed") };
   }
   if (!decided) {
-    return { ok: false, error: "This reservation changed while you were deciding it. Refresh and try again." };
+    return { ok: false, error: t("est.reservationChangedDeciding") };
   }
 
   // The guest hears the verdict — and a refusal must never arrive without the
@@ -1156,21 +1190,40 @@ export async function setReservationStatus(
   reservationId: string,
   status: "seated" | "completed" | "no_show",
 ): Promise<ActionResult> {
-  const { active } = await requireCapability("reservations.decide");
+  const t = await getTranslator();
+  const { active } = await requireCapability("reservations.seat");
   const supabase = createAdminClient();
 
   // The linked table is read BEFORE the update so the transition can act on
   // it in the same breath — the reservation and the floor must not drift.
   const { data: reservation } = await supabase
     .from("reservations")
-    .select("id, reference, customer_id, status, table_id")
+    .select("id, reference, customer_id, status, table_id, reserved_for")
     .eq("id", reservationId)
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
-  if (!reservation) return { ok: false, error: "Could not update the reservation." };
+  if (!reservation) return { ok: false, error: t("est.reservationUpdateFailed") };
   if (!canSetReservationStatus(reservation.status, status)) {
-    return { ok: false, error: "That reservation cannot move to this stage. Refresh the board." };
+    return { ok: false, error: t("est.reservationBadStage") };
+  }
+  /*
+    FAIR NO-SHOW (2026-09). A no-show keeps the deposit, so it is a verdict
+    with money attached — and a party booked for 20:00 is not absent at 20:01.
+    The board greys the button until the grace has run; this is the rule for
+    a stale tab or a direct POST.
+  */
+  if (status === "no_show" && !canMarkNoShowYet(reservation.reserved_for as string)) {
+    const from = noShowAllowedFrom(reservation.reserved_for as string);
+    const at = from
+      ? new Intl.DateTimeFormat("fr-FR", { timeZone: "Africa/Douala", hour: "2-digit", minute: "2-digit" }).format(from)
+      : "";
+    return {
+      ok: false,
+      error: at
+        ? t("est.noShowTooEarlyFrom", { minutes: NO_SHOW_GRACE_MIN, at })
+        : t("est.noShowTooEarly", { minutes: NO_SHOW_GRACE_MIN }),
+    };
   }
 
   const { data: updated, error } = await supabase
@@ -1182,8 +1235,8 @@ export async function setReservationStatus(
     .select("id")
     .maybeSingle();
 
-  if (error) return { ok: false, error: "Could not update the reservation." };
-  if (!updated) return { ok: false, error: "The reservation changed. Refresh the board." };
+  if (error) return { ok: false, error: t("est.reservationUpdateFailed") };
+  if (!updated) return { ok: false, error: t("est.reservationChangedBoard") };
 
   // SEATING a party marks its table occupied (unless the floor already has
   // it claimed). COMPLETING the meal — or a NO-SHOW, where the table was
@@ -1229,6 +1282,204 @@ export async function setReservationStatus(
   return { ok: true };
 }
 
+/**
+ * The restaurant withdraws a CONFIRMED booking. Reason required — the
+ * customer reads it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE MONEY MOVES IN POSTGRES, THE PAYOUT IN A SAGA.
+ *
+ *  restaurant_cancel_reservation (0060) locks the booking, debits the
+ *  restaurant wallet by the whole online deposit, writes a pending `refunds`
+ *  row and cancels the booking — one transaction, so a crash can never leave
+ *  a cancelled booking with the money still on the restaurant's side, or the
+ *  reverse. The Mobile Money payout cannot join that transaction; it is
+ *  startRefundPayout (idempotent, retried by the reconciler), called here
+ *  only to make the happy path immediate.
+ *
+ *  A deposit collected in cash is not refunded here: no online money moved,
+ *  so the function simply cancels.
+ *
+ *  'insufficient balance' means the restaurant already withdrew the money it
+ *  would have to give back. Nothing is cancelled half-way; support settles it.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function cancelConfirmedReservation(
+  reservationId: string,
+  reason: string,
+): Promise<ActionResult> {
+  const t = await getTranslator();
+  const { active, profile } = await requireCapability("reservations.decide");
+
+  const why = reason?.trim() ?? "";
+  if (!why) return { ok: false, error: t("est.reasonToCustomer") };
+  if (why.length > 500) return { ok: false, error: t("est.reasonTooLong") };
+
+  const supabase = createAdminClient();
+  const { data: current } = await supabase
+    .from("reservations")
+    .select("id, status")
+    .eq("id", reservationId)
+    .eq("restaurant_id", active.restaurantId)
+    .maybeSingle();
+
+  if (!current) return { ok: false, error: t("ecu.reservationNotFound") };
+  if (!canRestaurantCancelReservation(current.status as CustomerReservationStatus)) {
+    return {
+      ok: false,
+      error: t("est.onlyConfirmedCancellable"),
+    };
+  }
+
+  const { data, error } = await supabase.rpc("restaurant_cancel_reservation", {
+    p_reservation_id: reservationId,
+    p_restaurant_id: active.restaurantId,
+    p_actor: profile.email,
+    p_reason: why,
+  });
+
+  if (error) {
+    const message = error.message ?? "";
+    console.error("[manager:cancelConfirmedReservation]", error.code ?? "", message);
+    if (message.includes("insufficient balance")) {
+      return {
+        ok: false,
+        error:
+          t("est.walletCannotRefund"),
+      };
+    }
+    if (message.includes("reservation_not_cancellable")) {
+      return { ok: false, error: t("est.reservationStageChanged") };
+    }
+    if (message.includes("reason_required")) {
+      return { ok: false, error: t("est.reasonToCustomer") };
+    }
+    // 42883 = the function does not exist: migration 0060 was never applied.
+    if (error.code === "42883" || error.code === "PGRST202" || message.includes("restaurant_cancel_reservation")) {
+      return {
+        ok: false,
+        error: t("est.migration0060Cancel"),
+      };
+    }
+    return { ok: false, error: t("est.cancelNotSavedRetry") };
+  }
+
+  const result = (data ?? {}) as {
+    reference?: string;
+    customerId?: string | null;
+    tableId?: string | null;
+    refundId?: string | null;
+    refundAmount?: number;
+    alreadyCancelled?: boolean;
+  };
+
+  if (!result.alreadyCancelled) {
+    // Payout first: it is the customer's money, and the saga is idempotent —
+    // a failure here is retried by the reconciler, never lost.
+    if (result.refundId) {
+      await startRefundPayout(result.refundId).catch((payoutError) =>
+        console.error("[manager:cancelConfirmedReservation] payout", payoutError),
+      );
+    }
+
+    // A table held for this party is free again (same guard as a no-show:
+    // a table someone is actually eating at stays taken).
+    if (result.tableId) {
+      const { data: table } = await supabase
+        .from("restaurant_tables")
+        .select("number")
+        .eq("id", result.tableId)
+        .eq("restaurant_id", active.restaurantId)
+        .maybeSingle();
+      if (table) await releaseTableIfFree(supabase, active.restaurantId, table.number);
+    }
+
+    if (result.customerId) {
+      await notify({
+        event: "reservation_decision",
+        tone: "error",
+        customerId: result.customerId,
+        href: "/reservations",
+        params: {
+          reference: result.reference,
+          restaurantName: active.restaurantName,
+          status: "cancelled",
+          cancelledBy: "restaurant",
+          reason: why,
+          refundAmount: result.refundAmount && result.refundAmount > 0 ? result.refundAmount : undefined,
+          refundTo: result.refundAmount && result.refundAmount > 0 ? "mobile_money" : undefined,
+        },
+      });
+    }
+
+    await writeAudit(profile, {
+      action: "reservation.cancelled_by_restaurant",
+      entityType: "reservation",
+      entityId: reservationId,
+      summary: `Reservation ${result.reference ?? reservationId} cancelled by the restaurant: ${why}`,
+      metadata: { refundId: result.refundId ?? null, refundAmount: result.refundAmount ?? 0 },
+    });
+  }
+
+  revalidatePath("/m/reservations");
+  revalidatePath("/m/tables");
+  revalidatePath("/reservations");
+  revalidatePath("/account");
+  return {
+    ok: true,
+    note:
+      result.refundAmount && result.refundAmount > 0
+        ? t("est.depositRefundedNote", { amount: result.refundAmount.toLocaleString("fr-FR") })
+        : undefined,
+  };
+}
+
+/**
+ * How long a booking holds its table (0060) — the restaurant's own sitting
+ * length, 15 minutes to 8 hours. Only NEW bookings take it; existing ones
+ * keep the duration they were made with.
+ */
+export async function setReservationDuration(minutes: number): Promise<ActionResult> {
+  const t = await getTranslator();
+  const { active, profile } = await requireCapability("settings.manage");
+
+  const value = Math.round(Number(minutes));
+  if (!Number.isInteger(value) || value < MIN_RESERVATION_DURATION_MIN || value > MAX_RESERVATION_DURATION_MIN) {
+    return {
+      ok: false,
+      error: t("est.durationRange", { min: MIN_RESERVATION_DURATION_MIN, max: MAX_RESERVATION_DURATION_MIN / 60 }),
+    };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("restaurants")
+    .update({ reservation_duration_min: value })
+    .eq("id", active.restaurantId);
+
+  if (error) {
+    if (durationColumnMissing(error)) {
+      return {
+        ok: false,
+        error: t("est.migration0060Duration"),
+      };
+    }
+    console.error("[manager:setReservationDuration]", error.code ?? "", error.message);
+    return { ok: false, error: t("est.durationSaveFailed") };
+  }
+
+  await writeAudit(profile, {
+    action: "restaurant.reservation_duration",
+    entityType: "restaurant",
+    entityId: active.restaurantId,
+    summary: `Reservation sitting length set to ${value} min`,
+  });
+
+  revalidatePath("/m/settings");
+  revalidatePath("/m/reservations");
+  return { ok: true };
+}
+
 /* ── Promotions ────────────────────────────────────────────────────────── */
 
 export async function createPromotion(input: {
@@ -1241,24 +1492,25 @@ export async function createPromotion(input: {
   endsAt?: string | null;
   usageLimit?: number | null;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("promotions.manage");
 
   const code = input.code.trim().toUpperCase();
   if (!/^[A-Z0-9]{3,24}$/.test(code)) {
-    return { ok: false, error: "Codes are 3–24 letters and digits, no spaces." };
+    return { ok: false, error: t("est.promoCodeFormat") };
   }
 
   if (input.discountType === "percent" && (input.discountValue < 1 || input.discountValue > 100)) {
-    return { ok: false, error: "A percentage discount must be between 1 and 100." };
+    return { ok: false, error: t("est.percentRange") };
   }
-  if (input.discountValue <= 0) return { ok: false, error: "The discount must be greater than zero." };
+  if (input.discountValue <= 0) return { ok: false, error: t("est.discountPositive") };
 
   // An uncapped percentage is how a 20% code becomes a 40 000 F gift on one
   // large group booking. Warned about rather than blocked — it is a legitimate
   // choice, just rarely the intended one.
   const note =
     input.discountType === "percent" && !input.maxDiscount
-      ? "Created without a maximum discount — a large order will take the full percentage."
+      ? t("est.promoUncappedNote")
       : undefined;
 
   const supabase = createAdminClient();
@@ -1275,9 +1527,9 @@ export async function createPromotion(input: {
   });
 
   if (error) {
-    if (error.code === "23505") return { ok: false, error: "You already have a code with that name." };
+    if (error.code === "23505") return { ok: false, error: t("est.promoExists") };
     console.error("[manager:createPromotion]", error.message);
-    return { ok: false, error: "Could not create the promotion." };
+    return { ok: false, error: t("est.promoCreateFailed") };
   }
 
   revalidatePath("/m/promotions");
@@ -1285,6 +1537,7 @@ export async function createPromotion(input: {
 }
 
 export async function setPromotionActive(id: string, isActive: boolean): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("promotions.manage");
   const supabase = createAdminClient();
 
@@ -1294,7 +1547,7 @@ export async function setPromotionActive(id: string, isActive: boolean): Promise
     .eq("id", id)
     .eq("restaurant_id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not change the promotion." };
+  if (error) return { ok: false, error: t("est.promoChangeFailed") };
 
   revalidatePath("/m/promotions");
   return { ok: true };
@@ -1303,9 +1556,10 @@ export async function setPromotionActive(id: string, isActive: boolean): Promise
 /* ── Reviews ───────────────────────────────────────────────────────────── */
 
 export async function replyToReview(reviewId: string, reply: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("reviews.reply");
 
-  if (reply.trim().length < 5) return { ok: false, error: "The reply is too short." };
+  if (reply.trim().length < 5) return { ok: false, error: t("est.replyTooShort") };
 
   const supabase = createAdminClient();
   // `.select()` so we can tell "updated" from "matched nothing". PostgREST
@@ -1325,9 +1579,9 @@ export async function replyToReview(reviewId: string, reply: string): Promise<Ac
     .is("removed_at", null)
     .select("id, customer_id");
 
-  if (error) return { ok: false, error: "Could not post the reply." };
+  if (error) return { ok: false, error: t("est.replyFailed") };
   if ((data ?? []).length === 0) {
-    return { ok: false, error: "That review is no longer available." };
+    return { ok: false, error: t("est.reviewGone") };
   }
 
   // The reviewer is told their word was heard.
@@ -1353,12 +1607,13 @@ export async function upsertTable(input: {
   number: string;
   capacity: number;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("tables.manage");
 
   const number = input.number.trim();
-  if (!number) return { ok: false, error: "A table needs a number." };
+  if (!number) return { ok: false, error: t("est.tableNeedsNumber") };
   if (!Number.isInteger(input.capacity) || input.capacity < 1) {
-    return { ok: false, error: "Capacity must be at least 1." };
+    return { ok: false, error: t("est.capacityMin") };
   }
 
   const supabase = createAdminClient();
@@ -1382,8 +1637,8 @@ export async function upsertTable(input: {
         .insert({ restaurant_id: active.restaurantId, number, capacity: input.capacity });
 
   if (error) {
-    if (error.code === "23505") return { ok: false, error: "That table number is already in use." };
-    return { ok: false, error: "Could not save the table." };
+    if (error.code === "23505") return { ok: false, error: t("est.tableNumberInUse") };
+    return { ok: false, error: t("est.tableSaveFailed") };
   }
 
   revalidatePath("/m/tables");
@@ -1417,19 +1672,20 @@ export async function bulkCreateTables(input: {
   count: number;
   capacity: number;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("tables.manage");
 
   if (!Number.isInteger(input.count) || input.count < 1) {
-    return { ok: false, error: "Enter how many tables to create." };
+    return { ok: false, error: t("est.bulkCount") };
   }
   // A ceiling, because this writes one row per unit and the field is free
   // text: a mistyped "100" is a slow afternoon, a mistyped "100000" is an
   // outage. No real dining room in scope needs more than this in one go.
   if (input.count > 100) {
-    return { ok: false, error: "You can create at most 100 tables at once." };
+    return { ok: false, error: t("est.bulkMax") };
   }
   if (!Number.isInteger(input.capacity) || input.capacity < 1) {
-    return { ok: false, error: "Capacity must be at least 1." };
+    return { ok: false, error: t("est.capacityMin") };
   }
 
   const supabase = createAdminClient();
@@ -1459,10 +1715,10 @@ export async function bulkCreateTables(input: {
 
   if (error) {
     if (error.code === "23505") {
-      return { ok: false, error: "Some of those table numbers are already in use." };
+      return { ok: false, error: t("est.bulkNumbersInUse") };
     }
     console.error("[manager:bulkCreateTables] insert", error.message);
-    return { ok: false, error: "Could not create the tables." };
+    return { ok: false, error: t("est.tablesCreateFailed") };
   }
 
   revalidatePath("/m/tables");
@@ -1474,7 +1730,8 @@ export async function setTableStatus(
   id: string,
   status: "available" | "occupied" | "reserved" | "out_of_service",
 ): Promise<ActionResult> {
-  const { active } = await requireCapability("tables.manage");
+  const t = await getTranslator();
+  const { active } = await requireCapability("reservations.seat");
   const supabase = createAdminClient();
   const access = await fetchTableAccess(active.restaurantId).catch(() => null);
   if (!access) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.accessError"] };
@@ -1487,7 +1744,7 @@ export async function setTableStatus(
     .eq("id", id)
     .eq("restaurant_id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not update the table." };
+  if (error) return { ok: false, error: t("est.tableUpdateFailed") };
 
   revalidatePath("/m/tables");
   return { ok: true };
@@ -1501,6 +1758,7 @@ export async function setTableStatus(
  * action that unlocks the dashboard must not exclude any of them.
  */
 export async function completeSetup(): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.view");
   const supabase = createAdminClient();
 
@@ -1509,7 +1767,7 @@ export async function completeSetup(): Promise<ActionResult> {
     .update({ setup_done_at: new Date().toISOString() })
     .eq("id", active.restaurantId);
 
-  if (error) return { ok: false, error: "Could not finish the setup." };
+  if (error) return { ok: false, error: t("est.setupFailed") };
 
   revalidatePath("/m");
   revalidatePath("/m/setup");
@@ -1546,6 +1804,7 @@ export async function setDeliveryOffering(input: {
   /** Own riders (true) or platform-managed (false). Ignored when not delivering. */
   hasOwnDelivery?: boolean;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("profile.edit");
   const supabase = createAdminClient();
 
@@ -1561,7 +1820,7 @@ export async function setDeliveryOffering(input: {
 
   if (error) {
     console.error("[manager:setDeliveryOffering]", error.message);
-    return { ok: false, error: "Could not save the delivery settings." };
+    return { ok: false, error: t("est.deliverySaveFailed") };
   }
 
   await writeAudit(profile, {
@@ -1611,21 +1870,22 @@ export async function setDeliveryFeeRange(input: {
   min: number;
   max: number;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("profile.edit");
 
   const min = Math.round(input.min);
   const max = Math.round(input.max);
 
   if (!Number.isInteger(min) || min < 0) {
-    return { ok: false, error: "The minimum fee must be zero or a positive number of francs." };
+    return { ok: false, error: t("est.minFeeInvalid") };
   }
   if (!Number.isInteger(max) || max < 0) {
-    return { ok: false, error: "The maximum fee must be zero or a positive number of francs." };
+    return { ok: false, error: t("est.maxFeeInvalid") };
   }
   // Mirrors the database constraint, so the caller gets a sentence rather
   // than a Postgres error code.
   if (max !== 0 && max < min) {
-    return { ok: false, error: "The maximum fee cannot be lower than the minimum." };
+    return { ok: false, error: t("est.maxFeeBelowMin") };
   }
 
   const supabase = createAdminClient();
@@ -1642,8 +1902,8 @@ export async function setDeliveryFeeRange(input: {
       // migration rather than bad input, and "could not save" sends whoever
       // reads it looking in the wrong place.
       error: error.message.includes("min_delivery_fee")
-        ? "The delivery fee columns are missing — run migration 0035."
-        : "Could not save the delivery fee range.",
+        ? t("est.migration0035Fees")
+        : t("est.feeRangeSaveFailed"),
     };
   }
 
@@ -1673,6 +1933,7 @@ export async function setDeliveryFeeRange(input: {
  * interface since this is a fixed default.
  */
 export async function setDefaultOpeningHours(): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active } = await requireCapability("menu.view");
   const supabase = createAdminClient();
 
@@ -1699,7 +1960,7 @@ export async function setDefaultOpeningHours(): Promise<ActionResult> {
 
   if (error) {
     console.error("[manager:setDefaultOpeningHours]", error.message);
-    return { ok: false, error: "Could not save the opening hours." };
+    return { ok: false, error: t("est.hoursSaveFailed") };
   }
 
   revalidatePath("/m/profile");
@@ -1733,15 +1994,16 @@ export async function setRestaurantDeposit(
   amount: number,
   options: { type?: DepositType } = {},
 ): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("finance.manage");
 
   const type = normaliseDepositType(options.type);
   const value = Math.round(amount);
   if (!Number.isInteger(value) || value < 0) {
-    return { ok: false, error: "Amount must be zero or a positive number of francs." };
+    return { ok: false, error: t("est.amountNonNegative") };
   }
   if (type === "percent" && (value < 1 || value > 100)) {
-    return { ok: false, error: "A percentage fee must be between 1 and 100." };
+    return { ok: false, error: t("est.percentFeeRange") };
   }
 
   const supabase = createAdminClient();
@@ -1777,8 +2039,8 @@ export async function setRestaurantDeposit(
       ok: false,
       error:
         missingColumn || rejectedValue
-          ? "The reservation-fee columns are missing or out of date in the database — run migration 0038."
-          : `Could not save the deposit: ${error.message}`,
+          ? t("est.migration0038")
+          : t("est.depositSaveFailed", { detail: error.message }),
     };
   }
 
@@ -1815,7 +2077,10 @@ export async function collectReservationDeposit(
   reservationId: string,
   billTotal?: number,
 ): Promise<ActionResult> {
-  const { active, profile } = await requireCapability("finance.manage");
+  const t = await getTranslator();
+  // Taking a deposit at the counter is a cashier's job (payments.collect);
+  // finance.manage stays for withdrawals and deposit policy.
+  const { active, profile } = await requireCapability("payments.collect");
   const supabase = createAdminClient();
 
   const { data: reservation } = await supabase
@@ -1835,8 +2100,8 @@ export async function collectReservationDeposit(
     status: CustomerReservationStatus;
   } | null;
 
-  if (!row) return { ok: false, error: "Reservation not found." };
-  if (row.deposit_paid) return { ok: false, error: "Deposit already collected." };
+  if (!row) return { ok: false, error: t("ecu.reservationNotFound") };
+  if (row.deposit_paid) return { ok: false, error: t("est.depositAlreadyCollected") };
 
   /*
     ONLY THE CUSTOMER PAYS AN ONLINE DEPOSIT (payment first, 2026-09).
@@ -1850,7 +2115,7 @@ export async function collectReservationDeposit(
   if (Number(row.deposit_percent ?? 0) <= 0) {
     return {
       ok: false,
-      error: "This deposit is paid online by the customer. The booking confirms itself as soon as their payment lands.",
+      error: t("est.depositPaidOnline"),
     };
   }
   if (!canManagerCollectReservationDeposit({
@@ -1862,8 +2127,8 @@ export async function collectReservationDeposit(
       ok: false,
       error:
         row.deposit_percent > 0
-          ? "A percentage deposit can only be collected during or after service."
-          : "The customer owns the online payment step. Cash can only be recorded after the request is accepted.",
+          ? t("est.percentDepositDuringService")
+          : t("est.customerOwnsPayment"),
     };
   }
 
@@ -1879,7 +2144,7 @@ export async function collectReservationDeposit(
     if (openAttempt) {
       return {
         ok: false,
-        error: "The customer's Mobile Money payment is already being confirmed. Do not collect it again in cash.",
+        error: t("est.momoConfirmingNoCash"),
       };
     }
   }
@@ -1888,14 +2153,14 @@ export async function collectReservationDeposit(
   // manager is entering is what must be collected.
   let amount = row.deposit_amount;
   if (row.deposit_percent > 0) {
-    if (billTotal === undefined) return { ok: false, error: "Enter the bill total to collect a percentage deposit." };
+    if (billTotal === undefined) return { ok: false, error: t("est.billTotalRequired") };
     const bill = Math.round(billTotal);
-    if (!Number.isInteger(bill) || bill <= 0) return { ok: false, error: "The bill total must be a positive number." };
+    if (!Number.isInteger(bill) || bill <= 0) return { ok: false, error: t("est.billTotalPositive") };
     amount = Math.round((bill * row.deposit_percent) / 100);
-    if (amount <= 0) return { ok: false, error: "The deposit would be zero at this bill total." };
+    if (amount <= 0) return { ok: false, error: t("est.depositZero") };
   }
 
-  if (amount <= 0) return { ok: false, error: "This booking has no deposit." };
+  if (amount <= 0) return { ok: false, error: t("est.noDeposit") };
 
   /*
    * Claim the unpaid row before moving money. Two cashiers tapping together
@@ -1919,7 +2184,7 @@ export async function collectReservationDeposit(
     .maybeSingle();
 
   if (claimError || !claimed) {
-    return { ok: false, error: "The booking changed before the deposit could be recorded. Refresh and try again." };
+    return { ok: false, error: t("est.bookingChangedDeposit") };
   }
 
   const { error: creditError } = await supabase.rpc("wallet_credit", {
@@ -1942,7 +2207,7 @@ export async function collectReservationDeposit(
       .eq("id", reservationId)
       .eq("deposit_paid", true)
       .eq("status", isOnlineFallback ? "confirmed" : row.status);
-    return { ok: false, error: "Could not credit the wallet. Is migration 0024 applied?" };
+    return { ok: false, error: t("est.walletCreditFailed") };
   }
 
   if (isOnlineFallback && row.customer_id) {
@@ -1993,11 +2258,12 @@ export async function updateRestaurantProfile(input: {
   acceptsDelivery?: boolean;
   acceptsPickup?: boolean;
 }): Promise<ActionResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("profile.edit");
 
   const patch: Record<string, unknown> = {};
   if (input.name !== undefined) {
-    if (input.name.trim().length < 2) return { ok: false, error: "The restaurant name is too short." };
+    if (input.name.trim().length < 2) return { ok: false, error: t("est.restaurantNameShort") };
     patch.name = input.name.trim();
   }
   // Distinguishes two locations of the same restaurant ("Akwa", "Bonapriso"),
@@ -2005,7 +2271,7 @@ export async function updateRestaurantProfile(input: {
   // switcher with no way to tell which is which.
   if (input.branchLabel !== undefined) {
     const label = input.branchLabel.trim();
-    if (label.length < 2) return { ok: false, error: "The branch name is too short." };
+    if (label.length < 2) return { ok: false, error: t("est.branchNameShort") };
     patch.branch_label = label;
   }
   if (input.description !== undefined) patch.description = input.description.trim();
@@ -2027,11 +2293,11 @@ export async function updateRestaurantProfile(input: {
     const min = Math.round(input.minDeliveryFee ?? 0);
     const max = Math.round(input.maxDeliveryFee ?? 0);
     if (!Number.isInteger(min) || min < 0 || !Number.isInteger(max) || max < 0) {
-      return { ok: false, error: "Delivery fees must be whole, positive numbers of francs." };
+      return { ok: false, error: t("est.deliveryFeesWhole") };
     }
     // max = 0 is the "no ceiling declared" escape hatch and stays legal.
     if (max !== 0 && max < min) {
-      return { ok: false, error: "The maximum delivery fee cannot be lower than the minimum." };
+      return { ok: false, error: t("est.maxDeliveryBelowMin") };
     }
     patch.min_delivery_fee = min;
     patch.max_delivery_fee = max;
@@ -2057,8 +2323,8 @@ export async function updateRestaurantProfile(input: {
       ok: false,
       error:
         error.code === "42703"
-          ? "A column is missing from the database — check that migration 0035 has been run."
-          : "Could not save the changes.",
+          ? t("est.migration0035Column")
+          : t("est.changesSaveFailed"),
     };
   }
 

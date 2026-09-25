@@ -31,10 +31,10 @@ export const orderStatusDict = defineDict({
     "ost.pending": "En attente",
     "ost.cancelled": "Annulée",
     "ost.awaiting_customer": "Paiement à effectuer",
-    "ost.desc.pending": "Le restaurant n'a pas encore confirmé votre commande.",
+    "ost.desc.pending": "Le restaurant vérifie que vos plats sont disponibles.",
     "ost.desc.cancelled": "Cette commande a été annulée.",
     "ost.desc.awaiting_customer":
-      "Le restaurant a accepté votre commande. Payez maintenant pour lancer la préparation.",
+      "Le restaurant a confirmé votre commande. Payez les plats en ligne pour lancer la préparation.",
 
     /* ── Delivery ────────────────────────────────────────────────────── */
     "ost.delivery.confirmed": "Confirmée",
@@ -82,10 +82,10 @@ export const orderStatusDict = defineDict({
     "ost.pending": "Pending",
     "ost.cancelled": "Cancelled",
     "ost.awaiting_customer": "Payment required",
-    "ost.desc.pending": "The restaurant has not confirmed your order yet.",
+    "ost.desc.pending": "The restaurant is checking your dishes are available.",
     "ost.desc.cancelled": "This order was cancelled.",
     "ost.desc.awaiting_customer":
-      "The restaurant accepted your order. Pay now so preparation can start.",
+      "The restaurant confirmed your order. Pay for the food online so preparation can start.",
 
     /* ── Delivery ────────────────────────────────────────────────────── */
     "ost.delivery.confirmed": "Confirmed",

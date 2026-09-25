@@ -22,7 +22,11 @@ import { CartSummary } from "@/components/cart/cart-parts";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Field, Input, Radio, Textarea } from "@/components/ui/input";
+import { Checkbox, Field, Input, Radio, Textarea } from "@/components/ui/input";
+import { isSameAddress } from "@/lib/orders/address-match";
+// The pure rules module, not the gateway client: it has no server imports, so
+// the browser checks a number with exactly the rule CamerPay will apply.
+import { normalisePhone } from "@/lib/payments/camerpay/match";
 import { useToast } from "@/components/ui/toast";
 import {
   getRestaurantOrderCapabilities,
@@ -37,6 +41,24 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SessionUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
 import { canFulfilAt, canTakeAsapOrder, nextServiceSlot, serviceDateAndTime, type ServiceHours } from "@/lib/restaurant/service-hours";
+
+/**
+ * "En commandant, vous acceptez nos conditions" — shown under BOTH submit
+ * buttons. It used to live only in the desktop column, so on a phone the
+ * customer committed without ever being shown the terms they accepted.
+ */
+function TermsLine({ compact = false }: { compact?: boolean }) {
+  const { t } = useLocale();
+  return (
+    <p className={cn("text-center leading-relaxed text-text-light", compact ? "text-[11px]" : "mt-3 text-xs")}>
+      {t("cct.co.terms1")}{" "}
+      <Link href="/terms" className="font-medium text-primary hover:underline">
+        {t("cct.co.termsLink")}
+      </Link>
+      .
+    </p>
+  );
+}
 
 export function CheckoutClient({
   user,
@@ -89,6 +111,9 @@ export function CheckoutClient({
   const [clock, setClock] = useState(() => new Date());
   const [notes, setNotes] = useState("");
   const [placing, setPlacing] = useState(false);
+  // Ticked by default: someone typing a new address at checkout almost always
+  // orders to it again, and retyping it on a phone is the friction this saves.
+  const [saveAddress, setSaveAddress] = useState(true);
 
   // The basket lives in localStorage, so the server could not tell us which
   // restaurant it belongs to — ask here, once, so a mode the kitchen does not
@@ -163,6 +188,37 @@ export function CheckoutClient({
 
   const restaurant = lines[0];
 
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     THE MINIMUM ORDER USED TO BE DESKTOP-ONLY.
+
+     It sat in the summary column, which is `hidden lg:flex` — so on a phone,
+     where nearly every order here is placed, the customer never saw it and
+     only met it as a refusal after filling the whole form. It now disables
+     both submit buttons, and the button itself says why.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const belowMinimum = Boolean(
+    type === "delivery" && caps && caps.minimumOrder > 0 && totals.subtotal < caps.minimumOrder,
+  );
+  const submitBlocked = placing || serviceBlocked || belowMinimum;
+  const submitLabel = belowMinimum && caps
+    ? t("cct.co.belowMinBtn", { amount: formatMoney(caps.minimumOrder) })
+    : null;
+
+  // The restaurant's declared band, shown on the fee row. The fee itself is
+  // paid to the rider in cash and is never added to the online total.
+  const feeDetail = caps && caps.maxDeliveryFee > 0
+    ? t("cct.sum.feeBand", { min: formatMoney(caps.minDeliveryFee), max: formatMoney(caps.maxDeliveryFee) })
+    : caps && caps.minDeliveryFee > 0
+      ? t("cct.sum.feeFromBand", { min: formatMoney(caps.minDeliveryFee) })
+      : null;
+
+  // Already in the address book → nothing to offer; the server re-checks too.
+  const typedAddressKnown = addresses.some((a) =>
+    isSameAddress(a, { addressLine: deliveryAddress, quartier: deliveryQuartier }),
+  );
+
   function showFieldError(id: string, message: string) {
     setErrors({ [id === "checkout-form-error" ? "form" : id]: message });
     requestAnimationFrame(() => {
@@ -185,6 +241,17 @@ export function CheckoutClient({
     }
     if ((newAddress || type === "pickup") && !deliveryPhone.trim()) {
       showFieldError(type === "pickup" ? "ck-pu-phone" : "ck-phone", t("cct.err.phoneRequired"));
+      return;
+    }
+    // The restaurant and the rider call this number, and a typo is only
+    // discovered when nobody answers at the gate. Same rule as CamerPay:
+    // nine digits starting with 6, with or without +237.
+    if ((newAddress || type === "pickup") && !normalisePhone(deliveryPhone)) {
+      showFieldError(type === "pickup" ? "ck-pu-phone" : "ck-phone", t("cct.err.phoneInvalid"));
+      return;
+    }
+    if (belowMinimum && caps) {
+      showFieldError("checkout-form-error", t("cct.err.belowMinimum", { amount: formatMoney(caps.minimumOrder) }));
       return;
     }
     if (type === "delivery" && newAddress && !deliveryQuartier.trim()) {
@@ -235,6 +302,7 @@ export function CheckoutClient({
       // Survives a reload, so a retry after a lost response returns the order
       // that already exists instead of placing a second one.
       idempotencyKey: currentIdempotencyKey(),
+      saveAddress: Boolean(user) && type === "delivery" && newAddress && saveAddress && !typedAddressKnown,
     };
 
     /*
@@ -297,7 +365,7 @@ export function CheckoutClient({
   }
 
   return (
-    <div className="container-page w-full py-6 pb-44 lg:py-12 lg:pb-12">
+    <div className="container-page w-full py-6 pb-56 lg:py-12 lg:pb-12">
       <Link
         href="/cart"
         className="inline-flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-primary"
@@ -307,6 +375,28 @@ export function CheckoutClient({
       </Link>
 
       <h1 className="mt-4 font-display text-3xl font-bold">{t("cct.co.title")}</h1>
+
+      {/*
+        THE ORDER OF EVENTS, BEFORE THE FORM.
+
+        Nothing is charged when this page is submitted: the restaurant first
+        confirms the dishes (and quotes delivery), then the customer pays the
+        food online, and the delivery fee goes to the rider in cash. A button
+        that said "Payer" next to a total that excluded delivery read as a
+        charge now and a hidden fee later — three short lines fix both.
+      */}
+      <section aria-labelledby="ck-steps" className="mt-4 rounded-lg border border-info/25 bg-info-light p-4 text-sm text-info">
+        <h2 id="ck-steps" className="font-semibold">{t("cct.co.stepsTitle")}</h2>
+        <ol className="mt-2 grid gap-1.5 sm:grid-cols-3 sm:gap-3">
+          {[t("cct.co.step1"), t("cct.co.step2"), type === "delivery" ? t("cct.co.step3Delivery") : t("cct.co.step3Pickup")].map((step, index) => (
+            <li key={index} className="flex gap-2">
+              <span className="tnum grid size-5 shrink-0 place-items-center rounded-full bg-info text-[11px] font-bold text-white">{index + 1}</span>
+              <span className="leading-snug text-text">{step}</span>
+            </li>
+          ))}
+        </ol>
+        <p className="mt-2 text-xs leading-relaxed text-text-secondary">{t("cct.co.stepsNote")}</p>
+      </section>
       <div id="checkout-form-error" tabIndex={-1} className="outline-none">{errors.form && <p role="alert" className="mt-3 rounded-md border border-error/25 bg-error-light p-3 text-sm font-medium text-error">{errors.form}</p>}</div>
 
       <div className="mt-8 grid items-start gap-8 lg:grid-cols-[1fr_22rem]">
@@ -415,10 +505,14 @@ export function CheckoutClient({
                       onChange={(e) => setDeliveryName(e.target.value)}
                     />
                   </Field>
-                  <Field label={t("cct.co.phone")} htmlFor="ck-phone" required error={errors["ck-phone"]}>
+                  <Field label={t("cct.co.phone")} htmlFor="ck-phone" required hint={t("cct.co.phoneHint")} error={errors["ck-phone"]}>
                     <Input
                       id="ck-phone"
                       type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
+                      placeholder={t("cct.co.phonePh")}
+                      invalid={Boolean(errors["ck-phone"])}
                       value={deliveryPhone}
                       onChange={(e) => setDeliveryPhone(e.target.value)}
                     />
@@ -492,6 +586,19 @@ export function CheckoutClient({
                     />
                     <LocationButton value={deliveryLandmark} onChange={setDeliveryLandmark} />
                   </Field>
+                  {user && (
+                    <div className="sm:col-span-2">
+                      {typedAddressKnown ? (
+                        <p className="text-xs text-text-light">{t("cct.co.addressKnown")}</p>
+                      ) : (
+                        <Checkbox
+                          checked={saveAddress}
+                          onChange={(e) => setSaveAddress(e.target.checked)}
+                          label={t("cct.co.saveAddress")}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -556,10 +663,14 @@ export function CheckoutClient({
                     onChange={(e) => setDeliveryName(e.target.value)}
                   />
                 </Field>
-                <Field label={t("cct.co.phone")} htmlFor="ck-pu-phone" required error={errors["ck-pu-phone"]}>
+                <Field label={t("cct.co.phone")} htmlFor="ck-pu-phone" required hint={t("cct.co.phoneHint")} error={errors["ck-pu-phone"]}>
                   <Input
                     id="ck-pu-phone"
                     type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder={t("cct.co.phonePh")}
+                    invalid={Boolean(errors["ck-pu-phone"])}
                     value={deliveryPhone}
                     onChange={(e) => setDeliveryPhone(e.target.value)}
                   />
@@ -679,7 +790,7 @@ export function CheckoutClient({
           {/* Below the minimum, say so BEFORE the customer commits — the
               basket can't be submitted yet, and a surprise at the last click
               is how baskets get abandoned. */}
-          {type === "delivery" && caps && caps.minimumOrder > 0 && totals.subtotal < caps.minimumOrder && (
+          {belowMinimum && caps && (
             <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs leading-relaxed text-warning">
               {t("cct.co.belowMinHint", {
                 amount: formatMoney(caps.minimumOrder - totals.subtotal),
@@ -687,44 +798,54 @@ export function CheckoutClient({
             </p>
           )}
 
-          <CartSummary showDeliveryFee={type === "delivery"}>
+          <CartSummary showDeliveryFee={type === "delivery"} deliveryFeeDetail={feeDetail}>
             <Button
               size="lg"
               fullWidth
               loading={placing}
-              disabled={placing || serviceBlocked}
+              disabled={submitBlocked}
               onClick={submit}
               className="rounded-md"
             >
-              {t("cct.co.place", { total: formatMoney(totals.total) })}
+              {submitLabel ?? t("cct.co.place", { total: formatMoney(totals.total) })}
             </Button>
-            <p className="mt-3 text-center text-xs leading-relaxed text-text-light">
-              {t("cct.co.terms1")}{" "}
-              <Link href="/terms" className="font-medium text-primary hover:underline">
-                {t("cct.co.termsLink")}
-              </Link>
-              .
-            </p>
+            <TermsLine />
           </CartSummary>
         </div>
       </div>
 
       <div className="fixed inset-x-0 z-30 border-t border-border bg-surface/98 px-4 pt-3 shadow-[0_-10px_30px_rgba(0,0,0,0.08)] backdrop-blur-md lg:hidden" style={{ bottom: "calc(5rem + env(safe-area-inset-bottom, 0px))" }}>
         <div className="mx-auto max-w-lg">
+          {/* The phone summary carries everything the desktop column does —
+              lines, fees, the cash-to-rider note and the terms — because a
+              phone is where most orders are placed, and the desktop column is
+              `hidden lg:flex`. */}
           {summaryOpen && (
-            <div className="mb-3 max-h-52 overflow-y-auto rounded-md bg-surface-2 p-3">
+            <div className="mb-3 max-h-[55dvh] overflow-y-auto rounded-md bg-surface-2 p-3">
               <p className="font-semibold">{restaurant.restaurantName}</p>
               <ul className="mt-2 grid gap-1.5 text-xs text-text-secondary">
                 {lines.map((line) => <li key={line.id} className="flex justify-between gap-3"><span className="min-w-0 truncate">{line.quantity} x {line.name}</span><span className="tnum shrink-0">{formatMoney((line.basePrice + line.options.reduce((sum, option) => sum + option.priceDelta, 0)) * line.quantity)}</span></li>)}
               </ul>
+              <div className="mt-3">
+                <CartSummary showDeliveryFee={type === "delivery"} deliveryFeeDetail={feeDetail} />
+              </div>
             </div>
           )}
-          <div className="flex items-center gap-3 pb-3">
+          {belowMinimum && caps && (
+            <p role="status" className="mb-2 rounded-md bg-warning-light px-3 py-2 text-xs leading-snug text-warning">
+              {t("cct.co.belowMinHint", { amount: formatMoney(caps.minimumOrder - totals.subtotal) })}
+            </p>
+          )}
+          <div className="flex items-center gap-3 pb-1">
             <button type="button" aria-expanded={summaryOpen} onClick={() => setSummaryOpen((open) => !open)} className="min-w-0 flex-1 text-left">
-              <span className="flex items-center gap-1 text-xs font-medium text-text-light">{t("cct.co.yourOrder")}<ChevronUp className={cn("size-3.5 transition-transform", !summaryOpen && "rotate-180")} aria-hidden /></span>
+              <span className="flex items-center gap-1 text-xs font-medium text-text-light">{t("cct.sum.totalOnline")}<ChevronUp className={cn("size-3.5 transition-transform", !summaryOpen && "rotate-180")} aria-hidden /></span>
               <span className="tnum block text-lg font-bold">{formatMoney(totals.total)}</span>
+              {type === "delivery" && <span className="block truncate text-[11px] text-text-light">+ {t("cct.sum.delivery")} {t("cct.sum.toConfirm")}</span>}
             </button>
-            <Button size="lg" loading={placing} disabled={placing || serviceBlocked} onClick={submit} className="min-w-36 px-5">{t("cct.co.pay")}</Button>
+            <Button size="lg" loading={placing} disabled={submitBlocked} onClick={submit} className="min-w-36 px-5">{submitLabel ?? t("cct.co.pay")}</Button>
+          </div>
+          <div className="pb-3">
+            <TermsLine compact />
           </div>
         </div>
       </div>

@@ -57,6 +57,20 @@ export interface ManagerOrder {
   /** ISO timestamp for a scheduled order, null for ASAP (checkout page). */
   scheduledFor: string | null;
 
+  /**
+   * When the restaurant accepted (the first `awaiting_customer` history row).
+   * The customer's pay-by clock starts here (lib/orders/deadline). Read only
+   * for orders currently awaiting payment; null otherwise.
+   */
+  acceptedAt: string | null;
+  /**
+   * When the order became `confirmed` — i.e. was PAID (payment first). The
+   * kitchen's timer counts from here: the minutes an order spent waiting for
+   * the customer's Mobile Money are not minutes the kitchen was late.
+   * Filled by the kitchen queue only.
+   */
+  confirmedAt: string | null;
+
   items: OrderItemRow[];
 }
 
@@ -88,11 +102,25 @@ interface DbOrder {
   created_at: string;
 }
 
-function canRevealDeliveryPhone(o: DbOrder): boolean {
-  return o.type === "delivery" && o.is_paid && (["confirmed", "preparing", "shipped"] as string[]).includes(o.status);
+/*
+  ─────────────────────────────────────────────────────────────────────────
+   THE CUSTOMER'S NUMBER — ONLY WHILE THE FOOD IS ON ITS WAY.
+
+   Platform rule (Sep 2026): restaurants and customers talk through the
+   in-app chat, never by phone — a number the rider keeps is a number used to
+   take the next order off the platform. The ONE exception the owner allows
+   is a delivery in progress: a rider at the gate whose customer does not
+   answer the chat must be able to call. So the number is released for a
+   PAID delivery that is confirmed, preparing or out for delivery, and blanked
+   again the moment it is delivered or cancelled. Blanked here, at the one
+   place every manager read passes through.
+  ─────────────────────────────────────────────────────────────────────────
+*/
+export function phoneVisibleToRestaurant(o: { type: string; is_paid: boolean; status: string }): boolean {
+  return o.type === "delivery" && o.is_paid && ["confirmed", "preparing", "shipped"].includes(o.status);
 }
 
-function shape(o: DbOrder, items: OrderItemRow[]): ManagerOrder {
+function shape(o: DbOrder, items: OrderItemRow[], times: StatusTimes = {}): ManagerOrder {
   return {
     id: o.id,
     reference: o.reference,
@@ -107,10 +135,7 @@ function shape(o: DbOrder, items: OrderItemRow[]): ManagerOrder {
     deliveryFeeSetAt: o.delivery_fee_set_at,
     total: o.total,
     deliveryName: o.delivery_name,
-    // Contact is released only for a paid delivery that the restaurant has accepted,
-    // then disappears again after delivery/cancellation. The raw number never reaches
-    // manager client components outside that operational window.
-    deliveryPhone: canRevealDeliveryPhone(o) ? o.delivery_phone : null,
+    deliveryPhone: phoneVisibleToRestaurant(o) ? o.delivery_phone : null,
     deliveryAddress: o.delivery_address,
     deliveryQuartier: o.delivery_quartier,
     deliveryLandmark: o.delivery_landmark,
@@ -119,8 +144,47 @@ function shape(o: DbOrder, items: OrderItemRow[]): ManagerOrder {
     cancelledReason: o.cancelled_reason,
     scheduledFor: o.scheduled_for,
     createdAt: o.created_at,
+    acceptedAt: times.awaiting_customer ?? null,
+    confirmedAt: times.confirmed ?? null,
     items,
   };
+}
+
+/** First time an order entered a status, per status. */
+type StatusTimes = Partial<Record<"awaiting_customer" | "confirmed", string>>;
+
+/**
+ * The first `awaiting_customer` / `confirmed` history row per order — one
+ * query for a whole list, grouped in memory. Only asked for the orders that
+ * need it (awaiting payment on the queue, the kitchen's tickets), so a
+ * hundred-row queue does not drag a hundred histories along.
+ */
+async function fetchStatusTimes(
+  orderIds: string[],
+  statuses: (keyof StatusTimes)[],
+): Promise<Map<string, StatusTimes>> {
+  const map = new Map<string, StatusTimes>();
+  if (orderIds.length === 0 || statuses.length === 0) return map;
+
+  const { data, error } = await createAdminClient()
+    .from("order_status_history")
+    .select("order_id, status, created_at")
+    .in("order_id", orderIds)
+    .in("status", statuses)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("[orders:fetchStatusTimes]", error.message);
+    return map;
+  }
+
+  for (const row of (data ?? []) as { order_id: string; status: keyof StatusTimes; created_at: string }[]) {
+    const times = map.get(row.order_id) ?? {};
+    // Ascending order: the first write wins, which is the moment it ENTERED.
+    if (!times[row.status]) times[row.status] = row.created_at;
+    map.set(row.order_id, times);
+  }
+  return map;
 }
 
 /** Items for a set of orders, one query, grouped in memory. */
@@ -176,8 +240,13 @@ export async function fetchOrders(restaurantId: string, limit = 100): Promise<Ma
   }
 
   const rows = (data ?? []) as DbOrder[];
-  const items = await fetchItemsFor(rows.map((r) => r.id));
-  return rows.map((r) => shape(r, items.get(r.id) ?? []));
+  const awaiting = rows.filter((r) => r.status === "awaiting_customer").map((r) => r.id);
+  const [items, times] = await Promise.all([
+    fetchItemsFor(rows.map((r) => r.id)),
+    // The pay-by countdown on the queue needs when each was accepted.
+    fetchStatusTimes(awaiting, ["awaiting_customer"]),
+  ]);
+  return rows.map((r) => shape(r, items.get(r.id) ?? [], times.get(r.id)));
 }
 
 /** One order, scoped to the branch so an id from a URL cannot cross tenants. */
@@ -205,11 +274,18 @@ export async function fetchOrder(
       .order("created_at"),
   ]);
 
+  const events = ((history ?? []) as { status: string; by_name: string | null; note: string | null; created_at: string }[]).map(
+    (h) => ({ status: h.status, byName: h.by_name, note: h.note, createdAt: h.created_at }),
+  );
+  // The history is already here, ordered — the status times come free.
+  const times: StatusTimes = {
+    awaiting_customer: events.find((e) => e.status === "awaiting_customer")?.createdAt,
+    confirmed: events.find((e) => e.status === "confirmed")?.createdAt,
+  };
+
   return {
-    ...shape(data as DbOrder, items.get(orderId) ?? []),
-    history: ((history ?? []) as { status: string; by_name: string | null; note: string | null; created_at: string }[]).map(
-      (h) => ({ status: h.status, byName: h.by_name, note: h.note, createdAt: h.created_at }),
-    ),
+    ...shape(data as DbOrder, items.get(orderId) ?? [], times),
+    history: events,
   };
 }
 
@@ -235,6 +311,11 @@ export async function fetchKitchenQueue(restaurantId: string): Promise<ManagerOr
   }
 
   const rows = (data ?? []) as DbOrder[];
-  const items = await fetchItemsFor(rows.map((r) => r.id));
-  return rows.map((r) => shape(r, items.get(r.id) ?? []));
+  const ids = rows.map((r) => r.id);
+  const [items, times] = await Promise.all([
+    fetchItemsFor(ids),
+    // The ticket timer starts at payment, not at placement — see confirmedAt.
+    fetchStatusTimes(ids, ["confirmed"]),
+  ]);
+  return rows.map((r) => shape(r, items.get(r.id) ?? [], times.get(r.id)));
 }

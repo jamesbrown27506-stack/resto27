@@ -317,6 +317,8 @@ export interface RefundRow {
   createdBy: string;
   createdAt: string;
   completedAt: string | null;
+  /** A customer refund (order or booking) the payout saga sends, vs an admin ledger entry. */
+  customerRefund: boolean;
 }
 
 export async function listRefunds(): Promise<RefundRow[]> {
@@ -326,7 +328,7 @@ export async function listRefunds(): Promise<RefundRow[]> {
     .from("refunds")
     .select(
       `id, reference, type, amount, reason, status, created_by, created_at, completed_at,
-       restaurants ( name )`,
+       order_id, reservation_id, restaurants ( name )`,
     )
     .order("created_at", { ascending: false })
     .limit(200);
@@ -343,6 +345,8 @@ export async function listRefunds(): Promise<RefundRow[]> {
     created_by: string;
     created_at: string;
     completed_at: string | null;
+    order_id: string | null;
+    reservation_id: string | null;
     restaurants: { name: string } | null;
   }
 
@@ -357,6 +361,7 @@ export async function listRefunds(): Promise<RefundRow[]> {
     createdBy: row.created_by,
     createdAt: row.created_at,
     completedAt: row.completed_at,
+    customerRefund: Boolean(row.order_id || row.reservation_id),
   }));
 }
 

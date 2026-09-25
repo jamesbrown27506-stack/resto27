@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { ArrowLeft, MessageSquare, Plus, Send, Store, X } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, CalendarCheck, MessageSquare, Plus, Receipt, Send, Store, X } from "lucide-react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -24,6 +25,7 @@ import {
   type ChatThread,
 } from "@/lib/data/chat-actions";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
+import type { ChatContextRef } from "@/lib/chat/context";
 
 /**
  * The messaging screen, shared by every side.
@@ -333,6 +335,9 @@ export function ChatInbox({
                         <span>{t("mchat.peer.restaurant")}</span>
                       </span>
                     )}
+                    {c.context && (
+                      <ContextChip context={c.context} className="mt-0.5" />
+                    )}
                     <span className="mt-0.5 block truncate text-xs text-text-secondary">
                       {c.lastMessage ?? c.subject}
                     </span>
@@ -379,15 +384,25 @@ export function ChatInbox({
                   <ArrowLeft className="size-4" aria-hidden />
                 </Button>
                 <div className="min-w-0">
+                  {/* A subject that only names the order would repeat the
+                      chip right under it — the peer's name is the better
+                      title then, and the chip says what it is about. */}
                   <p className="truncate text-sm font-semibold">
-                    {thread.subject ? thread.subject : thread.peerName}
+                    {thread.subject && !thread.context ? thread.subject : thread.peerName}
                   </p>
                   <p className="truncate text-xs text-text-light">
-                    {selectedSummary?.unread
-                      ? `${t("notif.unreadCount", { count: selectedSummary.unread })} · `
-                      : ""}
-                    {thread.peerName}
+                    {[
+                      selectedSummary?.unread
+                        ? t("notif.unreadCount", { count: selectedSummary.unread })
+                        : null,
+                      thread.subject && !thread.context ? thread.peerName : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </p>
+                  {thread.context && (
+                    <ContextChip context={thread.context} href={thread.context.href} className="mt-1" />
+                  )}
                 </div>
               </div>
               <Button variant="ghost" size="sm" onClick={toggleClose}>
@@ -396,8 +411,10 @@ export function ChatInbox({
             </div>
 
             <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+              {/* An empty thread is a real state now: a contact button opens
+                  the conversation before anyone has written in it. */}
               {thread.messages.length === 0 && (
-                <p className="pt-10 text-center text-sm text-text-light">{t("common.loading")}</p>
+                <p className="pt-10 text-center text-sm text-text-light">{t("chat.emptyThread")}</p>
               )}
               {thread.messages.map((m) => {
                 const mine = m.senderId === myId;
@@ -574,5 +591,48 @@ function NewConversationForm({
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * "Commande CMD-XXXX" / "Réservation RES-XXXX" — what the thread is about.
+ *
+ * Linked in the thread header (to the customer's order page or the
+ * back-office ticket, per side); plain in the list, where the whole row is
+ * already a button and a link inside a button is invalid HTML. A context
+ * that survived only in the subject (before migration 0061) has no id and so
+ * shows unlinked.
+ */
+function ContextChip({
+  context,
+  href,
+  className,
+}: {
+  context: ChatContextRef;
+  href?: string | null;
+  className?: string;
+}) {
+  const { t } = useLocale();
+  const Icon = context.kind === "order" ? Receipt : CalendarCheck;
+  const label = t(context.kind === "order" ? "chat.context.order" : "chat.context.reservation", {
+    reference: context.reference,
+  });
+  const classes = cn(
+    "inline-flex max-w-full items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary",
+    href && "hover:bg-primary/20 hover:underline",
+    className,
+  );
+  const body = (
+    <>
+      <Icon className="size-3 shrink-0" aria-hidden />
+      <span className="tnum truncate">{label}</span>
+    </>
+  );
+  return href ? (
+    <Link href={href} className={classes}>
+      {body}
+    </Link>
+  ) : (
+    <span className={classes}>{body}</span>
   );
 }

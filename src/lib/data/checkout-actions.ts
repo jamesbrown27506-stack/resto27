@@ -8,8 +8,10 @@ import { getCartConfig } from "@/lib/orders/cart-config";
 import { discountFor } from "@/lib/orders/promotions";
 import { computeTotals } from "@/lib/orders/totals";
 import { notify } from "@/lib/notify";
+import { scheduleNewOrderRepeats } from "@/lib/notifications/new-order-burst";
 import { rateLimit } from "@/lib/rate-limit";
 import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
+import { saveCheckoutAddress } from "./checkout-address";
 import { canFulfilAt, canTakeAsapOrder, type ServiceHours } from "@/lib/restaurant/service-hours";
 
 
@@ -69,6 +71,12 @@ export interface CheckoutInput {
    * page has been reloaded by then. See migration 0047.
    */
   idempotencyKey?: string | null;
+  /**
+   * "Enregistrer cette adresse" at checkout. Honoured only for a delivery to a
+   * typed (not saved) address; an identical saved address is never duplicated.
+   * See lib/data/checkout-address.
+   */
+  saveAddress?: boolean;
 }
 
 /**
@@ -757,30 +765,48 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
    * belongs to whatever marks an order `delivered`.
    */
 
+  // The address typed at checkout joins the address book when the customer
+  // ticked "Enregistrer cette adresse". Never throws (see the module).
+  if (input.saveAddress === true && input.type === "delivery" && !input.addressId && profile) {
+    await saveCheckoutAddress({
+      profileId: profile.id,
+      recipientName: deliveryName,
+      phone: deliveryPhone,
+      addressLine,
+      quartier,
+      landmark,
+    });
+  }
+
   revalidatePath("/orders");
   revalidatePath("/account");
 
   // ── Notification triggers ────────────────────────────────────────────
   // The order is written; everything below is news about it. Non-fatal.
   //
-  // PAYMENT FIRST: the kitchen hears about an order when there is something
-  // for it to do. A delivery order needs its fee quoted before the customer
-  // can pay, so the restaurant is told now. A pickup order is announced by
-  // settlePayment the moment the customer's payment is confirmed — ringing
-  // the kitchen for an order nobody has paid for invites cooking it.
-  if (input.type === "delivery") {
-    await notify({
-      event: "new_order",
-      tone: "success",
-      restaurantId: input.restaurantId,
-      href: `/m/orders/${created.id}`,
-      params: {
-        reference: created.reference,
-        customerName: deliveryName,
-        amount: totals.total,
-      },
-    });
-  }
+  // PAYMENT FIRST: every new order needs the restaurant's answer before the
+  // customer can pay — "yes, we have these dishes" (and, for a delivery, the
+  // fee the rider will collect in cash). So EVERY order rings now.
+  //
+  // This used to ring for deliveries only, on the theory that a pickup would
+  // be announced when its payment landed. But a pickup cannot be paid until
+  // it is accepted, so it was never announced at all — the kitchen found it
+  // only if the queue happened to be open. The "paid — start it" push from
+  // settlePayment is the second, separate signal to begin cooking.
+  const newOrderParams = {
+    reference: created.reference,
+    customerName: deliveryName,
+    amount: totals.total,
+  };
+  await notify({
+    event: "new_order",
+    tone: "success",
+    restaurantId: input.restaurantId,
+    href: `/m/orders/${created.id}`,
+    params: newOrderParams,
+  });
+  // Two more buzzes in the next ten seconds for a phone with the app closed.
+  scheduleNewOrderRepeats({ orderId: created.id, restaurantId: input.restaurantId, params: newOrderParams });
 
   // Registered customers get a confirmation; guests have no profile to reach.
   if (profile) {

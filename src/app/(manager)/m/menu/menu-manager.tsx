@@ -38,6 +38,7 @@ import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { MenuCategory, MenuItem } from "@/lib/data/manager";
 import { cn } from "@/lib/utils";
+import { localizeActionError } from "@/lib/i18n/staff-errors";
 
 /**
  * Menu management.
@@ -105,12 +106,19 @@ export function MenuManager({
   items,
   limit,
   canEdit,
+  canToggleAvailability = canEdit,
 }: {
   categories: MenuCategory[];
   items: MenuItem[];
   /** null = unlimited */
   limit: number | null;
   canEdit: boolean;
+  /**
+   * `menu.availability` — the sold-out switch alone. The kitchen and the
+   * cashier hold it without `menu.edit`: they see the switch, not the
+   * edit / options / delete controls beside it.
+   */
+  canToggleAvailability?: boolean;
 }) {
   const { t, locale } = useLocale();
   const { toast } = useToast();
@@ -148,7 +156,7 @@ export function MenuManager({
   function run(fn: () => Promise<ActionResult>, success: string) {
     startTransition(async () => {
       const result = await fn();
-      if (!result.ok) return toast(result.error, "error");
+      if (!result.ok) return toast(localizeActionError(result.error, locale), "error");
       toast(success, "success");
     });
   }
@@ -359,7 +367,11 @@ export function MenuManager({
         </div>
       )}
 
-      {!canEdit && <p className="mt-4 text-sm text-text-light">{t("mm.readOnly")}</p>}
+      {!canEdit && (
+        <p className="mt-4 text-sm text-text-light">
+          {canToggleAvailability ? t("mops.menu.availabilityOnly") : t("mm.readOnly")}
+        </p>
+      )}
 
       <p className="mt-4 flex flex-wrap items-center gap-x-2 text-sm text-text-secondary">
         <span>{t(plural("mm.count", visible.length), { count: visible.length })}</span>
@@ -469,6 +481,25 @@ export function MenuManager({
                   <p className="tnum font-display text-lg font-bold text-primary md:shrink-0 md:text-right">
                     <span>{formatMoney(item.price)}</span>
                   </p>
+
+                  {canToggleAvailability && !canEdit && (
+                    <div className="flex w-full flex-wrap items-center gap-2 border-t border-border pt-3 md:w-auto md:shrink-0 md:border-0 md:pt-0">
+                      <Switch
+                        label={t("mm.available")}
+                        aria-label={t("mm.availabilityOf", { name: item.name })}
+                        checked={item.isAvailable}
+                        disabled={pending}
+                        onChange={() =>
+                          run(
+                            () => setItemAvailability(item.id, !item.isAvailable),
+                            item.isAvailable
+                              ? t("mm.markedSoldOut", { name: item.name })
+                              : t("mm.markedAvailable", { name: item.name }),
+                          )
+                        }
+                      />
+                    </div>
+                  )}
 
                   {canEdit && (
                     <div className="flex w-full flex-wrap items-center gap-2 border-t border-border pt-3 md:w-auto md:shrink-0 md:border-0 md:pt-0">

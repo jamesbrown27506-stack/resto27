@@ -43,7 +43,7 @@ export default async function TableOrderPage({ searchParams }: { searchParams: P
   return (
     <ManagerPage titleKey="m.tableOrder.title" descriptionKey="m.tableOrder.subtitle">
       {active.planTier === "enterprise" && (
-        <DiningFloor sessions={diningSessions as unknown as DiningFloorSession[]} focusSessionId={session} canFinance={can(active.role, "finance.manage")} notificationsEnabled={diningNotifications} />
+        <DiningFloor sessions={diningSessions as unknown as DiningFloorSession[]} focusSessionId={session} canCollect={can(active.role, "payments.collect")} notificationsEnabled={diningNotifications} />
       )}
       <TableOrderer
         tables={tables}

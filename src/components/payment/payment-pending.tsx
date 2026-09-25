@@ -1,8 +1,24 @@
 "use client";
 
-import { Copy, LoaderCircle, PhoneCall, Radio, ShieldCheck, Smartphone } from "lucide-react";
+import { useState, useSyncExternalStore } from "react";
+import { Check, Copy, LoaderCircle, PhoneCall, Radio, ShieldCheck, Smartphone } from "lucide-react";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { isAppleMobile } from "@/lib/device/ios";
+
+const noSubscribe = () => () => {};
+
+/**
+ * iPhone/iPad, read once on the client. `false` on the server and during
+ * hydration, so both renders agree; the browser then answers truthfully.
+ */
+function useAppleMobile(): boolean {
+  return useSyncExternalStore(
+    noSubscribe,
+    () => isAppleMobile(navigator.userAgent, navigator.platform, navigator.maxTouchPoints),
+    () => false,
+  );
+}
 
 export interface PaymentPendingViewProps {
   body: string;
@@ -37,10 +53,16 @@ export function PaymentPendingView({
   requesting = false,
   instruction,
 }: PaymentPendingViewProps) {
-  const { locale } = useLocale();
-  const orange = locale === "fr"
-    ? { title: "Action Orange requise", copy: "Copier le code", phone: "Ouvrir le téléphone", steps: ["Copiez le code", "Ouvrez l’application Téléphone", "Composez le code et validez", "Revenez sur Resto237"] }
-    : { title: "Orange action required", copy: "Copy code", phone: "Open Phone", steps: ["Copy the code", "Open the Phone app", "Dial the code and confirm", "Return to Resto237"] };
+  const { t } = useLocale();
+  // iOS blocks `*` and `#` in tel: links, so "Ouvrir le téléphone" would dial
+  // a mangled code there. Copy-and-paste is the path that works on iPhone.
+  const appleMobile = useAppleMobile();
+  const [copied, setCopied] = useState(false);
+  const steps = [t("sui.pay.step1"), t("sui.pay.step2"), t("sui.pay.step3"), t("sui.pay.step4")];
+
+  function copyCode(code: string) {
+    void navigator.clipboard?.writeText(code).then(() => setCopied(true), () => setCopied(false));
+  }
   return (
     <div role="status" aria-live="polite" className="mx-auto flex w-full min-w-0 max-w-sm flex-col items-center overflow-x-hidden text-center">
       <div className="relative mx-auto grid size-20 place-items-center">
@@ -83,7 +105,7 @@ export function PaymentPendingView({
 
       {instruction && (
         <div className="mt-4 w-full min-w-0 rounded-lg border border-warning/35 bg-warning-light p-4 text-left">
-          <p className="font-semibold text-warning">{orange.title}</p>
+          <p className="font-semibold text-warning">{t("sui.pay.orangeTitle")}</p>
           <p className="mt-1 text-sm leading-relaxed text-text-secondary">{instruction.message}</p>
           {instruction.code && (
             <>
@@ -91,27 +113,32 @@ export function PaymentPendingView({
                 {instruction.code}
               </code>
               <ol className="mt-3 grid gap-1.5 text-xs leading-relaxed text-text-secondary">
-                {orange.steps.map((step, index) => (
+                {steps.map((step, index) => (
                   <li key={step} className="flex gap-2"><span className="tnum font-bold text-warning">{index + 1}.</span><span>{step}</span></li>
                 ))}
               </ol>
-              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className={appleMobile ? "mt-3 grid grid-cols-1 gap-2" : "mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2"}>
                 <button
                   type="button"
                   className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 text-center text-sm leading-tight font-semibold"
-                  onClick={() => void navigator.clipboard.writeText(instruction.code!)}
+                  onClick={() => copyCode(instruction.code!)}
                 >
-                  <Copy className="size-4" aria-hidden />
-                  {orange.copy}
+                  {copied ? <Check className="size-4 text-success" aria-hidden /> : <Copy className="size-4" aria-hidden />}
+                  {copied ? t("sui.pay.copied") : t("sui.pay.copy")}
                 </button>
-                <a
-                  className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-center text-sm leading-tight font-semibold text-white"
-                  href={"tel:" + encodeURIComponent(instruction.code)}
-                >
-                  <PhoneCall className="size-4" aria-hidden />
-                  {orange.phone}
-                </a>
+                {!appleMobile && (
+                  <a
+                    className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-center text-sm leading-tight font-semibold text-white"
+                    href={"tel:" + encodeURIComponent(instruction.code)}
+                  >
+                    <PhoneCall className="size-4" aria-hidden />
+                    {t("sui.pay.openPhone")}
+                  </a>
+                )}
               </div>
+              {appleMobile && (
+                <p className="mt-2 text-xs leading-relaxed text-text-secondary">{t("sui.pay.iosHint")}</p>
+              )}
             </>
           )}
         </div>

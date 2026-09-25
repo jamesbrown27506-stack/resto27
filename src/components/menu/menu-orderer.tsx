@@ -220,6 +220,7 @@ export function MenuOrderer({
                           src={item.imageUrl}
                           alt=""
                           loading="lazy"
+                          decoding="async"
                           className="size-20 shrink-0 rounded-md border border-border object-cover"
                         />
                       )}

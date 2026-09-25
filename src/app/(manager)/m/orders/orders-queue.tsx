@@ -37,6 +37,8 @@ export function OrdersQueue({
   now,
   feeBand,
   canAdvance,
+  canCancel = false,
+  orderMinutes,
 }: {
   orders: ManagerOrder[];
   now: string;
@@ -48,6 +50,10 @@ export function OrdersQueue({
    * button simply not being there.
    */
   canAdvance: boolean;
+  /** `orders.cancel` — not held by the kitchen. */
+  canCancel?: boolean;
+  /** The admin's order time limit — each waiting card counts down to it. */
+  orderMinutes?: number;
 }) {
   const { t } = useLocale();
   const router = useRouter();
@@ -75,11 +81,21 @@ export function OrdersQueue({
     [orders],
   );
 
-  const visible = orders.filter((o) => {
-    if (filter === "active") return !isTerminal(o.status);
-    if (filter === "all") return true;
-    return o.status === filter;
-  });
+  // Orders waiting for us to accept go first, oldest first — they are the
+  // ones ringing and the ones the time limit will cancel. Everything else
+  // keeps the server's newest-first order (Array.sort is stable).
+  const visible = orders
+    .filter((o) => {
+      if (filter === "active") return !isTerminal(o.status);
+      if (filter === "all") return true;
+      return o.status === filter;
+    })
+    .sort((a, b) => {
+      const ap = a.status === "pending";
+      const bp = b.status === "pending";
+      if (ap && bp) return a.createdAt.localeCompare(b.createdAt);
+      return Number(bp) - Number(ap);
+    });
 
   return (
     <>
@@ -112,6 +128,7 @@ export function OrdersQueue({
                 order.type === "delivery" &&
                 order.deliveryFeeSetAt === null &&
                 !isTerminal(order.status);
+              const online = order.paymentMethod === "mobile_money" || order.paymentMethod === "wallet";
 
               return (
                 <li
@@ -179,22 +196,38 @@ export function OrdersQueue({
                       )}
                     </div>
 
-                    <div className="flex shrink-0 flex-col items-end gap-2">
+                    {/* The online amount, then — for a delivery — the cash the
+                        rider collects. Two figures, never a sum (0059). */}
+                    <div className="flex shrink-0 flex-col items-end gap-0.5 text-right">
+                      {online && (
+                        <span className="text-[11px] font-semibold text-text-light uppercase">
+                          {order.isPaid ? t("mops.paidOnline") : t("mops.toPayOnline")}
+                        </span>
+                      )}
                       <span className="tnum font-display text-lg font-bold">
                         {formatMoney(order.total)}
                       </span>
-                      {needsFee && (
-                        <span className="text-xs font-semibold text-warning">
-                          {t("mo.feeMissing")}
-                        </span>
-                      )}
+                      {order.type === "delivery" &&
+                        (needsFee ? (
+                          <span className="text-xs font-semibold text-warning">{t("mops.feeToQuote")}</span>
+                        ) : (
+                          <span className="tnum text-xs text-text-secondary">
+                            {t("mops.toCollect")} : {formatMoney(order.deliveryFee)}
+                          </span>
+                        ))}
                     </div>
                   </div>
 
+                  {/* The card's own Accept shortcut: a pending order's first
+                      button is "Accepter", 44 px tall, with the auto-cancel
+                      countdown just above it. */}
                   <OrderActionBar
                     order={order}
                     canAdvance={canAdvance}
+                    canCancel={canCancel}
                     feeBand={feeBand}
+                    orderMinutes={orderMinutes}
+                    now={now}
                     className="mt-4 border-t border-border pt-3.5"
                   >
                     <Link

@@ -2,12 +2,24 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notify } from "@/lib/notify";
 import { requireCronAuth, stampHeartbeat } from "@/lib/cron";
+import { orderDeadline } from "@/lib/orders/deadline";
+import { getTimeLimits } from "@/lib/orders/time-limit-settings";
+import { releaseOrderHoldings } from "@/lib/orders/cancellation-effects";
+import { resolveAttemptOutcome, MOBILE_MONEY_CONFIRMATION_WINDOW_MS } from "@/lib/payments/collect";
 
 /**
  * The order watchdog — four sweeps over the states where one side is
  * waiting on the other and nothing else in the system would ever act.
  *
  * ─────────────────────────────────────────────────────────────────────────
+ *  0. THE TIME LIMIT (0059). The admin's `order_response_minutes` (default
+ *     15) bounds both waits: a `pending` order the restaurant never accepted,
+ *     and an `awaiting_customer` order the customer never paid. Past it the
+ *     order is cancelled, its stock and points are given back, and both sides
+ *     are told. Before cancelling an unpaid order, any payment attempt still
+ *     open on it is resolved with CamerPay first — a PIN approved at the last
+ *     second must pay the order, not trigger a refund.
+ *
  *  1. UNACKNOWLEDGED ORDERS. A new order rings once at placement; a phone
  *     locked at the wrong moment meant the kitchen never knew. Orders still
  *     `pending` after 5 minutes ring again (same collapse tag + renotify =
@@ -15,10 +27,9 @@ import { requireCronAuth, stampHeartbeat } from "@/lib/cron";
  *     apart. On the 3rd ring the ADMINS are told too — the platform is the
  *     only party left who can pick up a phone.
  *
- *  2. UNANSWERED FEE QUOTES. `awaiting_customer` is the one notification
+ *  2. UNPAID ACCEPTED ORDERS. `awaiting_customer` is the one notification
  *     in the flow that blocks the kitchen until answered. One reminder to
- *     the customer after 15 minutes; if still unanswered an hour after the
- *     quote, the restaurant is told to call (the number is on the ticket).
+ *     the customer halfway through the time limit; sweep 0 ends it after.
  *
  *  3. REVIEW PROMPTS. A delivered order gets one invitation to rate, a few
  *     hours later, only if no review exists — the pipeline was starved at
@@ -40,8 +51,6 @@ export const dynamic = "force-dynamic";
 const PENDING_NAG_MINUTES = 5;
 const PENDING_NAG_MAX = 5;
 const PENDING_ADMIN_ESCALATION_AT = 3;
-const FEE_REMINDER_MINUTES = 15;
-const FEE_ESCALATION_MINUTES = 60;
 const REVIEW_PROMPT_AFTER_HOURS = 2;
 const REVIEW_PROMPT_WINDOW_HOURS = 26;
 const DUE_ALERT_LEAD_MINUTES = 45;
@@ -56,8 +65,134 @@ export async function GET(request: Request) {
 
   const supabase = createAdminClient();
   const now = Date.now();
-  const summary = { pendingNags: 0, feeReminders: 0, feeEscalations: 0, reviewPrompts: 0, dueAlerts: 0 };
+  const summary = { expired: 0, pendingNags: 0, feeReminders: 0, reviewPrompts: 0, dueAlerts: 0 };
   let schemaMissing = false;
+  const { orderMinutes } = await getTimeLimits();
+
+  /* ── 0. The time limit ───────────────────────────────────────────────── */
+  {
+    // Nothing younger than the limit can be past it: prefilter in SQL, decide
+    // per order with the same orderDeadline() the screens show.
+    const candidates = new Date(now - orderMinutes * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, reference, restaurant_id, customer_id, status, type, payment_method, is_paid, created_at, scheduled_for, restaurants ( name )")
+      .in("status", ["pending", "awaiting_customer"])
+      .eq("is_paid", false)
+      .lt("created_at", candidates)
+      .limit(100);
+
+    if (error) {
+      console.error("[order-nag] time-limit query failed", error.message);
+    } else if ((data ?? []).length > 0) {
+      const rows = data ?? [];
+      const awaiting = rows.filter((o) => o.status === "awaiting_customer").map((o) => o.id as string);
+      const acceptedAt = new Map<string, string>();
+      if (awaiting.length > 0) {
+        const { data: history } = await supabase
+          .from("order_status_history")
+          .select("order_id, created_at")
+          .in("order_id", awaiting)
+          .eq("status", "awaiting_customer")
+          .order("created_at", { ascending: true });
+        for (const h of history ?? []) {
+          if (!acceptedAt.has(h.order_id as string)) acceptedAt.set(h.order_id as string, h.created_at as string);
+        }
+      }
+
+      for (const order of rows) {
+        const deadline = orderDeadline(
+          {
+            status: order.status as string,
+            createdAt: order.created_at as string,
+            scheduledFor: order.scheduled_for as string | null,
+            acceptedAt: acceptedAt.get(order.id as string) ?? null,
+          },
+          orderMinutes,
+        );
+        if (!deadline || deadline.getTime() > now) continue;
+
+        if (order.status === "awaiting_customer") {
+          // Settle any payment still open on it before giving up on it.
+          const { data: attempts } = await supabase
+            .from("payment_attempts")
+            .select("id, created_at")
+            .eq("raw_response->>orderId", order.id as string)
+            .eq("status", "pending");
+          let paidMeanwhile = false;
+          let stillInFlight = false;
+          for (const attempt of attempts ?? []) {
+            const outcome = await resolveAttemptOutcome(attempt.id as string);
+            if (outcome.status === "succeeded") paidMeanwhile = true;
+            else if (
+              outcome.status === "pending" &&
+              now - Date.parse(attempt.created_at as string) < MOBILE_MONEY_CONFIRMATION_WINDOW_MS
+            ) {
+              stillInFlight = true;
+            }
+          }
+          // A prompt still live on the phone gets its five minutes.
+          if (paidMeanwhile || stillInFlight) continue;
+        }
+
+        const lapsedPending = order.status === "pending";
+        const reason = lapsedPending
+          ? "Le restaurant n'a pas confirmé la commande dans le délai."
+          : "Le paiement n'a pas été reçu dans le délai.";
+        const { data: cancelled } = await supabase
+          .from("orders")
+          .update({ status: "cancelled", cancelled_reason: reason, cancelled_at: new Date().toISOString() })
+          .eq("id", order.id)
+          .eq("status", order.status)
+          .eq("is_paid", false)
+          .select("id")
+          .maybeSingle();
+        if (!cancelled) continue;
+
+        await supabase.from("order_status_history").insert({
+          order_id: order.id,
+          status: "cancelled",
+          by_name: "Resto237",
+          note: `Time limit (${orderMinutes} min) — ${lapsedPending ? "not accepted" : "not paid"}`,
+        });
+        await releaseOrderHoldings(order.id as string);
+
+        const restaurantName = (order.restaurants as unknown as { name?: string } | null)?.name ?? undefined;
+        if (order.customer_id) {
+          await notify({
+            event: "order_cancelled",
+            tone: "warning",
+            customerId: order.customer_id as string,
+            href: `/orders/${order.id}`,
+            params: {
+              reference: order.reference as string,
+              restaurantName,
+              cancelledBy: "timeout",
+              reason: lapsedPending
+                ? `${restaurantName ?? "Le restaurant"} n'a pas confirmé votre commande à temps.`
+                : "Le paiement n'a pas été reçu à temps.",
+              audience: "customer",
+            },
+          });
+        }
+        await notify({
+          event: "order_cancelled",
+          tone: "warning",
+          restaurantId: order.restaurant_id as string,
+          href: `/m/orders/${order.id}`,
+          params: {
+            reference: order.reference as string,
+            cancelledBy: "timeout",
+            audience: "staff",
+            reason: lapsedPending
+              ? `Non acceptée en ${orderMinutes} minutes — annulée automatiquement.`
+              : `Le client n'a pas payé en ${orderMinutes} minutes — annulée automatiquement.`,
+          },
+        });
+        summary.expired++;
+      }
+    }
+  }
 
   /* ── 1. Unacknowledged pending orders ────────────────────────────────── */
   {
@@ -80,16 +215,14 @@ export async function GET(request: Request) {
     } else {
       for (const order of data ?? []) {
         /*
-          PAYMENT FIRST: an unpaid Mobile Money order is waiting on the
-          CUSTOMER, not the kitchen. Ringing the restaurant about it — and
-          escalating to the admins that "the restaurant is not responding" —
-          pushes them to act on food they may not start. The one restaurant
-          move before payment is quoting a delivery fee, so that still rings.
-        */
-        const awaitingPayment = order.payment_method === "mobile_money" && !order.is_paid;
-        const needsQuote = order.type === "delivery" && !order.delivery_fee_set_at;
-        if (awaitingPayment && !needsQuote) continue;
+          EVERY `pending` ORDER IS WAITING ON THE RESTAURANT.
 
+          In the payment-first flow nothing is paid before the restaurant
+          accepts, so "unpaid" never meant "waiting on the customer" here.
+          The old skip for unpaid Mobile Money orders silenced every PICKUP
+          order (no fee to quote) — the kitchen was never rung, not at
+          placement and not here, and the customer waited indefinitely.
+        */
         const lastAlert = order.pending_alert_at ? Date.parse(order.pending_alert_at as string) : 0;
         if (now - lastAlert < PENDING_NAG_MINUTES * 60 * 1000) continue;
 
@@ -131,69 +264,64 @@ export async function GET(request: Request) {
     }
   }
 
-  /* ── 2. Unanswered fee quotes ────────────────────────────────────────── */
+  /* ── 2. Accepted orders the customer has not paid ─────────────────── */
   {
-    const remindCutoff = new Date(now - FEE_REMINDER_MINUTES * 60 * 1000).toISOString();
+    // Halfway through the time limit, one reminder with the same collapse tag
+    // as the original request, so the banner re-buzzes instead of stacking.
+    const halfway = Math.max(1, Math.floor(orderMinutes / 2));
     const { data, error } = await supabase
       .from("orders")
-      .select("id, reference, customer_id, restaurant_id, delivery_fee, fee_reminder_at, fee_escalated_at, delivery_fee_set_at, restaurants ( name )")
+      .select("id, reference, customer_id, restaurant_id, total, delivery_fee, fee_reminder_at, restaurants ( name )")
       .eq("status", "awaiting_customer")
+      .eq("is_paid", false)
       .not("customer_id", "is", null)
-      .lt("delivery_fee_set_at", remindCutoff);
+      .is("fee_reminder_at", null)
+      .limit(100);
 
     if (missingColumn(error)) {
       schemaMissing = true;
     } else if (error) {
-      console.error("[order-nag] fee query failed", error.message);
-    } else {
+      console.error("[order-nag] payment reminder query failed", error.message);
+    } else if ((data ?? []).length > 0) {
+      const ids = (data ?? []).map((o) => o.id as string);
+      const { data: history } = await supabase
+        .from("order_status_history")
+        .select("order_id, created_at")
+        .in("order_id", ids)
+        .eq("status", "awaiting_customer");
+      const acceptedAt = new Map<string, number>();
+      for (const h of history ?? []) {
+        const at = Date.parse(h.created_at as string);
+        const known = acceptedAt.get(h.order_id as string);
+        if (known === undefined || at < known) acceptedAt.set(h.order_id as string, at);
+      }
+
       for (const order of data ?? []) {
-        const restaurantName =
-          (order.restaurants as unknown as { name?: string } | null)?.name ?? undefined;
+        const accepted = acceptedAt.get(order.id as string);
+        if (!accepted || now - accepted < halfway * 60 * 1000) continue;
+        const payBy = new Intl.DateTimeFormat("fr-FR", { timeZone: "Africa/Douala", hour: "2-digit", minute: "2-digit" })
+          .format(new Date(accepted + orderMinutes * 60 * 1000));
 
-        if (!order.fee_reminder_at) {
-          // The same action-required copy as the quote itself — same collapse
-          // tag, so the banner is refreshed and re-buzzes, not duplicated.
-          await notify({
-            event: "order_status",
-            tone: "warning",
-            customerId: order.customer_id as string,
-            href: `/orders/${order.id}`,
-            params: {
-              status: "awaiting_customer",
-              reference: order.reference as string,
-              restaurantName,
-              deliveryFee: (order.delivery_fee as number) ?? undefined,
-            },
-          });
-          await supabase
-            .from("orders")
-            .update({ fee_reminder_at: new Date().toISOString() })
-            .eq("id", order.id)
-            .eq("status", "awaiting_customer");
-          summary.feeReminders++;
-          continue;
-        }
-
-        const quotedAgo = now - Date.parse(order.delivery_fee_set_at as string);
-        if (!order.fee_escalated_at && quotedAgo > FEE_ESCALATION_MINUTES * 60 * 1000) {
-          await notify({
-            event: "order_delayed",
-            tone: "warning",
-            restaurantId: order.restaurant_id as string,
-            href: `/m/orders/${order.id}`,
-            params: {
-              reference: order.reference as string,
-              status: "awaiting_customer",
-              audience: "staff",
-            },
-          });
-          await supabase
-            .from("orders")
-            .update({ fee_escalated_at: new Date().toISOString() })
-            .eq("id", order.id)
-            .eq("status", "awaiting_customer");
-          summary.feeEscalations++;
-        }
+        await notify({
+          event: "order_status",
+          tone: "warning",
+          customerId: order.customer_id as string,
+          href: `/orders/${order.id}`,
+          params: {
+            status: "awaiting_customer",
+            reference: order.reference as string,
+            restaurantName: (order.restaurants as unknown as { name?: string } | null)?.name ?? undefined,
+            deliveryFee: (order.delivery_fee as number) ?? undefined,
+            amount: order.total as number,
+            whenLabel: payBy,
+          },
+        });
+        await supabase
+          .from("orders")
+          .update({ fee_reminder_at: new Date().toISOString() })
+          .eq("id", order.id)
+          .eq("status", "awaiting_customer");
+        summary.feeReminders++;
       }
     }
   }

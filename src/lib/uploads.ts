@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
 /**
  * File uploads, into Supabase Storage.
@@ -91,21 +92,57 @@ export interface UploadResult {
   bytes: number;
 }
 
+/**
+ * Why an image was refused — a stable code, so the customer- and
+ * restaurant-facing actions can answer in the reader's language. `error` stays
+ * the English sentence the admin area shows as-is.
+ */
+export type UploadRejection = "empty" | "tooLarge" | "notImage" | "storageFailed";
+
 export interface UploadError {
   ok: false;
   error: string;
+  reason?: UploadRejection;
+  /** Size in MB, one decimal, for the `tooLarge` message. */
+  sizeMb?: string;
+}
+
+/**
+ * The rejection in the viewer's language, for everything outside the admin
+ * area. Falls back to the English `error` for a result without a code (the
+ * audio path, which only the admin uses).
+ */
+export function localizeUploadError(
+  result: UploadError,
+  t: (key: TranslationKey, vars?: Record<string, string | number>) => string,
+): string {
+  switch (result.reason) {
+    case "empty":
+      return t("ecu.noFile");
+    case "tooLarge":
+      return t("ecu.up.tooLarge", { size: result.sizeMb ?? "?" });
+    case "notImage":
+      return t("ecu.up.notImage");
+    case "storageFailed":
+      return t("ecu.up.storageFailed");
+    default:
+      return result.error;
+  }
 }
 
 export async function saveUpload(
   file: File,
   kind: UploadKind,
 ): Promise<UploadResult | UploadError> {
-  if (!file || file.size === 0) return { ok: false, error: "No file received." };
+  if (!file || file.size === 0) return { ok: false, reason: "empty", error: "No file received." };
 
   if (file.size > MAX_BYTES) {
+    const sizeMb = (file.size / 1024 / 1024).toFixed(1);
     return {
       ok: false,
-      error: `File is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 2 MB.`,
+      reason: "tooLarge",
+      sizeMb,
+      error: `File is ${sizeMb} MB. The limit is 2 MB.`,
     };
   }
 
@@ -117,6 +154,7 @@ export async function saveUpload(
     // did not believe it.
     return {
       ok: false,
+      reason: "notImage",
       error:
         "That file is not a PNG, JPEG, GIF, WebP or ICO. The contents are checked, not the file name — SVG is not accepted because it can carry scripts.",
     };
@@ -143,6 +181,7 @@ export async function saveUpload(
     console.error("[upload] storage rejected the object", error.message);
     return {
       ok: false,
+      reason: "storageFailed",
       error:
         "Could not store the file. If this is a fresh deployment, check that migration 0016 has been run — it creates the storage bucket.",
     };

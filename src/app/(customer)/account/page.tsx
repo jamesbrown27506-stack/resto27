@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { fetchMyStaffInvitations } from "@/lib/auth/staff-invitations";
-import { CalendarCheck, Gift, Heart, ReceiptText, ShoppingBag } from "lucide-react";
+import { CalendarCheck, Gift, Heart, ReceiptText, ShoppingBag, WalletCards } from "lucide-react";
+import { fetchCustomerWalletOverview, type CustomerWalletOverview } from "@/lib/data/customer-wallet";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { AccountShell } from "@/components/layout/account-shell";
 import { OrderCard } from "@/components/order/order-parts";
 import { RestaurantCard } from "@/components/restaurant/restaurant-card";
@@ -20,10 +22,79 @@ import {
 } from "@/lib/data/customer";
 import { fetchActiveRestaurants } from "@/lib/data/public";
 import { formatMoney } from "@/lib/format/currency";
-import { formatDayLabel, formatTime } from "@/lib/format/datetime";
+import { formatDateTime, formatDayLabel, formatTime } from "@/lib/format/datetime";
 import { isTerminal } from "@/lib/format/order-status";
 import { partitionCustomerReservations } from "@/lib/reservations/lifecycle";
 import { RESERVATION_STATUS_TONE } from "@/lib/data/customer";
+
+/**
+ * The Resto237 wallet: balance and the latest movements, so a refund the
+ * customer was told about is something they can actually see (see
+ * lib/data/customer-wallet for the incident this answers).
+ */
+function WalletCard({
+  wallet,
+  t,
+  locale,
+}: {
+  wallet: CustomerWalletOverview;
+  t: (key: TranslationKey, vars?: Record<string, string | number>) => string;
+  locale: string;
+}) {
+  const kindLabel = (kind: string) =>
+    kind === "refund" || kind === "payment" || kind === "adjustment"
+      ? t(`cac.wallet.kind.${kind}` as TranslationKey)
+      : kind;
+  return (
+    <Panel title={t("cac.wallet.title")}>
+      <div className="p-5">
+        <div className="flex items-center gap-3">
+          <span className="grid size-10 shrink-0 place-items-center rounded-md bg-primary-light text-primary">
+            <WalletCards className="size-5" aria-hidden />
+          </span>
+          <p translate="no" className="tnum font-display text-2xl font-bold">
+            {formatMoney(wallet.balance)}
+          </p>
+        </div>
+        <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+          {wallet.available ? t("cac.wallet.body") : t("cac.wallet.unavailable")}
+        </p>
+        {wallet.available && (
+          <div className="mt-4">
+            <p className="text-xs font-semibold tracking-wide text-text-light uppercase">{t("cac.wallet.recent")}</p>
+            {wallet.recent.length === 0 ? (
+              <p className="mt-2 text-sm text-text-light">{t("cac.wallet.empty")}</p>
+            ) : (
+              <ul className="mt-2 divide-y divide-border">
+                {wallet.recent.map((row) => (
+                  <li key={row.id} className="flex items-start justify-between gap-3 py-2.5 text-sm">
+                    <span className="min-w-0">
+                      <span className="block font-medium">
+                        {kindLabel(row.kind)}
+                        {row.reference && <span className="ml-1 font-mono text-xs text-text-light">{row.reference}</span>}
+                      </span>
+                      <span className="tnum block text-xs text-text-light">
+                        {formatDateTime(row.createdAt, locale === "en" ? "en-CM" : "fr-CM")}
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      <span translate="no" className={`tnum block font-semibold ${row.amount >= 0 ? "text-success" : "text-text"}`}>
+                        {row.amount >= 0 ? "+" : "−"}{formatMoney(Math.abs(row.amount))}
+                      </span>
+                      <span translate="no" className="tnum block text-xs text-text-light">
+                        {t("cac.wallet.balanceAfter", { amount: formatMoney(row.balanceAfter) })}
+                      </span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
 
 export default async function AccountPage() {
   const user = await requireUser();
@@ -33,12 +104,13 @@ export default async function AccountPage() {
   const locale = await getLocale();
   const staffInvitations = await fetchMyStaffInvitations();
 
-  const [orders, reservations, favoriteIds, restaurants, loyalty] = await Promise.all([
+  const [orders, reservations, favoriteIds, restaurants, loyalty, wallet] = await Promise.all([
     fetchCustomerOrders(user.id),
     fetchCustomerReservations(user.id),
     fetchFavoriteRestaurantIds(user.id),
     fetchActiveRestaurants(),
     getLoyaltyState(),
+    fetchCustomerWalletOverview(user.id),
   ]);
 
   const active = orders.filter((o) => !isTerminal(o.status));
@@ -167,6 +239,8 @@ export default async function AccountPage() {
               )}
             </div>
           </Panel>
+
+          <WalletCard wallet={wallet} t={t} locale={locale} />
 
           <Card className="bg-primary text-primary-fg">
             <CardBody>

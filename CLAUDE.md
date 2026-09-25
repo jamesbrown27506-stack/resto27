@@ -50,7 +50,9 @@ Tests are pure unit tests of `src/lib` modules — there is no DB/integration ha
 ### Money
 - All amounts are integer XAF (zero-decimal). Times are `timestamptz`, rendered in `Africa/Douala` (`lib/format/*`).
 - `lib/orders/totals.ts` is **the one money function** — service charge applies to food after discount, never to the delivery fee. Never add up totals anywhere else.
-- Delivery fees are quoted by the restaurant on confirmation; the UI shows "to be confirmed" rather than 0 until `delivery_fee_set_at` is stamped.
+- Delivery fees are quoted by the restaurant on confirmation and **paid in cash to the rider** — they are stored (`delivery_fee`, `delivery_fee_set_at`) but never added to `orders.total`, which is exactly the amount paid online (0059). The UI shows "to be confirmed" until `delivery_fee_set_at` is stamped.
+- Order flow is payment-first: `pending` (restaurant must accept) → `awaiting_customer` (customer pays the food) → `confirmed` → … Both waits are bounded by the admin setting `order_response_minutes` (default 15, `lib/orders/deadline.ts`); the order-nag cron cancels what outlives it and returns stock/points (`lib/orders/cancellation-effects.ts`).
+- Paid orders can be cancelled by the restaurant or admin: `cancel_paid_order` (0059) debits the restaurant and writes a pending `refunds` row; `lib/payments/refund-payouts.ts` sends it to Mobile Money (claim → send → confirm, retried by the reconciler). The restaurant's share of undelivered paid orders and online deposits of upcoming bookings is held back from withdrawals (`ordersInProgressHold`).
 - Order/reservation/snapshot columns (prices, commission rates, actor email/role) are deliberate snapshots — don't "normalise" them away. Loyalty is an append-only ledger (balance = SUM), not a counter.
 
 ### Payments (CamerPay)
@@ -58,10 +60,11 @@ Tests are pure unit tests of `src/lib` modules — there is no DB/integration ha
 - `payment_mode` setting: `sandbox` (attempts succeed instantly, no money moves) vs `live`.
 - Three paths reach a pending attempt — browser poll, webhook, reconciler cron — and all funnel into the same resolver using conditional (compare-and-swap) updates so racing paths credit exactly once. The verdict comes only from `confirmTransaction()`; the webhook body is treated as a hint (CamerPay callbacks are unsigned).
 - `settled_at` means "finished, nothing owed" — a success is stamped only after the subscription is extended / wallet credited, so "succeeded and unsettled" is the reconciler's work queue.
-- Refunds and withdrawals: `lib/payments/reservation-refunds.ts`, `lib/payments/withdrawals.ts`.
+- Refunds and withdrawals: `lib/payments/refund-payouts.ts` (all customer refunds — orders, bookings, late payments on orders no longer payable), `lib/payments/withdrawals.ts`. The resolver asks CamerPay before expiring an attempt past its 5-minute window.
+- Contact between customers and restaurants is **in-app chat only** — never show phone numbers or WhatsApp links to the other side (product decision: it lets both sides bypass the platform). Restaurants may only open a thread with a customer who ordered/booked there.
 
 ### Background jobs
-- `/api/cron/{reconcile,expire,order-nag,delivery-monitor,reservation-clock}` are scheduled by **pg_cron + pg_net in Supabase** (migration `0045_pg_cron_schedule.sql`), not by `vercel.json` (there is none).
+- `/api/cron/{reconcile,expire,order-nag,delivery-monitor,reservation-clock}` are scheduled by **pg_cron + pg_net in Supabase** (migration `0045_pg_cron_schedule.sql`; reconcile set back to every 10 min in 0059), not by `vercel.json` (there is none). Vercel Hobby CPU is tight: don't add cron routes or fast polling — reuse the existing sweeps, poll only while visible and only while something is pending.
 - Each route calls `requireCronAuth()` (`Authorization: Bearer $CRON_SECRET`; unset secret fails closed) and `stampHeartbeat()` into `ops_heartbeats`, which `/a/health` reads.
 - `next.config.ts` redirects alternate hosts to the canonical domain **except `/api/cron/`** — a cross-host redirect drops the bearer header and every sweep 401s. Keep that exemption.
 

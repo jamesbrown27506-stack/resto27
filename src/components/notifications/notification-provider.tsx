@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { getNotificationState } from "@/lib/data/notify-actions";
 import { useToast } from "@/components/ui/toast";
 import {
+  isNotificationSoundUnlocked,
   playNotificationSound,
   unlockNotificationSound,
 } from "@/lib/notifications/sound-player";
@@ -71,9 +72,32 @@ interface NotificationContextValue {
    * the page yet. Actionable, so it is surfaced rather than swallowed.
    */
   soundBlocked: boolean;
+  /**
+   * True once this page's audio element has been allowed to play (a first
+   * tap unlocked it, or a sound already played). Until then a notification
+   * arriving into an untouched tab is SILENT — which is why the manager shell
+   * shows "tap to enable the sound" while this is false.
+   */
+  soundReady: boolean;
   /** Play the configured sound now — the settings preview and diagnostics. */
   playSound: () => void;
+  /**
+   * Hear about every announced notification (after the dedupe), with the
+   * link it carries. The pending-order alarm uses the `/m/orders…` link to
+   * know that an order just arrived, without a poll. Returns the unsubscribe.
+   */
+  onNotification: (listener: NotificationListener) => () => void;
 }
+
+export interface AnnouncedNotification {
+  title: string;
+  body: string;
+  tone: NotifyTone;
+  /** The in-app link, when the payload carried one. */
+  href: string | null;
+}
+
+export type NotificationListener = (event: AnnouncedNotification) => void;
 
 const NotificationContext = createContext<NotificationContextValue | null>(null);
 
@@ -121,11 +145,19 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     ─────────────────────────────────────────────────────────────────────────
   */
   const [soundBlocked, setSoundBlocked] = useState(false);
+  // The element is a module singleton, so a provider remounted inside the
+  // same document (a layout switch) starts from what the page already knows.
+  // On a fresh load it is always false, so server and client HTML agree.
+  const [soundReady, setSoundReady] = useState(
+    () => typeof window !== "undefined" && isNotificationSoundUnlocked(),
+  );
 
   useEffect(() => {
     const unlock = () => {
-      unlockNotificationSound(soundRef.current);
       setSoundBlocked(false);
+      void unlockNotificationSound(soundRef.current).then((ok) => {
+        if (ok) setSoundReady(true);
+      });
     };
     window.addEventListener("pointerdown", unlock);
     window.addEventListener("keydown", unlock);
@@ -181,7 +213,18 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       // it can make a sound" is something the person can act on, and the
       // diagnostics screen can now say it out loud.
       setSoundBlocked(result === "blocked");
+      if (result === "played") setSoundReady(true);
     });
+  }, []);
+
+  // Listeners are a ref, not state: subscribing must not re-render the tree,
+  // and announce() must always see the current set without re-creating.
+  const listenersRef = useRef(new Set<NotificationListener>());
+  const onNotification = useCallback((listener: NotificationListener) => {
+    listenersRef.current.add(listener);
+    return () => {
+      listenersRef.current.delete(listener);
+    };
   }, []);
 
   /*
@@ -206,7 +249,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const refreshSoonRef = useRef<(() => void) | null>(null);
 
   const announce = useCallback(
-    (title: string, body: string, tone: NotifyTone, source: "row" | "sw") => {
+    (title: string, body: string, tone: NotifyTone, source: "row" | "sw", href: string | null = null) => {
       const key = `${title}\u0000${body}`;
       const now = Date.now();
 
@@ -231,6 +274,15 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       setLastEventAt(new Date());
       toast(title, tone);
       play();
+
+      // A listener that throws must not take the toast or the sound with it.
+      for (const listener of listenersRef.current) {
+        try {
+          listener({ title, body, tone, href });
+        } catch (error) {
+          console.error("[notify] listener failed", error);
+        }
+      }
     },
     [toast, play],
   );
@@ -251,13 +303,13 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     const onMessage = (event: MessageEvent) => {
       const data = event.data;
       if (!data || data.type !== "restolink:notification") return;
-      announce(String(data.title ?? ""), String(data.body ?? ""), (data.tone ?? "info") as NotifyTone, "sw");
+      announce(String(data.title ?? ""), String(data.body ?? ""), (data.tone ?? "info") as NotifyTone, "sw", typeof data.href === "string" ? data.href : null);
     };
 
     const onNativeMessage = (event: Event) => {
       const data = (event as CustomEvent).detail;
       if (!data || data.type !== "restolink:notification") return;
-      announce(String(data.title ?? ""), String(data.body ?? ""), (data.tone ?? "info") as NotifyTone, "sw");
+      announce(String(data.title ?? ""), String(data.body ?? ""), (data.tone ?? "info") as NotifyTone, "sw", typeof data.href === "string" ? data.href : null);
     };
 
     if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", onMessage);
@@ -400,8 +452,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
             filter: `profile_id=eq.${id}`,
           },
           (payload) => {
-            const row = payload.new as { title: string; body: string; tone: NotifyTone };
-            announce(row.title, row.body ?? "", row.tone, "row");
+            const row = payload.new as { title: string; body: string; tone: NotifyTone; href?: string | null };
+            announce(row.title, row.body ?? "", row.tone, "row", row.href ?? null);
           },
         )
         .subscribe((status, error) => {
@@ -524,6 +576,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         decrementUnread: () => setUnread((u) => Math.max(0, u - 1)),
         clearUnread: () => setUnread(0),
         soundBlocked,
+        soundReady,
+        onNotification,
         playSound: () => play(),
       }}
     >

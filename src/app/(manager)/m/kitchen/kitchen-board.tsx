@@ -9,6 +9,7 @@ import { advanceLabelKey, nextStatus } from "@/lib/format/order-status";
 import { advanceOrder } from "@/lib/data/order-actions";
 import { useToast } from "@/components/ui/toast";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { localizeActionError } from "@/lib/i18n/staff-errors";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { ManagerOrder } from "@/lib/data/orders";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,7 @@ const POLL_MS = 15_000;
  * the poll later (B.4); the poll stays as its fallback.
  */
 export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: string }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { toast } = useToast();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -55,7 +56,7 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
   function advance(order: ManagerOrder) {
     startTransition(async () => {
       const result = await advanceOrder(order.id);
-      if (!result.ok) toast(result.error, "error");
+      if (!result.ok) toast(localizeActionError(result.error, locale), "error");
     });
   }
 
@@ -112,7 +113,11 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
       ) : (
         <ul className="grid flex-1 auto-rows-min gap-3 p-3 sm:grid-cols-2 sm:gap-4 sm:p-4 xl:grid-cols-3 2xl:grid-cols-4">
           {orders.map((order) => {
-            const minutes = minutesSince(order.createdAt, clock);
+            // From PAYMENT, not placement (payment first): the minutes an order
+            // sat waiting for the customer's Mobile Money are not kitchen minutes,
+            // and counting them turned every ticket amber on arrival.
+            const startedAt = order.confirmedAt ?? order.createdAt;
+            const minutes = minutesSince(startedAt, clock);
             const late = minutes >= RED_AFTER_MIN;
             const warning = !late && minutes >= AMBER_AFTER_MIN;
             const Icon = TYPE_ICON[order.type];
@@ -144,7 +149,7 @@ export function KitchenBoard({ orders, now }: { orders: ManagerOrder[]; now: str
                   </span>
                   <span className="tnum flex items-center gap-1.5 text-lg font-bold">
                     <Clock className="size-4" aria-hidden />
-                    <span>{formatElapsed(order.createdAt, clock)}</span>
+                    <span>{formatElapsed(startedAt, clock)}</span>
                   </span>
                 </div>
 

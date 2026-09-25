@@ -55,6 +55,7 @@ export default async function ManagerDashboard() {
         branchLabel: active.branchLabel,
         status: active.status,
         role: active.role,
+        isAcceptingOrders: active.isAcceptingOrders,
       }}
       planLabel={`${freePlan ?? active.planName} · ${stateMeta.label}`}
       // `tone: null` on an active subscription means "no banner needed" — it is

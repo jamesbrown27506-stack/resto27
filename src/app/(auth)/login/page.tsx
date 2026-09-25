@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Field, Input, Switch } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { signIn, type AuthState } from "@/lib/auth/actions";
+import { withNext } from "@/lib/auth/safe-next";
 import { useLocale } from "@/lib/i18n/use-locale";
 
 const VALID_REASONS: LoginReason[] = [
@@ -125,7 +126,10 @@ function LoginForm() {
 
       <p className="mt-7 text-center text-sm text-text-secondary">
         {t("auth.noAccount")}{" "}
-        <Link href="/register" className="font-semibold text-primary hover:underline">
+        {/* Carries `next` so a guest sent here from /checkout who has no
+            account yet comes back to the checkout after signing up, instead of
+            losing the basket they were about to pay for. */}
+        <Link href={withNext("/register", params.get("next"))} className="font-semibold text-primary hover:underline">
           {t("auth.createAccount")}
         </Link>
       </p>

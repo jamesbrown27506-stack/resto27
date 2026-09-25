@@ -7,26 +7,31 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/auth/session";
 import { canCustomerCancel, type OrderStatus } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
-import { saveUpload, type UploadKind } from "@/lib/uploads";
+import { localizeUploadError, saveUpload, type UploadKind } from "@/lib/uploads";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { PICKUP_RECEIPT_CONFIRMATION_NOTE } from "@/lib/orders/pickup-receipt";
+import { releaseOrderHoldings } from "@/lib/orders/cancellation-effects";
+import { orderDeadline } from "@/lib/orders/deadline";
+import { getTimeLimits } from "@/lib/orders/time-limit-settings";
 import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
-import { paymentMode } from "./billing";
 import { anyPushWanted, toStoredJson } from "@/lib/notifications/customer-topics";
 import {
   floorIsUnmanaged,
   fullSlots,
+  lostInsertRace,
+  overlapQueryRange,
   seatableTables,
   slotIsFull,
-  slotWindow,
   HOLDING_STATUSES,
-  SLOT_WINDOW_AFTER_MIN,
-  SLOT_WINDOW_BEFORE_MIN,
   type FloorTable,
+  type HoldingBooking,
 } from "@/lib/reservations/availability";
+import { getReservationDuration } from "@/lib/reservations/duration-server";
 import { slotsForDate } from "@/lib/reservations/slots";
 import { serviceDateAndTime } from "@/lib/restaurant/service-hours";
-import { getLocale } from "@/lib/i18n/locale-server";
+import { getTranslator } from "@/lib/i18n/locale-server";
+import { firstIssueMessage } from "@/lib/i18n/issue-message";
+import { paymentErrorMessage } from "@/lib/payments/payment-error";
 import {
   depositChargedNow,
   normaliseDepositType,
@@ -44,14 +49,8 @@ import {
 } from "@/lib/payments/collect";
 import type { ActionResult } from "./admin-actions";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
-import {
-  acceptedTransactionId,
-  latestTransactionId,
-  normalisePhone,
-  recordAcceptedRequest,
-  sendPayout,
-} from "@/lib/payments/camerpay/client";
-import { settleReservationRefund } from "@/lib/payments/reservation-refunds";
+import { normalisePhone } from "@/lib/payments/camerpay/client";
+import { settleRefundPayout, startRefundPayout } from "@/lib/payments/refund-payouts";
 import type { CustomerPreferences } from "./customer";
 import type { UploadActionResult } from "./profile-actions";
 import { fetchTableAccess } from "./table-access";
@@ -72,6 +71,7 @@ import { fetchTableAccess } from "./table-access";
  * once the kitchen has committed to the food, the restaurant decides.
  */
 export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
   const supabase = createAdminClient();
 
@@ -82,31 +82,39 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
     .eq("customer_id", user.id)
     .maybeSingle();
 
-  if (error || !order) return { ok: false, error: "Commande introuvable." };
+  if (error || !order) return { ok: false, error: t("ecu.orderNotFound") };
   if (!canCustomerCancel(order.status as CustomerStatus)) {
-    return { ok: false, error: "Cette commande ne peut plus être annulée." };
+    return { ok: false, error: t("ecu.orderNotCancellable") };
   }
   // A PAID order is refunded, not just cancelled — that goes through the
   // restaurant and Resto237, never a one-tap that loses the customer's money.
   if (order.is_paid) {
-    return { ok: false, error: "Cette commande est déjà payée : contactez le restaurant pour l'annuler." };
+    return { ok: false, error: t("ecu.orderPaidContactRestaurant") };
   }
   // A prompt still open on the customer's phone may yet be approved: cancelling
   // now would leave them charged for an order that no longer exists.
   if (order.payment_method === "mobile_money" && (await orderPaymentInFlight(order.id))) {
     return {
       ok: false,
-      error: "Un paiement est en cours pour cette commande. Attendez sa confirmation, ou réessayez dans quelques minutes.",
+      error: t("ecu.orderPaymentInFlight"),
     };
   }
   const now = new Date().toISOString();
-  const { error: updateError } = await supabase
+  const { data: cancelled, error: updateError } = await supabase
     .from("orders")
     .update({ status: "cancelled", cancelled_reason: "Annulée par le client", cancelled_at: now })
     .eq("id", orderId)
-    .eq("status", order.status);
+    .eq("status", order.status)
+    .eq("is_paid", false)
+    .select("id")
+    .maybeSingle();
 
-  if (updateError) return { ok: false, error: "L'annulation a échoué." };
+  if (updateError) return { ok: false, error: t("ecu.cancelFailed") };
+  // Paid or moved by the restaurant a moment ago — the refresh shows why.
+  if (!cancelled) return { ok: false, error: t("ecu.orderChanged") };
+
+  // Only the caller that won the cancellation gives back stock and points.
+  await releaseOrderHoldings(orderId);
 
   await supabase.from("order_status_history").insert({
     order_id: orderId,
@@ -133,107 +141,28 @@ export async function cancelOwnOrder(orderId: string): Promise<ActionResult> {
 type CustomerStatus = OrderStatus;
 
 /**
- * Accept or refuse the delivery fee the restaurant quoted (0040).
- *
- * ─────────────────────────────────────────────────────────────────────────
- *  THE ORDER IS SITTING AT `awaiting_customer` AND NOTHING IS COOKING.
- *
- *  A delivery order is placed before anyone knows what delivering it costs.
- *  The restaurant quotes the fee, the total rises, and that is a change to the
- *  deal the customer agreed to — so the order stops until they answer.
- *
- *  Accepting moves it to `confirmed`, which is the signal the kitchen starts
- *  on. Declining cancels it. Either way the kitchen has committed nothing:
- *  before this state existed the fee was applied unilaterally AND the order
- *  went straight to `confirmed`, so a customer refusing the price was
- *  refusing food that had already been cooked.
- *
- *  Both are scoped to `customer_id` from the SESSION and guarded on the
- *  current status, so a stale tab, a double-tap, or a guessed order id cannot
- *  accept a price on somebody else's behalf.
- * ─────────────────────────────────────────────────────────────────────────
+ * Past the time limit (0059) an accepted order is waiting for the order-nag
+ * sweep to cancel it; starting a payment in that gap would only produce a
+ * refund. Same rule as the countdown on the order page.
  */
-export async function respondToDeliveryFee(
-  orderId: string,
-  response: "accept" | "decline",
-): Promise<ActionResult> {
-  const user = await requireUser();
+async function paymentWindowClosed(orderId: string, createdAt: string): Promise<boolean> {
   const supabase = createAdminClient();
-
-  const { data, error } = await supabase
-    .from("orders")
-    .select("id, customer_id, restaurant_id, reference, status, delivery_fee")
-    .eq("id", orderId)
-    .eq("customer_id", user.id)
-    .maybeSingle();
-
-  if (error || !data) return { ok: false, error: "Commande introuvable." };
-
-  const order = data as {
-    id: string;
-    restaurant_id: string;
-    reference: string;
-    status: string;
-    delivery_fee: number | null;
-  };
-
-  if (order.status !== "awaiting_customer") {
-    return { ok: false, error: "Cette commande n'attend pas votre réponse." };
-  }
-
-  const accepted = response === "accept";
-  // The customer now accepts the final price by paying it. This legacy action
-  // must never move an accepted order back to pending and bypass payment.
-  if (accepted) return { ok: false, error: "Pay the accepted total to continue this order." };
-  const now = new Date().toISOString();
-
-  const patch = accepted
-    ? { status: "pending" }
-    : {
-        status: "cancelled",
-        cancelled_reason: "Frais de livraison refusés par le client",
-        cancelled_at: now,
-      };
-
-  const { error: updateError } = await supabase
-    .from("orders")
-    .update(patch)
-    .eq("id", orderId)
-    // Optimistic concurrency: if anything moved it first, this matches nothing
-    // and the refresh shows the newer truth rather than overwriting it.
-    .eq("status", "awaiting_customer");
-
-  if (updateError) {
-    console.error("[customer:respondToDeliveryFee]", updateError.code ?? "", updateError.message);
-    return { ok: false, error: "Votre réponse n'a pas pu être enregistrée. Réessayez." };
-  }
-
-  await supabase.from("order_status_history").insert({
-    order_id: orderId,
-    status: accepted ? "pending" : "cancelled",
-    by_name: user.name,
-    note: accepted ? "Delivery fee accepted by customer" : "Delivery fee declined by customer",
-  });
-
-  // The kitchen needs to know whether to start — that is the whole point of
-  // the state — so the branch hears either answer, not just the refusal.
-  await notify({
-    event: accepted ? "order_status" : "order_cancelled",
-    tone: accepted ? "success" : "warning",
-    restaurantId: order.restaurant_id,
-    href: `/m/orders/${orderId}`,
-    params: {
-      reference: order.reference,
-      status: accepted ? "pending" : undefined,
-      cancelledBy: accepted ? undefined : "customer",
-      reason: accepted ? undefined : "Frais de livraison refusés",
-    },
-  });
-
-  revalidatePath("/orders");
-  revalidatePath(`/orders/${orderId}`);
-  revalidatePath("/account");
-  return { ok: true };
+  const [{ orderMinutes }, { data: accepted }] = await Promise.all([
+    getTimeLimits(),
+    supabase
+      .from("order_status_history")
+      .select("created_at")
+      .eq("order_id", orderId)
+      .eq("status", "awaiting_customer")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle(),
+  ]);
+  const deadline = orderDeadline(
+    { status: "awaiting_customer", createdAt, acceptedAt: (accepted?.created_at as string | undefined) ?? null },
+    orderMinutes,
+  );
+  return Boolean(deadline && deadline.getTime() <= Date.now());
 }
 
 /** Start or resume the signed-in customer's Mobile Money order payment. */
@@ -241,30 +170,60 @@ export async function payOwnOrder(
   orderId: string,
   phone: string,
 ): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string; instruction?: PaymentInstruction }> {
+  const t = await getTranslator();
   const user = await requireUser();
   const supabase = createAdminClient();
 
   if (!z.string().uuid().safeParse(orderId).success) {
-    return { ok: false, error: "Commande introuvable." };
+    return { ok: false, error: t("ecu.orderNotFound") };
   }
-  if (!phone.trim()) return { ok: false, error: "Numéro Mobile Money requis." };
+  if (!phone.trim()) return { ok: false, error: t("ecu.momoRequired") };
   const requestedPhone = normalisePhone(phone);
-  if (!requestedPhone) return { ok: false, error: "Numéro Mobile Money invalide." };
+  if (!requestedPhone) return { ok: false, error: t("ecu.momoInvalid") };
 
   const { data } = await supabase
     .from("orders")
-    .select("id, reference, restaurant_id, customer_id, status, type, total, is_paid, payment_method, delivery_fee_set_at")
+    .select("id, reference, restaurant_id, customer_id, status, type, total, is_paid, payment_method, delivery_fee_set_at, created_at")
     .eq("id", orderId)
     .eq("customer_id", user.id)
     .maybeSingle();
 
-  if (!data) return { ok: false, error: "Commande introuvable." };
+  if (!data) return { ok: false, error: t("ecu.orderNotFound") };
   if (data.is_paid) return { ok: true, status: "succeeded" };
-  if (data.payment_method !== "mobile_money" || data.status !== "awaiting_customer") {
-    return { ok: false, error: "Cette commande n'attend pas de paiement en ligne." };
+  if (
+    (data.payment_method !== "mobile_money" && data.payment_method !== "wallet") ||
+    data.status !== "awaiting_customer"
+  ) {
+    return { ok: false, error: t("ecu.notAwaitingOnlinePayment") };
   }
   if (data.type === "delivery" && !data.delivery_fee_set_at) {
-    return { ok: false, error: "Le restaurant doit d'abord confirmer les frais de livraison." };
+    return { ok: false, error: t("ecu.deliveryFeeFirst") };
+  }
+  if (await paymentWindowClosed(data.id, data.created_at as string)) {
+    return { ok: false, error: t("ecu.paymentDeadlinePassed") };
+  }
+
+  /*
+    A WALLET ORDER MAY BE PAID BY MOBILE MONEY INSTEAD.
+
+    The customer chose the wallet at checkout; by the time the restaurant
+    accepts, the balance may no longer cover it (another order, a refund not
+    yet in). Leaving "wallet" as the only way to pay made that order a dead
+    end. Switching is guarded on the state it was read in, so it cannot race
+    a wallet payment landing at the same moment.
+  */
+  if (data.payment_method === "wallet") {
+    const { data: switched } = await supabase
+      .from("orders")
+      .update({ payment_method: "mobile_money" })
+      .eq("id", data.id)
+      .eq("customer_id", user.id)
+      .eq("payment_method", "wallet")
+      .eq("status", "awaiting_customer")
+      .eq("is_paid", false)
+      .select("id")
+      .maybeSingle();
+    if (!switched) return { ok: false, error: t("ecu.orderChanged") };
   }
 
   // Order attempts carry the order id in `raw_response.orderId`: the column
@@ -279,14 +238,14 @@ export async function payOwnOrder(
     .order("created_at", { ascending: false })
     .limit(10);
 
-  if (attemptsError) return { ok: false, error: "Impossible de vérifier le paiement en cours." };
+  if (attemptsError) return { ok: false, error: t("ecu.paymentCheckFailed") };
 
   const open = (attempts ?? []).find(
     (attempt) => attempt.status === "succeeded" || Boolean(attempt.transaction_id),
   );
   if (open?.status === "succeeded") {
     const settled = await settlePayment(open.id as string);
-    if (!settled.ok) return { ok: false, error: settled.error ?? "Le paiement n'a pas pu être appliqué." };
+    if (!settled.ok) return { ok: false, error: paymentErrorMessage(settled, t, "ecu.paymentNotApplied") };
     return { ok: true, status: "succeeded" };
   }
   if (open?.status === "pending" && open.transaction_id) {
@@ -302,7 +261,7 @@ export async function payOwnOrder(
         return {
           ok: false,
           error:
-            "Une autre demande Mobile Money est encore active. Terminez-la ou attendez son expiration avant de changer de numéro.",
+            t("ecu.otherMomoActive"),
         };
       }
       return {
@@ -324,14 +283,14 @@ export async function payOwnOrder(
   });
 
   if (!initiated.ok || !initiated.attemptId) {
-    return { ok: false, error: initiated.error ?? "Le paiement a échoué." };
+    return { ok: false, error: paymentErrorMessage(initiated, t, "ecu.paymentFailed") };
   }
   if (initiated.status === "pending") {
     return { ok: true, status: "pending", attemptId: initiated.attemptId, instruction: initiated.instruction };
   }
 
   const settled = await settlePayment(initiated.attemptId);
-  if (!settled.ok) return { ok: false, error: settled.error ?? "Le paiement n'a pas pu être appliqué." };
+  if (!settled.ok) return { ok: false, error: paymentErrorMessage(settled, t, "ecu.paymentNotApplied") };
   revalidatePath("/orders");
   revalidatePath("/orders/" + orderId);
   revalidatePath("/account");
@@ -342,20 +301,45 @@ export async function payOwnOrder(
 export async function payOwnOrderWithWallet(
   orderId: string,
 ): Promise<ActionResult & { status?: "succeeded" }> {
+  const t = await getTranslator();
   const user = await requireUser();
   const supabase = createAdminClient();
-  if (!z.string().uuid().safeParse(orderId).success) return { ok: false, error: "Commande introuvable." };
+  if (!z.string().uuid().safeParse(orderId).success) return { ok: false, error: t("ecu.orderNotFound") };
 
   const { data: order } = await supabase
     .from("orders")
-    .select("id, reference, restaurant_id, delivery_name, is_paid, payment_method, status")
+    .select("id, reference, restaurant_id, delivery_name, is_paid, payment_method, status, total, created_at")
     .eq("id", orderId)
     .eq("customer_id", user.id)
     .maybeSingle();
-  if (!order) return { ok: false, error: "Commande introuvable." };
+  if (!order) return { ok: false, error: t("ecu.orderNotFound") };
   if (order.is_paid) return { ok: true, status: "succeeded" };
-  if (order.payment_method !== "wallet" || order.status !== "awaiting_customer") {
-    return { ok: false, error: "Cette commande n'attend pas de paiement en ligne." };
+  if (
+    (order.payment_method !== "wallet" && order.payment_method !== "mobile_money") ||
+    order.status !== "awaiting_customer"
+  ) {
+    return { ok: false, error: t("ecu.notAwaitingOnlinePayment") };
+  }
+  if (await paymentWindowClosed(order.id, order.created_at as string)) {
+    return { ok: false, error: t("ecu.paymentDeadlinePassed") };
+  }
+  // The other direction of the switch: never while a Mobile Money prompt is
+  // open on the phone, or the customer could pay twice.
+  if (order.payment_method === "mobile_money") {
+    if (await orderPaymentInFlight(order.id)) {
+      return { ok: false, error: t("ecu.momoInProgress") };
+    }
+    const { data: switched } = await supabase
+      .from("orders")
+      .update({ payment_method: "wallet" })
+      .eq("id", order.id)
+      .eq("customer_id", user.id)
+      .eq("payment_method", "mobile_money")
+      .eq("status", "awaiting_customer")
+      .eq("is_paid", false)
+      .select("id")
+      .maybeSingle();
+    if (!switched) return { ok: false, error: t("ecu.orderChanged") };
   }
 
   const { error } = await supabase.rpc("customer_wallet_pay_order", {
@@ -366,8 +350,8 @@ export async function payOwnOrderWithWallet(
     return {
       ok: false,
       error: error.message.includes("insufficient_customer_wallet")
-        ? "Solde du portefeuille insuffisant."
-        : "Le paiement par portefeuille a échoué.",
+        ? t("ecu.walletInsufficient")
+        : t("ecu.walletPaymentFailed"),
     };
   }
 
@@ -376,7 +360,12 @@ export async function payOwnOrderWithWallet(
     tone: "success",
     restaurantId: order.restaurant_id,
     href: "/m/orders/" + order.id,
-    params: { reference: order.reference, customerName: order.delivery_name ?? undefined, paid: true },
+    params: {
+      reference: order.reference,
+      customerName: order.delivery_name ?? undefined,
+      amount: Number(order.total),
+      paid: true,
+    },
   });
   revalidatePath("/orders");
   revalidatePath("/orders/" + orderId);
@@ -388,6 +377,7 @@ export async function payOwnOrderWithWallet(
 export async function checkOwnOrderPayment(
   attemptId: string,
 ): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed"; instruction?: PaymentInstruction }> {
+  const t = await getTranslator();
   const user = await requireUser();
   const supabase = createAdminClient();
   const { data: attempt } = await supabase
@@ -398,7 +388,7 @@ export async function checkOwnOrderPayment(
 
   const raw = (attempt?.raw_response ?? null) as { orderId?: unknown } | null;
   const paidOrderId = typeof raw?.orderId === "string" ? raw.orderId : null;
-  if (!paidOrderId) return { ok: false, error: "Paiement introuvable." };
+  if (!paidOrderId) return { ok: false, error: t("ecu.paymentNotFound") };
 
   const { data: order } = await supabase
     .from("orders")
@@ -406,10 +396,10 @@ export async function checkOwnOrderPayment(
     .eq("id", paidOrderId)
     .eq("customer_id", user.id)
     .maybeSingle();
-  if (!order) return { ok: false, error: "Paiement introuvable." };
+  if (!order) return { ok: false, error: t("ecu.paymentNotFound") };
 
   const result = await checkPaymentAttempt(attemptId);
-  if (!result.ok) return { ok: false, error: result.error ?? "Paiement introuvable." };
+  if (!result.ok) return { ok: false, error: paymentErrorMessage(result, t, "ecu.paymentNotFound") };
   if (result.status === "succeeded") {
     revalidatePath("/orders");
     revalidatePath("/orders/" + paidOrderId);
@@ -446,6 +436,7 @@ export async function checkOwnOrderPayment(
  * ─────────────────────────────────────────────────────────────────────────
  */
 export async function confirmOwnDelivery(orderId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
   const supabase = createAdminClient();
 
@@ -456,15 +447,15 @@ export async function confirmOwnDelivery(orderId: string): Promise<ActionResult>
     .eq("customer_id", user.id)
     .maybeSingle();
 
-  if (error || !order) return { ok: false, error: "Commande introuvable." };
+  if (error || !order) return { ok: false, error: t("ecu.orderNotFound") };
 
   if (order.status !== "shipped") {
     return {
       ok: false,
       error:
         order.status === "delivered"
-          ? "Cette commande est déjà marquée comme reçue."
-          : "Vous pourrez confirmer la réception dès que la commande sera en route.",
+          ? t("ecu.alreadyReceived")
+          : t("ecu.confirmWhenShipped"),
     };
   }
 
@@ -482,7 +473,7 @@ export async function confirmOwnDelivery(orderId: string): Promise<ActionResult>
     if (!request) {
       return {
         ok: false,
-        error: "The restaurant must first request confirmation after handing over your pickup.",
+        error: t("ecu.pickupConfirmNotRequested"),
       };
     }
   }
@@ -498,7 +489,7 @@ export async function confirmOwnDelivery(orderId: string): Promise<ActionResult>
 
   if (updateError) {
     console.error("[customer:confirmOwnDelivery]", orderId, updateError.message);
-    return { ok: false, error: "La confirmation a échoué. Réessayez." };
+    return { ok: false, error: t("ecu.confirmFailed") };
   }
 
   await supabase.from("order_status_history").insert({
@@ -536,9 +527,10 @@ export async function confirmOwnDelivery(orderId: string): Promise<ActionResult>
 
 /** 1–5 stars on a delivered order's delivery experience. */
 export async function rateOwnDelivery(orderId: string, rating: number): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-    return { ok: false, error: "Note entre 1 et 5." };
+    return { ok: false, error: t("ecu.ratingRange") };
   }
 
   const supabase = createAdminClient();
@@ -551,7 +543,7 @@ export async function rateOwnDelivery(orderId: string, rating: number): Promise<
     .maybeSingle();
 
   if (error || !order || order.type !== "delivery") {
-    return { ok: false, error: "Cette commande ne peut pas être notée." };
+    return { ok: false, error: t("ecu.cannotRate") };
   }
 
   const { error: updateError } = await supabase
@@ -559,7 +551,7 @@ export async function rateOwnDelivery(orderId: string, rating: number): Promise<
     .update({ delivery_rating: rating })
     .eq("id", orderId);
 
-  if (updateError) return { ok: false, error: "L'enregistrement a échoué." };
+  if (updateError) return { ok: false, error: t("ecu.saveFailed") };
 
   revalidatePath(`/orders/${orderId}`);
   return { ok: true };
@@ -580,13 +572,14 @@ export async function rateOwnDelivery(orderId: string, rating: number): Promise<
  * broken review. Files validated by bytes, like every upload (§9).
  */
 export async function uploadReviewPhoto(formData: FormData): Promise<UploadActionResult> {
+  const t = await getTranslator();
   await requireUser();
 
   const file = formData.get("file");
-  if (!(file instanceof File)) return { ok: false, error: "No file received." };
+  if (!(file instanceof File)) return { ok: false, error: t("ecu.noFile") };
 
   const result = await saveUpload(file, "reviews" satisfies UploadKind);
-  if (!result.ok) return { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: localizeUploadError(result, t) };
 
   return { ok: true, url: result.url };
 }
@@ -597,11 +590,12 @@ export async function submitOwnReview(
   body: string,
   photoUrls: string[] = [],
 ): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-    return { ok: false, error: "Note entre 1 et 5." };
+    return { ok: false, error: t("ecu.ratingRange") };
   }
-  if (body.trim().length < 10) return { ok: false, error: "Votre avis doit faire au moins 10 caractères." };
+  if (body.trim().length < 10) return { ok: false, error: t("ecu.reviewTooShort") };
 
   const supabase = createAdminClient();
   const { data: order, error } = await supabase
@@ -612,7 +606,7 @@ export async function submitOwnReview(
     .eq("status", "delivered")
     .maybeSingle();
 
-  if (error || !order) return { ok: false, error: "Commande introuvable." };
+  if (error || !order) return { ok: false, error: t("ecu.orderNotFound") };
 
   const { data: existing, error: dupError } = await supabase
     .from("reviews")
@@ -620,8 +614,8 @@ export async function submitOwnReview(
     .eq("order_id", orderId)
     .maybeSingle();
 
-  if (dupError) return { ok: false, error: "Un avis existe déjà pour cette commande." };
-  if (existing) return { ok: false, error: "Un avis existe déjà pour cette commande." };
+  if (dupError) return { ok: false, error: t("ecu.reviewExists") };
+  if (existing) return { ok: false, error: t("ecu.reviewExists") };
 
   // Photos are capped at three and must be URLs on our own storage — a
   // review must not embed arbitrary external content.
@@ -642,7 +636,7 @@ export async function submitOwnReview(
     .select("id")
     .single();
 
-  if (insertError || !created) return { ok: false, error: "La publication a échoué." };
+  if (insertError || !created) return { ok: false, error: t("ecu.publishFailed") };
 
   if (photos.length > 0) {
     const { error: photoError } = await supabase.from("review_photos").insert(
@@ -675,11 +669,12 @@ export async function updateOwnReview(
   rating: number,
   body: string,
 ): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-    return { ok: false, error: "Note entre 1 et 5." };
+    return { ok: false, error: t("ecu.ratingRange") };
   }
-  if (body.trim().length < 10) return { ok: false, error: "Votre avis doit faire au moins 10 caractères." };
+  if (body.trim().length < 10) return { ok: false, error: t("ecu.reviewTooShort") };
 
   const supabase = createAdminClient();
   const { error } = await supabase
@@ -688,7 +683,7 @@ export async function updateOwnReview(
     .eq("id", reviewId)
     .eq("customer_id", user.id);
 
-  if (error) return { ok: false, error: "La mise à jour a échoué." };
+  if (error) return { ok: false, error: t("ecu.updateFailed") };
 
   revalidatePath("/reviews");
   revalidatePath("/restaurants");
@@ -697,6 +692,7 @@ export async function updateOwnReview(
 
 /** Remove one of your own reviews — the customer's word, not the manager's. */
 export async function deleteOwnReview(reviewId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   const supabase = createAdminClient();
@@ -706,7 +702,7 @@ export async function deleteOwnReview(reviewId: string): Promise<ActionResult> {
     .eq("id", reviewId)
     .eq("customer_id", user.id);
 
-  if (error) return { ok: false, error: "La suppression a échoué." };
+  if (error) return { ok: false, error: t("ecu.deleteFailed") };
 
   revalidatePath("/reviews");
   revalidatePath("/restaurants");
@@ -803,14 +799,15 @@ async function readDepositConfig(
 export async function createOwnReservation(
   input: z.infer<typeof ReservationSchema>,
 ): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string; instruction?: PaymentInstruction }> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   const parsed = ReservationSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: "Vérifiez les informations de la réservation." };
+  if (!parsed.success) return { ok: false, error: t("ecu.checkReservation") };
 
   const { restaurantId, reservedFor, partySize, notes, phone } = parsed.data;
   const when = new Date(reservedFor);
-  if (when.getTime() <= Date.now()) return { ok: false, error: "Choisissez une date à venir." };
+  if (when.getTime() <= Date.now()) return { ok: false, error: t("ecu.chooseFutureDate") };
 
   const supabase = createAdminClient();
 
@@ -849,24 +846,20 @@ export async function createOwnReservation(
       restaurantError.code ?? "",
       restaurantError.message,
     );
-    return { ok: false, error: "La disponibilité n'a pas pu être vérifiée. Réessayez." };
+    return { ok: false, error: t("ecu.availabilityRetry") };
   }
-  if (!restaurant) return { ok: false, error: "Restaurant introuvable." };
+  if (!restaurant) return { ok: false, error: t("ecu.restaurantNotFound") };
 
   // The form's slot list is advisory; enforce the same opening-hours rule
   // here so stale tabs and direct Server Action calls cannot reserve a closed time.
   const { data: hoursRows, error: hoursError } = await supabase.from("restaurant_hours")
     .select("weekday, opens_at, closes_at").eq("restaurant_id", restaurantId);
-  if (hoursError) return { ok: false, error: (await getLocale()) === "en"
-    ? "Opening hours could not be checked. Please try again."
-    : "Les horaires n’ont pas pu être vérifiés. Réessayez." };
+  if (hoursError) return { ok: false, error: t("ecu.hoursCheckFailed") };
   const localSlot = serviceDateAndTime(when);
   const hours = ((hoursRows ?? []) as { weekday: number; opens_at: string | null; closes_at: string | null }[])
     .map((row) => ({ weekday: row.weekday, opensAt: row.opens_at, closesAt: row.closes_at }));
   if (!localSlot || !slotsForDate(hours, localSlot.date).slots.includes(localSlot.time)) {
-    return { ok: false, error: (await getLocale()) === "en"
-      ? "This time is outside the restaurant’s available hours. Choose another slot."
-      : "Ce créneau est en dehors des horaires disponibles du restaurant. Choisissez-en un autre." };
+    return { ok: false, error: t("ecu.slotOutsideHours") };
   }
 
   const deposit = await readDepositConfig(supabase, restaurantId);
@@ -897,10 +890,13 @@ export async function createOwnReservation(
     that showed a more generous rule than this one enforces would be the same
     bug wearing a different hat.
   */
-  const window = slotWindow(when);
+  // The restaurant's sitting length (0060, default one hour) — snapshotted
+  // onto the booking below, and the length every overlap test uses for it.
+  const durationMin = await getReservationDuration(restaurantId, supabase);
+  const window = overlapQueryRange(when, when, durationMin);
 
   const tableAccess = await fetchTableAccess(restaurantId).catch(() => null);
-  if (!tableAccess) return { ok: false, error: "La disponibilité n'a pas pu être vérifiée." };
+  if (!tableAccess) return { ok: false, error: t("ecu.availabilityFailed") };
   const floor: FloorTable[] = tableAccess.tables.map((table) => ({
     capacity: table.capacity,
     status: table.planLocked ? "out_of_service" : table.status,
@@ -911,24 +907,24 @@ export async function createOwnReservation(
   // filled in.
   if (!floorIsUnmanaged(floor)) {
     if (seatableTables(floor, partySize) === 0) {
-      return { ok: false, error: "Aucune table ne peut accueillir ce nombre de personnes." };
+      return { ok: false, error: t("ecu.noTableForParty") };
     }
 
     const { data: overlapping, error: overlapError } = await supabase
       .from("reservations")
-      .select("reserved_for")
+      .select("reserved_for, duration_min")
       .eq("restaurant_id", restaurantId)
       .in("status", [...HOLDING_STATUSES])
-      .gte("reserved_for", window.start)
-      .lte("reserved_for", window.end);
+      .gt("reserved_for", window.start)
+      .lt("reserved_for", window.end);
 
-    if (overlapError) return { ok: false, error: "La disponibilité n'a pas pu être vérifiée." };
+    if (overlapError) return { ok: false, error: t("ecu.availabilityFailed") };
 
-    const holding = ((overlapping ?? []) as { reserved_for: string }[]).map(
-      (r) => new Date(r.reserved_for),
-    );
-    if (slotIsFull(when, holding, floor, partySize)) {
-      return { ok: false, error: "Plus de table disponible sur ce créneau." };
+    const holding: HoldingBooking[] = (
+      (overlapping ?? []) as { reserved_for: string; duration_min: number | null }[]
+    ).map((r) => ({ start: new Date(r.reserved_for), durationMin: r.duration_min }));
+    if (slotIsFull(when, durationMin, holding, floor, partySize)) {
+      return { ok: false, error: t("ecu.slotFull") };
     }
   }
 
@@ -946,6 +942,10 @@ export async function createOwnReservation(
     guest_phone: phone.trim() || user.phone || "",
     party_size: partySize,
     reserved_for: reservedFor,
+    // The sitting length at booking time (0060). A snapshot, like the deposit:
+    // a restaurant shortening its sittings tonight must not shrink the
+    // bookings it already accepted.
+    duration_min: durationMin,
     status: "pending",
     // Snapshotted from the restaurant's price at booking time (0025) — a
     // price change after the customer booked must not rewrite their booking.
@@ -960,12 +960,12 @@ export async function createOwnReservation(
   };
   const row = { ...baseRow, deposit_percent: depositPercent };
 
-  let inserted: { id: string } | null = null;
+  let inserted: { id: string; created_at: string } | null = null;
   let insertError = null as { code?: string; message?: string } | null;
 
   {
-    const attempt = await supabase.from("reservations").insert(row).select("id").single();
-    inserted = attempt.data as { id: string } | null;
+    const attempt = await supabase.from("reservations").insert(row).select("id, created_at").single();
+    inserted = attempt.data as { id: string; created_at: string } | null;
     insertError = attempt.error;
 
     // Same skipped migration as the deposit read above: `deposit_percent` is
@@ -976,8 +976,8 @@ export async function createOwnReservation(
       console.warn(
         "[customer:createOwnReservation] reservations.deposit_percent is missing — run migration 0031 (or 0033_catch_up). Booking saved without the percentage snapshot.",
       );
-      const retry = await supabase.from("reservations").insert(baseRow).select("id").single();
-      inserted = retry.data as { id: string } | null;
+      const retry = await supabase.from("reservations").insert(baseRow).select("id, created_at").single();
+      inserted = retry.data as { id: string; created_at: string } | null;
       insertError = retry.error;
     }
   }
@@ -988,8 +988,49 @@ export async function createOwnReservation(
       insertError?.code ?? "",
       insertError?.message ?? "no row returned",
     );
-    return { ok: false, error: "La demande n'a pas pu être envoyée." };
+    return { ok: false, error: t("ecu.requestNotSent") };
   }
+
+  /*
+    THE LAST TABLE, REQUESTED TWICE AT ONCE (lostInsertRace, availability.ts).
+
+    The capacity check above and the insert are two statements, so two
+    customers can both pass the check for the same last table. Re-reading
+    after the insert and yielding to whichever request got in first settles it
+    without a lock; the loser's row is removed before anyone is notified of it.
+    A failed re-read keeps the booking — the restaurant still decides it.
+  */
+  if (!floorIsUnmanaged(floor)) {
+    const { data: afterRows, error: afterError } = await supabase
+      .from("reservations")
+      .select("id, created_at, reserved_for, duration_min")
+      .eq("restaurant_id", restaurantId)
+      .in("status", [...HOLDING_STATUSES])
+      .gt("reserved_for", window.start)
+      .lt("reserved_for", window.end);
+
+    if (!afterError) {
+      const others = (
+        (afterRows ?? []) as { id: string; created_at: string; reserved_for: string; duration_min: number | null }[]
+      ).map((r) => ({
+        id: r.id,
+        createdAt: r.created_at,
+        start: new Date(r.reserved_for),
+        durationMin: r.duration_min,
+      }));
+      const lost = lostInsertRace(
+        { id: inserted.id, createdAt: inserted.created_at, start: when, durationMin },
+        others,
+        floor,
+        partySize,
+      );
+      if (lost) {
+        await supabase.from("reservations").delete().eq("id", inserted.id).eq("status", "pending");
+        return { ok: false, error: t("ecu.slotFull") };
+      }
+    }
+  }
+
   /*
     ─────────────────────────────────────────────────────────────────────────
      NOTHING IS CHARGED HERE. THAT IS THE POINT OF THIS FUNCTION NOW.
@@ -1126,29 +1167,33 @@ export async function fetchDayAvailability(input: {
   if (floorIsUnmanaged(floor)) return { ok: true, slots, full: [] };
 
   // The widest window any of the day's slots can occupy, so one read covers
-  // every question below.
+  // every question below: back by the longest possible sitting, forward by
+  // this restaurant's own.
   const dayStart = new Date(`${date}T00:00:00+01:00`);
   const dayEnd = new Date(`${date}T23:59:59+01:00`);
+  const durationMin = await getReservationDuration(restaurantId, supabase);
+  const range = overlapQueryRange(dayStart, dayEnd, durationMin);
 
   const { data: holdingRows, error: holdingError } = await supabase
     .from("reservations")
-    .select("reserved_for")
+    .select("reserved_for, duration_min")
     .eq("restaurant_id", restaurantId)
     .in("status", [...HOLDING_STATUSES])
-    .gte("reserved_for", new Date(dayStart.getTime() - SLOT_WINDOW_AFTER_MIN * 60_000).toISOString())
-    .lte("reserved_for", new Date(dayEnd.getTime() + SLOT_WINDOW_BEFORE_MIN * 60_000).toISOString());
+    .gt("reserved_for", range.start)
+    .lt("reserved_for", range.end);
 
   if (holdingError) return { ok: false, slots, full: [] };
 
-  const holding = ((holdingRows ?? []) as { reserved_for: string }[]).map(
-    (r) => new Date(r.reserved_for),
-  );
+  const holding: HoldingBooking[] = (
+    (holdingRows ?? []) as { reserved_for: string; duration_min: number | null }[]
+  ).map((r) => ({ start: new Date(r.reserved_for), durationMin: r.duration_min }));
 
   // Africa/Douala is UTC+1 with no DST, the same conversion the submit path
   // uses when it builds `reservedFor`.
   const full = fullSlots(
     slots,
     (slot) => new Date(`${date}T${slot}:00+01:00`),
+    durationMin,
     holding,
     floor,
     partySize,
@@ -1180,17 +1225,18 @@ export async function payReservationDeposit(
   reservationId: string,
   phone: string,
 ): Promise<ActionResult & { status?: "succeeded" | "pending"; attemptId?: string; instruction?: PaymentInstruction }> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   if (!z.string().uuid().safeParse(reservationId).success) {
-    return { ok: false, error: "Réservation introuvable." };
+    return { ok: false, error: t("ecu.reservationNotFound") };
   }
   if (!phone.trim()) {
-    return { ok: false, error: "Numéro Mobile Money requis pour régler l'acompte." };
+    return { ok: false, error: t("ecu.momoRequiredDeposit") };
   }
   const requestedPhone = normalisePhone(phone);
   if (!requestedPhone) {
-    return { ok: false, error: "Numéro Mobile Money invalide." };
+    return { ok: false, error: t("ecu.momoInvalid") };
   }
 
   const supabase = createAdminClient();
@@ -1204,9 +1250,9 @@ export async function payReservationDeposit(
 
   if (error) {
     console.error("[customer:payReservationDeposit] lookup", error.message);
-    return { ok: false, error: "La réservation n'a pas pu être vérifiée. Réessayez." };
+    return { ok: false, error: t("ecu.reservationCheckRetry") };
   }
-  if (!data) return { ok: false, error: "Réservation introuvable." };
+  if (!data) return { ok: false, error: t("ecu.reservationNotFound") };
 
   const booking = data as {
     id: string;
@@ -1219,11 +1265,11 @@ export async function payReservationDeposit(
     duration_min: number;
   };
 
-  if (booking.deposit_paid) return { ok: false, error: "Cet acompte a déjà été réglé." };
+  if (booking.deposit_paid) return { ok: false, error: t("ecu.depositAlreadyPaid") };
   if (booking.status !== "awaiting_payment") {
     // Either the restaurant has not decided yet, or it declined, or the table
     // is already confirmed. None of them is a bill.
-    return { ok: false, error: "Cette réservation n'attend pas de paiement." };
+    return { ok: false, error: t("ecu.reservationNotAwaitingPayment") };
   }
   if (
     !isUpcomingReservation({
@@ -1232,11 +1278,11 @@ export async function payReservationDeposit(
       durationMin: booking.duration_min,
     })
   ) {
-    return { ok: false, error: "Le créneau de cette réservation est déjà passé." };
+    return { ok: false, error: t("ecu.slotPassed") };
   }
 
   const amount = Number(booking.deposit_amount ?? 0);
-  if (amount <= 0) return { ok: false, error: "Aucun acompte n'est dû pour cette réservation." };
+  if (amount <= 0) return { ok: false, error: t("ecu.noDepositDue") };
 
   /*
    * A reload or a second tap must resume the Mobile Money request already on
@@ -1257,7 +1303,7 @@ export async function payReservationDeposit(
     console.error("[customer:payReservationDeposit] open attempt", openAttemptsError.message);
     return {
       ok: false,
-      error: "Impossible de vérifier le paiement en cours. Réessayez dans un instant.",
+      error: t("ecu.paymentCheckRetry"),
     };
   }
 
@@ -1268,7 +1314,7 @@ export async function payReservationDeposit(
   if (openAttempt?.status === "succeeded") {
     const settled = await settlePayment(openAttempt.id as string);
     if (!settled.ok) {
-      return { ok: false, error: settled.error ?? "L'acompte n'a pas pu être appliqué." };
+      return { ok: false, error: paymentErrorMessage(settled, t, "ecu.depositNotApplied") };
     }
     revalidatePath("/reservations");
     revalidatePath("/account");
@@ -1286,7 +1332,7 @@ export async function payReservationDeposit(
         return {
           ok: false,
           error:
-            "Une autre demande Mobile Money est encore active. Terminez-la ou attendez son expiration avant de changer de numéro.",
+            t("ecu.otherMomoActive"),
         };
       }
       return {
@@ -1312,7 +1358,7 @@ export async function payReservationDeposit(
     // pay-at-booking path: the restaurant has already agreed to it, and
     // throwing away an accepted table because a payment did not go through
     // would lose the thing the customer is trying to keep. They can try again.
-    return { ok: false, error: initiated.error ?? "Le paiement de l'acompte a échoué." };
+    return { ok: false, error: paymentErrorMessage(initiated, t, "ecu.depositPaymentFailed") };
   }
 
   if (initiated.status === "pending") {
@@ -1328,7 +1374,7 @@ export async function payReservationDeposit(
   const settled = await settlePayment(initiated.attemptId);
   if (!settled.ok) {
     console.error("[customer:payReservationDeposit] settle", settled.error);
-    return { ok: false, error: settled.error ?? "L'acompte n'a pas pu être appliqué." };
+    return { ok: false, error: paymentErrorMessage(settled, t, "ecu.depositNotApplied") };
   }
 
   revalidatePath("/reservations");
@@ -1346,6 +1392,7 @@ export async function payReservationDeposit(
 export async function checkReservationPayment(
   attemptId: string,
 ): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed"; instruction?: PaymentInstruction }> {
+  const t = await getTranslator();
   const user = await requireUser();
   const supabase = createAdminClient();
 
@@ -1355,7 +1402,7 @@ export async function checkReservationPayment(
     .eq("id", attemptId)
     .maybeSingle();
 
-  if (!attempt?.reservation_id) return { ok: false, error: "Paiement introuvable." };
+  if (!attempt?.reservation_id) return { ok: false, error: t("ecu.paymentNotFound") };
 
   const { data: reservation } = await supabase
     .from("reservations")
@@ -1364,10 +1411,10 @@ export async function checkReservationPayment(
     .eq("customer_id", user.id)
     .maybeSingle();
 
-  if (!reservation) return { ok: false, error: "Paiement introuvable." };
+  if (!reservation) return { ok: false, error: t("ecu.paymentNotFound") };
 
   const result = await checkPaymentAttempt(attemptId);
-  if (!result.ok) return { ok: false, error: result.error ?? "Paiement introuvable." };
+  if (!result.ok) return { ok: false, error: paymentErrorMessage(result, t, "ecu.paymentNotFound") };
 
   if (result.status === "succeeded") {
     revalidatePath("/reservations");
@@ -1407,6 +1454,7 @@ type CancellationClaim = {
 export async function cancelOwnReservation(
   reservationId: string,
 ): Promise<ReservationCancellationResult> {
+  const t = await getTranslator();
   const user = await requireUser();
   const supabase = createAdminClient();
 
@@ -1417,9 +1465,9 @@ export async function cancelOwnReservation(
     .eq("customer_id", user.id)
     .maybeSingle();
 
-  if (error || !reservation) return { ok: false, error: "Réservation introuvable." };
+  if (error || !reservation) return { ok: false, error: t("ecu.reservationNotFound") };
   if (!canCustomerCancelReservation(reservation.status)) {
-    return { ok: false, error: "Cette réservation ne peut plus être annulée." };
+    return { ok: false, error: t("ecu.reservationNotCancellable") };
   }
 
   // Do not race a charge still being approved on the customer's handset.
@@ -1434,7 +1482,7 @@ export async function cancelOwnReservation(
   if (openAttempt) {
     return {
       ok: false,
-      error: "Un paiement est en cours de confirmation. Attendez son résultat avant d'annuler.",
+      error: t("ecu.paymentConfirming"),
     };
   }
 
@@ -1451,7 +1499,7 @@ export async function cancelOwnReservation(
       .lte("reserved_for", new Date().toISOString())
       .select("id")
       .maybeSingle();
-    if (clearError || !cleared) return { ok: false, error: "La demande a changé. Actualisez la page et réessayez." };
+    if (clearError || !cleared) return { ok: false, error: t("ecu.requestChanged") };
     await notify({
       event: "reservation",
       tone: "info",
@@ -1476,7 +1524,7 @@ export async function cancelOwnReservation(
       durationMin: reservation.duration_min,
     })
   ) {
-    return { ok: false, error: "Le créneau de cette réservation est déjà passé." };
+    return { ok: false, error: t("ecu.slotPassed") };
   }
   const { data: claimData, error: claimError } = await supabase.rpc(
     "cancel_customer_reservation",
@@ -1492,16 +1540,16 @@ export async function cancelOwnReservation(
     if (claimError.message.includes("insufficient balance")) {
       return {
         ok: false,
-        error: "Le remboursement ne peut pas encore être réservé. Resto237 a été alerté; contactez l'assistance.",
+        error: t("ecu.refundNotReserved"),
       };
     }
     if (claimError.message.includes("refund_below_provider_minimum")) {
       return {
         ok: false,
-        error: "Le remboursement est inférieur au minimum Mobile Money. Contactez l'assistance Resto237.",
+        error: t("ecu.refundBelowMin"),
       };
     }
-    return { ok: false, error: "L'annulation n'a pas pu être enregistrée." };
+    return { ok: false, error: t("ecu.cancelNotSaved") };
   }
 
   const claim = claimData as CancellationClaim;
@@ -1536,81 +1584,28 @@ export async function cancelOwnReservation(
   if (claim.refundStatus === "completed") {
     return { ok: true, status: "refunded", ...resultBase };
   }
-  if (claim.replyTo) {
-    return { ok: true, status: "refund_pending", ...resultBase };
-  }
+  /*
+    THE SAME REFUND ENGINE AS EVERY OTHER REFUND (refund-payouts.ts).
 
-  const phone = normalisePhone(claim.phone ?? "");
-  if (!phone) {
-    return {
-      ok: true,
-      status: "refund_pending",
-      note: "Réservation annulée. Le remboursement attend la vérification du numéro Mobile Money.",
-      ...resultBase,
-    };
-  }
-
-  if ((await paymentMode()) === "sandbox") {
-    const { data: completed } = await supabase.rpc("complete_reservation_refund", {
-      p_refund_id: claim.refundId,
-      p_provider_row_id: null,
-    });
-    return completed
-      ? { ok: true, status: "refunded", ...resultBase }
-      : { ok: true, status: "refund_pending", ...resultBase };
-  }
-
-  const afterId = await latestTransactionId();
-  let response;
-  try {
-    response = await sendPayout(phone, claim.refundAmount);
-  } catch (payoutError) {
-    console.error("[customer:reservationRefund] payout call", payoutError);
-    return {
-      ok: true,
-      status: "refund_pending",
-      note: "Réservation annulée. Le remboursement reste en attente de traitement.",
-      ...resultBase,
-    };
-  }
-
-  const replyTo = acceptedTransactionId(response);
-  if (!(response.httpStatus === 202 || response.etat) || !replyTo) {
-    await supabase
-      .from("refunds")
-      .update({ raw_response: { response, needs_retry: true } })
-      .eq("id", claim.refundId)
-      .eq("status", "pending");
-    return {
-      ok: true,
-      status: "refund_pending",
-      note: "Réservation annulée. CamerPay n'a pas encore accepté le remboursement.",
-      ...resultBase,
-    };
-  }
-
-  await recordAcceptedRequest({
-    replyTo,
-    direction: "payout",
-    phone,
-    amount: claim.refundAmount,
-    afterId: afterId ?? null,
-    startedAt: new Date().toISOString(),
-  });
-  await supabase
-    .from("refunds")
-    .update({ reply_to: replyTo, phone, raw_response: { response, afterId } })
-    .eq("id", claim.refundId)
-    .eq("status", "pending")
-    .is("reply_to", null);
-
-  return { ok: true, status: "refund_pending", ...resultBase };
+    This used to call sendPayout() itself, with no claim — so the reconciler's
+    refund sweep and this request could both send the same deposit. It also
+    ignored the admin's switch (0062): startRefundPayout() claims first, then
+    pays Mobile Money or credits the wallet as the admin decided, and the
+    reconciler finishes whatever this request does not.
+  */
+  const outcome = await startRefundPayout(claim.refundId);
+  return {
+    ok: true,
+    status: outcome === "refunded" ? "refunded" : "refund_pending",
+    ...resultBase,
+  };
 }
 
 /** Poll a reservation refund owned by the signed-in customer. */
 export async function checkReservationRefund(
   refundId: string,
 ): Promise<ReservationCancellationResult> {
+  const t = await getTranslator();
   const user = await requireUser();
   const supabase = createAdminClient();
 
@@ -1619,7 +1614,7 @@ export async function checkReservationRefund(
     .select("id, reservation_id, amount, status, phone, reply_to, restaurant_compensation, platform_fee")
     .eq("id", refundId)
     .maybeSingle();
-  if (!refund?.reservation_id) return { ok: false, error: "Remboursement introuvable." };
+  if (!refund?.reservation_id) return { ok: false, error: t("ecu.refundNotFound") };
 
   const { data: reservation } = await supabase
     .from("reservations")
@@ -1627,7 +1622,7 @@ export async function checkReservationRefund(
     .eq("id", refund.reservation_id)
     .eq("customer_id", user.id)
     .maybeSingle();
-  if (!reservation) return { ok: false, error: "Remboursement introuvable." };
+  if (!reservation) return { ok: false, error: t("ecu.refundNotFound") };
 
   const resultBase = {
     refundId,
@@ -1637,7 +1632,7 @@ export async function checkReservationRefund(
   };
   if (refund.status === "completed") return { ok: true, status: "refunded", ...resultBase };
   if (refund.status === "rejected") return { ok: true, status: "refund_failed", ...resultBase };
-  const outcome = await settleReservationRefund(refundId);
+  const outcome = await settleRefundPayout(refundId);
   revalidatePath("/reservations");
   revalidatePath("/account");
   if (outcome === "refunded") return { ok: true, status: "refunded", ...resultBase };
@@ -1649,6 +1644,7 @@ export async function checkReservationRefund(
 
 /** Add or remove a favourite — the same button both ways. */
 export async function toggleFavorite(restaurantId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
   const supabase = createAdminClient();
 
@@ -1669,7 +1665,7 @@ export async function toggleFavorite(restaurantId: string): Promise<ActionResult
         .from("favorites")
         .insert({ profile_id: user.id, restaurant_id: restaurantId });
 
-  if (error) return { ok: false, error: "La mise à jour des favoris a échoué." };
+  if (error) return { ok: false, error: t("ecu.favoritesFailed") };
 
   revalidatePath("/browse");
   revalidatePath("/favorites");
@@ -1679,12 +1675,14 @@ export async function toggleFavorite(restaurantId: string): Promise<ActionResult
 
 /* ── Addresses ──────────────────────────────────────────────────────────── */
 
+// Messages are dictionary keys, translated by translateIssueMessage where the
+// issue becomes the returned `error` — the schema cannot know who is reading.
 const AddressSchema = z.object({
-  label: z.string().trim().min(1, "Donnez un libellé.").max(40),
-  recipientName: z.string().trim().min(1, "Nom du destinataire requis.").max(120),
-  phone: z.string().trim().min(1, "Téléphone requis.").max(30),
-  addressLine: z.string().trim().min(1, "Adresse requise.").max(200),
-  quartierName: z.string().trim().min(1, "Quartier requis."),
+  label: z.string().trim().min(1, "ecu.v.addrLabel").max(40),
+  recipientName: z.string().trim().min(1, "ecu.v.addrRecipient").max(120),
+  phone: z.string().trim().min(1, "ecu.v.addrPhone").max(30),
+  addressLine: z.string().trim().min(1, "ecu.v.addrLine").max(200),
+  quartierName: z.string().trim().min(1, "ecu.v.addrQuartier"),
   landmark: z.string().trim().max(120).optional().default(""),
   isDefault: z.boolean().optional().default(false),
 });
@@ -1728,13 +1726,14 @@ async function clearOtherDefaults(profileId: string, keepId?: string) {
 
 /** Save a new delivery address for this customer. */
 export async function saveOwnAddress(input: z.infer<typeof AddressSchema>): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   const parsed = AddressSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Vérifiez le formulaire." };
+  if (!parsed.success) return { ok: false, error: firstIssueMessage(parsed.error, t) };
 
   const quartierId = await resolveQuartierId(parsed.data.quartierName);
-  if (!quartierId) return { ok: false, error: "Impossible d'enregistrer ce quartier. Réessayez." };
+  if (!quartierId) return { ok: false, error: t("ecu.quartierFailed") };
 
   const supabase = createAdminClient();
   if (parsed.data.isDefault) await clearOtherDefaults(user.id);
@@ -1750,7 +1749,7 @@ export async function saveOwnAddress(input: z.infer<typeof AddressSchema>): Prom
     is_default: parsed.data.isDefault,
   });
 
-  if (error) return { ok: false, error: "L'adresse n'a pas pu être enregistrée." };
+  if (error) return { ok: false, error: t("ecu.addressSaveFailed") };
 
   revalidatePath("/addresses");
   revalidatePath("/checkout");
@@ -1762,13 +1761,14 @@ export async function updateOwnAddress(
   addressId: string,
   input: z.infer<typeof AddressSchema>,
 ): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   const parsed = AddressSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Vérifiez le formulaire." };
+  if (!parsed.success) return { ok: false, error: firstIssueMessage(parsed.error, t) };
 
   const quartierId = await resolveQuartierId(parsed.data.quartierName);
-  if (!quartierId) return { ok: false, error: "Impossible d'enregistrer ce quartier. Réessayez." };
+  if (!quartierId) return { ok: false, error: t("ecu.quartierFailed") };
 
   const supabase = createAdminClient();
   if (parsed.data.isDefault) await clearOtherDefaults(user.id, addressId);
@@ -1787,7 +1787,7 @@ export async function updateOwnAddress(
     .eq("id", addressId)
     .eq("profile_id", user.id);
 
-  if (error) return { ok: false, error: "L'adresse n'a pas pu être mise à jour." };
+  if (error) return { ok: false, error: t("ecu.addressUpdateFailed") };
 
   revalidatePath("/addresses");
   revalidatePath("/checkout");
@@ -1796,6 +1796,7 @@ export async function updateOwnAddress(
 
 /** Delete one of this customer's addresses. */
 export async function deleteOwnAddress(addressId: string): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   const supabase = createAdminClient();
@@ -1805,7 +1806,7 @@ export async function deleteOwnAddress(addressId: string): Promise<ActionResult>
     .eq("id", addressId)
     .eq("profile_id", user.id);
 
-  if (error) return { ok: false, error: "L'adresse n'a pas pu être supprimée." };
+  if (error) return { ok: false, error: t("ecu.addressDeleteFailed") };
 
   revalidatePath("/addresses");
   revalidatePath("/checkout");
@@ -1822,6 +1823,7 @@ export async function deleteOwnAddress(addressId: string): Promise<ActionResult>
  * on the screen is a courtesy; this is the rule.
  */
 export async function saveOwnPreferences(prefs: CustomerPreferences): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   const clean = toStoredJson(prefs);
@@ -1863,7 +1865,7 @@ export async function saveOwnPreferences(prefs: CustomerPreferences): Promise<Ac
 
   if (error) {
     console.error("[customer:saveOwnPreferences]", error.code ?? "", error.message);
-    return { ok: false, error: "Les préférences n'ont pas pu être enregistrées." };
+    return { ok: false, error: t("ecu.prefsFailed") };
   }
 
   revalidatePath("/settings");
@@ -1880,6 +1882,7 @@ export async function saveOwnPreferences(prefs: CustomerPreferences): Promise<Ac
  * revokes access permanently.
  */
 export async function deleteOwnAccount(): Promise<ActionResult> {
+  const t = await getTranslator();
   const user = await requireUser();
 
   const supabase = createAdminClient();
@@ -1897,7 +1900,7 @@ export async function deleteOwnAccount(): Promise<ActionResult> {
     })
     .eq("id", user.id);
 
-  if (error) return { ok: false, error: "La suppression du compte a échoué." };
+  if (error) return { ok: false, error: t("ecu.accountDeleteFailed") };
 
   const { error: deleteError } = await supabase.auth.admin.deleteUser(user.authUserId);
   if (deleteError) {

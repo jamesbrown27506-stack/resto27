@@ -77,9 +77,18 @@ export const custCartDict = defineDict({
     "cct.sum.delivery": "Livraison",
     "cct.sum.loyalty": "Points de fidélité",
     "cct.sum.total": "Total",
-    "cct.sum.toConfirm": "à confirmer",
+    // NEW PAYMENT MODEL: only the food is paid online. The delivery fee is
+    // quoted by the restaurant on confirmation and handed to the rider in
+    // cash — it is never part of the online total, so the line says who is
+    // paid and how rather than "à confirmer".
+    "cct.sum.toConfirm": "à payer au livreur",
+    "cct.sum.feeBand": "{min} – {max}, en espèces",
+    "cct.sum.feeFromBand": "dès {min}, en espèces",
+    "cct.sum.totalOnline": "Total payé en ligne",
     "cct.sum.feeNote":
-      "Les frais de livraison sont fixés par le restaurant à la confirmation, selon votre quartier. Ils s'ajouteront à ce total.",
+      "Les frais de livraison sont fixés par le restaurant à la confirmation, selon votre quartier. Ils ne sont pas payés en ligne : vous les réglez en espèces au livreur.",
+    "cct.minOrder": "Minimum de commande en livraison : {amount}.",
+    "cct.minOrderMissing": "Encore {amount} pour atteindre le minimum de commande en livraison ({min}).",
 
     /* ── Checkout ───────────────────────────────────────────────────── */
     "cct.co.title": "Finaliser la commande",
@@ -128,11 +137,20 @@ export const custCartDict = defineDict({
     "cct.co.landmarkHint":
       "C'est ce qui permet vraiment de vous trouver : « en face de la pharmacie », « derrière le carrefour Ndokoti ».",
     "cct.co.feeNote":
-      "Les frais de livraison sont fixés par le restaurant lorsqu'il confirme votre commande, en fonction de votre quartier. Ils vous seront communiqués à ce moment-là.",
+      "Les frais de livraison sont fixés par le restaurant lorsqu'il confirme votre commande, selon votre quartier. Ils ne sont pas payés en ligne : vous les réglez en espèces au livreur, à la livraison.",
     "cct.co.feeRange":
-      "Les frais de livraison de ce restaurant se situent entre {min} et {max}. Le montant exact est fixé à la confirmation, selon votre quartier — il ne dépassera pas {max}.",
+      "Les frais de livraison de ce restaurant se situent entre {min} et {max} (jamais plus de {max}). Le montant exact est fixé à la confirmation, selon votre quartier, et se règle en espèces au livreur — il ne s'ajoute pas au paiement en ligne.",
     "cct.co.feeFrom":
-      "Les frais de livraison de ce restaurant démarrent à {min}. Le montant exact est fixé à la confirmation, selon votre quartier.",
+      "Les frais de livraison de ce restaurant démarrent à {min}. Le montant exact est fixé à la confirmation, selon votre quartier, et se règle en espèces au livreur — il ne s'ajoute pas au paiement en ligne.",
+    "cct.co.saveAddress": "Enregistrer cette adresse pour mes prochaines commandes",
+    "cct.co.addressKnown": "Cette adresse est déjà dans vos adresses enregistrées.",
+    "cct.co.stepsTitle": "Comment ça se passe",
+    "cct.co.step1": "Le restaurant confirme que les plats sont disponibles.",
+    "cct.co.step2": "Vous payez les plats en ligne (Mobile Money ou portefeuille).",
+    "cct.co.step3Delivery": "Livraison : les frais de livraison se paient en espèces au livreur.",
+    "cct.co.step3Pickup": "Retrait : vous récupérez la commande au restaurant.",
+    "cct.co.stepsNote": "Rien n'est débité maintenant. Sans réponse du restaurant, ou sans paiement dans le délai indiqué, la commande est annulée automatiquement.",
+    "cct.co.belowMinBtn": "Minimum {amount} en livraison",
     "cct.co.addressesUnavailable": "Vos adresses enregistrées ne sont pas accessibles pour le moment.",
     "cct.co.pickupNote": "Le restaurant les utilise pour vous joindre au moment du retrait.",
     "cct.co.when": "Quand ?",
@@ -145,13 +163,14 @@ export const custCartDict = defineDict({
     "cct.co.scheduleRequired": "Choisissez une date et une heure pour la programmation.",
     "cct.co.onlineSoon": "Le paiement Mobile Money est obligatoire. La cuisine ne démarre qu'après confirmation du paiement.",
     "cct.co.paymentChoice": "Choisissez comment régler cette commande.",
-    "cct.co.mobileMoneyBody": "Validez le paiement depuis votre téléphone après confirmation de la commande.",
+    "cct.co.mobileMoneyBody": "Vous payez les plats depuis votre téléphone, une fois que le restaurant a confirmé la commande.",
     "cct.co.wallet": "Portefeuille",
     "cct.co.walletLogin": "Connectez-vous pour utiliser votre solde.",
     "cct.co.walletUnavailable": "Le portefeuille sera disponible après la mise à jour de votre compte.",
     "cct.co.walletInsufficient": "Solde insuffisant. Il manque {missing}.",
-    "cct.co.walletReady": "Solde suffisant. Le paiement est immédiat.",
-    "cct.co.pay": "Payer",
+    "cct.co.walletReady": "Solde suffisant. Les plats sont débités de votre solde après confirmation du restaurant.",
+    // Not "Payer": nothing is charged when the order is sent (see step 2).
+    "cct.co.pay": "Envoyer la commande",
     "cct.co.noDelivery": "Ce restaurant ne propose pas la livraison.",
     "cct.co.noPickup": "Ce restaurant ne propose pas le retrait.",
 
@@ -169,7 +188,7 @@ export const custCartDict = defineDict({
     "cct.co.notesPh": "Sonner à l'interphone, appartement 3B…",
 
     "cct.co.yourOrder": "Votre commande",
-    "cct.co.place": "Commander · {total}",
+    "cct.co.place": "Envoyer la commande · {total}",
     "cct.co.terms1": "En commandant, vous acceptez nos",
     "cct.co.termsLink": "conditions d'utilisation",
     "cct.co.sent": "Commande {ref} envoyée au restaurant.",
@@ -212,6 +231,7 @@ export const custCartDict = defineDict({
     "cct.err.addressNotFound": "Cette adresse est introuvable. Choisissez-en une autre.",
     "cct.err.nameRequired": "Indiquez le nom de la personne à contacter.",
     "cct.err.phoneRequired": "Indiquez un numéro de téléphone.",
+    "cct.err.phoneInvalid": "Numéro camerounais à 9 chiffres commençant par 6, par exemple 6 99 00 00 00.",
     "cct.err.addressRequired": "Indiquez l'adresse de livraison.",
     "cct.err.quartierRequired": "Indiquez votre quartier.",
     "cct.err.notEnoughWallet": "Votre portefeuille ne couvre pas le total.",
@@ -281,9 +301,14 @@ export const custCartDict = defineDict({
     "cct.sum.delivery": "Delivery",
     "cct.sum.loyalty": "Loyalty points",
     "cct.sum.total": "Total",
-    "cct.sum.toConfirm": "to be confirmed",
+    "cct.sum.toConfirm": "paid to the rider",
+    "cct.sum.feeBand": "{min} – {max}, in cash",
+    "cct.sum.feeFromBand": "from {min}, in cash",
+    "cct.sum.totalOnline": "Total paid online",
     "cct.sum.feeNote":
-      "The delivery fee is set by the restaurant when it confirms, based on your neighbourhood. It is added on top of this total.",
+      "The delivery fee is set by the restaurant when it confirms, based on your neighbourhood. It is not paid online: you pay it in cash to the rider.",
+    "cct.minOrder": "Minimum order for delivery: {amount}.",
+    "cct.minOrderMissing": "{amount} more to reach the delivery minimum ({min}).",
 
     /* ── Checkout ───────────────────────────────────────────────────── */
     "cct.co.title": "Checkout",
@@ -331,11 +356,20 @@ export const custCartDict = defineDict({
     "cct.co.landmarkHint":
       "This is what actually gets you found: “opposite the pharmacy”, “behind the Ndokoti junction”.",
     "cct.co.feeNote":
-      "The delivery fee is set by the restaurant when it confirms your order, based on your neighbourhood. You will be told the amount then.",
+      "The delivery fee is set by the restaurant when it confirms your order, based on your neighbourhood. It is not paid online: you pay it in cash to the rider on delivery.",
     "cct.co.feeRange":
-      "This restaurant's delivery fee is between {min} and {max}. The exact amount is set at confirmation based on your neighbourhood — it will not go above {max}.",
+      "This restaurant's delivery fee is between {min} and {max} (never more than {max}). The exact amount is set at confirmation based on your neighbourhood and is paid in cash to the rider — it is not added to the online payment.",
     "cct.co.feeFrom":
-      "This restaurant's delivery fee starts at {min}. The exact amount is set at confirmation based on your neighbourhood.",
+      "This restaurant's delivery fee starts at {min}. The exact amount is set at confirmation based on your neighbourhood and is paid in cash to the rider — it is not added to the online payment.",
+    "cct.co.saveAddress": "Save this address for my next orders",
+    "cct.co.addressKnown": "This address is already in your saved addresses.",
+    "cct.co.stepsTitle": "How it works",
+    "cct.co.step1": "The restaurant confirms the dishes are available.",
+    "cct.co.step2": "You pay for the food online (Mobile Money or wallet).",
+    "cct.co.step3Delivery": "Delivery: the delivery fee is paid in cash to the rider.",
+    "cct.co.step3Pickup": "Pickup: you collect the order at the restaurant.",
+    "cct.co.stepsNote": "Nothing is charged now. If the restaurant does not answer, or the order is not paid in time, it is cancelled automatically.",
+    "cct.co.belowMinBtn": "Minimum {amount} for delivery",
     "cct.co.addressesUnavailable": "Your saved addresses cannot be reached right now.",
     "cct.co.pickupNote": "The restaurant uses these to reach you at pickup time.",
     "cct.co.when": "When?",
@@ -348,13 +382,13 @@ export const custCartDict = defineDict({
     "cct.co.scheduleRequired": "Pick a date and time for the scheduled order.",
     "cct.co.onlineSoon": "Online payment is required. The kitchen only starts after payment is confirmed.",
     "cct.co.paymentChoice": "Choose how to pay for this order.",
-    "cct.co.mobileMoneyBody": "Approve the payment on your phone after the restaurant confirms the order.",
+    "cct.co.mobileMoneyBody": "You pay for the food from your phone once the restaurant has confirmed the order.",
     "cct.co.wallet": "Wallet",
     "cct.co.walletLogin": "Sign in to use your balance.",
     "cct.co.walletUnavailable": "Your wallet will be available after your account is updated.",
     "cct.co.walletInsufficient": "Insufficient balance. Add {missing}.",
-    "cct.co.walletReady": "Your balance covers this order. Payment is immediate.",
-    "cct.co.pay": "Pay",
+    "cct.co.walletReady": "Your balance covers this order. The food is taken from your balance once the restaurant confirms.",
+    "cct.co.pay": "Send order",
     "cct.co.noDelivery": "This restaurant does not offer delivery.",
     "cct.co.noPickup": "This restaurant does not offer pickup.",
 
@@ -372,7 +406,7 @@ export const custCartDict = defineDict({
     "cct.co.notesPh": "Ring the intercom, flat 3B…",
 
     "cct.co.yourOrder": "Your order",
-    "cct.co.place": "Place order · {total}",
+    "cct.co.place": "Send order · {total}",
     "cct.co.terms1": "By ordering, you accept our",
     "cct.co.termsLink": "terms of use",
     "cct.co.sent": "Order {ref} sent to the restaurant.",
@@ -412,6 +446,7 @@ export const custCartDict = defineDict({
     "cct.err.addressNotFound": "That address could not be found. Pick another one.",
     "cct.err.nameRequired": "Give the name of the person to contact.",
     "cct.err.phoneRequired": "Give a phone number.",
+    "cct.err.phoneInvalid": "A 9-digit Cameroon number starting with 6, for example 6 99 00 00 00.",
     "cct.err.addressRequired": "Give the delivery address.",
     "cct.err.quartierRequired": "Give your neighbourhood.",
     "cct.err.notEnoughWallet": "Your wallet does not cover the total.",

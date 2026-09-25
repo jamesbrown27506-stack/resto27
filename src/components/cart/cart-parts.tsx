@@ -280,11 +280,14 @@ export function LoyaltyRedeem({
 /* ── Totals panel ──────────────────────────────────────────────────────── */
 
 export function CartSummary({
-  /** Delivery orders show "à confirmer"; pickup and dine-in show nothing. */
+  /** Delivery orders show "à payer au livreur"; pickup and dine-in show nothing. */
   showDeliveryFee = true,
+  deliveryFeeDetail,
   children,
 }: {
   showDeliveryFee?: boolean;
+  /** The restaurant's advertised band, e.g. "1 000 – 3 000 FCFA, en espèces". */
+  deliveryFeeDetail?: string | null;
   children?: React.ReactNode;
 }) {
   const { totals, promoCode } = useCart();
@@ -323,7 +326,15 @@ export function CartSummary({
               we are about to break; showing "à confirmer" is the truth.
             */}
             <dd className="text-right font-medium text-text-light">
+              {/* NEW PAYMENT MODEL: the fee goes to the rider in cash and is
+                  never part of the online total below — so the row names who
+                  is paid, and the band when the restaurant declared one. */}
               {t("cct.sum.toConfirm")}
+              {deliveryFeeDetail && (
+                <span translate="no" className="tnum block text-xs font-normal">
+                  {deliveryFeeDetail}
+                </span>
+              )}
             </dd>
           </div>
         )}
@@ -338,7 +349,9 @@ export function CartSummary({
       </dl>
 
       <div className="mt-4 flex items-baseline justify-between gap-3 border-t border-border pt-4">
-        <span className="font-display text-lg font-bold">{t("cct.sum.total")}</span>
+        <span className="font-display text-lg font-bold">
+          {t("cct.sum.totalOnline")}
+        </span>
         <span translate="no" className="tnum font-display text-2xl font-bold text-primary">
           {formatMoney(totals.total)}
         </span>

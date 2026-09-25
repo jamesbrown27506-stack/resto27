@@ -102,11 +102,21 @@ export function managerTabs(role: BranchRole | null): { items: TabItem[]; more: 
   const has = (capability: Capability) => role !== null && can(role, capability);
 
   const items: TabItem[] = [{ href: "/m", icon: "LayoutDashboard", labelKey: "tab.dashboard" }];
-  // Kitchen staff who cannot open the menu get their screen in its place.
-  if (has("menu.view")) {
+  /*
+    The second cell is the screen this person WORKS in. For whoever edits the
+    menu that is the menu; for the kitchen it is the kitchen display.
+
+    It used to be "menu.view first", and every role holds menu.view — so the
+    kitchen's own bar had no Kitchen tab at all: the one screen a cook lives
+    in was two taps deep inside "Plus", behind a menu they cannot change.
+    The menu stays reachable from the sheet (and for the sold-out switch).
+  */
+  if (has("menu.edit")) {
     items.push({ href: "/m/menu", icon: "UtensilsCrossed", labelKey: "nav.m.menu", matchPrefix: true });
   } else if (has("kitchen.display")) {
     items.push({ href: "/m/kitchen", icon: "ChefHat", labelKey: "nav.m.kitchen", badgeKey: "kitchen" });
+  } else if (has("menu.view")) {
+    items.push({ href: "/m/menu", icon: "UtensilsCrossed", labelKey: "nav.m.menu", matchPrefix: true });
   }
   if (has("orders.view")) {
     items.push({ href: "/m/orders", icon: "ReceiptText", labelKey: "nav.m.orders", matchPrefix: true, badgeKey: "orders" });
@@ -128,6 +138,15 @@ export function managerTabs(role: BranchRole | null): { items: TabItem[]; more: 
             .filter((item) => !inTabs(items, item.href) && (!item.capability || has(item.capability)))
             .map((item) => toMenuItem(item, group)),
         ),
+        /*
+          Everyone's OWN alert settings — sound, push on this phone, quiet
+          hours. They used to live only on /m/settings, which needs
+          settings.manage, so the kitchen, the cashier and the waiters (the
+          people who most need the ring) could not reach their own switch.
+        */
+        ...(role !== null
+          ? [{ href: "/m/notifications", icon: "Bell", labelKey: "mops.nav.notifications", groupKey: "nav.site" } satisfies NavMenuItem]
+          : []),
         // The way out to the marketplace, now that no tab is spent on it.
         { href: "/", icon: "Globe", labelKey: "nav.publicSite", groupKey: "nav.site" },
       ],

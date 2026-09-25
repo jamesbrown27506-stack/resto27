@@ -67,10 +67,15 @@ function setSource(audio: HTMLAudioElement, soundName: string | null | undefined
  * that this element has now played once with permission.
  *
  * Safe to call repeatedly; it does its work once.
+ *
+ * Resolves to whether the element is now allowed to play, so the manager
+ * shell can take down its "tap to enable the sound" banner the moment the
+ * tap worked — and leave it up when it did not.
  */
-export function unlockNotificationSound(soundName?: string | null): void {
+export function unlockNotificationSound(soundName?: string | null): Promise<boolean> {
   const audio = ensureElement();
-  if (!audio || unlocked) return;
+  if (!audio) return Promise.resolve(false);
+  if (unlocked) return Promise.resolve(true);
 
   setSource(audio, soundName);
 
@@ -81,18 +86,20 @@ export function unlockNotificationSound(soundName?: string | null): void {
   if (attempt === undefined) {
     unlocked = true;
     audio.muted = previousMuted;
-    return;
+    return Promise.resolve(true);
   }
 
-  void attempt
+  return attempt
     .then(() => {
       audio.pause();
       audio.currentTime = 0;
       unlocked = true;
+      return true;
     })
     .catch(() => {
       // Not fatal. The element stays usable, `play()` is simply still subject
       // to the policy — the next real interaction gets another chance.
+      return false;
     })
     .finally(() => {
       audio.muted = previousMuted;

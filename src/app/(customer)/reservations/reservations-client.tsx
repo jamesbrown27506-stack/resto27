@@ -30,6 +30,7 @@ import { formatMoney } from "@/lib/format/currency";
 import { depositChargedNow } from "@/lib/reservations/deposit";
 import { quoteReservationCancellation } from "@/lib/reservations/cancellation";
 import { PaymentPendingView } from "@/components/payment/payment-pending";
+import { ContactRestaurantButton } from "@/components/chat/contact-restaurant-button";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import {
   canCustomerCancelReservation,
@@ -719,6 +720,15 @@ export function ReservationsClient({
                           {reservationStatusLabel(r.status, t)}
                         </Badge>
 
+                        {/* In-app chat about THIS booking — the only channel
+                            to the restaurant (no phone numbers are shown). */}
+                        <ContactRestaurantButton
+                          restaurantId={r.restaurantId}
+                          reservationId={r.id}
+                          variant="ghost"
+                          size="sm"
+                        />
+
                         {canCustomerCancelReservation(r.status) && (
                           <Button
                             variant="ghost"
@@ -847,6 +857,12 @@ export function ReservationsClient({
                           {t("crs.withdrawExpired")}
                         </Button>
                       )}
+                      <ContactRestaurantButton
+                        restaurantId={r.restaurantId}
+                        reservationId={r.id}
+                        variant="ghost"
+                        size="sm"
+                      />
                       {r.refundStatus && (
                         <Badge tone={r.refundStatus === "completed" ? "success" : r.refundStatus === "rejected" ? "error" : "warning"}>
                           {t(
@@ -860,7 +876,20 @@ export function ReservationsClient({
                         </Badge>
                       )}
                     </div>
-                    {r.refundStatus === "completed" && (
+                    {/* The restaurant's own words when it declined or cancelled — the
+                        customer used to see them only in the notification. */}
+                    {r.status === "cancelled" && r.declineReason && (
+                      <p className="mt-3 rounded-md border border-error/25 bg-error-light p-3 text-sm text-text-secondary">
+                        <span className="font-semibold text-error">{t("crs.declineReason")}</span> {r.declineReason}
+                      </p>
+                    )}
+                    {r.refundStatus === "completed" && r.refundDestination === "mobile_money" && (
+                      <div className="mt-3 rounded-md border border-success/25 bg-success-light p-3 text-sm">
+                        <p className="font-semibold text-success">{t("crs.refundMomoTitle")}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-text-secondary">{t("crs.refundMomoBody", { amount: formatMoney(r.refundAmount), reference: r.reference })}</p>
+                      </div>
+                    )}
+                    {r.refundStatus === "completed" && r.refundDestination !== "mobile_money" && (
                       <div className="mt-3 rounded-md border border-success/25 bg-success-light p-3 text-sm">
                         <p className="font-semibold text-success">{t("crs.refundWalletTitle")}</p>
                         <p className="mt-1 text-xs leading-relaxed text-text-secondary">{t("crs.refundWalletBody", { amount: formatMoney(r.refundAmount), reference: r.reference })}</p>

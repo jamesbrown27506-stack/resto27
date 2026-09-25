@@ -17,6 +17,7 @@ const PAY_LABEL: Record<string, string> = {
   cash_on_delivery: "Especes a la livraison",
   pay_at_restaurant: "Paiement au restaurant",
   mobile_money: "Mobile Money",
+  wallet: "Portefeuille Resto237",
 };
 
 /**
@@ -41,6 +42,8 @@ export function TicketView({
     const id = window.setTimeout(() => window.print(), 400);
     return () => window.clearTimeout(id);
   }, []);
+
+  const online = order.paymentMethod === "mobile_money" || order.paymentMethod === "wallet";
 
   return (
     <div className="mx-auto max-w-[80mm] bg-white p-3 font-mono text-[11px] leading-tight text-black">
@@ -106,31 +109,40 @@ export function TicketView({
         <Row label="Remise" value={`-${formatMoney(order.discountAmount, { showSymbol: false })}`} />
       )}
       <Row label="Service" value={formatMoney(order.serviceCharge, { showSymbol: false })} />
-      {order.type === "delivery" && (
-        <Row
-          label="Livraison"
-          value={
-            order.deliveryFeeSetAt === null
-              ? "A CONFIRMER"
-              : formatMoney(order.deliveryFee, { showSymbol: false })
-          }
-        />
-      )}
       <Divider />
 
+      {/*
+        TWO AMOUNTS, NEVER ONE SUM (0059). `total` is what was paid online —
+        the food. A delivery's fee is cash the rider collects at the door, and
+        it is printed as its own line so the rider knows exactly what to ask
+        for and nobody asks the customer to pay the food twice.
+      */}
       <div className="flex justify-between text-sm font-bold">
-        <span>TOTAL</span>
+        <span>{online ? (order.isPaid ? "PAYE EN LIGNE" : "A PAYER EN LIGNE") : "TOTAL"}</span>
         <span>{formatMoney(order.total, { showSymbol: false })} FCFA</span>
       </div>
 
-      <p className="mt-1">{PAY_LABEL[order.paymentMethod]}</p>
+      <p className="mt-1">{PAY_LABEL[order.paymentMethod] ?? order.paymentMethod}</p>
+
+      {order.type === "delivery" && (
+        <div className="mt-2 flex justify-between text-sm font-bold">
+          <span>A ENCAISSER A LA LIVRAISON</span>
+          <span>
+            {order.deliveryFeeSetAt === null
+              ? "A CONFIRMER"
+              : `${formatMoney(order.deliveryFee, { showSymbol: false })} FCFA`}
+          </span>
+        </div>
+      )}
 
       {order.type === "delivery" && order.deliveryAddress && (
         <>
           <Divider />
           <p className="font-bold">LIVRAISON</p>
           <p>{order.deliveryName}</p>
-          <p>{order.deliveryPhone}</p>
+          {/* The number prints only while the paid delivery is in progress
+              (lib/data/orders) — the rider's fallback if the chat goes unanswered. */}
+          {order.deliveryPhone && <p>Tel : {order.deliveryPhone}</p>}
           <p>{order.deliveryAddress}</p>
           <p>{order.deliveryQuartier}</p>
           {order.deliveryLandmark && <p>Repere : {order.deliveryLandmark}</p>}

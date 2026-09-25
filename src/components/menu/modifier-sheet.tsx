@@ -48,6 +48,7 @@ export function ModifierSheet({
   open,
   onClose,
   onAdded,
+  onAddLine,
 }: {
   item: MenuItem | null;
   restaurant: { id: string; name: string; slug: string };
@@ -58,6 +59,16 @@ export function ModifierSheet({
    * it back so the confirmation is specific rather than a count ticking over.
    */
   onAdded?: (name: string) => void;
+  /**
+   * Take the composed line instead of adding it to the delivery basket.
+   *
+   * The QR table page has its own basket (a dining round, not a checkout),
+   * and used to add dishes by silently picking the first option of every
+   * required group — the "+" that §3 says produces tickets the kitchen has to
+   * chase. Passing this lets it reuse this exact picker; the delivery cart,
+   * and its one-restaurant replace prompt, are then left untouched.
+   */
+  onAddLine?: (line: { menuItemId: string; name: string; unitPrice: number; quantity: number; options: CartOptionChoice[]; notes: string | null }) => void;
 }) {
   const { addLine, itemCount, restaurantId: cartRestaurantId } = useCart();
   const { t } = useLocale();
@@ -125,6 +136,19 @@ export function ModifierSheet({
   }
 
   function doAdd() {
+    if (onAddLine) {
+      onAddLine({
+        menuItemId: item!.id,
+        name: item!.name,
+        unitPrice,
+        quantity,
+        options: choices,
+        notes: notes.trim() || null,
+      });
+      onClose();
+      onAdded?.(item!.name);
+      return;
+    }
     addLine({
       menuItemId: item!.id,
       name: item!.name,
@@ -144,7 +168,7 @@ export function ModifierSheet({
   function add() {
     // One restaurant per basket. A basket from another kitchen would be wiped
     // by addLine without a word, so ask before the customer loses it.
-    if (itemCount > 0 && cartRestaurantId && cartRestaurantId !== restaurant.id) {
+    if (!onAddLine && itemCount > 0 && cartRestaurantId && cartRestaurantId !== restaurant.id) {
       setConfirmReplace(true);
       return;
     }

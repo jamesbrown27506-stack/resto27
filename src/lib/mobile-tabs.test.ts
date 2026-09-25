@@ -74,6 +74,29 @@ describe("who sees what", () => {
     }
   });
 
+  it("the kitchen gets its own screen as a tab, not a menu it cannot change", () => {
+    const { items, more } = managerTabs("kitchen");
+    expect(hrefs(items)).toContain("/m/kitchen");
+    expect(hrefs(items)).not.toContain("/m/menu");
+    // The menu is still reachable (the sold-out switch lives there).
+    expect(hrefs(more.items)).toContain("/m/menu");
+  });
+
+  it("whoever edits the menu keeps the Menu tab; roles without either keep the menu", () => {
+    for (const role of BRANCH_ROLES) {
+      const tabs = hrefs(managerTabs(role).items);
+      if (can(role, "menu.edit")) expect(tabs, role).toContain("/m/menu");
+      else if (can(role, "kitchen.display")) expect(tabs, role).toContain("/m/kitchen");
+      else expect(tabs, role).toContain("/m/menu");
+    }
+  });
+
+  it("every staff role can reach its own notification settings", () => {
+    for (const role of BRANCH_ROLES) {
+      expect(hrefs(managerTabs(role).more.items), role).toContain("/m/notifications");
+    }
+  });
+
   it("staff can always get back to the public site from the sheet", () => {
     for (const role of [...BRANCH_ROLES, null]) {
       expect(hrefs(managerTabs(role).more.items)).toContain("/");

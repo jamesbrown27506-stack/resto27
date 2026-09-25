@@ -24,6 +24,8 @@ export function accountLinksFor(area: "customer" | "manager" | "admin", role: Br
       return [
         { href: "/m", icon: "LayoutDashboard", labelKey: "nav.m.dashboard" },
         { href: "/profile", icon: "User", labelKey: "acct.personalProfile" },
+        // Their own ring / push / quiet hours — every role (see /m/notifications).
+        ...(role ? [{ href: "/m/notifications", icon: "Bell", labelKey: "mops.nav.notifications" } satisfies AccountLink] : []),
         ...(role && can(role, "profile.edit")
           ? [{ href: "/m/profile", icon: "Store", labelKey: "nav.m.profile" } satisfies AccountLink]
           : []),

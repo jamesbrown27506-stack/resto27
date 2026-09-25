@@ -37,6 +37,16 @@ export interface FeeTarget {
  *  therefore shows the customer's address and the new total prominently: the
  *  person setting the number should see what they are asking someone to pay.
  * ─────────────────────────────────────────────────────────────────────────
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  SINCE SEP 2026 THE FEE IS PAID IN CASH TO THE RIDER (migration 0059).
+ *
+ *  `orders.total` is exactly what the customer pays ONLINE — the food. The
+ *  delivery fee quoted here is collected by the rider at the door. So the
+ *  dialog no longer shows a "new total": adding the two made managers tell
+ *  customers the wrong online amount. It shows the two amounts side by side
+ *  — paid online, cash to the rider — and says plainly which is which.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 export function DeliveryFeeDialog({
   order,
@@ -86,7 +96,6 @@ export function DeliveryFeeDialog({
   if (!order) return null;
 
   const fee = parseMoney(value) ?? 0;
-  const newTotal = order.total + fee;
   const malformed = value !== "" && parseMoney(value) === null;
   // Above what the customer was promised. Its own flag, so the message can
   // say WHICH rule was broken rather than just colouring the box red.
@@ -113,7 +122,7 @@ export function DeliveryFeeDialog({
               setValue("");
             }}
           >
-            <span>{t("fee.confirm")}</span>
+            <span>{t("mops.fee.confirm")}</span>
           </Button>
         </>
       }
@@ -169,7 +178,7 @@ export function DeliveryFeeDialog({
         </div>
 
         <Field
-          label={t("fee.amount")}
+          label={t("mops.fee.label")}
           htmlFor="fee"
           required
           error={overCeiling ? t("fee.overMax", { max: formatMoney(max) }) : undefined}
@@ -187,16 +196,21 @@ export function DeliveryFeeDialog({
           />
         </Field>
 
-        <p className="flex items-baseline justify-between rounded-md bg-primary-light px-4 py-3">
-          <span className="text-sm font-medium">{t("fee.newTotal")}</span>
-          <span className="tnum font-display text-xl font-bold text-primary">
-            {formatMoney(newTotal)}
-          </span>
-        </p>
+        {/* Two amounts, never summed: one is paid online, the other in cash. */}
+        <dl className="flex flex-col gap-2 rounded-md bg-primary-light px-4 py-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <dt className="text-sm font-medium">{t("mops.fee.online")}</dt>
+            <dd className="tnum font-display text-xl font-bold text-primary">{formatMoney(order.total)}</dd>
+          </div>
+          <div className="flex items-baseline justify-between gap-3 border-t border-primary/20 pt-2">
+            <dt className="text-sm font-medium">{t("mops.fee.cash")}</dt>
+            <dd className="tnum font-display text-lg font-bold">{formatMoney(fee)}</dd>
+          </div>
+        </dl>
 
-        <p className="flex items-start gap-2 text-xs leading-relaxed text-text-light">
+        <p className="flex items-start gap-2 text-xs leading-relaxed text-text-secondary">
           <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          <span>{t("fee.hint")}</span>
+          <span>{t("mops.fee.cashNote")}</span>
         </p>
       </div>
     </Dialog>

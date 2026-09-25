@@ -19,6 +19,7 @@ import {
   setMyDiningNotifications,
 } from "@/lib/data/dining-actions";
 import { useRouter } from "next/navigation";
+import { localizeActionError } from "@/lib/i18n/staff-errors";
 
 type Guest = { id: string; display_name: string; status: string; created_at: string };
 type Item = { id: string; name: string; quantity: number; unit_price: number; options_label: string | null; status: string; rejection_reason: string | null };
@@ -94,6 +95,7 @@ const copy = {
     alertsHelp: "Access requests, food orders and calls. Push requires notifications to be enabled on this device.",
     alertsSaved: "Table alert preference saved",
     alertsFailed: "Could not save the table alert preference",
+    error: "Something went wrong. Refresh and try again.",
   },
   fr: {
     empty: "Aucune session de table active",
@@ -152,10 +154,11 @@ const copy = {
     alertsHelp: "Demandes d’accès, commandes et appels. Le push doit être activé sur cet appareil.",
     alertsSaved: "Préférence d’alerte enregistrée",
     alertsFailed: "Impossible d’enregistrer la préférence d’alerte",
+    error: "Une erreur est survenue. Actualisez et réessayez.",
   },
 } as const;
 
-export function DiningFloor({ sessions, focusSessionId, canFinance, notificationsEnabled }: { sessions: DiningFloorSession[]; focusSessionId?: string; canFinance: boolean; notificationsEnabled: boolean }) {
+export function DiningFloor({ sessions, focusSessionId, canCollect, notificationsEnabled }: { sessions: DiningFloorSession[]; focusSessionId?: string; /** `payments.collect` — request Mobile Money, close a cash bill. */ canCollect: boolean; notificationsEnabled: boolean }) {
   const { toast } = useToast();
   const { locale } = useLocale();
   const t = copy[locale];
@@ -174,17 +177,58 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
   const [cashSessionId, setCashSessionId] = useState<string | null>(null);
   const [cashAcknowledged, setCashAcknowledged] = useState(false);
 
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     FAST ONLY WHILE A TABLE IS WAITING ON US.
+
+     This screen re-rendered the whole floor on the server every 5 s, all
+     service long, on every open tablet — one of the largest Vercel CPU lines
+     in the Sep 2026 audit, and almost all of it re-reading a floor where
+     nothing was waiting. Now:
+       · someone is waiting (a guest asking to join, dishes to approve, a
+         table settling its bill) and the tab is visible → every 8 s;
+       · nothing waiting → every 30 s, just to notice the next request;
+       · tab hidden → nothing at all; coming back refreshes at once.
+     Guest requests also arrive as notifications, so 30 s is the worst case,
+     not the normal one.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const hot = sessions.some(
+    (session) =>
+      session.status === "payment_requested" ||
+      (session.dining_guests ?? []).some((guest) => guest.status === "pending") ||
+      (session.dining_rounds ?? []).some((round) => round.status === "pending"),
+  );
   useEffect(() => {
-    const refresh = () => { if (document.visibilityState === "visible") router.refresh(); };
-    const timer = window.setInterval(refresh, 5000);
-    document.addEventListener("visibilitychange", refresh);
-    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
-  }, [router]);
+    const everyMs = hot ? 8_000 : 30_000;
+    let timer: number | null = null;
+    const start = () => {
+      if (timer === null) timer = window.setInterval(() => router.refresh(), everyMs);
+    };
+    const stop = () => {
+      if (timer !== null) window.clearInterval(timer);
+      timer = null;
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        router.refresh();
+        start();
+      } else {
+        stop();
+      }
+    };
+    if (document.visibilityState === "visible") start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [router, hot]);
 
   function run(fn: () => Promise<{ ok: boolean; error?: string }>, success: string) {
     start(async () => {
       const result = await fn();
-      toast(result.ok ? success : result.error ?? "Error", result.ok ? "success" : "error");
+      toast(result.ok ? success : localizeActionError(result.error, locale, t.error), result.ok ? "success" : "error");
       if (result.ok) router.refresh();
     });
   }
@@ -197,7 +241,7 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
     }
     start(async () => {
       const result = await decideDiningItem(rejectItem.id, false, rejectReason);
-      toast(result.ok ? t.dishRejected : result.error ?? "Error", result.ok ? "success" : "error");
+      toast(result.ok ? t.dishRejected : localizeActionError(result.error, locale, t.error), result.ok ? "success" : "error");
       if (result.ok) {
         setRejectItem(null);
         setRejectReason("");
@@ -210,7 +254,7 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
     if (!ids.length) return;
     start(async () => {
       const result = await decideDiningItems(ids, approve, reason);
-      toast(result.ok ? (approve ? t.bulkAccepted : t.bulkRejected) : result.error ?? "Error", result.ok ? "success" : "error");
+      toast(result.ok ? (approve ? t.bulkAccepted : t.bulkRejected) : localizeActionError(result.error, locale, t.error), result.ok ? "success" : "error");
       setSelectedItems(result.failedIds);
       if (result.ok) { setBulkRejectOpen(false); setBulkReason(""); }
       router.refresh();
@@ -223,7 +267,7 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
     start(async () => {
       const result = await setMyDiningNotifications(enabled);
       if (!result.ok) setAlertsEnabled(previous);
-      toast(result.ok ? t.alertsSaved : result.error ?? t.alertsFailed, result.ok ? "success" : "error");
+      toast(result.ok ? t.alertsSaved : localizeActionError(result.error, locale, t.alertsFailed), result.ok ? "success" : "error");
     });
   }
 
@@ -387,7 +431,7 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
                       const body = text[session.id] ?? "";
                       start(async () => {
                         const result = await sendStaffDiningMessage(session.id, replyGuestId, body);
-                        toast(result.ok ? t.sent : result.error ?? "Error", result.ok ? "success" : "error");
+                        toast(result.ok ? t.sent : localizeActionError(result.error, locale, t.error), result.ok ? "success" : "error");
                         if (result.ok) { setText((value) => ({ ...value, [session.id]: "" })); router.refresh(); }
                       });
                     }}><Send className="size-4" /></Button>
@@ -400,8 +444,8 @@ export function DiningFloor({ sessions, focusSessionId, canFinance, notification
                       <p className="text-xs text-text-secondary">{order.reference}</p>
                       <p className="font-display text-xl font-bold">{formatMoney(order.total)}</p>
                     </div>
-                    {canFinance && !order.is_paid && session.status === "open" && <Button className="whitespace-normal" variant="outline" disabled={pending} onClick={() => run(() => requestDiningPayment(session.id), t.requested)}><CreditCard className="size-4 shrink-0" />{t.requestPayment}</Button>}
-                    {canFinance && !order.is_paid && <Button className="whitespace-normal" disabled={pending} onClick={() => { setCashSessionId(session.id); setCashAcknowledged(false); }}><ReceiptText className="size-4 shrink-0" />{t.cash}</Button>}
+                    {canCollect && !order.is_paid && session.status === "open" && <Button className="whitespace-normal" variant="outline" disabled={pending} onClick={() => run(() => requestDiningPayment(session.id), t.requested)}><CreditCard className="size-4 shrink-0" />{t.requestPayment}</Button>}
+                    {canCollect && !order.is_paid && <Button className="whitespace-normal" disabled={pending} onClick={() => { setCashSessionId(session.id); setCashAcknowledged(false); }}><ReceiptText className="size-4 shrink-0" />{t.cash}</Button>}
                     {session.status === "payment_requested" && <span className="flex items-center gap-1 text-sm text-warning"><Clock3 className="size-4" />{t.waiting}</span>}
                   </div>
                 )}

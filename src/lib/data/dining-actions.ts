@@ -11,6 +11,8 @@ import { notify } from "@/lib/notify";
 import { sendGuestDiningPush } from "@/lib/push";
 import { canGuestUseDiningSession, diningFeatureAllowed } from "@/lib/dining/access";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
+import { getTranslator } from "@/lib/i18n/locale-server";
+import { paymentErrorMessage } from "@/lib/payments/payment-error";
 
 const hash = (token: string) => createHash("sha256").update(token).digest("hex");
 const tokenOk = (token: string) => /^[a-f0-9]{64}$/i.test(token);
@@ -115,12 +117,25 @@ export async function getTableLanding(tableToken: string) {
   return { table:{id:data.id,token:tableToken,number:data.number,capacity:data.capacity,status:data.status}, restaurant, categories:categories??[], items:items??[], groups:filteredGroups, options:(options??[]).filter(x=>groupIds.has(x.group_id)), serviceChargePercent:Number(feeSetting?.value??0)||0 };
 }
 
+/*
+  ─────────────────────────────────────────────────────────────────────────
+   GUEST-FACING ERRORS ARE TRANSLATED.
+
+   Every `error` a guest function below returns is shown verbatim on the
+   table page, and they were English-only — a French-speaking diner who hit
+   a rate limit or a closed session was answered in a language they had not
+   chosen. They now go through getTranslator() (the same cookie the page
+   renders with); the strings live in lib/i18n/dict/table-guest.ts.
+   Staff-facing functions in this file are untouched.
+  ─────────────────────────────────────────────────────────────────────────
+*/
 export async function requestTableAccess(tableToken: string, displayName: string, locale: "fr" | "en" = "fr") {
+  const t=await getTranslator();
   const limited=await rateLimit({key:"dining:join",limit:12,windowMs:60*60_000});
-  if(!limited.ok) return {ok:false,error:"Too many requests. Ask a waiter for help."};
+  if(!limited.ok) return {ok:false,error:t("tbg.err.tooManyJoin")};
   const raw=randomBytes(32).toString("hex");
   const {data,error}=await createAdminClient().rpc("request_dining_access",{p_table_token:tableToken,p_token_hash:hash(raw),p_display_name:displayName});
-  if(error){console.error("[dining:join]",error.message);return {ok:false,error:error.message.includes("table_payment_in_progress")?(locale==="en"?"This table is settling its bill. Ask staff to close the visit before scanning again.":"Cette table règle son addition. Demandez au personnel de clôturer la visite avant de rescanner."):"This table cannot accept guests right now."};}
+  if(error){console.error("[dining:join]",error.message);return {ok:false,error:error.message.includes("table_payment_in_progress")?t("tbg.err.settling"):t("tbg.err.tableUnavailable")};}
   const result=data as {status:string;sessionId:string;guestId:string};
   await createAdminClient().from("dining_guests").update({locale}).eq("id",result.guestId);
   await notifyDiningStaff(result.sessionId,"access",displayName.trim().slice(0,60)||"Guest");
@@ -148,9 +163,10 @@ export async function getGuestDiningState(raw:string){
 }
 
 export async function submitGuestRound(raw:string,input:{lines:{menuItemId:string;quantity:number;optionIds:string[]}[];notes?:string}):Promise<DiningAction>{
-  const limited=await rateLimit({key:"dining:order",limit:10,windowMs:15*60_000,identifier:hash(raw).slice(0,24)}); if(!limited.ok)return{ok:false,error:"Please wait before sending another order."};
-  const {error}=await createAdminClient().rpc("submit_dining_round",{p_token_hash:hash(raw),p_lines:input.lines,p_notes:input.notes??null});
-  if(error){console.error("[dining:round]",error.message);return{ok:false,error:error.message.includes("session_not_open")?"This table session is closed.":"The order could not be sent. Check the dishes and try again."};}
+  const t=await getTranslator();
+  const limited=await rateLimit({key:"dining:order",limit:10,windowMs:15*60_000,identifier:hash(raw).slice(0,24)}); if(!limited.ok)return{ok:false,error:t("tbg.err.waitOrder")};
+  const {error}=await createAdminClient().rpc("submit_dining_round",{p_token_hash:hash(raw),p_lines:input.lines,p_notes:input.notes?.slice(0,500)??null});
+  if(error){console.error("[dining:round]",error.message);return{ok:false,error:error.message.includes("session_not_open")?t("tbg.err.sessionClosed"):error.message.includes("guest_not_approved")?t("tbg.err.accessInactive"):error.message.includes("item_unavailable")?t("tbg.err.itemUnavailable"):t("tbg.err.roundFailed")};}
   const ctx=await guestContext(raw);
   if(ctx) await notifyDiningStaff(ctx.session_id,"order",ctx.display_name);
   revalidatePath("/m/table-order"); return{ok:true};
@@ -158,12 +174,13 @@ export async function submitGuestRound(raw:string,input:{lines:{menuItemId:strin
 
 const REQUESTS={call_waiter:"Please come to our table.",water:"Please bring water.",cutlery:"Please bring cutlery.",bill:"We would like the bill.",missing_item:"An item is missing.",allergy:"We need help with an allergy.",help:"We need assistance."} as const;
 export async function sendGuestDiningMessage(raw:string,kind:keyof typeof REQUESTS|"message",body?:string):Promise<DiningAction>{
-  const ctx=await guestContext(raw); if(!ctx||ctx.status!=="approved")return{ok:false,error:"Your table access is not active."};
+  const t=await getTranslator();
+  const ctx=await guestContext(raw); if(!ctx||ctx.status!=="approved")return{ok:false,error:t("tbg.err.accessInactive")};
   const session=Array.isArray(ctx.dining_sessions)?ctx.dining_sessions[0]:ctx.dining_sessions;
-  if(!session||!canGuestUseDiningSession(ctx.status,session.status))return{ok:false,error:"This table session is closed."};
-  const text=(kind==="message"?body:REQUESTS[kind])?.trim().slice(0,500);if(!text)return{ok:false,error:"Write a message first."};
-  const limited=await rateLimit({key:"dining:message",limit:12,windowMs:5*60_000,identifier:ctx.id});if(!limited.ok)return{ok:false,error:"Please wait before sending another request."};
-  const {error}=await createAdminClient().from("dining_messages").insert({session_id:ctx.session_id,guest_id:ctx.id,sender_kind:"guest",kind,body:text});if(error)return{ok:false,error:"Message not sent."};
+  if(!session||!canGuestUseDiningSession(ctx.status,session.status))return{ok:false,error:t("tbg.err.sessionClosed")};
+  const text=(kind==="message"?body:REQUESTS[kind])?.trim().slice(0,500);if(!text)return{ok:false,error:t("tbg.err.writeFirst")};
+  const limited=await rateLimit({key:"dining:message",limit:12,windowMs:5*60_000,identifier:ctx.id});if(!limited.ok)return{ok:false,error:t("tbg.err.waitRequest")};
+  const {error}=await createAdminClient().from("dining_messages").insert({session_id:ctx.session_id,guest_id:ctx.id,sender_kind:"guest",kind,body:text});if(error)return{ok:false,error:t("tbg.err.messageFailed")};
   await notifyDiningStaff(ctx.session_id,"message",ctx.display_name,text);
   revalidatePath("/m/table-order");return{ok:true};
 }
@@ -180,6 +197,7 @@ export async function getMyDiningNotifications(): Promise<boolean> {
 }
 
 export async function setMyDiningNotifications(enabled: boolean): Promise<DiningAction> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("orders.view");
   const { error } = await createAdminClient().from("notification_preferences").upsert({
     restaurant_id: active.restaurantId,
@@ -191,7 +209,7 @@ export async function setMyDiningNotifications(enabled: boolean): Promise<Dining
   }, { onConflict: "restaurant_id,profile_id,event_key" });
   if (error) {
     console.error("[dining:notifications]", error.message);
-    return { ok: false, error: "Could not save your table alert preference." };
+    return { ok: false, error: t("est.diningAlertPrefFailed") };
   }
   revalidatePath("/m/table-order");
   revalidatePath("/m/settings");
@@ -203,10 +221,11 @@ export async function fetchDiningFloor(restaurantId:string){
 }
 
 export async function decideDiningGuest(guestId:string,approve:boolean):Promise<DiningAction>{
-  const {active,profile}=await requireCapability("orders.advance"); if(!(await enterpriseRestaurant(active.restaurantId)))return{ok:false,error:"The 25,000 FCFA package is required."};
+  const t = await getTranslator();
+  const {active,profile}=await requireCapability("orders.advance"); if(!(await enterpriseRestaurant(active.restaurantId)))return{ok:false,error:t("est.diningPackageRequired")};
   const db=createAdminClient();const {data:guest}=await db.from("dining_guests").select("id,status,session_id,dining_sessions!inner(restaurant_id,table_id)").eq("id",guestId).eq("status","pending").maybeSingle();
-  const session=Array.isArray(guest?.dining_sessions)?guest?.dining_sessions[0]:guest?.dining_sessions;if(!guest||session?.restaurant_id!==active.restaurantId)return{ok:false,error:"Request not found."};
-  const {error}=await db.rpc("decide_dining_guest",{p_guest_id:guestId,p_staff_id:profile.id,p_approve:approve});if(error){console.error("[dining:guest]",error.message);return{ok:false,error:error.message.includes("table_payment_in_progress")?"This table is settling its bill. Close the current visit before approving another guest.":"Could not update access."};}
+  const session=Array.isArray(guest?.dining_sessions)?guest?.dining_sessions[0]:guest?.dining_sessions;if(!guest||session?.restaurant_id!==active.restaurantId)return{ok:false,error:t("est.requestNotFound")};
+  const {error}=await db.rpc("decide_dining_guest",{p_guest_id:guestId,p_staff_id:profile.id,p_approve:approve});if(error){console.error("[dining:guest]",error.message);return{ok:false,error:error.message.includes("table_payment_in_progress")?t("est.tableSettlingGuest"):t("est.guestAccessFailed")};}
   await notifyTableGuest(guestId, approve
     ? {
         fr: { title: "Accès à la table accepté", body: "Le restaurant a confirmé votre présence. Vous pouvez consulter le menu et commander." },
@@ -220,9 +239,10 @@ export async function decideDiningGuest(guestId:string,approve:boolean):Promise<
 }
 
 export async function decideDiningItem(itemId: string, approve: boolean, reason?: string): Promise<DiningAction> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("orders.advance");
   if (!approve && (!reason?.trim() || reason.trim().length < 5 || reason.trim().length > 240)) {
-    return { ok: false, error: "Give the customer a reason (5–240 characters)." };
+    return { ok: false, error: t("est.diningReasonRequired") };
   }
   const db = createAdminClient();
   const { data: item } = await db.from("dining_round_items")
@@ -230,7 +250,7 @@ export async function decideDiningItem(itemId: string, approve: boolean, reason?
     .eq("id", itemId).eq("status", "pending").maybeSingle();
   const round = Array.isArray(item?.dining_rounds) ? item.dining_rounds[0] : item?.dining_rounds;
   const session = Array.isArray(round?.dining_sessions) ? round.dining_sessions[0] : round?.dining_sessions;
-  if (!item || session?.restaurant_id !== active.restaurantId) return { ok: false, error: "Dish request not found." };
+  if (!item || session?.restaurant_id !== active.restaurantId) return { ok: false, error: t("est.dishRequestNotFound") };
 
   const { data, error } = await db.rpc("decide_dining_item", {
     p_item_id: itemId,
@@ -241,8 +261,8 @@ export async function decideDiningItem(itemId: string, approve: boolean, reason?
   if (error) {
     console.error("[dining:item-decision]", error.message);
     return { ok: false, error: error.message.includes("insufficient_stock")
-      ? "Not enough stock for this dish."
-      : "Could not update this dish. Refresh and try again." };
+      ? t("est.notEnoughStock")
+      : t("est.dishUpdateFailed") };
   }
   const result = data as { guestId: string; orderId?: string; reference?: string; itemName: string; quantity: number; amount: number };
   if (approve) {
@@ -270,11 +290,12 @@ export async function decideDiningItem(itemId: string, approve: boolean, reason?
 }
 
 export async function decideDiningItems(itemIds: string[], approve: boolean, reason?: string): Promise<DiningAction & { succeeded: number; failedIds: string[] }> {
+  const t = await getTranslator();
   if (!Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > 50 || new Set(itemIds).size !== itemIds.length) {
-    return { ok: false, error: "Select between 1 and 50 different dishes.", succeeded: 0, failedIds: itemIds ?? [] };
+    return { ok: false, error: t("est.selectDishes"), succeeded: 0, failedIds: itemIds ?? [] };
   }
   if (!approve && (!reason?.trim() || reason.trim().length < 5 || reason.trim().length > 240)) {
-    return { ok: false, error: "Give the customer a reason (5–240 characters).", succeeded: 0, failedIds: itemIds };
+    return { ok: false, error: t("est.diningReasonRequired"), succeeded: 0, failedIds: itemIds };
   }
   let succeeded = 0;
   const failedIds: string[] = [];
@@ -283,12 +304,13 @@ export async function decideDiningItems(itemIds: string[], approve: boolean, rea
     if (result.ok) succeeded++;
     else failedIds.push(id);
   }
-  return { ok: failedIds.length === 0, error: failedIds.length ? `${failedIds.length} dish(es) could not be updated. Refresh and review them.` : undefined, succeeded, failedIds };
+  return { ok: failedIds.length === 0, error: failedIds.length ? t("est.dishesNotUpdated", { count: failedIds.length }) : undefined, succeeded, failedIds };
 }
 
 export async function requestDiningPayment(sessionId:string):Promise<DiningAction>{
-  const {active,profile}=await requireCapability("finance.manage");const db=createAdminClient();const {data:s}=await db.from("dining_sessions").select("id,order_id").eq("id",sessionId).eq("restaurant_id",active.restaurantId).eq("status","open").maybeSingle();if(!s?.order_id)return{ok:false,error:"There is no bill to collect."};
-  const {data:setting}=await db.from("settings").select("value").eq("key","service_charge_percent").maybeSingle();const pct=Number(setting?.value??0)||0;const {error}=await db.rpc("request_dining_payment",{p_session_id:sessionId,p_staff_id:profile.id,p_service_charge_percent:pct});if(error){console.error("[dining:request-payment]",error.message);return{ok:false,error:"The bill could not be moved to payment. Refresh and try again."};}
+  const t = await getTranslator();
+  const {active,profile}=await requireCapability("payments.collect");const db=createAdminClient();const {data:s}=await db.from("dining_sessions").select("id,order_id").eq("id",sessionId).eq("restaurant_id",active.restaurantId).eq("status","open").maybeSingle();if(!s?.order_id)return{ok:false,error:t("est.noBillToCollect")};
+  const {data:setting}=await db.from("settings").select("value").eq("key","service_charge_percent").maybeSingle();const pct=Number(setting?.value??0)||0;const {error}=await db.rpc("request_dining_payment",{p_session_id:sessionId,p_staff_id:profile.id,p_service_charge_percent:pct});if(error){console.error("[dining:request-payment]",error.message);return{ok:false,error:t("est.billToPaymentFailed")};}
   await notifySessionGuests(sessionId, {
     fr: { title: "Addition prête à payer", body: "Le restaurant vous propose de régler votre addition en ligne. Ouvrez la table pour voir le total et la commission." },
     en: { title: "Bill ready to pay", body: "The restaurant invited you to pay your bill online. Open your table to review the total and service fee." },
@@ -299,11 +321,12 @@ export async function requestDiningPayment(sessionId:string):Promise<DiningActio
 export type DiningCashConfirmation = { sessionId: string; orderId: string; amount: number; itemIds: string[]; guestIds: string[]; confirmAll: true };
 
 export async function closeDiningCash(confirmation: DiningCashConfirmation): Promise<DiningAction> {
-  const { active, profile } = await requireCapability("finance.manage");
+  const t = await getTranslator();
+  const { active, profile } = await requireCapability("payments.collect");
   const db = createAdminClient();
   const { data: session } = await db.from("dining_sessions").select("id").eq("id", confirmation.sessionId).eq("restaurant_id", active.restaurantId).maybeSingle();
-  if (!session) return { ok: false, error: "Table session not found." };
-  if (confirmation.confirmAll !== true) return { ok: false, error: "Confirm the whole-table receipt first." };
+  if (!session) return { ok: false, error: t("est.tableSessionNotFound") };
+  if (confirmation.confirmAll !== true) return { ok: false, error: t("est.confirmWholeTable") };
   const { error } = await db.rpc("close_dining_cash_confirmed", {
     p_session_id: confirmation.sessionId, p_staff_id: profile.id, p_order_id: confirmation.orderId,
     p_amount: confirmation.amount, p_item_ids: confirmation.itemIds, p_guest_ids: confirmation.guestIds,
@@ -311,7 +334,7 @@ export async function closeDiningCash(confirmation: DiningCashConfirmation): Pro
   });
   if (error) {
     console.error("[dining:cash]", error.message);
-    return { ok: false, error: "The bill changed or payment is in progress. Refresh and review it again." };
+    return { ok: false, error: t("est.billChanged") };
   }
   await notifySessionGuests(confirmation.sessionId, {
     fr: { title: "Paiement sur place enregistré", body: "Le restaurant a enregistré votre paiement sur place. Merci de votre visite." },
@@ -321,30 +344,31 @@ export async function closeDiningCash(confirmation: DiningCashConfirmation): Pro
   return { ok: true };
 }
 
-export async function payDiningBill(raw:string,phone:string):Promise<DiningAction&{status?:"pending"|"succeeded";attemptId?:string;instruction?:PaymentInstruction}>{const ctx=await guestContext(raw);const session=Array.isArray(ctx?.dining_sessions)?ctx?.dining_sessions[0]:ctx?.dining_sessions;if(!ctx||ctx.status!=="approved"||session?.status!=="payment_requested"||!session.order_id)return{ok:false,error:"This table is not requesting payment."};const requested=normalisePhone(phone);if(!requested)return{ok:false,error:"Enter a valid Mobile Money number."};const db=createAdminClient();const {data:o}=await db.from("orders").select("id,reference,restaurant_id,total,status,is_paid,payment_method").eq("id",session.order_id).maybeSingle();if(!o)return{ok:false,error:"Bill not found."};if(o.is_paid)return{ok:true,status:"succeeded"};
- const {data:attempts}=await db.from("payment_attempts").select("id,status,transaction_id,phone").eq("raw_response->>orderId",o.id).in("status",["pending","succeeded"]).is("settled_at",null).order("created_at",{ascending:false}).limit(5);const open=(attempts??[]).find(a=>a.status==="succeeded"||Boolean(a.transaction_id));if(open?.status==="succeeded"){const settled=await settlePayment(open.id);return settled.ok?{ok:true,status:"succeeded"}:{ok:false,error:settled.error};}if(open?.transaction_id){const current=await checkPaymentAttempt(open.id);if(current.status==="succeeded")return{ok:true,status:"succeeded"};if(current.status==="pending"){if(normalisePhone(String(open.phone??""))!==requested)return{ok:false,error:"Another Mobile Money request is still active for this bill."};return{ok:true,status:"pending",attemptId:open.id,instruction:current.instruction};}}
- const {data:claimed}=await db.rpc("claim_dining_payment",{p_order_id:o.id});if(!claimed)return{ok:false,error:"A payment request is already active for this bill."};
- const initiated=await initiatePaymentAttempt({kind:"order",restaurantId:o.restaurant_id,orderId:o.id,reference:o.reference,phone:requested,amount:o.total});if(!initiated.ok||!initiated.attemptId){await db.from("orders").update({payment_started_at:null}).eq("id",o.id).eq("is_paid",false);return{ok:false,error:initiated.error??"Payment failed."};}if(initiated.status==="pending")return{ok:true,status:"pending",attemptId:initiated.attemptId,instruction:initiated.instruction};const settled=await settlePayment(initiated.attemptId);return settled.ok?{ok:true,status:"succeeded"}:{ok:false,error:settled.error};}
+export async function payDiningBill(raw:string,phone:string):Promise<DiningAction&{status?:"pending"|"succeeded";attemptId?:string;instruction?:PaymentInstruction}>{const t=await getTranslator();const ctx=await guestContext(raw);const session=Array.isArray(ctx?.dining_sessions)?ctx?.dining_sessions[0]:ctx?.dining_sessions;if(!ctx||ctx.status!=="approved"||session?.status!=="payment_requested"||!session.order_id)return{ok:false,error:t("tbg.err.notRequestingPayment")};const requested=normalisePhone(phone);if(!requested)return{ok:false,error:t("tbg.err.badPhone")};const db=createAdminClient();const {data:o}=await db.from("orders").select("id,reference,restaurant_id,total,status,is_paid,payment_method").eq("id",session.order_id).maybeSingle();if(!o)return{ok:false,error:t("tbg.err.billNotFound")};if(o.is_paid)return{ok:true,status:"succeeded"};
+ const {data:attempts}=await db.from("payment_attempts").select("id,status,transaction_id,phone").eq("raw_response->>orderId",o.id).in("status",["pending","succeeded"]).is("settled_at",null).order("created_at",{ascending:false}).limit(5);const open=(attempts??[]).find(a=>a.status==="succeeded"||Boolean(a.transaction_id));if(open?.status==="succeeded"){const settled=await settlePayment(open.id);return settled.ok?{ok:true,status:"succeeded"}:{ok:false,error:paymentErrorMessage(settled,t,"tbg.err.paymentFailed")};}if(open?.transaction_id){const current=await checkPaymentAttempt(open.id);if(current.status==="succeeded")return{ok:true,status:"succeeded"};if(current.status==="pending"){if(normalisePhone(String(open.phone??""))!==requested)return{ok:false,error:t("tbg.err.otherRequestActive")};return{ok:true,status:"pending",attemptId:open.id,instruction:current.instruction};}}
+ const {data:claimed}=await db.rpc("claim_dining_payment",{p_order_id:o.id});if(!claimed)return{ok:false,error:t("tbg.err.paymentActive")};
+ const initiated=await initiatePaymentAttempt({kind:"order",restaurantId:o.restaurant_id,orderId:o.id,reference:o.reference,phone:requested,amount:o.total});if(!initiated.ok||!initiated.attemptId){await db.from("orders").update({payment_started_at:null}).eq("id",o.id).eq("is_paid",false);return{ok:false,error:paymentErrorMessage(initiated,t,"tbg.err.paymentFailed")};}if(initiated.status==="pending")return{ok:true,status:"pending",attemptId:initiated.attemptId,instruction:initiated.instruction};const settled=await settlePayment(initiated.attemptId);return settled.ok?{ok:true,status:"succeeded"}:{ok:false,error:paymentErrorMessage(settled,t,"tbg.err.paymentFailed")};}
 
-export async function checkDiningPayment(raw:string,attemptId:string){const ctx=await guestContext(raw);const session=Array.isArray(ctx?.dining_sessions)?ctx?.dining_sessions[0]:ctx?.dining_sessions;if(!ctx||!session?.order_id)return{ok:false as const,error:"Payment not found."};const db=createAdminClient();const {data:a}=await db.from("payment_attempts").select("raw_response").eq("id",attemptId).maybeSingle();if((a?.raw_response as {orderId?:string}|null)?.orderId!==session.order_id)return{ok:false as const,error:"Payment not found."};const result=await checkPaymentAttempt(attemptId);return{ok:result.ok,status:result.status,instruction:result.instruction,error:result.error};}
+export async function checkDiningPayment(raw:string,attemptId:string){const t=await getTranslator();const ctx=await guestContext(raw);const session=Array.isArray(ctx?.dining_sessions)?ctx?.dining_sessions[0]:ctx?.dining_sessions;if(!ctx||!session?.order_id)return{ok:false as const,error:t("tbg.err.paymentNotFound")};const db=createAdminClient();const {data:a}=await db.from("payment_attempts").select("raw_response").eq("id",attemptId).maybeSingle();if((a?.raw_response as {orderId?:string}|null)?.orderId!==session.order_id)return{ok:false as const,error:t("tbg.err.paymentNotFound")};const result=await checkPaymentAttempt(attemptId);return{ok:result.ok,status:result.status,instruction:result.instruction,error:result.ok?undefined:paymentErrorMessage(result,t,"tbg.err.paymentNotFound")};}
 
 export async function sendStaffDiningMessage(sessionId: string, guestId: string, body: string): Promise<DiningAction> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("orders.view");
   const text = body.trim().slice(0, 500);
-  if (!text) return { ok: false, error: "Write a message first." };
+  if (!text) return { ok: false, error: t("tbg.err.writeFirst") };
   const db = createAdminClient();
   const { data: session } = await db.from("dining_sessions").select("id")
     .eq("id", sessionId).eq("restaurant_id", active.restaurantId)
     .in("status", ["awaiting_staff", "open", "payment_requested"]).maybeSingle();
-  if (!session) return { ok: false, error: "Table session not found." };
+  if (!session) return { ok: false, error: t("est.tableSessionNotFound") };
   const { data: guest } = await db.from("dining_guests").select("id")
     .eq("id", guestId).eq("session_id", sessionId).eq("status", "approved").maybeSingle();
-  if (!guest) return { ok: false, error: "Choose an approved guest." };
+  if (!guest) return { ok: false, error: t("est.chooseApprovedGuest") };
   const { error } = await db.from("dining_messages").insert({
     session_id: sessionId, guest_id: guestId, sender_kind: "staff",
     sender_staff_id: profile.id, kind: "message", body: text,
   });
-  if (error) return { ok: false, error: "Message not sent." };
+  if (error) return { ok: false, error: t("est.messageNotSent") };
   await notifyTableGuest(guestId, {
     fr: { title: "Message du restaurant", body: text },
     en: { title: "Message from the restaurant", body: text },
@@ -354,65 +378,112 @@ export async function sendStaffDiningMessage(sessionId: string, guestId: string,
 }
 
 export async function saveGuestDiningPush(raw: string, input: { endpoint: string; p256dh: string; auth: string }): Promise<DiningAction> {
+  const t = await getTranslator();
   const ctx = await guestContext(raw);
   const session = Array.isArray(ctx?.dining_sessions) ? ctx?.dining_sessions[0] : ctx?.dining_sessions;
   if (!ctx || !session || !["pending", "approved"].includes(ctx.status) || !["awaiting_staff", "open", "payment_requested"].includes(session.status)) {
-    return { ok: false, error: "Your table visit is not active." };
+    return { ok: false, error: t("tbg.err.visitInactive") };
   }
   const endpoint = input.endpoint.trim();
   if (!endpoint.startsWith("https://") || endpoint.length > 2048 ||
       !/^[A-Za-z0-9_+/=-]{40,}$/.test(input.p256dh) ||
       !/^[A-Za-z0-9_+/=-]{8,}$/.test(input.auth)) {
-    return { ok: false, error: "Invalid browser subscription." };
+    return { ok: false, error: t("tbg.err.badSubscription") };
   }
   const limited = await rateLimit({ key: "dining:push", identifier: ctx.id, limit: 10, windowMs: 60 * 60_000 });
-  if (!limited.ok) return { ok: false, error: "Please try again later." };
+  if (!limited.ok) return { ok: false, error: t("tbg.err.tryLater") };
   const { error } = await createAdminClient().from("dining_guest_push_subscriptions")
     .upsert({ guest_id: ctx.id, endpoint, p256dh: input.p256dh, auth: input.auth, updated_at: new Date().toISOString() }, { onConflict: "endpoint" });
   if (error) {
     console.error("[dining:guest-push]", error.message);
-    return { ok: false, error: "Could not enable table alerts." };
+    return { ok: false, error: t("tbg.err.alertsFailed") };
   }
   return { ok: true };
 }
 
 export async function requestGuestDiningPayment(raw: string): Promise<DiningAction> {
+  const t = await getTranslator();
   const ctx = await guestContext(raw);
   const session = Array.isArray(ctx?.dining_sessions) ? ctx?.dining_sessions[0] : ctx?.dining_sessions;
   if (!ctx || ctx.status !== "approved" || !session || !canGuestUseDiningSession(ctx.status, session.status)) {
-    return { ok: false, error: "This table visit is not active." };
+    return { ok: false, error: t("tbg.err.visitInactive") };
   }
   const limited = await rateLimit({ key: "dining:checkout", identifier: ctx.id, limit: 4, windowMs: 10 * 60_000 });
-  if (!limited.ok) return { ok: false, error: "Please wait before trying again." };
+  if (!limited.ok) return { ok: false, error: t("tbg.err.waitRequest") };
   const { error } = await createAdminClient().rpc("guest_request_dining_payment", { p_token_hash: hash(raw) });
   if (error) {
     console.error("[dining:guest-checkout]", error.message);
     return { ok: false, error: error.message.includes("items_pending")
-      ? "Wait until the restaurant answers every dish before paying."
-      : "Could not prepare online payment. Ask a waiter for help." };
+      ? t("tbg.err.itemsPending")
+      : t("tbg.err.preparePayment") };
   }
   await notifyDiningStaff(session.id, "message", ctx.display_name, "Guest chose online payment.");
   return { ok: true };
 }
 
 export async function saveGuestDiningNativePush(raw: string, token: string, platform: "android" | "ios"): Promise<DiningAction> {
+  const t = await getTranslator();
   const ctx = await guestContext(raw);
   const session = Array.isArray(ctx?.dining_sessions) ? ctx.dining_sessions[0] : ctx?.dining_sessions;
   if (!ctx || !session || !["pending", "approved"].includes(ctx.status) ||
       !["awaiting_staff", "open", "payment_requested"].includes(session.status)) {
-    return { ok: false, error: "Your table visit is not active." };
+    return { ok: false, error: t("tbg.err.visitInactive") };
   }
   if (!["android", "ios"].includes(platform) || !/^[A-Za-z0-9_:.-]{20,4096}$/.test(token)) {
-    return { ok: false, error: "Invalid device subscription." };
+    return { ok: false, error: t("tbg.err.badSubscription") };
   }
   const limited = await rateLimit({ key: "dining:native-push", identifier: ctx.id, limit: 20, windowMs: 60 * 60_000 });
-  if (!limited.ok) return { ok: false, error: "Please try again later." };
+  if (!limited.ok) return { ok: false, error: t("tbg.err.tryLater") };
   const { error } = await createAdminClient().from("dining_guest_fcm_subscriptions").upsert({
     guest_id: ctx.id, token, platform, updated_at: new Date().toISOString(),
   }, { onConflict: "token" });
   if (error) {
     console.error("[dining:native-push]", error.message);
-    return { ok: false, error: "Could not enable table alerts." };
+    return { ok: false, error: t("tbg.err.alertsFailed") };
   }
+  return { ok: true };
+}
+
+/**
+ * The guest withdraws a table-access request that no waiter has answered yet.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE "EN ATTENTE D'UN SERVEUR" SCREEN USED TO BE A DEAD END.
+ *
+ *  A guest who scanned the wrong table, or whose friends had already
+ *  ordered, had nothing to press: the request sat pending on the staff floor
+ *  and the phone showed a spinner for ever. This lets them take it back.
+ * ─────────────────────────────────────────────────────────────────────────
+ *
+ * Conditional on `status = 'pending'` (compare-and-swap): if a waiter
+ * approved or declined in the same instant, the decision stands and this
+ * reports failure instead of overwriting it. The row becomes `expired` — the
+ * status the schema already uses for a guest who is no longer part of the
+ * visit. The session itself is left alone: other guests may be in it, and the
+ * next person to scan the table simply joins it.
+ */
+export async function withdrawTableAccess(raw: string): Promise<DiningAction> {
+  const t = await getTranslator();
+  if (!tokenOk(raw)) return { ok: false, error: t("tbg.err.cancelFailed") };
+  const limited = await rateLimit({ key: "dining:withdraw", limit: 10, windowMs: 10 * 60_000, identifier: hash(raw).slice(0, 24) });
+  if (!limited.ok) return { ok: false, error: t("tbg.err.tryLater") };
+  const db = createAdminClient();
+  const { data, error } = await db.from("dining_guests")
+    .update({ status: "expired" })
+    .eq("token_hash", hash(raw))
+    .eq("status", "pending")
+    .select("id, session_id, display_name")
+    .maybeSingle();
+  if (error || !data) {
+    if (error) console.error("[dining:withdraw]", error.message);
+    return { ok: false, error: t("tbg.err.cancelFailed") };
+  }
+  // Staff-facing trace on the floor, in the manager's language (French).
+  const { error: messageError } = await db.from("dining_messages").insert({
+    session_id: data.session_id, guest_id: data.id, sender_kind: "system", kind: "message",
+    body: `Demande d’accès retirée par ${String(data.display_name ?? "le client").slice(0, 60)}`,
+  });
+  if (messageError) console.error("[dining:withdraw-message]", messageError.message);
+  revalidatePath("/m/table-order");
   return { ok: true };
 }

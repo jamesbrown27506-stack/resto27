@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { Button, buttonClasses } from "@/components/ui/button";
+import { useLocale } from "@/lib/i18n/use-locale";
 
 /**
  * Global error boundary.
@@ -11,6 +12,10 @@ import { Button, buttonClasses } from "@/components/ui/button";
  * Deliberately does NOT print the raw error message: it can contain a
  * connection string, a query fragment or a user's email. The digest is enough
  * to correlate with server logs, and is safe to show.
+ *
+ * Localised: it used to be French only, so an English-speaking customer who
+ * hit an error was told "Réessayer". It renders inside the root layout, so
+ * the LocaleProvider (and the customer's chosen language) is available here.
  */
 export default function GlobalError({
   error,
@@ -19,6 +24,7 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const { t } = useLocale();
   useEffect(() => {
     console.error(error);
   }, [error]);
@@ -29,11 +35,8 @@ export default function GlobalError({
         <AlertTriangle className="size-6" aria-hidden />
       </span>
 
-      <h1 className="font-display text-3xl font-bold">Une erreur est survenue</h1>
-      <p className="max-w-md leading-relaxed text-text-secondary">
-        Quelque chose s&apos;est mal passé de notre côté. Réessayez — si le problème persiste,
-        écrivez-nous en mentionnant la référence ci-dessous.
-      </p>
+      <h1 className="font-display text-3xl font-bold">{t("sui.error.title")}</h1>
+      <p className="max-w-md leading-relaxed text-text-secondary">{t("sui.error.body")}</p>
 
       {error.digest && (
         <p className="tnum rounded-md bg-surface-2 px-3 py-1.5 font-mono text-xs text-text-light">
@@ -44,10 +47,10 @@ export default function GlobalError({
       <div className="mt-2 flex flex-wrap justify-center gap-3">
         <Button onClick={reset}>
           <RefreshCw className="size-4" aria-hidden />
-          Réessayer
+          {t("sui.error.retry")}
         </Button>
         <Link href="/" className={buttonClasses({ variant: "outline" })}>
-          Retour à l&apos;accueil
+          {t("sui.error.home")}
         </Link>
       </div>
     </div>

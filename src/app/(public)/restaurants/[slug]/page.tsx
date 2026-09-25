@@ -14,6 +14,7 @@ import { RatingStars } from "@/components/ui/rating-stars";
 import { OpenBadge } from "@/components/restaurant/open-badge";
 import { HoursTable, ReviewList } from "@/components/restaurant/restaurant-detail-parts";
 import { MenuOrderer } from "@/components/menu/menu-orderer";
+import { ContactRestaurantButton } from "@/components/chat/contact-restaurant-button";
 import { fetchMenuSections, fetchPublicRestaurantBySlug } from "@/lib/data/public";
 import { fetchReviews } from "@/lib/data/reviews";
 import { formatMoney } from "@/lib/format/currency";
@@ -309,6 +310,9 @@ export default async function RestaurantDetailPage({
               <CalendarCheck className="size-4" aria-hidden />
               {t("cbr.bookHere")}
             </Link>
+            {/* The only way to reach the restaurant: in-app chat, never a
+                phone number (see openRestaurantConversation). */}
+            <ContactRestaurantButton restaurantId={restaurant.id} fullWidth className="sm:w-auto" />
             <p className="text-center text-xs text-text-light sm:text-right">
               {t("cbr.orderBelow")}
             </p>

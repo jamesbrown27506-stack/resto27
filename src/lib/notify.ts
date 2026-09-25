@@ -45,7 +45,8 @@ export type NotifyEvent =
   | "table_service" //      → staff   : guest access, table order or service message
   | "new_order" //           → manager : a customer placed an order
   | "order_status" //        → customer: the order advanced a step
-  | "order_cancelled" //     → both    : someone cancelled an order
+  | "order_cancelled" //     → both    : someone cancelled an order (or the time limit did)
+  | "refund" //              → customer: money for a cancelled order/booking reached them
   | "reservation" //         → manager : a new reservation request
   | "reservation_decision" //→ customer: confirmed or declined
   | "reservation_status" //  → customer: seated, completed or no-show
@@ -103,8 +104,12 @@ export interface NotifyParams {
     | "delivered"
     | "cancelled"
     | "suspended";
-  /** Who cancelled — decides whose side of the copy the manager reads. */
-  cancelledBy?: "customer" | "restaurant";
+  /** Who cancelled — decides whose side of the copy the manager reads.
+      "timeout" is the order time limit (0059) cancelling for nobody. */
+  cancelledBy?: "customer" | "restaurant" | "timeout";
+  /** order_cancelled: what is being refunded, and where it goes. */
+  refundAmount?: number;
+  refundTo?: "mobile_money" | "customer_wallet";
   deliveryFee?: number;
   reason?: string;
   partySize?: number;
@@ -287,14 +292,24 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
         would bury the only notification in the flow that needs an action.
       */
       if (p.status === "awaiting_customer") {
+        // Food online, delivery in cash to the rider (0059) — both numbers,
+        // and the deadline after which the order lapses.
+        const due = p.amount !== undefined ? ` ${money(p.amount)}` : "";
+        const by = p.whenLabel ? (fr ? ` avant ${p.whenLabel}` : ` before ${p.whenLabel}`) : "";
+        const cash =
+          p.deliveryFee !== undefined && p.deliveryFee > 0
+            ? fr
+              ? ` Livraison : ${money(p.deliveryFee)} à payer en espèces au livreur.`
+              : ` Delivery: ${money(p.deliveryFee)} to pay the rider in cash.`
+            : "";
         return fr
           ? {
               title: `Commande ${p.reference ?? ""} — paiement demandé`,
-              body: `${p.restaurantName ?? "Le restaurant"} a accepté votre commande. Payez maintenant pour lancer la préparation.`,
+              body: `${p.restaurantName ?? "Le restaurant"} a confirmé votre commande. Payez${due}${by} pour lancer la préparation.${cash}`,
             }
           : {
               title: `Order ${p.reference ?? ""} — payment requested`,
-              body: `${p.restaurantName ?? "The restaurant"} accepted your order. Pay now so preparation can start.`,
+              body: `${p.restaurantName ?? "The restaurant"} confirmed your order. Pay${due}${by} so preparation can start.${cash}`,
             };
       }
 
@@ -361,11 +376,11 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
         return fr
           ? {
               title: `Devis sans réponse — commande ${p.reference ?? ""}`,
-              body: "Le client n'a pas répondu au devis de livraison depuis plus d'une heure. Appelez-le, ou annulez la commande.",
+              body: "Le client n'a pas encore payé cette commande. Écrivez-lui dans la messagerie ; sans paiement elle sera annulée automatiquement.",
             }
           : {
               title: `Quote unanswered — order ${p.reference ?? ""}`,
-              body: "The customer has not answered the delivery quote for over an hour. Call them, or cancel the order.",
+              body: "The customer has not paid this order yet. Message them in the app; unpaid, it will be cancelled automatically.",
             };
       }
       return p.audience === "staff"
@@ -388,8 +403,52 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
               body: `Your delivery from ${p.restaurantName ?? "the restaurant"} is taking longer than expected. The restaurant has been alerted.`,
             };
 
+    case "refund":
+      return fr
+        ? {
+            title: `Remboursement ${p.reference ?? ""} effectué`,
+            body: `${money(p.amount)} vous ont été renvoyés.`,
+          }
+        : {
+            title: `Refund ${p.reference ?? ""} sent`,
+            body: `${money(p.amount)} has been returned to you.`,
+          };
+
     case "order_cancelled": {
       const byCustomer = p.cancelledBy === "customer";
+      /*
+        THE TIME LIMIT (0059) speaks to both sides, in different words: the
+        customer needs to know they owe nothing (or are being refunded); the
+        kitchen needs to know an order slipped past it.
+      */
+      const refundLine =
+        p.refundAmount && p.refundAmount > 0
+          ? fr
+            ? ` ${money(p.refundAmount)} vous seront remboursés ${p.refundTo === "customer_wallet" ? "sur votre portefeuille Resto237" : "sur votre Mobile Money"}.`
+            : ` ${money(p.refundAmount)} will be refunded ${p.refundTo === "customer_wallet" ? "to your Resto237 wallet" : "to your Mobile Money"}.`
+          : "";
+      if (p.cancelledBy === "timeout") {
+        if (p.audience === "staff") {
+          return fr
+            ? {
+                title: `Commande ${p.reference ?? ""} expirée`,
+                body: p.reason ?? "Délai dépassé — la commande a été annulée automatiquement.",
+              }
+            : {
+                title: `Order ${p.reference ?? ""} expired`,
+                body: p.reason ?? "Time limit passed — the order was cancelled automatically.",
+              };
+        }
+        return fr
+          ? {
+              title: `Commande ${p.reference ?? ""} annulée`,
+              body: `${p.reason ?? "Le délai de réponse est dépassé."}${refundLine || " Aucun montant ne vous a été prélevé."}`,
+            }
+          : {
+              title: `Order ${p.reference ?? ""} cancelled`,
+              body: `${p.reason ?? "The time limit passed."}${refundLine || " You have not been charged."}`,
+            };
+      }
       return fr
         ? byCustomer
           ? { title: `Commande ${p.reference ?? ""} annulée`, body: "Annulée par le client." }
@@ -397,7 +456,7 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
               title: `Commande ${p.reference ?? ""} annulée`,
               body: `Votre commande chez ${p.restaurantName ?? "le restaurant"} a été annulée.${
                 p.reason ? ` Raison : ${p.reason}` : ""
-              }`,
+              }${refundLine}`,
             }
         : byCustomer
           ? { title: `Order ${p.reference ?? ""} cancelled`, body: "Cancelled by the customer." }
@@ -405,7 +464,7 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
               title: `Order ${p.reference ?? ""} cancelled`,
               body: `Your order at ${p.restaurantName ?? "the restaurant"} was cancelled.${
                 p.reason ? ` Reason: ${p.reason}` : ""
-              }`,
+              }${refundLine}`,
             };
     }
 
@@ -432,18 +491,43 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
               body: `${p.customerName ?? "The guest"} cancelled the reservation. The table is released.`,
             };
       }
+      // The reservation clock's one reminder on an unanswered request (0060):
+      // half the answer time is gone. `whenLabel` is the deadline itself.
+      if (p.status === "pending" && p.reminder) {
+        return fr
+          ? {
+              title: `Demande ${p.reference ?? ""} toujours sans réponse`,
+              body: `${p.customerName ?? "Un client"} · ${p.partySize ?? 1} pers. Répondez avant ${p.whenLabel ?? "l'échéance"}, sinon la demande expire.`,
+            }
+          : {
+              title: `Request ${p.reference ?? ""} still unanswered`,
+              body: `${p.customerName ?? "A guest"} · ${p.partySize ?? 1} people. Answer before ${p.whenLabel ?? "the deadline"} or the request expires.`,
+            };
+      }
+      if (p.status === "expired") {
+        return fr
+          ? {
+              title: `Demande ${p.reference ?? ""} expirée`,
+              body: `Sans réponse dans le délai, la demande de ${p.customerName ?? "ce client"} a expiré. Le client a été prévenu.`,
+            }
+          : {
+              title: `Request ${p.reference ?? ""} expired`,
+              body: `It was not answered in time, so ${p.customerName ?? "the guest"}'s request expired. The guest has been told.`,
+            };
+      }
       if (p.status === "cancelled") {
         // Released by the platform, not by either party: the deposit never
-        // came and the slot has passed. Honest wording — "the client
-        // cancelled" would blame someone who merely went quiet.
+        // came within the payment hold (0060: one hour after acceptance, and
+        // never later than one hour before the slot). Honest wording — "the
+        // client cancelled" would blame someone who merely went quiet.
         return fr
           ? {
               title: `Réservation ${p.reference ?? ""} libérée`,
-              body: `Acompte non réglé avant l'heure de la réservation — la table est de nouveau disponible.`,
+              body: `Acompte non réglé à temps — la table est de nouveau disponible.`,
             }
           : {
               title: `Reservation ${p.reference ?? ""} released`,
-              body: `The deposit was never paid and the slot has passed — the table is available again.`,
+              body: `The deposit was not paid in time — the table is available again.`,
             };
       }
       return fr
@@ -485,20 +569,73 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
       }
 
       if (p.status === "expired") {
+        // Since 0060 a request expires when the restaurant has not answered
+        // within the time limit (or one hour before the slot) — not only once
+        // the slot has passed — so the copy says who went quiet.
         return fr
           ? {
               title: `Demande ${p.reference ?? ""} expirée`,
-              body: "Le créneau est passé sans confirmation du restaurant. Aucun paiement n’a été prélevé.",
+              body: `${p.restaurantName ?? "Le restaurant"} n’a pas répondu à temps. Aucun paiement n’a été prélevé — choisissez un autre créneau ou un autre restaurant.`,
             }
           : {
               title: `Request ${p.reference ?? ""} expired`,
-              body: "The booking time passed without restaurant confirmation. No payment was taken.",
+              body: `${p.restaurantName ?? "The restaurant"} did not answer in time. No payment was taken — pick another time or another restaurant.`,
+            };
+      }
+
+      /*
+        THE RESTAURANT WITHDREW A BOOKING IT HAD CONFIRMED (0060). Not a
+        "decline": the customer had a table, possibly paid for. The reason is
+        the restaurant's own words and always present; the refund line names
+        the amount and where it goes, because "you will be refunded" without
+        a figure is the sentence people call support about.
+      */
+      if (p.status === "cancelled" && p.cancelledBy === "restaurant") {
+        const refund = p.refundAmount && p.refundAmount > 0 ? formatMoney(p.refundAmount) : "";
+        return fr
+          ? {
+              title: `Réservation ${p.reference ?? ""} annulée par le restaurant`,
+              body: `Raison : ${p.reason ?? "Non précisée"}.${
+                refund ? ` Votre acompte de ${refund} vous est intégralement remboursé sur Mobile Money.` : ""
+              }`,
+            }
+          : {
+              title: `Reservation ${p.reference ?? ""} cancelled by the restaurant`,
+              body: `Reason: ${p.reason ?? "Not specified"}.${
+                refund ? ` Your ${refund} deposit is being refunded in full to your Mobile Money.` : ""
+              }`,
+            };
+      }
+
+      // The payment hold ran out (0060): accepted, never paid, table freed.
+      if (p.status === "cancelled" && p.cancelledBy === "timeout") {
+        return fr
+          ? {
+              title: `Réservation ${p.reference ?? ""} libérée`,
+              body: "L’acompte n’a pas été réglé à temps, la table a été libérée. Aucun paiement n’a été prélevé.",
+            }
+          : {
+              title: `Reservation ${p.reference ?? ""} released`,
+              body: "The deposit was not paid in time, so the table was released. No payment was taken.",
             };
       }
 
       const awaiting = p.status === "awaiting_payment";
       const confirmed = p.status === "confirmed";
       const amount = p.amount !== undefined ? formatMoney(p.amount) : "";
+
+      // The one nag while the payment hold runs; `whenLabel` is its deadline.
+      if (awaiting && p.reminder) {
+        return fr
+          ? {
+              title: `Acompte ${p.reference ?? ""} à régler avant ${p.whenLabel ?? "l'échéance"}`,
+              body: `${p.restaurantName ?? "Le restaurant"} garde votre table jusque-là. Sans paiement de ${amount}, elle sera libérée.`,
+            }
+          : {
+              title: `Deposit ${p.reference ?? ""} due before ${p.whenLabel ?? "the deadline"}`,
+              body: `${p.restaurantName ?? "The restaurant"} holds your table until then. Without the ${amount} payment it will be released.`,
+            };
+      }
 
       if (awaiting) {
         return fr
@@ -924,6 +1061,7 @@ interface Channels {
 const CUSTOMER_PREF_KEY: Partial<Record<NotifyEvent, CustomerTopicKey>> = {
   order_status: "order_status",
   order_cancelled: "order_status",
+  refund: "order_status",
   order_delayed: "order_status",
   reservation_decision: "reservations",
   reservation_status: "reservations",

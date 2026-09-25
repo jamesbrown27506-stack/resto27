@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { getLocale, getTranslator } from "@/lib/i18n/locale-server";
+import { paymentErrorMessage } from "@/lib/payments/payment-error";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
@@ -53,6 +55,7 @@ function laterDate(a: string | null, b: string | null): string | null {
 export async function choosePlan(
   planId: string,
 ): Promise<SubscribeResult & { invoiceId?: string; amount?: number }> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("billing.manage");
   const supabase = createAdminClient();
 
@@ -63,7 +66,7 @@ export async function choosePlan(
     .maybeSingle();
 
   if (!plan || !plan.is_active) {
-    return { ok: false, reason: "planUnavailable", error: "Ce forfait n'est pas disponible." };
+    return { ok: false, reason: "planUnavailable", error: t("est.planUnavailable") };
   }
 
   const { data: subscription } = await supabase
@@ -76,7 +79,7 @@ export async function choosePlan(
     return {
       ok: false,
       reason: "noSubscription",
-      error: "Aucun abonnement pour cet établissement.",
+      error: t("est.noSubscription"),
     };
   }
 
@@ -120,7 +123,7 @@ export async function choosePlan(
       return {
         ok: false,
         reason: "planChangeFailed",
-        error: "Le changement de forfait a échoué.",
+        error: t("est.planChangeFailed"),
       };
     }
 
@@ -155,7 +158,7 @@ export async function choosePlan(
     });
 
     revalidatePath("/m", "layout");
-    return { ok: true, note: `Vous êtes maintenant sur ${plan.name}.` };
+    return { ok: true, note: t("est.nowOnPlan", { plan: plan.name }) };
   }
 
   /* ── Paid: raise an invoice, grant nothing yet ────────────────────────── */
@@ -177,7 +180,7 @@ export async function choosePlan(
   });
 
   if (!invoice) {
-    return { ok: false, reason: "invoiceFailed", error: "Impossible de créer la facture." };
+    return { ok: false, reason: "invoiceFailed", error: t("est.invoiceCreateFailed") };
   }
 
   if (!invoice.created) return { ok: true, invoiceId: invoice.id, amount: invoice.amount };
@@ -212,6 +215,7 @@ export async function choosePlan(
  * ─────────────────────────────────────────────────────────────────────────
  */
 export async function startTrial(planId: string): Promise<SubscribeResult> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("billing.manage");
   const supabase = createAdminClient();
 
@@ -222,10 +226,10 @@ export async function startTrial(planId: string): Promise<SubscribeResult> {
     .maybeSingle();
 
   if (!plan || !plan.is_active) {
-    return { ok: false, reason: "planUnavailable", error: "Ce forfait n'est pas disponible." };
+    return { ok: false, reason: "planUnavailable", error: t("est.planUnavailable") };
   }
   if (!plan.trial_days) {
-    return { ok: false, reason: "noTrialOnPlan", error: "Ce forfait n'a pas d'essai gratuit." };
+    return { ok: false, reason: "noTrialOnPlan", error: t("est.noTrial") };
   }
 
   const { data: subscription } = await supabase
@@ -238,14 +242,14 @@ export async function startTrial(planId: string): Promise<SubscribeResult> {
     return {
       ok: false,
       reason: "noSubscription",
-      error: "Aucun abonnement pour cet établissement.",
+      error: t("est.noSubscription"),
     };
   }
 
   // One per restaurant, ever. Checked on the server because the button being
   // hidden is not the rule — this is.
   if (subscription.trial_used) {
-    return { ok: false, reason: "trialUsed", error: "Votre essai gratuit a déjà été utilisé." };
+    return { ok: false, reason: "trialUsed", error: t("est.trialUsed") };
   }
 
   const endsAt = new Date(Date.now() + plan.trial_days * 86_400_000).toISOString();
@@ -266,7 +270,7 @@ export async function startTrial(planId: string): Promise<SubscribeResult> {
 
   if (error) {
     console.error("[subscribe:startTrial]", error.message);
-    return { ok: false, reason: "trialStartFailed", error: "Impossible de démarrer l'essai." };
+    return { ok: false, reason: "trialStartFailed", error: t("est.trialStartFailed") };
   }
 
   await supabase.from("plan_changes").insert({
@@ -302,7 +306,10 @@ export async function startTrial(planId: string): Promise<SubscribeResult> {
 
   return {
     ok: true,
-    note: `Essai de ${plan.trial_days} jours démarré. Aucun paiement n'est requis avant le ${new Date(endsAt).toLocaleDateString("fr-CM")}.`,
+    note: t("est.trialStarted", {
+      days: plan.trial_days,
+      date: new Date(endsAt).toLocaleDateString((await getLocale()) === "en" ? "en-GB" : "fr-CM"),
+    }),
   };
 }
 
@@ -318,6 +325,7 @@ export async function payInvoice(input: {
   invoiceId: string;
   phone: string;
 }): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed"; attemptId?: string }> {
+  const t = await getTranslator();
   const { active, profile } = await requireCapability("billing.manage");
   const supabase = createAdminClient();
 
@@ -328,8 +336,8 @@ export async function payInvoice(input: {
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
 
-  if (!invoice) return { ok: false, error: "Facture introuvable." };
-  if (invoice.status !== "unpaid") return { ok: false, error: "Cette facture n'est pas en attente." };
+  if (!invoice) return { ok: false, error: t("est.invoiceNotFound") };
+  if (invoice.status !== "unpaid") return { ok: false, error: t("est.invoiceNotPending") };
 
   // Resume the Mobile Money request already on the handset. A double tap,
   // reload or return from another screen must never create a second charge.
@@ -349,7 +357,7 @@ export async function payInvoice(input: {
     console.error("[subscribe:payInvoice] open attempt", openAttemptsError.message);
     return {
       ok: false,
-      error: "Impossible de vérifier le paiement en cours. Réessayez dans un instant.",
+      error: t("ecu.paymentCheckRetry"),
     };
   }
 
@@ -359,7 +367,7 @@ export async function payInvoice(input: {
   if (openAttempt?.status === "succeeded") {
     const settled = await settlePayment(openAttempt.id);
     if (!settled.ok) {
-      return { ok: false, error: settled.error ?? "Le paiement n'a pas pu être appliqué." };
+      return { ok: false, error: paymentErrorMessage(settled, t, "ecu.paymentNotApplied") };
     }
     revalidatePath("/m", "layout");
     revalidatePath("/a/subscriptions");
@@ -379,7 +387,7 @@ export async function payInvoice(input: {
   });
 
   if (!initiated.ok || !initiated.attemptId) {
-    return { ok: false, error: initiated.error ?? "Le paiement a échoué." };
+    return { ok: false, error: paymentErrorMessage(initiated, t, "ecu.paymentFailed") };
   }
 
   if (initiated.status === "pending") {
@@ -390,7 +398,7 @@ export async function payInvoice(input: {
   const settled = await settlePayment(initiated.attemptId);
   if (!settled.ok) {
     console.error("[subscribe:payInvoice] settle", settled.error);
-    return { ok: false, error: settled.error ?? "Le paiement n'a pas pu être appliqué." };
+    return { ok: false, error: paymentErrorMessage(settled, t, "ecu.paymentNotApplied") };
   }
 
   await writeAudit(profile, {
@@ -431,10 +439,11 @@ export async function payInvoice(input: {
 export async function checkInvoicePayment(
   attemptId: string,
 ): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed" }> {
+  const t = await getTranslator();
   const { active } = await requireCapability("billing.manage");
   const result = await checkPaymentAttempt(attemptId, active.restaurantId);
 
-  if (!result.ok) return { ok: false, error: result.error ?? "Paiement introuvable." };
+  if (!result.ok) return { ok: false, error: paymentErrorMessage(result, t, "ecu.paymentNotFound") };
 
   if (result.status === "succeeded") {
     revalidatePath("/m", "layout");

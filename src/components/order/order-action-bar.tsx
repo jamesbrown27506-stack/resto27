@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { Clock } from "lucide-react";
+import { useEffect, useState, useTransition } from "react";
+import { Clock, Timer } from "lucide-react";
 import { DeliveryFeeDialog } from "@/components/order/delivery-fee-dialog";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -9,7 +9,11 @@ import { Field, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { advanceLabelKey, isTerminal, nextStatus } from "@/lib/format/order-status";
 import { advanceOrder, cancelOrder, requestPickupReceiptConfirmation } from "@/lib/data/order-actions";
+import { minutesLeft, orderDeadline } from "@/lib/orders/deadline";
+import { announceOrdersChanged } from "@/lib/orders/pending-alarm";
+import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { localizeActionError } from "@/lib/i18n/staff-errors";
 import type { ManagerOrder } from "@/lib/data/orders";
 import { cn } from "@/lib/utils";
 
@@ -32,29 +36,31 @@ import { cn } from "@/lib/utils";
  *
  *  THE RULES IT CARRIES WITH IT:
  *
- *   · THE FEE GATE (§14.4). A delivery order cannot reach `confirmed` without
- *     a quoted fee. This is the UI half; `advanceOrder` re-checks server-side,
+ *   · THE FEE GATE (§14.4). A delivery order cannot be accepted without a
+ *     quoted fee. This is the UI half; `advanceOrder` re-checks server-side,
  *     so there is no path that skips the quote — but the dialog is what stops
- *     a manager being refused AFTER they pressed confirm.
+ *     a manager being refused AFTER they pressed accept. Since Sep 2026 that
+ *     fee is paid in CASH to the rider and is not part of the online total.
  *   · `nextStatus()` IS THE ONLY SOURCE for which button to draw, so the UI
  *     can never offer a transition the state machine will refuse. The server
  *     re-derives the transition from the current row anyway, so two taps
  *     racing on one ticket cannot double-skip.
  *   · `awaiting_customer` HAS NO ADVANCE BUTTON, on purpose — the only way out
- *     is the customer accepting or declining the fee. What renders instead is
- *     the notice telling the kitchen not to start, because a missing button
- *     with no explanation is read as a broken screen.
- *   · `canAdvance` mirrors the `orders.advance` capability that both server
- *     actions re-check. A waiter sees no buttons rather than buttons that
- *     fail.
+ *     is the customer paying (or the time limit cancelling it). What renders
+ *     instead is the notice telling the kitchen not to start, and WHEN the
+ *     wait ends, because a missing button with no explanation is read as a
+ *     broken screen.
+ *   · `canAdvance` mirrors `orders.advance`; `canCancel` mirrors the separate
+ *     `orders.cancel` — a cancellation now refunds a paid customer, and the
+ *     kitchen tablet is not where that is decided.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
 /**
  * Deliberately a `Pick` rather than `ManagerOrder`, mirroring why the fee
  * dialog takes a `FeeTarget`: this component must be renderable from any
- * screen that can name these seven fields, and widening it to the full row
- * would tie the detail page's fetch shape to the queue's.
+ * screen that can name these fields, and widening it to the full row would
+ * tie the detail page's fetch shape to the queue's.
  */
 export type OrderActionTarget = Pick<
   ManagerOrder,
@@ -72,28 +78,45 @@ export type OrderActionTarget = Pick<
   // Payment first: an unpaid Mobile Money order shows a notice, not a button.
   | "isPaid"
   | "paymentMethod"
+  // The time limit (0059): when the current wait runs out.
+  | "createdAt"
+  | "scheduledFor"
+  | "acceptedAt"
 >;
+
+/** The countdown re-renders twice a minute — minutes are all it shows. */
+const CLOCK_TICK_MS = 30_000;
 
 export function OrderActionBar({
   order,
   canAdvance,
+  canCancel = false,
   feeBand,
+  orderMinutes,
+  now,
   size = "sm",
   className,
   children,
 }: {
   order: OrderActionTarget;
-  /** `orders.advance`. False hides both buttons; the notice still shows. */
+  /** `orders.advance`. False hides the advance button; the notice still shows. */
   canAdvance: boolean;
+  /** `orders.cancel`. False hides the cancel button. */
+  canCancel?: boolean;
   /** The restaurant's advertised delivery band (migration 0035). */
   feeBand?: { min: number; max: number };
+  /** The admin's `order_response_minutes`; absent = no countdown shown. */
+  orderMinutes?: number;
+  /** Server-stamped render time, so the first paint matches the HTML. */
+  now?: string;
   /** `sm` in the dense queue row, `md` on the roomier detail card. */
   size?: "sm" | "md";
   className?: string;
   /** Screen-specific extras — the queue's Detail and Ticket links. */
   children?: React.ReactNode;
 }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const dates = useDates();
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
 
@@ -112,20 +135,53 @@ export function OrderActionBar({
   const nextLabel = advanceLabelKey(order.status, order.type);
 
   /*
-    PAYMENT FIRST. An unpaid Mobile Money order is waiting on the customer,
-    and `advanceOrder` refuses every step until the money lands — except
-    quoting a delivery fee, because the customer cannot pay a total nobody has
-    priced. So that one button stays; every other advance becomes a notice
-    instead of a button the server would refuse after it was pressed.
+    THE TIME LIMIT, SHOWN WHERE THE DECISION IS MADE.
+
+    A pending order is cancelled if nobody accepts it in time; an accepted
+    one if the customer does not pay in time (lib/orders/deadline — the same
+    function the order-nag sweep applies). The clock starts from the server's
+    `now` so the first paint matches the HTML, then ticks locally — only
+    while there is a deadline to count down to.
   */
-  const blockedByPayment =
-    order.status === "awaiting_customer" && !order.isPaid && !isTerminal(order.status);
+  const deadline =
+    orderMinutes !== undefined
+      ? orderDeadline(
+          {
+            status: order.status,
+            createdAt: order.createdAt,
+            scheduledFor: order.scheduledFor,
+            acceptedAt: order.acceptedAt,
+          },
+          orderMinutes,
+        )
+      : null;
+  const [clock, setClock] = useState(() => (now ? Date.parse(now) : 0));
+  const hasDeadline = deadline !== null;
+  useEffect(() => {
+    if (!hasDeadline) return;
+    const tick = () => setClock(Date.now());
+    const first = window.setTimeout(tick, 0);
+    const timer = window.setInterval(tick, CLOCK_TICK_MS);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
+  }, [hasDeadline]);
+  const left = clock > 0 ? minutesLeft(deadline, clock) : null;
+
+  /*
+    PAYMENT FIRST. An accepted order waits for the customer's online payment,
+    and `advanceOrder` refuses every step until the money lands. So instead
+    of an advance button there is a notice — with the moment the wait ends.
+  */
+  const awaitingPayment = order.status === "awaiting_customer" && !order.isPaid;
   const needsPickupConfirmation = order.type === "pickup" && order.status === "shipped";
+  const isAccept = order.status === "pending";
 
   function advance(fee?: number) {
     if (!next) return;
 
-    // The gate. A delivery order cannot reach `confirmed` without a fee.
+    // The gate. A delivery order cannot be accepted without a fee.
     if (
       next === "awaiting_customer" &&
       order.type === "delivery" &&
@@ -139,16 +195,19 @@ export function OrderActionBar({
     startTransition(async () => {
       const result = await advanceOrder(order.id, fee !== undefined ? { deliveryFee: fee } : {});
       setFeeOpen(false);
-      if (!result.ok) return toast(result.error, "error");
+      if (!result.ok) return toast(localizeActionError(result.error, locale, t("common.error")), "error");
+
+      // Stop the ring in this tab now, not at the alarm's next check.
+      announceOrdersChanged();
 
       /*
-        A quoted fee does not confirm the order any more — it parks it at
-        `awaiting_customer` until the customer accepts (0040). Saying
-        "updated" there would tell the kitchen it may start, which is the one
-        thing that state exists to prevent.
+        Accepting does not start the kitchen — it parks the order at
+        `awaiting_customer` until the customer pays. Saying "updated" there
+        would tell the kitchen it may start, which is the one thing that
+        state exists to prevent.
       */
       toast(
-        result.status === "awaiting_customer" ? t("oact.sentToCustomer") : t("mo.updated"),
+        result.status === "awaiting_customer" ? t("mops.accepted") : t("mo.updated"),
         result.status === "awaiting_customer" ? "info" : "success",
       );
     });
@@ -157,7 +216,7 @@ export function OrderActionBar({
   function requestPickupConfirmation() {
     startTransition(async () => {
       const result = await requestPickupReceiptConfirmation(order.id);
-      if (!result.ok) return toast(result.error, "error");
+      if (!result.ok) return toast(localizeActionError(result.error, locale, t("common.error")), "error");
       setPickupRequestSent(true);
       toast(t("oact.pickupConfirmationSent"), "success");
     });
@@ -166,12 +225,19 @@ export function OrderActionBar({
   function submitCancel() {
     startTransition(async () => {
       const result = await cancelOrder(order.id, reason);
-      if (!result.ok) return toast(result.error, "error");
+      if (!result.ok) return toast(localizeActionError(result.error, locale, t("common.error")), "error");
       setCancelOpen(false);
       setReason("");
-      toast(t("mo.cancelled"), "success");
+      announceOrdersChanged();
+      // A paid order is refunded by the server (0059) — say so, so nobody
+      // reaches for the phone to promise the customer their money back.
+      toast(order.isPaid ? t("mops.cancelRefund") : t("mo.cancelled"), "success");
     });
   }
+
+  // "Accept" is the one tap that matters most and is made in a hurry, often
+  // one-handed: never smaller than the 44 px touch target, whatever `size`.
+  const advanceSize = isAccept ? "md" : size;
 
   return (
     <>
@@ -179,11 +245,32 @@ export function OrderActionBar({
         The explanation for a missing button belongs WITH the buttons, which is
         why this sits inside the cluster rather than above it.
       */}
-      {order.status === "awaiting_customer" && (
+      {awaitingPayment && (
         <p className="mb-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning-light px-3 py-2 text-xs leading-relaxed text-warning">
           <Clock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
           <span>
-            <strong>{t("mo.awaitingCustomer")}</strong> {t("mo.awaitingCustomerBody")}
+            <strong>
+              {deadline
+                ? t("mops.awaitingPayment", { time: dates.time(deadline) })
+                : t("mops.awaitingPaymentNoTime")}
+            </strong>{" "}
+            {t("mops.awaitingPaymentBody")}
+          </span>
+        </p>
+      )}
+
+      {isAccept && deadline && left !== null && (
+        <p
+          className={cn(
+            "tnum mb-3 flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-semibold",
+            left <= 5 ? "border-error/40 bg-error-light text-error" : "border-warning/30 bg-warning-light text-warning",
+          )}
+        >
+          <Timer className="size-3.5 shrink-0" aria-hidden />
+          <span>
+            {left > 0 ? t("mops.countdown", { minutes: left }) : t("mops.countdownOver")}
+            {" · "}
+            {dates.time(deadline)}
           </span>
         </p>
       )}
@@ -195,29 +282,27 @@ export function OrderActionBar({
         </p>
       )}
 
-      {blockedByPayment && (
-        <p className="mb-3 flex items-start gap-2 rounded-md border border-info/30 bg-info-light px-3 py-2 text-xs leading-relaxed text-info">
-          <Clock className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-          <span>
-            <strong>{t("mo.awaitingPayment")}</strong> {t("mo.awaitingPaymentBody")}
-          </span>
-        </p>
-      )}
-
       <div className={cn("flex flex-wrap items-center gap-2", className)}>
-        {canAdvance && next && nextLabel && !blockedByPayment && !pickupRequestSent && (
+        {canAdvance && next && nextLabel && !awaitingPayment && !pickupRequestSent && (
           <Button
-            size={size}
+            size={advanceSize}
             disabled={pending}
+            className={cn(isAccept && "min-h-11 px-6 font-bold")}
             onClick={() => (needsPickupConfirmation ? requestPickupConfirmation() : advance())}
           >
-            <span>{needsPickupConfirmation ? t("oact.requestPickupConfirmation") : t(nextLabel)}</span>
+            <span>
+              {needsPickupConfirmation
+                ? t("oact.requestPickupConfirmation")
+                : isAccept
+                  ? t("mops.accept")
+                  : t(nextLabel)}
+            </span>
           </Button>
         )}
 
         {children}
 
-        {canAdvance && !isTerminal(order.status) && (
+        {canCancel && !isTerminal(order.status) && (
           <Button
             variant="ghost"
             size={size}
