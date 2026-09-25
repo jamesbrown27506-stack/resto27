@@ -547,7 +547,7 @@ async function countReviewsNeedingAttention(restaurantId: string): Promise<{ cou
       .eq("is_reported", false);
   const { count, error } = await scoped()
     .is("restaurant_seen_at", null)
-    .or("restaurant_reaction.is.null,rating.lte.2");
+    .is("restaurant_reaction", null);
   if (!error) return { count };
   const fallback = await scoped();
   return { count: fallback.count };

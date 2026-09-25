@@ -2,6 +2,7 @@ import { NotificationProviderPanel } from "./notification-provider-panel";
 import { getNotificationProviderStatus } from "@/lib/data/notification-provider-actions";
 import { AdminPage } from "@/components/layout/admin-shell";
 import { SettingsForm } from "./settings-form";
+import { ResetPanel } from "./reset-panel";
 import { listSettings } from "@/lib/data/platform";
 import { isGatewaySettingKey } from "@/lib/auth/super-admin-rules";
 
@@ -21,6 +22,8 @@ export default async function SettingsPage() {
       <SettingsForm
         settings={settings.filter((s) => s.key !== "push_provider" && !isGatewaySettingKey(s.key))}
       />
+      {/* Super admins only: wipe test activity, keep the setup (0067). */}
+      <ResetPanel />
     </AdminPage>
   );
 }

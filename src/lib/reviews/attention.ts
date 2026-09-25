@@ -7,16 +7,16 @@
  *  asking for attention when the restaurant:
  *    · wrote a reply, or
  *    · marked it as read ("J'ai lu"), or
- *    · reacted to it (❤️ 🙏 👍) — for a 3★+ review only. A 1–2★ review is
- *      where a written answer matters for the restaurant's image, so a
- *      reaction alone does not clear it (a reply or "J'ai lu" does).
+ *    · reacted to it (heart / thanks / like — Lucide icons, never emojis).
+ *  Any of the three means the restaurant has dealt with it, whatever the
+ *  rating (owner's call, Sep 2026: a reaction left on a low rating still
+ *  showed as "to handle", which read as a bug).
  *  Reported reviews are with the moderators and never count.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
 export type ReviewReaction = "heart" | "thanks" | "like";
 export const REVIEW_REACTIONS: readonly ReviewReaction[] = ["heart", "thanks", "like"];
-export const REACTION_EMOJI: Record<ReviewReaction, string> = { heart: "❤️", thanks: "🙏", like: "👍" };
 
 export function isReviewReaction(value: unknown): value is ReviewReaction {
   return typeof value === "string" && (REVIEW_REACTIONS as readonly string[]).includes(value);
@@ -32,6 +32,6 @@ export function reviewNeedsAttention(review: {
   if (review.isReported) return false;
   if (review.reply) return false;
   if (review.seenAt) return false;
-  if (review.reaction && review.rating >= 3) return false;
+  if (review.reaction) return false;
   return true;
 }

@@ -46,7 +46,10 @@ export default async function MenuPage() {
    * keep enforcing yesterday's number.
    */
   const tier = active.subscriptionState === "locked" ? "starter" : active.planTier;
-  const limit = limits.get(tier)?.menuItemLimit ?? limits.get("starter")?.menuItemLimit ?? null;
+  // Pick the PLAN first, then its limit. `null` means unlimited (Enterprise);
+  // `a?.limit ?? starter.limit` treated that null as "missing" and showed
+  // an Enterprise restaurant the Starter ceiling of 20 dishes.
+  const limit = (limits.get(tier) ?? limits.get("starter"))?.menuItemLimit ?? null;
 
   return (
     // titleKey, not title: this is a Server Component and cannot call

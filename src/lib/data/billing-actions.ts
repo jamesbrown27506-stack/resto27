@@ -211,11 +211,34 @@ export async function extendSubscription(
     return { ok: false, error: "Could not extend the subscription." };
   }
 
+  /*
+    THE EXTENSION REPLACES THE RENEWAL INVOICE.
+
+    When a subscription reaches its end date the lifecycle raises a renewal
+    invoice for the same plan. Extending by hand used to move the date but
+    leave that invoice "unpaid" — so the restaurant kept seeing an overdue
+    bill for a period the platform had just given them for free, with dates
+    already in the past. Unpaid invoices for the CURRENT plan starting before
+    the new end date are voided; an invoice for a different plan (an upgrade
+    the restaurant asked for) is left alone.
+  */
+  const { data: voided, error: voidError } = await supabase
+    .from("invoices")
+    .update({ status: "void" })
+    .eq("restaurant_id", restaurantId)
+    .eq("status", "unpaid")
+    .eq("plan_id", current.plan_id)
+    .lt("period_start", endDate)
+    .select("number");
+  if (voidError) console.error("[billing:extendSubscription] void invoices", voidError.message);
+
   await writeAudit(admin, {
     action: "subscription.extend",
     entityType: "subscription",
     entityId: subscriptionId,
-    summary: `Extended by ${days} days to ${endDate}`,
+    summary: `Extended by ${days} days to ${endDate}${
+      voided && voided.length > 0 ? ` — voided ${voided.map((v) => v.number).join(", ")}` : ""
+    }`,
   });
 
   await notify({
@@ -228,6 +251,8 @@ export async function extendSubscription(
 
   revalidatePath("/a/subscriptions");
   revalidatePath("/a/restaurants");
+  revalidatePath("/m/billing");
+  revalidatePath("/m", "layout");
   return { ok: true };
 }
 

@@ -14,10 +14,10 @@ describe("reviews needing the restaurant", () => {
     expect(reviewNeedsAttention({ ...base, isReported: true })).toBe(false);
   });
 
-  it("lets a reaction answer a good review but not a bad one", () => {
+  it("treats any reaction as handled, whatever the rating", () => {
     expect(reviewNeedsAttention({ ...base, reaction: "heart" })).toBe(false);
-    expect(reviewNeedsAttention({ ...base, rating: 2, reaction: "heart" })).toBe(true);
-    expect(reviewNeedsAttention({ ...base, rating: 2, seenAt: "2026-09-25T10:00:00Z" })).toBe(false);
+    expect(reviewNeedsAttention({ ...base, rating: 2, reaction: "like" })).toBe(false);
+    expect(reviewNeedsAttention({ ...base, rating: 1 })).toBe(true);
   });
 
   it("accepts only known reactions", () => {

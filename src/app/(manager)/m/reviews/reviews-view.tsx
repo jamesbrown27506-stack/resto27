@@ -15,7 +15,8 @@ import { isoAttr } from "@/lib/format/datetime";
 import { useDates } from "@/lib/format/use-dates";
 import { replyToReview } from "@/lib/data/manager-actions";
 import { markAllReviewsSeen, markReviewSeen, reactToReview, reportReview } from "@/lib/data/review-actions";
-import { REACTION_EMOJI, REVIEW_REACTIONS, reviewNeedsAttention, type ReviewReaction } from "@/lib/reviews/attention";
+import { REVIEW_REACTIONS, reviewNeedsAttention, type ReviewReaction } from "@/lib/reviews/attention";
+import { ReactionIcon } from "@/components/reviews/reaction-icon";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { RestaurantReview, ReviewSummary } from "@/lib/data/reviews";
 
@@ -287,13 +288,14 @@ export function ReviewsView({
                               aria-pressed={review.reaction === reaction}
                               title={t(`mrv.reaction.${reaction}`)}
                               onClick={() => react(review.id, review.reaction, reaction)}
-                              className={`grid size-11 place-items-center rounded-md border text-lg transition-colors ${
+                              className={`grid size-11 place-items-center rounded-md border transition-colors ${
                                 review.reaction === reaction
-                                  ? "border-primary bg-primary-light"
-                                  : "border-border bg-surface hover:bg-surface-2"
+                                  ? "border-primary bg-primary-light text-primary"
+                                  : "border-border bg-surface text-text-secondary hover:bg-surface-2 hover:text-primary"
                               }`}
                             >
-                              <span aria-hidden>{REACTION_EMOJI[reaction]}</span>
+                              <ReactionIcon reaction={reaction} filled={review.reaction === reaction} className="size-5" />
+                              <span className="sr-only">{t(`mrv.reaction.${reaction}`)}</span>
                             </button>
                           ))}
                         </div>

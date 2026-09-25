@@ -18,7 +18,7 @@ export const reviewsDict = defineDict({
     "mrv.stat.average": "Note moyenne",
     "mrv.stat.averageHint": "sur {count} avis",
     "mrv.stat.unanswered": "À traiter",
-    "mrv.stat.unansweredHint": "Nouveaux avis ni répondus, ni lus. Une réaction suffit pour un avis 3★ et plus.",
+    "mrv.stat.unansweredHint": "Nouveaux avis sans réponse, réaction ni lecture.",
     "mrv.stat.reported": "Signalés",
     "mrv.stat.reportedHint": "En cours d'examen par la plateforme.",
 
@@ -85,7 +85,7 @@ export const reviewsDict = defineDict({
     "mrv.stat.average": "Average rating",
     "mrv.stat.averageHint": "across {count} reviews",
     "mrv.stat.unanswered": "To handle",
-    "mrv.stat.unansweredHint": "New reviews not answered or read yet. A reaction is enough for 3★ and above.",
+    "mrv.stat.unansweredHint": "New reviews with no reply, reaction or read mark yet.",
     "mrv.stat.reported": "Reported",
     "mrv.stat.reportedHint": "Being looked at by the platform.",
 

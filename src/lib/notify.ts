@@ -771,10 +771,12 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
     case "review_reply":
       // A one-tap reaction (0066) instead of a written reply.
       if (p.reaction) {
-        const emoji = p.reaction === "heart" ? "❤️" : p.reaction === "thanks" ? "🙏" : "👍";
+        // Words, not emojis: notification text should read like the product.
+        const frVerb = p.reaction === "heart" ? "a adoré" : p.reaction === "thanks" ? "vous remercie pour" : "a aimé";
+        const enVerb = p.reaction === "heart" ? "loved" : p.reaction === "thanks" ? "thanked you for" : "liked";
         return fr
-          ? { title: `${p.restaurantName ?? "Le restaurant"} a réagi à votre avis ${emoji}`, body: "Merci d'avoir pris le temps de laisser un avis." }
-          : { title: `${p.restaurantName ?? "The restaurant"} reacted to your review ${emoji}`, body: "Thank you for taking the time to leave a review." };
+          ? { title: `${p.restaurantName ?? "Le restaurant"} ${frVerb} votre avis`, body: "Merci d'avoir pris le temps de laisser un avis." }
+          : { title: `${p.restaurantName ?? "The restaurant"} ${enVerb} your review`, body: "Thank you for taking the time to leave a review." };
       }
       return fr
         ? {

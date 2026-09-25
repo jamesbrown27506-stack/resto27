@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { AlertTriangle, Bell, BellRing, Mail, Moon, Pause, RotateCcw, Smartphone } from "lucide-react";
+import { AlertTriangle, Bell, BellRing, Check, Mail, Moon, Pause, RotateCcw, Smartphone, X } from "lucide-react";
 import { BackgroundSettings } from "./background-settings";
 import { FirebaseMessagingSettings } from "@/components/firebase/firebase-messaging-settings";
 import { Badge } from "@/components/ui/badge";
@@ -829,9 +829,11 @@ export function NotificationSettings({ className }: { className?: string }) {
                             d.status === "sent" ? "text-success" : "text-warning"
                           }`}
                         >
-                          <span className="mt-0.5 shrink-0">
-                            {d.status === "sent" ? "✓" : "✗"}
-                          </span>
+                          {d.status === "sent" ? (
+                            <Check className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                          ) : (
+                            <X className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                          )}
                           <span className="min-w-0 break-words">
                             <span className="font-mono">
                               {d.service} …{d.endpointTail}

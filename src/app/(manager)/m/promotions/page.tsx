@@ -29,7 +29,8 @@ export default async function PromotionsPage() {
   // A locked account is held to the entry plan's ceiling rather than the one it
   // stopped paying for — but only for NEW codes; see the banner in the client.
   const tier = active.subscriptionState === "locked" ? "starter" : active.planTier;
-  const limit = limits.get(tier)?.promotionLimit ?? limits.get("starter")?.promotionLimit ?? null;
+  // Plan first, then its limit: `null` is unlimited, not "fall back to Starter".
+  const limit = (limits.get(tier) ?? limits.get("starter"))?.promotionLimit ?? null;
 
   return (
     // Keys, not strings: this page is a Server Component and cannot call
