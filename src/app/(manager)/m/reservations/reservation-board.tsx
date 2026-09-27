@@ -1,7 +1,17 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Ban, Banknote, CalendarCheck, Check, Clock, Users, X } from "lucide-react";
+import { Ban, Banknote, CalendarCheck, Check, Clock, History, NotebookPen, Phone, Plus, Ticket, Users, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import {
+  createPhoneReservation,
+  decideReservationChange,
+  saveGuestNote,
+  suggestTablesFor,
+} from "@/lib/data/booking-manager-actions";
+import { redeemVoucher } from "@/lib/data/voucher-actions";
+import { OCCASIONS, type Occasion } from "@/lib/reservations/rules";
+import { todayInDisplayTz } from "@/lib/reservations/slots";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MessageCustomerButton } from "@/components/chat/message-customer-button";
@@ -73,6 +83,7 @@ export function ReservationBoard({
   canTakeDeposit = canCollectDeposit,
   responseMinutes,
   now,
+  tableService = false,
 }: {
   reservations: Reservation[];
   tables: RestaurantTable[];
@@ -90,14 +101,24 @@ export function ReservationBoard({
   responseMinutes: number;
   /** Server-stamped render instant — never Date.now() in render. */
   now: number;
+  /** Enterprise table service: seating a booking can open its bill (0068). */
+  tableService?: boolean;
 }) {
   const { t } = useLocale();
   const dates = useDates();
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
 
+  const router = useRouter();
   const [confirming, setConfirming] = useState<Reservation | null>(null);
-  const [tableId, setTableId] = useState("");
+  /** Several tables for one booking (0068) — a big group at tables pushed together. */
+  const [tableIds, setTableIds] = useState<string[]>([]);
+  const [phoneOpen, setPhoneOpen] = useState(false);
+  const [phoneDraft, setPhoneDraft] = useState({ guestName: "", guestPhone: "", partySize: 2, date: "", time: "", notes: "", occasion: "" as Occasion | "" });
+  const [noteFor, setNoteFor] = useState<Reservation | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [declineChange, setDeclineChange] = useState<Reservation | null>(null);
+  const [changeReason, setChangeReason] = useState("");
   const [declining, setDeclining] = useState<Reservation | null>(null);
   const [reason, setReason] = useState("");
   const [depositDraft, setDepositDraft] = useState(String(depositAmount));
@@ -128,13 +149,42 @@ export function ReservationBoard({
       const result = await fn();
       if (!result.ok) return toast(result.error ?? t("common.error"), "error");
       toast(success, "success");
+      router.refresh();
     });
   }
 
+  /** Open the confirm sheet with the seating rule's suggestion preselected. */
+  function openConfirm(reservation: Reservation) {
+    setConfirming(reservation);
+    setTableIds(reservation.tableIds);
+    startTransition(async () => {
+      const suggestion = await suggestTablesFor(reservation.id);
+      if (suggestion.ok && suggestion.tableIds.length) setTableIds(suggestion.tableIds);
+    });
+  }
+
+  /**
+   * Seating a booking uses its voucher (0068): one transaction marks it
+   * seated, and — with table service — opens the party's bill on its first
+   * table with the deposit already deducted.
+   */
+  function seat(reservation: Reservation) {
+    if (!reservation.voucherCode) {
+      run(() => setReservationStatus(reservation.id, "seated"), t("res.seatedDone"));
+      return;
+    }
+    const code = reservation.voucherCode;
+    run(async () => {
+      const result = await redeemVoucher(code, { openTableId: tableService ? reservation.tableIds[0] ?? null : null });
+      if (!result.ok) return result;
+      if (result.credit > 0 && !(tableService && reservation.tableIds[0])) {
+        toast(t("ons.c.deductByHand", { amount: result.credit.toLocaleString("fr-CM") + " FCFA" }), "info");
+      }
+      return { ok: true };
+    }, t("res.seatedDone"));
+  }
+
   function row(reservation: Reservation) {
-    const seatable = tables.filter(
-      (table) => !table.planLocked && table.status !== "out_of_service" && table.capacity >= reservation.partySize,
-    );
     const end = sittingEnd(reservation.reservedFor, reservation.durationMin);
     const answerBy =
       reservation.status === "pending"
@@ -162,11 +212,16 @@ export function ReservationBoard({
             <Badge tone={STATUS_TONE[reservation.status]}>
               {t(`res.status.${reservation.status}` as TranslationKey)}
             </Badge>
-            {reservation.tableNumber && (
+            {reservation.tableNumbers.length > 0 && (
               <Badge tone="neutral">
-                {t("res.table")} {reservation.tableNumber}
+                {reservation.tableNumbers.length > 1 ? t("ons.m.tables") : t("res.table")} {reservation.tableNumbers.join(" + ")}
               </Badge>
             )}
+            {reservation.isGroupRequest && <Badge tone="info">{t("ons.c.groupRequest")}</Badge>}
+            {reservation.occasion && <Badge tone="accent">{t(`ons.c.occasion.${reservation.occasion}` as TranslationKey)}</Badge>}
+            {reservation.seatingPreference && <Badge tone="neutral">{reservation.seatingPreference}</Badge>}
+            {reservation.source === "phone" && <Badge tone="neutral"><Phone className="size-3" aria-hidden />{t("ons.m.phoneBooking")}</Badge>}
+            {reservation.voucherRedeemedAt && <Badge tone="success"><Ticket className="size-3" aria-hidden />{t("ons.m.voucherUsed")}</Badge>}
           </div>
 
           {/* The END of the sitting too (0060): it is what decides whether the
@@ -200,6 +255,7 @@ export function ReservationBoard({
             {/* No guest phone: the only number a restaurant sees is a customer's
                 during a paid delivery (lib/data/orders). Bookings talk in the chat. */}
             <span className="tnum">{reservation.reference}</span>
+            {reservation.voucherCode && <span className="tnum font-mono">{reservation.voucherCode}</span>}
             {/* In-app chat about this booking (server checks the link). */}
             <MessageCustomerButton reservationId={reservation.id} variant="link" size="sm" />
           </p>
@@ -208,6 +264,39 @@ export function ReservationBoard({
             <p className="mt-1.5 rounded-md bg-surface-2 p-2 text-sm text-text-secondary">
               {reservation.notes}
             </p>
+          )}
+
+          {/* Guest history at THIS restaurant, and the team's private note. */}
+          {reservation.guestHistory && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
+              <span className="inline-flex items-center gap-1"><History className="size-3" aria-hidden />
+                {reservation.guestHistory.visits > 0 ? t("ons.m.visits", { count: reservation.guestHistory.visits }) : t("ons.m.firstVisit")}
+              </span>
+              {reservation.guestHistory.noShows > 0 && <span className="font-semibold text-error">{t("ons.m.noShows", { count: reservation.guestHistory.noShows })}</span>}
+              {reservation.guestHistory.note && <span className="italic">« {reservation.guestHistory.note} »</span>}
+              {canDecide && (
+                <button type="button" className="inline-flex items-center gap-1 font-semibold text-primary hover:underline"
+                  onClick={() => { setNoteFor(reservation); setNoteDraft(reservation.guestHistory?.note ?? ""); }}>
+                  <NotebookPen className="size-3" aria-hidden />{t("ons.m.note")}
+                </button>
+              )}
+            </p>
+          )}
+
+          {/* A customer asked to move this booking (0068). */}
+          {reservation.pendingChange && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-info/30 bg-info-light p-2 text-sm">
+              <span className="min-w-0 flex-1">{t("ons.m.changeAsked", {
+                when: dates.dateTime(reservation.pendingChange.reservedFor),
+                count: reservation.pendingChange.partySize,
+              })}</span>
+              {canDecide && (
+                <>
+                  <Button size="sm" disabled={pending} onClick={() => run(() => decideReservationChange(reservation.id, true), t("ons.m.changeAccepted"))}>{t("ons.m.acceptChange")}</Button>
+                  <Button size="sm" variant="ghost" disabled={pending} onClick={() => { setDeclineChange(reservation); setChangeReason(""); }}>{t("ons.m.declineChange")}</Button>
+                </>
+              )}
+            </div>
           )}
 
           {/* The refusal reason is shown back to the restaurant too — it is
@@ -283,10 +372,7 @@ export function ReservationBoard({
                 <Button
                   size="sm"
                   disabled={pending}
-                  onClick={() => {
-                    setConfirming(reservation);
-                    setTableId(seatable[0]?.id ?? "");
-                  }}
+                  onClick={() => openConfirm(reservation)}
                 >
                   <Check className="size-3.5" aria-hidden />
                   {t("common.confirm")}
@@ -340,9 +426,7 @@ export function ReservationBoard({
                   variant="outline"
                   size="sm"
                   disabled={pending}
-                  onClick={() =>
-                    run(() => setReservationStatus(reservation.id, "seated"), t("res.seatedDone"))
-                  }
+                  onClick={() => seat(reservation)}
                 >
                   {t("res.seat")}
                 </Button>
@@ -473,6 +557,14 @@ export function ReservationBoard({
         </section>
       )}
 
+      {canDecide && (
+        <div className="mb-4 flex justify-end">
+          <Button variant="outline" size="sm" onClick={() => { setPhoneDraft({ guestName: "", guestPhone: "", partySize: 2, date: todayInDisplayTz(), time: "", notes: "", occasion: "" }); setPhoneOpen(true); }}>
+            <Plus className="size-3.5" aria-hidden />{t("ons.m.phoneBookingNew")}
+          </Button>
+        </div>
+      )}
+
       {awaiting.length > 0 && (
         <section className="mb-6">
           <h2 className="mb-3 font-display text-lg font-bold">
@@ -514,7 +606,7 @@ export function ReservationBoard({
                 loading={pending}
                 onClick={() => {
                   run(
-                    () => decideReservation(confirming.id, "confirmed", { tableId: tableId || null }),
+                    () => decideReservation(confirming.id, "confirmed", { tableIds }),
                     t("res.confirmedDone"),
                   );
                   setConfirming(null);
@@ -539,29 +631,38 @@ export function ReservationBoard({
               <span>{dates.dateTime(confirming.reservedFor)}</span>
             </p>
 
-            <Field
-              label={t("res.table")}
-              htmlFor="reservation-table"
-              hint={t("res.tableHint")}
-            >
-              <Select
-                id="reservation-table"
-                value={tableId}
-                onChange={(e) => setTableId(e.target.value)}
-              >
-                <option value="">{t("res.noTableYet")}</option>
-                {/* Only tables that actually seat the party. Offering a
-                    two-seater for six is an error waiting to be made at the
-                    door, in front of the guest. */}
+            {/*
+              SEVERAL TABLES FOR ONE PARTY (0068). The seating rule's
+              suggestion is preselected (fewest tables, least waste, the
+              guest's zone if possible); the restaurant can change it. The
+              seats of the chosen tables must cover the party.
+            */}
+            <fieldset>
+              <legend className="mb-1 text-sm font-semibold">{t("ons.m.tablesFor", { count: confirming.partySize })}</legend>
+              <p className="mb-2 text-xs text-text-light">{t("res.tableHint")}</p>
+              <div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto">
                 {tables
-                  .filter((table) => table.capacity >= confirming.partySize)
-                  .map((table) => (
-                    <option key={table.id} value={table.id}>
-                      {t("res.table")} {table.number} — {t("m.tables.seats", { count: table.capacity })}
-                    </option>
-                  ))}
-              </Select>
-            </Field>
+                  .filter((table) => !table.planLocked && table.status !== "out_of_service")
+                  .map((table) => {
+                    const checked = tableIds.includes(table.id);
+                    return (
+                      <label key={table.id} className={`flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm ${checked ? "border-primary bg-primary-light" : "border-border"}`}>
+                        <input type="checkbox" checked={checked} onChange={(e) => setTableIds((current) => e.target.checked ? [...current, table.id] : current.filter((id) => id !== table.id))} />
+                        <span className="min-w-0 flex-1 truncate">{t("res.table")} {table.number}{table.zone ? ` · ${table.zone}` : ""}</span>
+                        <span className="tnum text-xs text-text-light">{table.capacity}</span>
+                      </label>
+                    );
+                  })}
+              </div>
+              {(() => {
+                const seats = tables.filter((table) => tableIds.includes(table.id)).reduce((sum, table) => sum + table.capacity, 0);
+                return tableIds.length > 0 && (
+                  <p className={`mt-2 text-xs font-semibold ${seats >= confirming.partySize ? "text-success" : "text-error"}`}>
+                    {t("ons.m.seatsChosen", { seats, count: confirming.partySize })}
+                  </p>
+                );
+              })()}
+            </fieldset>
 
           </div>
         )}
@@ -769,6 +870,108 @@ export function ReservationBoard({
             )}
           </div>
         )}
+      </Sheet>
+      {/* ── Booking taken by phone / at the counter (0068) ────────────── */}
+      <Sheet
+        open={phoneOpen}
+        onClose={() => setPhoneOpen(false)}
+        title={t("ons.m.phoneBookingNew")}
+        footer={
+          <SheetActions>
+            <Button variant="outline" onClick={() => setPhoneOpen(false)}><span>{t("common.cancel")}</span></Button>
+            <Button
+              loading={pending}
+              disabled={phoneDraft.guestName.trim().length < 2 || !phoneDraft.date || !/^\d{2}:\d{2}$/.test(phoneDraft.time)}
+              onClick={() => {
+                const draft = phoneDraft;
+                startTransition(async () => {
+                  const result = await createPhoneReservation({ ...draft, occasion: draft.occasion || null });
+                  if (!result.ok) return toast(result.error ?? t("common.error"), "error");
+                  toast(t("ons.m.phoneBookingDone", { code: result.voucherCode ?? "" }), "success");
+                  setPhoneOpen(false);
+                  router.refresh();
+                });
+              }}
+            >
+              <span>{t("common.save")}</span>
+            </Button>
+          </SheetActions>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-text-secondary">{t("ons.m.phoneBookingBody")}</p>
+          <Field label={t("ons.m.guestName")} htmlFor="phone-name" required>
+            <Input id="phone-name" value={phoneDraft.guestName} maxLength={80} onChange={(e) => setPhoneDraft((d) => ({ ...d, guestName: e.target.value }))} />
+          </Field>
+          <Field label={t("ons.m.guestPhone")} htmlFor="phone-phone" hint={t("ons.m.guestPhoneHint")}>
+            <Input id="phone-phone" inputMode="tel" value={phoneDraft.guestPhone} maxLength={20} onChange={(e) => setPhoneDraft((d) => ({ ...d, guestPhone: e.target.value }))} />
+          </Field>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label={t("ons.m.party")} htmlFor="phone-party">
+              <Input id="phone-party" type="number" min={1} max={200} value={phoneDraft.partySize} onChange={(e) => setPhoneDraft((d) => ({ ...d, partySize: Math.max(1, Number(e.target.value) || 1) }))} />
+            </Field>
+            <Field label={t("ons.m.date")} htmlFor="phone-date">
+              <Input id="phone-date" type="date" value={phoneDraft.date} onChange={(e) => setPhoneDraft((d) => ({ ...d, date: e.target.value }))} />
+            </Field>
+            <Field label={t("ons.m.time")} htmlFor="phone-time">
+              <Input id="phone-time" type="time" step={1800} value={phoneDraft.time} onChange={(e) => setPhoneDraft((d) => ({ ...d, time: e.target.value }))} />
+            </Field>
+          </div>
+          <Field label={t("ons.c.occasionLabel")} htmlFor="phone-occasion">
+            <Select id="phone-occasion" value={phoneDraft.occasion} onChange={(e) => setPhoneDraft((d) => ({ ...d, occasion: e.target.value as Occasion | "" }))}>
+              <option value="">{t("ons.c.occasionNone")}</option>
+              {OCCASIONS.map((o) => <option key={o} value={o}>{t(`ons.c.occasion.${o}` as TranslationKey)}</option>)}
+            </Select>
+          </Field>
+          <Field label={t("res.reason")} htmlFor="phone-notes">
+            <Textarea id="phone-notes" rows={2} value={phoneDraft.notes} maxLength={500} onChange={(e) => setPhoneDraft((d) => ({ ...d, notes: e.target.value }))} placeholder={t("ons.m.notesPh")} />
+          </Field>
+        </div>
+      </Sheet>
+
+      {/* ── Private note about a regular guest ───────────────────────── */}
+      <Sheet
+        open={noteFor !== null}
+        onClose={() => setNoteFor(null)}
+        title={t("ons.m.noteTitle", { name: noteFor?.guestName ?? "" })}
+        footer={
+          noteFor && (
+            <SheetActions>
+              <Button variant="outline" onClick={() => setNoteFor(null)}><span>{t("common.cancel")}</span></Button>
+              <Button loading={pending} onClick={() => {
+                const target = noteFor;
+                setNoteFor(null);
+                if (target.customerId) run(() => saveGuestNote(target.customerId!, noteDraft), t("ons.m.noteSaved"));
+              }}><span>{t("common.save")}</span></Button>
+            </SheetActions>
+          )
+        }
+      >
+        <p className="mb-3 text-sm text-text-secondary">{t("ons.m.noteBody")}</p>
+        <Textarea rows={4} maxLength={1000} value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} placeholder={t("ons.m.notePh")} aria-label={t("ons.m.note")} />
+      </Sheet>
+
+      {/* ── Decline a change request ─────────────────────────────────── */}
+      <Sheet
+        open={declineChange !== null}
+        onClose={() => setDeclineChange(null)}
+        title={t("ons.m.declineChange")}
+        footer={
+          declineChange && (
+            <SheetActions>
+              <Button variant="outline" onClick={() => setDeclineChange(null)}><span>{t("common.cancel")}</span></Button>
+              <Button variant="danger" loading={pending} onClick={() => {
+                const target = declineChange;
+                setDeclineChange(null);
+                run(() => decideReservationChange(target.id, false, changeReason), t("ons.m.changeDeclined"));
+              }}><span>{t("ons.m.declineChange")}</span></Button>
+            </SheetActions>
+          )
+        }
+      >
+        <Field label={t("res.reason")} htmlFor="change-reason" hint={t("ons.m.changeDeclineHint")}>
+          <Textarea id="change-reason" rows={3} value={changeReason} maxLength={300} onChange={(e) => setChangeReason(e.target.value)} />
+        </Field>
       </Sheet>
     </>
   );

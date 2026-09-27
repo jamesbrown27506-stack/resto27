@@ -6,6 +6,8 @@ import { fetchNotificationPreferences, fetchPausedReason } from "@/lib/data/sett
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { getReservationDuration } from "@/lib/reservations/duration-server";
+import { fetchBookingSettings } from "@/lib/data/booking-rules";
+import { BookingRulesPanel } from "./booking-rules-panel";
 
 // The service state and the saved preferences both change from this very page,
 // and the pause is read by every customer-facing screen — a cached copy would
@@ -24,11 +26,12 @@ export default async function ManagerSettingsPage() {
 
   // Preferences are PER PERSON per branch (0012), so the profile id is as much
   // a part of the query as the restaurant id.
-  const [preferences, pausedReason, reservationDuration] = await Promise.all([
+  const [preferences, pausedReason, reservationDuration, bookingSettings] = await Promise.all([
     fetchNotificationPreferences(active.restaurantId, profile.id),
     fetchPausedReason(active.restaurantId),
     // 0060; a database without the column answers the one-hour default.
     getReservationDuration(active.restaurantId),
+    fetchBookingSettings(active.restaurantId),
   ]);
 
   return (
@@ -45,6 +48,9 @@ export default async function ManagerSettingsPage() {
         pausedReason={pausedReason}
         reservationDuration={reservationDuration}
       />
+      <div className="mt-6">
+        <BookingRulesPanel {...bookingSettings} tableService={active.planTier === "enterprise"} />
+      </div>
     </ManagerPage>
   );
 }

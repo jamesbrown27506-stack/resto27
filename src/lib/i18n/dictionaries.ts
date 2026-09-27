@@ -47,6 +47,7 @@ import { staffDict } from "./dict/staff";
 import { mReservationsDict } from "./dict/m-reservations";
 import { errCustomerDict } from "./dict/err-customer";
 import { errStaffDict } from "./dict/err-staff";
+import { onsiteDict } from "./dict/onsite";
 
 export const LOCALES = ["fr", "en"] as const;
 export type Locale = (typeof LOCALES)[number];
@@ -1778,6 +1779,7 @@ const fr = {
   ...legalDict.fr,
   ...errCustomerDict.fr,
   ...errStaffDict.fr,
+  ...onsiteDict.fr,
 } as const;
 
 export type TranslationKey = keyof typeof fr;
@@ -1822,6 +1824,7 @@ const en: Record<TranslationKey, string> = {
   ...legalDict.en,
   ...errCustomerDict.en,
   ...errStaffDict.en,
+  ...onsiteDict.en,
 };
 
 export const DICTIONARIES: Record<Locale, Record<TranslationKey, string>> = { fr, en };

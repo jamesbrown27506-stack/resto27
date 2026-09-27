@@ -1,5 +1,6 @@
 "use server";
 
+import { orderScheduleMaxDays } from "./booking-rules";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
@@ -539,7 +540,9 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     const when = new Date(input.scheduledFor);
     if (Number.isNaN(when.getTime())) return { ok: false, reason: "badSchedule" };
     if (when.getTime() <= Date.now() + 60_000) return { ok: false, reason: "scheduleTooSoon" };
-    if (when.getTime() > Date.now() + 7 * 86_400_000) return { ok: false, reason: "scheduleTooFar" };
+    // How far ahead is the admin's call (0068: order_schedule_max_days, default 7).
+    const maxDays = await orderScheduleMaxDays();
+    if (when.getTime() > Date.now() + maxDays * 86_400_000) return { ok: false, reason: "scheduleTooFar" };
     scheduledFor = when.toISOString();
   }
 

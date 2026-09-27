@@ -15,17 +15,20 @@ import { orderDeadline } from "@/lib/orders/deadline";
 import { getTimeLimits } from "@/lib/orders/time-limit-settings";
 import { defaultServiceAreaId, resolveOrCreateQuartier } from "./quartiers";
 import { anyPushWanted, toStoredJson } from "@/lib/notifications/customer-topics";
+import { floorSeats, slotVerdict } from "@/lib/reservations/tables";
 import {
-  floorIsUnmanaged,
-  fullSlots,
-  lostInsertRace,
-  overlapQueryRange,
-  seatableTables,
-  slotIsFull,
-  HOLDING_STATUSES,
-  type FloorTable,
-  type HoldingBooking,
-} from "@/lib/reservations/availability";
+  ABSOLUTE_MAX_PARTY,
+  closureOn,
+  isGroupRequest,
+  OCCASIONS,
+  withinHorizon,
+} from "@/lib/reservations/rules";
+import { loadBookingConfig, loadFloorPlan, loadHoldingBookings } from "./booking-rules";
+import { getSettingsMap, settingNumber } from "@/lib/settings-map";
+import { paymentFee } from "@/lib/dining/bill";
+import { notifyWaitlist } from "./waitlist";
+import { isMissingColumn as isMissingSchema } from "./missing-column";
+import { rateLimit } from "@/lib/rate-limit";
 import { getReservationDuration } from "@/lib/reservations/duration-server";
 import { slotsForDate } from "@/lib/reservations/slots";
 import { serviceDateAndTime } from "@/lib/restaurant/service-hours";
@@ -53,7 +56,6 @@ import { normalisePhone } from "@/lib/payments/camerpay/client";
 import { settleRefundPayout, startRefundPayout } from "@/lib/payments/refund-payouts";
 import type { CustomerPreferences } from "./customer";
 import type { UploadActionResult } from "./profile-actions";
-import { fetchTableAccess } from "./table-access";
 
 /**
  * Customer-side mutations.
@@ -717,12 +719,23 @@ export async function deleteOwnReview(reviewId: string): Promise<ActionResult> {
 const ReservationSchema = z.object({
   restaurantId: z.string().uuid(),
   reservedFor: z.string().datetime(),
-  partySize: z.coerce.number().int().min(1).max(20),
+  /**
+   * Up to the absolute ceiling: above the restaurant's own maximum the booking
+   * is still sent, as a group request the restaurant arranges by hand (0068).
+   */
+  partySize: z.coerce.number().int().min(1).max(ABSOLUTE_MAX_PARTY),
   notes: z.string().max(500).optional().default(""),
   /** Mobile Money number — required only when the restaurant charges a fixed
    *  reservation fee, which the customer pays online at booking. */
   phone: z.string().optional().default(""),
+  /** Optional (0068): birthday, business… shown to the restaurant. */
+  occasion: z.enum(OCCASIONS).optional().nullable(),
+  /** Optional (0068): a table zone ("Terrasse") — a preference, not a condition. */
+  seatingPreference: z.string().trim().max(40).optional().nullable(),
 });
+
+/** The columns 0068 added to `reservations` — dropped on a database without it. */
+const BOOKING_0068_COLUMNS = ["occasion", "seating_preference", "is_group_request", "source", "pending_change"];
 
 /**
  * "That column does not exist" — the shape a skipped migration takes, and it
@@ -738,10 +751,8 @@ const ReservationSchema = z.object({
  * exact path they exist for. Both mention the column by name, which is what
  * keeps this from swallowing an unrelated failure.
  */
-function isMissingColumn(error: { code?: string; message?: string } | null, column: string) {
-  if (!error) return false;
-  const known = error.code === "42703" || error.code === "PGRST204";
-  return known && (error.message ?? "").includes(column);
+function isMissingColumn(error: { code?: string; message?: string } | null, column?: string) {
+  return isMissingSchema(error, column);
 }
 
 /**
@@ -808,7 +819,7 @@ export async function createOwnReservation(
   const parsed = ReservationSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: t("ecu.checkReservation") };
 
-  const { restaurantId, reservedFor, partySize, notes, phone } = parsed.data;
+  const { restaurantId, reservedFor, partySize, notes, phone, occasion, seatingPreference } = parsed.data;
   const when = new Date(reservedFor);
   if (when.getTime() <= Date.now()) return { ok: false, error: t("ecu.chooseFutureDate") };
 
@@ -865,6 +876,23 @@ export async function createOwnReservation(
     return { ok: false, error: t("ecu.slotOutsideHours") };
   }
 
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     THE RESTAURANT'S OWN BOOKING RULES (0068).
+
+     How far ahead (admin setting), closures, the largest party it seats
+     itself, and how many arrivals it can greet in one half-hour. Above the
+     maximum party the request is still sent, as a GROUP REQUEST: the
+     restaurant arranges the tables by hand, so no capacity test is run.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const config = await loadBookingConfig(restaurantId);
+  if (!withinHorizon(localSlot.date, config.horizonDays)) {
+    return { ok: false, error: t("ons.err.tooFarAhead", { days: config.horizonDays }) };
+  }
+  if (closureOn(localSlot.date, config.closures)) return { ok: false, error: t("ons.err.closedOnDate") };
+  const groupRequest = isGroupRequest(partySize, config.maxParty);
+
   const deposit = await readDepositConfig(supabase, restaurantId);
   const depositType = deposit.type;
   const depositPercent = depositType === "percent" ? deposit.amount : 0;
@@ -887,46 +915,26 @@ export async function createOwnReservation(
   /*
     THE SAME RULE THE BOOKING FORM DRAWS ITS GREYED SLOTS FROM.
 
-    This used to be the only place capacity was tested, which is why a full
-    Saturday was a dead end reached after the whole form was filled. The rule
-    now lives in lib/reservations/availability and both sides call it — a form
-    that showed a more generous rule than this one enforces would be the same
-    bug wearing a different hat.
+    A party is seated on one table when one fits and on several when not
+    (lib/reservations/tables — a simulation of the whole floor, 0068), and
+    the arrivals cap is part of the same verdict. The form asks
+    fetchDayAvailability, which calls slotVerdict too: one definition of
+    "full", on both sides.
   */
   // The restaurant's sitting length (0060, default one hour) — snapshotted
   // onto the booking below, and the length every overlap test uses for it.
   const durationMin = await getReservationDuration(restaurantId, supabase);
-  const window = overlapQueryRange(when, when, durationMin);
 
-  const tableAccess = await fetchTableAccess(restaurantId).catch(() => null);
-  if (!tableAccess) return { ok: false, error: t("ecu.availabilityFailed") };
-  const floor: FloorTable[] = tableAccess.tables.map((table) => ({
-    capacity: table.capacity,
-    status: table.planLocked ? "out_of_service" : table.status,
-  }));
-
-  // No configured floor means the restaurant manages capacity manually — a
-  // walk-in place must not have bookings refused by a floor plan nobody
-  // filled in.
-  if (!floorIsUnmanaged(floor)) {
-    if (seatableTables(floor, partySize) === 0) {
+  if (!groupRequest) {
+    const floor = await loadFloorPlan(restaurantId).catch(() => null);
+    if (!floor) return { ok: false, error: t("ecu.availabilityFailed") };
+    // No configured floor means the restaurant manages capacity manually.
+    if (floor.length > 0 && floorSeats(floor) < partySize) {
       return { ok: false, error: t("ecu.noTableForParty") };
     }
-
-    const { data: overlapping, error: overlapError } = await supabase
-      .from("reservations")
-      .select("reserved_for, duration_min")
-      .eq("restaurant_id", restaurantId)
-      .in("status", [...HOLDING_STATUSES])
-      .gt("reserved_for", window.start)
-      .lt("reserved_for", window.end);
-
-    if (overlapError) return { ok: false, error: t("ecu.availabilityFailed") };
-
-    const holding: HoldingBooking[] = (
-      (overlapping ?? []) as { reserved_for: string; duration_min: number | null }[]
-    ).map((r) => ({ start: new Date(r.reserved_for), durationMin: r.duration_min }));
-    if (slotIsFull(when, durationMin, holding, floor, partySize)) {
+    const holding = await loadHoldingBookings(restaurantId, when, when, durationMin);
+    if (!holding) return { ok: false, error: t("ecu.availabilityFailed") };
+    if (slotVerdict({ tables: floor, bookings: holding, at: when, durationMin, partySize, maxArrivals: config.maxArrivals }) !== "ok") {
       return { ok: false, error: t("ecu.slotFull") };
     }
   }
@@ -936,6 +944,7 @@ export async function createOwnReservation(
     `deposit_percent` is kept OUT of the base row and added on top, so the
     retry below has something to fall back to that was never assembled with
     it — rather than destructuring the key back out of an object that has it.
+    The 0068 details ride on top again, dropped first if the database lacks them.
   */
   const baseRow = {
     reference,
@@ -962,12 +971,22 @@ export async function createOwnReservation(
     notes: notes.trim() || null,
   };
   const row = { ...baseRow, deposit_percent: depositPercent };
+  const fullRow = {
+    ...row,
+    occasion: occasion ?? null,
+    seating_preference: seatingPreference?.trim() || null,
+    is_group_request: groupRequest,
+  };
 
   let inserted: { id: string; created_at: string } | null = null;
   let insertError = null as { code?: string; message?: string } | null;
 
   {
-    const attempt = await supabase.from("reservations").insert(row).select("id, created_at").single();
+    let attempt = await supabase.from("reservations").insert(fullRow).select("id, created_at").single();
+    if (attempt.error && BOOKING_0068_COLUMNS.some((column) => isMissingColumn(attempt.error, column))) {
+      console.warn("[customer:createOwnReservation] 0068 booking columns missing — saved without occasion / preference.");
+      attempt = await supabase.from("reservations").insert(row).select("id, created_at").single();
+    }
     inserted = attempt.data as { id: string; created_at: string } | null;
     insertError = attempt.error;
 
@@ -995,40 +1014,29 @@ export async function createOwnReservation(
   }
 
   /*
-    THE LAST TABLE, REQUESTED TWICE AT ONCE (lostInsertRace, availability.ts).
+    THE LAST TABLE, REQUESTED TWICE AT ONCE.
 
     The capacity check above and the insert are two statements, so two
     customers can both pass the check for the same last table. Re-reading
     after the insert and yielding to whichever request got in first settles it
-    without a lock; the loser's row is removed before anyone is notified of it.
-    A failed re-read keeps the booking — the restaurant still decides it.
+    without a lock: only bookings created BEFORE ours count against it, so of
+    two racing requests exactly the later one withdraws. A failed re-read keeps
+    the booking — the restaurant still decides it.
   */
-  if (!floorIsUnmanaged(floor)) {
-    const { data: afterRows, error: afterError } = await supabase
-      .from("reservations")
-      .select("id, created_at, reserved_for, duration_min")
-      .eq("restaurant_id", restaurantId)
-      .in("status", [...HOLDING_STATUSES])
-      .gt("reserved_for", window.start)
-      .lt("reserved_for", window.end);
-
-    if (!afterError) {
-      const others = (
-        (afterRows ?? []) as { id: string; created_at: string; reserved_for: string; duration_min: number | null }[]
-      ).map((r) => ({
-        id: r.id,
-        createdAt: r.created_at,
-        start: new Date(r.reserved_for),
-        durationMin: r.duration_min,
-      }));
-      const lost = lostInsertRace(
-        { id: inserted.id, createdAt: inserted.created_at, start: when, durationMin },
-        others,
-        floor,
-        partySize,
-      );
-      if (lost) {
-        await supabase.from("reservations").delete().eq("id", inserted.id).eq("status", "pending");
+  if (!groupRequest) {
+    const floor = await loadFloorPlan(restaurantId).catch(() => null);
+    const after = floor ? await loadHoldingBookings(restaurantId, when, when, durationMin) : null;
+    if (floor && after) {
+      const mine = inserted;
+      const mineAt = Date.parse(mine.created_at);
+      const earlier = after.filter((other) => {
+        if (other.id === mine.id) return false;
+        const at = Date.parse(other.createdAt);
+        return at < mineAt || (at === mineAt && other.id < mine.id);
+      });
+      const verdict = slotVerdict({ tables: floor, bookings: earlier, at: when, durationMin, partySize, maxArrivals: config.maxArrivals });
+      if (verdict !== "ok") {
+        await supabase.from("reservations").delete().eq("id", mine.id).eq("status", "pending");
         return { ok: false, error: t("ecu.slotFull") };
       }
     }
@@ -1058,13 +1066,27 @@ export async function createOwnReservation(
     ─────────────────────────────────────────────────────────────────────────
   */
 
+  // A waitlist spot the customer booked from is used up (0068; tolerated if absent).
+  await supabase
+    .from("reservation_waitlist")
+    .update({ status: "booked" })
+    .eq("restaurant_id", restaurantId)
+    .eq("customer_id", user.id)
+    .eq("wanted_date", localSlot.date)
+    .in("status", ["waiting", "notified"]);
+
   // A booking request is only real once someone at the restaurant has seen it.
   await notify({
     event: "reservation",
-    tone: "info",
+    tone: groupRequest ? "warning" : "info",
     restaurantId,
     href: "/m/reservations",
-    params: { reference, customerName: user.name, partySize },
+    params: {
+      reference,
+      customerName: user.name,
+      partySize,
+      detail: groupRequest ? "Demande de groupe — tables à attribuer à la main" : undefined,
+    },
   });
 
   /*
@@ -1129,12 +1151,27 @@ export async function fetchDayAvailability(input: {
   /** YYYY-MM-DD in the display zone. */
   date: string;
   partySize: number;
-}): Promise<{ ok: boolean; slots: string[]; full: string[] }> {
+}): Promise<{
+  ok: boolean;
+  slots: string[];
+  full: string[];
+  /** Past the admin limit on how far ahead a table can be booked (0068). */
+  tooFar?: boolean;
+  maxDays?: number;
+  /** The restaurant is closed that day; the reason it gave, if any. */
+  closed?: boolean;
+  closedReason?: string | null;
+  /** Above the restaurant's maximum: the request is arranged by hand. */
+  groupRequest?: boolean;
+  maxParty?: number;
+  /** Table zones the customer may prefer ("Terrasse"…), when the floor has them. */
+  zones?: string[];
+}> {
   const parsed = z
     .object({
       restaurantId: z.string().uuid(),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      partySize: z.coerce.number().int().min(1).max(20),
+      partySize: z.coerce.number().int().min(1).max(ABSOLUTE_MAX_PARTY),
     })
     .safeParse(input);
 
@@ -1143,66 +1180,61 @@ export async function fetchDayAvailability(input: {
 
   const supabase = createAdminClient();
 
-  const { data: hoursRows, error: hoursError } = await supabase
-    .from("restaurant_hours")
-    .select("weekday, opens_at, closes_at")
-    .eq("restaurant_id", restaurantId);
-
+  const [{ data: hoursRows, error: hoursError }, config] = await Promise.all([
+    supabase.from("restaurant_hours").select("weekday, opens_at, closes_at").eq("restaurant_id", restaurantId),
+    loadBookingConfig(restaurantId),
+  ]);
   if (hoursError) return { ok: false, slots: [], full: [] };
+
+  // The rules that empty the whole day come first — they are the answer.
+  if (!withinHorizon(date, config.horizonDays)) {
+    return { ok: true, slots: [], full: [], tooFar: true, maxDays: config.horizonDays };
+  }
+  const closure = closureOn(date, config.closures);
+  if (closure) return { ok: true, slots: [], full: [], closed: true, closedReason: closure.reason };
 
   const hours = ((hoursRows ?? []) as { weekday: number; opens_at: string | null; closes_at: string | null }[]).map(
     (h) => ({ weekday: h.weekday, opensAt: h.opens_at, closesAt: h.closes_at }),
   );
 
   const { slots } = slotsForDate(hours, date);
-  if (slots.length === 0) return { ok: true, slots: [], full: [] };
+  if (slots.length === 0) return { ok: true, slots: [], full: [], maxParty: config.maxParty };
 
-  const tableAccess = await fetchTableAccess(restaurantId).catch(() => null);
-  if (!tableAccess) return { ok: false, slots, full: [] };
-  const floor: FloorTable[] = tableAccess.tables.map((table) => ({
-    capacity: table.capacity,
-    status: table.planLocked ? "out_of_service" : table.status,
-  }));
+  const floor = await loadFloorPlan(restaurantId).catch(() => null);
+  if (!floor) return { ok: false, slots, full: [] };
+  const zones = [...new Set(floor.filter((table) => table.status !== "out_of_service").map((table) => table.zone).filter((zone): zone is string => Boolean(zone)))].sort();
 
-  // An unmanaged floor has no ceiling to enforce, so the second query is
-  // pointless — and answering "nothing is full" without it is not a guess,
-  // it is the rule.
-  if (floorIsUnmanaged(floor)) return { ok: true, slots, full: [] };
+  // A group request is arranged by hand — every opening slot can be asked for.
+  if (isGroupRequest(partySize, config.maxParty)) {
+    return { ok: true, slots, full: [], groupRequest: true, maxParty: config.maxParty, zones };
+  }
 
-  // The widest window any of the day's slots can occupy, so one read covers
-  // every question below: back by the longest possible sitting, forward by
-  // this restaurant's own.
+  // An unmanaged floor with no arrivals cap has nothing to enforce.
+  if (floor.length === 0 && !config.maxArrivals) return { ok: true, slots, full: [], maxParty: config.maxParty, zones };
+
+  // One read covers every slot of the day: back by the longest possible
+  // sitting, forward by this restaurant's own.
   const dayStart = new Date(`${date}T00:00:00+01:00`);
   const dayEnd = new Date(`${date}T23:59:59+01:00`);
   const durationMin = await getReservationDuration(restaurantId, supabase);
-  const range = overlapQueryRange(dayStart, dayEnd, durationMin);
-
-  const { data: holdingRows, error: holdingError } = await supabase
-    .from("reservations")
-    .select("reserved_for, duration_min")
-    .eq("restaurant_id", restaurantId)
-    .in("status", [...HOLDING_STATUSES])
-    .gt("reserved_for", range.start)
-    .lt("reserved_for", range.end);
-
-  if (holdingError) return { ok: false, slots, full: [] };
-
-  const holding: HoldingBooking[] = (
-    (holdingRows ?? []) as { reserved_for: string; duration_min: number | null }[]
-  ).map((r) => ({ start: new Date(r.reserved_for), durationMin: r.duration_min }));
+  const holding = await loadHoldingBookings(restaurantId, dayStart, dayEnd, durationMin);
+  if (!holding) return { ok: false, slots, full: [] };
 
   // Africa/Douala is UTC+1 with no DST, the same conversion the submit path
   // uses when it builds `reservedFor`.
-  const full = fullSlots(
-    slots,
-    (slot) => new Date(`${date}T${slot}:00+01:00`),
-    durationMin,
-    holding,
-    floor,
-    partySize,
+  const full = slots.filter(
+    (slot) =>
+      slotVerdict({
+        tables: floor,
+        bookings: holding,
+        at: new Date(`${date}T${slot}:00+01:00`),
+        durationMin,
+        partySize,
+        maxArrivals: config.maxArrivals,
+      }) !== "ok",
   );
 
-  return { ok: true, slots, full };
+  return { ok: true, slots, full, maxParty: config.maxParty, zones };
 }
 
 /**
@@ -1284,8 +1316,25 @@ export async function payReservationDeposit(
     return { ok: false, error: t("ecu.slotPassed") };
   }
 
-  const amount = Number(booking.deposit_amount ?? 0);
-  if (amount <= 0) return { ok: false, error: t("ecu.noDepositDue") };
+  const deposit = Number(booking.deposit_amount ?? 0);
+  if (deposit <= 0) return { ok: false, error: t("ecu.noDepositDue") };
+
+  /*
+    THE PAYMENT FEE, ON EVERY MOBILE MONEY PAYMENT (0068).
+
+    The gateway takes its percentage of every payment that passes through
+    it, so the admin's payment service fee applies to a deposit exactly as it
+    does to an online order. The restaurant is credited the deposit it set
+    (settlePayment splits the two), and the fee is snapshotted on the booking
+    so the screen, the charge and the settlement read one figure.
+  */
+  const feePercent = settingNumber(await getSettingsMap(), "service_charge_percent", 0);
+  const depositFee = paymentFee(deposit, feePercent);
+  const amount = deposit + depositFee;
+  {
+    const { error: feeError } = await supabase.from("reservations").update({ deposit_fee: depositFee }).eq("id", booking.id);
+    if (feeError && !isMissingColumn(feeError, "deposit_fee")) console.error("[customer:payReservationDeposit] fee", feeError.message);
+  }
 
   /*
    * A reload or a second tap must resume the Mobile Money request already on
@@ -1577,6 +1626,8 @@ export async function cancelOwnReservation(
       cancelledBy: "customer",
     },
   });
+  // The table this booking held is free — the waitlist hears first (0068).
+  await notifyWaitlist(reservation.restaurant_id, reservation.reserved_for);
 
   revalidatePath("/reservations");
   revalidatePath("/account");
@@ -1916,4 +1967,300 @@ export async function deleteOwnAccount(): Promise<ActionResult> {
 
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+/* ── Waitlist, booking changes, booking reviews (0068) ──────────────────── */
+
+const SlotSchema = z.object({
+  restaurantId: z.string().uuid(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  time: z.string().regex(/^\d{2}:\d{2}$/),
+  partySize: z.coerce.number().int().min(1).max(ABSOLUTE_MAX_PARTY),
+});
+
+/**
+ * "Tell me if a table frees up" — for a slot the form greyed out as full.
+ * The customer is told once, the moment a booking that overlapped it is
+ * cancelled or declined (lib/data/waitlist.ts); booking still goes through
+ * the normal availability check.
+ */
+export async function joinWaitlist(input: z.infer<typeof SlotSchema>): Promise<ActionResult> {
+  const t = await getTranslator();
+  const user = await requireUser();
+  const parsed = SlotSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: t("ecu.checkReservation") };
+  const { restaurantId, date, time, partySize } = parsed.data;
+  const limited = await rateLimit({ key: "booking:waitlist", identifier: user.id, limit: 20, windowMs: 60 * 60_000 });
+  if (!limited.ok) return { ok: false, error: t("tbg.err.tryLater") };
+
+  const config = await loadBookingConfig(restaurantId);
+  if (!withinHorizon(date, config.horizonDays)) {
+    return { ok: false, error: t("ons.err.tooFarAhead", { days: config.horizonDays }) };
+  }
+  const { error } = await createAdminClient().from("reservation_waitlist").insert({
+    restaurant_id: restaurantId,
+    customer_id: user.id,
+    wanted_date: date,
+    wanted_time: time,
+    party_size: partySize,
+  });
+  if (error) {
+    if (error.code === "23505") return { ok: false, error: t("ons.err.alreadyWaiting") };
+    console.error("[customer:joinWaitlist]", error.code ?? "", error.message);
+    return { ok: false, error: isMissingColumn(error) ? t("ons.err.migration0068") : t("ons.err.waitlistFailed") };
+  }
+  revalidatePath("/reservations");
+  return { ok: true };
+}
+
+export async function leaveWaitlist(entryId: string): Promise<ActionResult> {
+  const t = await getTranslator();
+  const user = await requireUser();
+  if (!z.string().uuid().safeParse(entryId).success) return { ok: false, error: t("ons.err.waitlistFailed") };
+  const { error } = await createAdminClient()
+    .from("reservation_waitlist")
+    .update({ status: "cancelled" })
+    .eq("id", entryId)
+    .eq("customer_id", user.id);
+  if (error) return { ok: false, error: t("ons.err.waitlistFailed") };
+  revalidatePath("/reservations");
+  return { ok: true };
+}
+
+/**
+ * Move a booking to another time or party size.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  A request the restaurant has NOT answered yet is simply edited (the
+ *  restaurant decides the new version). One it already ACCEPTED is not
+ *  rewritten behind its back: the change is parked in `pending_change` and
+ *  the original booking stands until the board accepts or declines it
+ *  (decideReservationChange). Either way the new slot must pass the same
+ *  rules as a new booking, not counting this booking's own tables.
+ *
+ *  A deposit already paid stays as it is — it was for this table, and what
+ *  remains of a per-seat fee is settled at the restaurant.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function requestReservationChange(
+  reservationId: string,
+  input: { date: string; time: string; partySize: number },
+): Promise<ActionResult> {
+  const t = await getTranslator();
+  const user = await requireUser();
+  if (!z.string().uuid().safeParse(reservationId).success) return { ok: false, error: t("ecu.reservationNotFound") };
+  const supabase = createAdminClient();
+  const { data: booking } = await supabase
+    .from("reservations")
+    .select("id, reference, restaurant_id, status, reserved_for, party_size, deposit_paid, guest_name")
+    .eq("id", reservationId)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+  if (!booking) return { ok: false, error: t("ecu.reservationNotFound") };
+  if (!["pending", "awaiting_payment", "confirmed"].includes(booking.status)) {
+    return { ok: false, error: t("ons.err.changeNotAllowed") };
+  }
+  // Changing at the last minute is a phone call to the room, not a request.
+  if (Date.parse(booking.reserved_for) - Date.now() < 2 * 60 * 60_000) {
+    return { ok: false, error: t("ons.err.changeTooLate") };
+  }
+
+  const parsed = SlotSchema.safeParse({ ...input, restaurantId: booking.restaurant_id });
+  if (!parsed.success) return { ok: false, error: t("ecu.checkReservation") };
+  const { date, time, partySize } = parsed.data;
+  const when = new Date(`${date}T${time}:00+01:00`);
+  if (when.getTime() <= Date.now() + 30 * 60_000) return { ok: false, error: t("ecu.chooseFutureDate") };
+
+  const [{ data: hoursRows }, config] = await Promise.all([
+    supabase.from("restaurant_hours").select("weekday, opens_at, closes_at").eq("restaurant_id", booking.restaurant_id),
+    loadBookingConfig(booking.restaurant_id),
+  ]);
+  const hours = ((hoursRows ?? []) as { weekday: number; opens_at: string | null; closes_at: string | null }[])
+    .map((row) => ({ weekday: row.weekday, opensAt: row.opens_at, closesAt: row.closes_at }));
+  if (!slotsForDate(hours, date).slots.includes(time)) return { ok: false, error: t("ecu.slotOutsideHours") };
+  if (!withinHorizon(date, config.horizonDays)) return { ok: false, error: t("ons.err.tooFarAhead", { days: config.horizonDays }) };
+  if (closureOn(date, config.closures)) return { ok: false, error: t("ons.err.closedOnDate") };
+
+  const groupRequest = isGroupRequest(partySize, config.maxParty);
+  if (!groupRequest) {
+    const durationMin = await getReservationDuration(booking.restaurant_id, supabase);
+    const [floor, holding] = await Promise.all([
+      loadFloorPlan(booking.restaurant_id).catch(() => null),
+      loadHoldingBookings(booking.restaurant_id, when, when, durationMin),
+    ]);
+    if (!floor || !holding) return { ok: false, error: t("ecu.availabilityFailed") };
+    const others = holding.filter((other) => other.id !== booking.id);
+    if (slotVerdict({ tables: floor, bookings: others, at: when, durationMin, partySize, maxArrivals: config.maxArrivals }) !== "ok") {
+      return { ok: false, error: t("ecu.slotFull") };
+    }
+  }
+
+  const whenLabel = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Africa/Douala", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+  }).format(when);
+
+  if (booking.status === "pending") {
+    const deposit = await readDepositConfig(supabase, booking.restaurant_id);
+    const patch: Record<string, unknown> = {
+      reserved_for: when.toISOString(),
+      party_size: partySize,
+      is_group_request: groupRequest,
+      pending_change: null,
+    };
+    if (!booking.deposit_paid) patch.deposit_amount = depositChargedNow(deposit, partySize);
+    const { data: moved, error } = await supabase.from("reservations").update(patch)
+      .eq("id", booking.id).eq("status", "pending").select("id").maybeSingle();
+    if (error || !moved) {
+      if (error) console.error("[customer:requestReservationChange] edit", error.code ?? "", error.message);
+      return { ok: false, error: error && isMissingColumn(error) ? t("ons.err.migration0068") : t("ecu.requestChanged") };
+    }
+  } else {
+    const { error } = await supabase.from("reservations").update({
+      pending_change: { reservedFor: when.toISOString(), partySize, requestedAt: new Date().toISOString() },
+    }).eq("id", booking.id).in("status", ["awaiting_payment", "confirmed"]);
+    if (error) {
+      console.error("[customer:requestReservationChange] park", error.code ?? "", error.message);
+      return { ok: false, error: isMissingColumn(error) ? t("ons.err.migration0068") : t("ecu.requestChanged") };
+    }
+  }
+
+  await notify({
+    event: "reservation",
+    tone: "warning",
+    restaurantId: booking.restaurant_id,
+    href: "/m/reservations",
+    params: {
+      reference: booking.reference,
+      customerName: booking.guest_name ?? user.name,
+      partySize,
+      whenLabel,
+      reservationUpdate: "change_requested",
+    },
+  });
+  // The old slot may have freed a table.
+  if (booking.status === "pending") await notifyWaitlist(booking.restaurant_id, booking.reserved_for);
+
+  revalidatePath("/reservations");
+  revalidatePath("/m/reservations");
+  return { ok: true, note: booking.status === "pending" ? "moved" : "requested" };
+}
+
+/** Withdraw a change request the restaurant has not answered. */
+export async function cancelReservationChange(reservationId: string): Promise<ActionResult> {
+  const t = await getTranslator();
+  const user = await requireUser();
+  if (!z.string().uuid().safeParse(reservationId).success) return { ok: false, error: t("ecu.reservationNotFound") };
+  const { error } = await createAdminClient().from("reservations").update({ pending_change: null })
+    .eq("id", reservationId).eq("customer_id", user.id);
+  if (error) return { ok: false, error: t("ecu.requestChanged") };
+  revalidatePath("/reservations");
+  revalidatePath("/m/reservations");
+  return { ok: true };
+}
+
+/**
+ * Rate a visit made with a booking — and, optionally, the platform itself.
+ * Only after the visit (completed, or seated and its day is over), once.
+ */
+export async function submitReservationReview(
+  reservationId: string,
+  input: { rating: number; body?: string; platformRating?: number | null; platformBody?: string },
+): Promise<ActionResult> {
+  const t = await getTranslator();
+  const user = await requireUser();
+  if (!z.string().uuid().safeParse(reservationId).success) return { ok: false, error: t("ecu.reservationNotFound") };
+  const rating = Math.round(Number(input.rating));
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) return { ok: false, error: t("ecu.ratingRange") };
+
+  const supabase = createAdminClient();
+  const { data: booking } = await supabase
+    .from("reservations")
+    .select("id, reference, restaurant_id, status, reserved_for")
+    .eq("id", reservationId)
+    .eq("customer_id", user.id)
+    .maybeSingle();
+  if (!booking) return { ok: false, error: t("ecu.reservationNotFound") };
+  const visited = booking.status === "completed" ||
+    (booking.status === "seated" && Date.parse(booking.reserved_for) < Date.now());
+  if (!visited) return { ok: false, error: t("ons.err.reviewAfterVisit") };
+
+  const { error } = await supabase.from("reviews").insert({
+    restaurant_id: booking.restaurant_id,
+    customer_id: user.id,
+    customer_name: user.name,
+    rating,
+    body: (input.body ?? "").trim().slice(0, 2000),
+    reservation_id: booking.id,
+  });
+  if (error) {
+    if (error.code === "23505") return { ok: false, error: t("ons.err.alreadyReviewed") };
+    console.error("[customer:submitReservationReview]", error.code ?? "", error.message);
+    return { ok: false, error: isMissingColumn(error) ? t("ons.err.migration0068") : t("ecu.publishFailed") };
+  }
+
+  await savePlatformFeedback({
+    source: "reservation",
+    rating: input.platformRating ?? null,
+    body: input.platformBody ?? "",
+    restaurantId: booking.restaurant_id,
+    customerId: user.id,
+  });
+
+  await notify({
+    event: "review",
+    tone: "info",
+    restaurantId: booking.restaurant_id,
+    href: "/m/reviews",
+    params: { rating, customerName: user.name, reference: booking.reference },
+  });
+  revalidatePath("/reservations");
+  revalidatePath("/restaurants");
+  return { ok: true };
+}
+
+/**
+ * "How do you find Resto237? What can we improve?" — optional, from any
+ * signed-in customer (after an order, a booking, or on its own).
+ */
+export async function submitPlatformFeedback(input: {
+  source: "order" | "reservation" | "other";
+  rating?: number | null;
+  body: string;
+  restaurantId?: string | null;
+}): Promise<ActionResult> {
+  const t = await getTranslator();
+  const user = await requireUser();
+  const limited = await rateLimit({ key: "feedback:platform", identifier: user.id, limit: 5, windowMs: 60 * 60_000 });
+  if (!limited.ok) return { ok: false, error: t("tbg.err.tryLater") };
+  if (!input.body?.trim() && !input.rating) return { ok: false, error: t("tbg.err.writeFirst") };
+  const saved = await savePlatformFeedback({
+    source: ["order", "reservation", "other"].includes(input.source) ? input.source : "other",
+    rating: input.rating ?? null,
+    body: input.body,
+    restaurantId: input.restaurantId && z.string().uuid().safeParse(input.restaurantId).success ? input.restaurantId : null,
+    customerId: user.id,
+  });
+  return saved ? { ok: true } : { ok: false, error: t("ons.err.feedbackFailed") };
+}
+
+async function savePlatformFeedback(input: {
+  source: "order" | "reservation" | "other";
+  rating: number | null;
+  body: string;
+  restaurantId: string | null;
+  customerId: string;
+}): Promise<boolean> {
+  const body = input.body.trim().slice(0, 2000);
+  const rating = Number(input.rating);
+  const validRating = Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null;
+  if (!body && !validRating) return true;
+  const { error } = await createAdminClient().from("platform_feedback").insert({
+    source: input.source,
+    rating: validRating,
+    body: body || "—",
+    restaurant_id: input.restaurantId,
+    customer_id: input.customerId,
+  });
+  if (error) console.error("[customer:platformFeedback]", error.code ?? "", error.message);
+  return !error;
 }

@@ -319,6 +319,20 @@ export interface Reservation {
   depositPercent: number;
   depositPaid: boolean;
   createdAt: string;
+  /* ── 0068 (empty on a database without it) ─────────────────────────── */
+  customerId: string | null;
+  voucherCode: string | null;
+  voucherRedeemedAt: string | null;
+  occasion: string | null;
+  seatingPreference: string | null;
+  isGroupRequest: boolean;
+  source: "online" | "phone" | "walk_in";
+  pendingChange: { reservedFor: string; partySize: number; requestedAt: string } | null;
+  /** Every table held, the main one first. */
+  tableIds: string[];
+  tableNumbers: string[];
+  /** This guest at this restaurant: past visits, no-shows, staff note. Null for phone bookings. */
+  guestHistory: { visits: number; noShows: number; lastVisit: string | null; note: string | null } | null;
 }
 
 export async function fetchReservations(
@@ -389,6 +403,105 @@ export async function fetchReservations(
       depositPercent: Number(r.deposit_percent ?? 0),
       depositPaid: Boolean(r.deposit_paid),
       createdAt: r.created_at,
+      customerId: null,
+      voucherCode: null,
+      voucherRedeemedAt: null,
+      occasion: null,
+      seatingPreference: null,
+      isGroupRequest: false,
+      source: "online" as const,
+      pendingChange: null,
+      tableIds: r.table_id ? [r.table_id] : [],
+      tableNumbers: r.restaurant_tables?.number ? [r.restaurant_tables.number] : [],
+      guestHistory: null,
+    };
+  });
+}
+
+/**
+ * The 0068 details for the board, read beside fetchReservations so a
+ * database without 0068 still shows every booking.
+ */
+export async function withBookingDetails(restaurantId: string, rows: Reservation[]): Promise<Reservation[]> {
+  if (rows.length === 0) return rows;
+  const supabase = createAdminClient();
+  const ids = rows.map((row) => row.id);
+  const [extras, links] = await Promise.all([
+    supabase
+      .from("reservations")
+      .select("id, customer_id, voucher_code, voucher_redeemed_at, occasion, seating_preference, is_group_request, source, pending_change")
+      .in("id", ids),
+    supabase.from("reservation_tables").select("reservation_id, table_id, restaurant_tables ( number )").in("reservation_id", ids),
+  ]);
+  if (extras.error) return rows;
+
+  type Extra = {
+    id: string; customer_id: string | null; voucher_code: string | null; voucher_redeemed_at: string | null;
+    occasion: string | null; seating_preference: string | null; is_group_request: boolean | null; source: string | null;
+    pending_change: { reservedFor?: string; partySize?: number; requestedAt?: string } | null;
+  };
+  const extraById = new Map(((extras.data ?? []) as Extra[]).map((e) => [e.id, e]));
+  const linksBy = new Map<string, { id: string; number: string }[]>();
+  for (const link of (links.error ? [] : links.data ?? []) as { reservation_id: string; table_id: string; restaurant_tables: { number: string } | { number: string }[] | null }[]) {
+    const table = Array.isArray(link.restaurant_tables) ? link.restaurant_tables[0] : link.restaurant_tables;
+    const list = linksBy.get(link.reservation_id) ?? [];
+    list.push({ id: link.table_id, number: table?.number ?? "?" });
+    linksBy.set(link.reservation_id, list);
+  }
+
+  // Guest history: how often each account came, and failed to come, here.
+  const customerIds = [...new Set(((extras.data ?? []) as Extra[]).map((e) => e.customer_id).filter((id): id is string => Boolean(id)))];
+  const history = new Map<string, { visits: number; noShows: number; lastVisit: string | null; note: string | null }>();
+  if (customerIds.length) {
+    const [past, notes] = await Promise.all([
+      supabase
+        .from("reservations")
+        .select("customer_id, status, reserved_for")
+        .eq("restaurant_id", restaurantId)
+        .in("customer_id", customerIds)
+        .in("status", ["completed", "seated", "no_show"])
+        .lt("reserved_for", new Date().toISOString()),
+      supabase.from("restaurant_guest_notes").select("customer_id, note").eq("restaurant_id", restaurantId).in("customer_id", customerIds),
+    ]);
+    for (const id of customerIds) history.set(id, { visits: 0, noShows: 0, lastVisit: null, note: null });
+    for (const row of (past.data ?? []) as { customer_id: string; status: string; reserved_for: string }[]) {
+      const entry = history.get(row.customer_id)!;
+      if (row.status === "no_show") entry.noShows++;
+      else {
+        entry.visits++;
+        if (!entry.lastVisit || row.reserved_for > entry.lastVisit) entry.lastVisit = row.reserved_for;
+      }
+    }
+    for (const row of (notes.error ? [] : notes.data ?? []) as { customer_id: string; note: string }[]) {
+      history.get(row.customer_id)!.note = row.note;
+    }
+  }
+
+  return rows.map((row) => {
+    const extra = extraById.get(row.id);
+    if (!extra) return row;
+    const linked = linksBy.get(row.id) ?? [];
+    const main = linked.find((l) => l.id === row.tableId);
+    const ordered = main ? [main, ...linked.filter((l) => l !== main)] : linked;
+    return {
+      ...row,
+      customerId: extra.customer_id,
+      voucherCode: extra.voucher_code,
+      voucherRedeemedAt: extra.voucher_redeemed_at,
+      occasion: extra.occasion,
+      seatingPreference: extra.seating_preference,
+      isGroupRequest: Boolean(extra.is_group_request),
+      source: (extra.source === "phone" || extra.source === "walk_in" ? extra.source : "online") as Reservation["source"],
+      pendingChange: extra.pending_change?.reservedFor
+        ? {
+            reservedFor: extra.pending_change.reservedFor,
+            partySize: Number(extra.pending_change.partySize ?? row.partySize),
+            requestedAt: extra.pending_change.requestedAt ?? "",
+          }
+        : null,
+      tableIds: ordered.length ? ordered.map((l) => l.id) : row.tableIds,
+      tableNumbers: ordered.length ? ordered.map((l) => l.number) : row.tableNumbers,
+      guestHistory: extra.customer_id ? history.get(extra.customer_id) ?? null : null,
     };
   });
 }
@@ -407,6 +520,8 @@ export interface RestaurantTable {
   planLocked: boolean;
   /** Opaque locator embedded in this table’s printable QR code. */
   publicToken?: string | null;
+  /** "Terrasse", "Salle", "VIP"… (0068) — what a booking preference matches. */
+  zone?: string | null;
 }
 
 export async function fetchTables(restaurantId: string): Promise<RestaurantTable[]> {
@@ -426,6 +541,12 @@ export async function fetchTables(restaurantId: string): Promise<RestaurantTable
     .select("id, public_token")
     .eq("restaurant_id", restaurantId);
   const qrById = new Map(((qrRows ?? []) as { id: string; public_token: string }[]).map((row) => [row.id, row.public_token]));
+  // Zones (0068), read on their own for the same reason.
+  const { data: zoneRows } = await supabase
+    .from("restaurant_tables")
+    .select("id, zone")
+    .eq("restaurant_id", restaurantId);
+  const zoneById = new Map(((zoneRows ?? []) as { id: string; zone: string | null }[]).map((row) => [row.id, row.zone]));
 
   // Occupancy comes from the open dine-in orders, not from a join: orders
   // carry the table NUMBER as a snapshot (the waiter could rename the table
@@ -449,7 +570,12 @@ export async function fetchTables(restaurantId: string): Promise<RestaurantTable
     }
   }
 
-  return tables.map((t) => ({ ...t, publicToken: qrById.get(t.id) ?? null, activePartySize: byNumber.get(t.number)?.party ?? null }));
+  return tables.map((t) => ({
+    ...t,
+    publicToken: qrById.get(t.id) ?? null,
+    zone: zoneById.get(t.id) ?? null,
+    activePartySize: byNumber.get(t.number)?.party ?? null,
+  }));
 }
 
 /* ── Promotions ────────────────────────────────────────────────────────── */

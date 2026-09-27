@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { ManagerPage } from "@/components/layout/manager-shell";
-import { TableOrderer } from "./table-orderer";
+import { TableOrderer, type OpenBill } from "./table-orderer";
 import { requireCapability } from "@/lib/auth/branch";
-import { createAdminClient } from "@/lib/supabase/server";
 import { fetchCategories, fetchMenu, fetchTables } from "@/lib/data/manager";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
@@ -19,8 +18,8 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 export const dynamic = "force-dynamic";
 
-export default async function TableOrderPage({ searchParams }: { searchParams: Promise<{ session?: string }> }) {
-  const { session } = await searchParams;
+export default async function TableOrderPage({ searchParams }: { searchParams: Promise<{ session?: string; bill?: string }> }) {
+  const { session, bill } = await searchParams;
   const { active } = await requireCapability("orders.advance");
   if (!onsiteOrdersAllowed(active)) {
     return (
@@ -29,29 +28,54 @@ export default async function TableOrderPage({ searchParams }: { searchParams: P
       </ManagerPage>
     );
   }
-  const supabase = createAdminClient();
-
-  const [tables, categories, items, chargeSetting, diningSessions, diningNotifications] = await Promise.all([
+  const enterprise = active.planTier === "enterprise";
+  const [tables, categories, items, diningSessions, diningNotifications] = await Promise.all([
     fetchTables(active.restaurantId),
     fetchCategories(active.restaurantId),
     fetchMenu(active.restaurantId),
-    supabase.from("settings").select("value").eq("key", "service_charge_percent").maybeSingle(),
-    active.planTier === "enterprise" ? fetchDiningFloor(active.restaurantId) : Promise.resolve([]),
-    active.planTier === "enterprise" ? getMyDiningNotifications() : Promise.resolve(true),
+    enterprise ? fetchDiningFloor(active.restaurantId) : Promise.resolve([]),
+    enterprise ? getMyDiningNotifications() : Promise.resolve(true),
   ]);
+  const floor = diningSessions as unknown as DiningFloorSession[];
+
+  /*
+    ENTERPRISE: EVERYTHING EATEN AT A TABLE IS ON ONE OF ITS BILLS (0068).
+    The waiter picks an open bill on the table, or opens a new one (a
+    walk-in, a guest without a phone) — never a separate ticket beside the
+    guests' own bills.
+  */
+  const openBills: OpenBill[] | undefined = enterprise
+    ? floor.map((entry) => {
+        const table = Array.isArray(entry.restaurant_tables) ? entry.restaurant_tables[0] : entry.restaurant_tables;
+        return {
+          id: entry.id,
+          tableId: table?.id ?? "",
+          label: entry.label ?? null,
+          code: entry.join_code ?? null,
+          confirmed: Boolean(entry.presence_confirmed_at) && entry.status === "open",
+        };
+      })
+    : undefined;
+  const now = new Date().getTime();
 
   return (
     <ManagerPage titleKey="m.tableOrder.title" descriptionKey="m.tableOrder.subtitle">
-      {active.planTier === "enterprise" && (
-        <DiningFloor sessions={diningSessions as unknown as DiningFloorSession[]} focusSessionId={session} canCollect={can(active.role, "payments.collect")} notificationsEnabled={diningNotifications} />
+      {enterprise && (
+        <DiningFloor
+          sessions={floor}
+          focusSessionId={session}
+          canCollect={can(active.role, "payments.collect")}
+          canSeat={can(active.role, "reservations.seat")}
+          notificationsEnabled={diningNotifications}
+          now={now}
+        />
       )}
       <TableOrderer
         tables={tables}
         categories={categories}
         items={items}
-        // The same setting createTableOrder() reads, so the preview and the
-        // saved order can only disagree if it changes mid-ticket.
-        chargePercent={Number(chargeSetting.data?.value ?? 5) || 0}
+        bills={openBills}
+        focusBillId={bill}
       />
     </ManagerPage>
   );

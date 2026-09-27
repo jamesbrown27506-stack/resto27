@@ -172,6 +172,7 @@ export const ADMIN_NAV: NavGroup[] = [
     label: "Moderation",
     items: [
       { href: "/a/reviews", label: "Reported reviews", icon: "Flag" },
+      { href: "/a/feedback", label: "Platform feedback", icon: "Star" },
       { href: "/a/support", label: "Support", icon: "LifeBuoy" },
       { href: "/a/messages", label: "Messages", icon: "MessageSquare" },
       { href: "/a/broadcast", label: "Broadcast", icon: "Megaphone" },

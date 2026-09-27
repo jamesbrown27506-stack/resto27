@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { activateFromInvoice } from "@/lib/data/invoice-activation";
 import { paymentMode } from "@/lib/data/billing";
 import { notify } from "@/lib/notify";
-import { notifyDiningPaymentSettled } from "@/lib/dining/guest-alerts";
+import { notifyDiningPartPaid, notifyDiningPaymentSettled } from "@/lib/dining/guest-alerts";
 import { refundUnpayableAttempt, startRefundPayout } from "@/lib/payments/refund-payouts";
 import { collectionGateway, gatewayRange, payableOn } from "@/lib/payments/gateway";
 import { cameroonNetwork } from "@/lib/payments/saspay/cameroon";
@@ -81,7 +81,13 @@ import {
  *  (./payment-error.ts), so a new code needs a key there too.
  */
 
-export type AttemptKind = "subscription" | "reservation" | "order" | "wallet";
+/**
+ * `dining` (0068) is one part-payment of an Enterprise table bill — the guest
+ * paid everything, their own dishes, an equal share or an amount, plus an
+ * optional tip. Like `order` it is stored with the reservation-shaped row and
+ * recognised by `raw_response.diningPaymentId`.
+ */
+export type AttemptKind = "subscription" | "reservation" | "order" | "wallet" | "dining";
 
 export type PaymentStatus = "succeeded" | "pending" | "failed";
 
@@ -126,6 +132,8 @@ export interface PaymentAttemptRow {
   invoiceId: string | null;
   reservationId: string | null;
   orderId: string | null;
+  /** The table-bill payment this attempt pays (0068). */
+  diningPaymentId: string | null;
   restaurantId: string;
   kind: AttemptKind;
   provider: string;
@@ -143,14 +151,20 @@ export interface PaymentAttemptRow {
 function attemptRow(row: Record<string, unknown>): PaymentAttemptRow {
   const rawResponse = (row.raw_response as Record<string, unknown> | null) ?? null;
   const orderId = typeof rawResponse?.orderId === "string" ? rawResponse.orderId : null;
+  const diningPaymentId = typeof rawResponse?.diningPaymentId === "string" ? rawResponse.diningPaymentId : null;
   return {
     id: row.id as string,
     reference: row.reference as string,
     invoiceId: (row.invoice_id as string | null) ?? null,
     reservationId: (row.reservation_id as string | null) ?? null,
     orderId,
+    diningPaymentId,
     restaurantId: row.restaurant_id as string,
-    kind: rawResponse?.walletFunding === true ? "wallet" : orderId ? "order" : (row.kind as AttemptKind),
+    kind: rawResponse?.walletFunding === true
+      ? "wallet"
+      : diningPaymentId
+        ? "dining"
+        : orderId ? "order" : (row.kind as AttemptKind),
     provider: row.provider as string,
     transactionId: (row.transaction_id as string | null) ?? null,
     phone: (row.phone as string | null) ?? null,
@@ -228,6 +242,8 @@ export async function initiatePaymentAttempt(input: {
   reservationId?: string;
   /** Required when kind === "order". */
   orderId?: string;
+  /** Required when kind === "dining": the dining_payments row (0068). */
+  diningPaymentId?: string;
   /** Human-readable reference for the attempt (invoice number, reservation reference). */
   reference: string;
   phone: string;
@@ -280,6 +296,9 @@ export async function initiatePaymentAttempt(input: {
   if (input.kind === "order" && !input.orderId) {
     return { ok: false, reason: "orderMissing", error: "Commande manquante." };
   }
+  if (input.kind === "dining" && !input.diningPaymentId) {
+    return { ok: false, reason: "orderMissing", error: "Addition manquante." };
+  }
 
   const reference = `PAY-${randomUUID().slice(0, 10).toUpperCase()}`;
   const base = {
@@ -287,7 +306,7 @@ export async function initiatePaymentAttempt(input: {
     restaurant_id: input.restaurantId,
     invoice_id: input.kind === "subscription" ? input.invoiceId! : null,
     reservation_id: input.kind === "reservation" ? input.reservationId! : null,
-    kind: input.kind === "order" || input.kind === "wallet" ? "reservation" : input.kind,
+    kind: input.kind === "order" || input.kind === "wallet" || input.kind === "dining" ? "reservation" : input.kind,
     method: "mobile_money",
     phone,
     amount,
@@ -299,7 +318,7 @@ export async function initiatePaymentAttempt(input: {
   if (mode === "sandbox") {
     const { data, error } = await supabase
       .from("payment_attempts")
-      .insert({ ...base, provider: "sandbox", status: "succeeded", raw_response: { sandbox: true, orderId: input.orderId, walletFunding: input.kind === "wallet" } })
+      .insert({ ...base, provider: "sandbox", status: "succeeded", raw_response: { sandbox: true, orderId: input.orderId, walletFunding: input.kind === "wallet", diningPaymentId: input.diningPaymentId } })
       .select("id")
       .single();
 
@@ -341,7 +360,7 @@ export async function initiatePaymentAttempt(input: {
       ...base,
       provider: "camerpay",
       status: "pending",
-      raw_response: { requested_at: startedAt, afterId, notificationAfterId, orderId: input.orderId, walletFunding: input.kind === "wallet" },
+      raw_response: { requested_at: startedAt, afterId, notificationAfterId, orderId: input.orderId, walletFunding: input.kind === "wallet", diningPaymentId: input.diningPaymentId },
     })
     .select("id")
     .single();
@@ -373,7 +392,7 @@ export async function initiatePaymentAttempt(input: {
           afterId,
           notificationAfterId,
           orderId: input.orderId,
-          walletFunding: input.kind === "wallet",
+          walletFunding: input.kind === "wallet", diningPaymentId: input.diningPaymentId,
           transport_error: error instanceof Error ? error.message : String(error),
         },
       })
@@ -421,7 +440,7 @@ export async function initiatePaymentAttempt(input: {
         afterId,
         notificationAfterId,
         orderId: input.orderId,
-        walletFunding: input.kind === "wallet",
+        walletFunding: input.kind === "wallet", diningPaymentId: input.diningPaymentId,
         requested_at: startedAt,
       },
     })
@@ -490,7 +509,7 @@ async function initiateSaspayAttempt(args: {
 
   const supabase = createAdminClient();
   const startedAt = new Date().toISOString();
-  const rawBase = { requested_at: startedAt, orderId: input.orderId, walletFunding: input.kind === "wallet" };
+  const rawBase = { requested_at: startedAt, orderId: input.orderId, walletFunding: input.kind === "wallet", diningPaymentId: input.diningPaymentId };
   const { data: created, error: createError } = await supabase
     .from("payment_attempts")
     .insert({ ...base, provider: "saspay", status: "pending", raw_response: rawBase })
@@ -993,6 +1012,82 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
         ok = true;
       }
     }
+  } else if (row.kind === "dining" && row.diningPaymentId) {
+    /*
+     * ONE PART OF A TABLE BILL (0068).
+     *
+     * settle_dining_payment locks the payment and its bill, credits the
+     * restaurant share + tip, books the gateway fee as platform revenue, and
+     * closes the bill when it is covered — one transaction. A payment that
+     * lands for a bill that no longer wants it (closed in cash meanwhile,
+     * already covered by a friend) is refunded straight away, exactly like a
+     * late payment for a cancelled order.
+     */
+    const { data: settlement, error: settlementError } = await supabase.rpc("settle_dining_payment", {
+      p_payment_id: row.diningPaymentId,
+      p_amount: row.amount,
+    });
+    if (settlementError) {
+      const message = settlementError.message ?? "";
+      if (message.includes("not_payable") || message.includes("amount_mismatch")) {
+        const { data: payment } = await supabase
+          .from("dining_payments")
+          .select("session_id, dining_sessions ( order_id )")
+          .eq("id", row.diningPaymentId)
+          .maybeSingle();
+        const sessionRow = (payment as { dining_sessions?: { order_id: string | null } | { order_id: string | null }[] | null } | null)?.dining_sessions;
+        const orderId = (Array.isArray(sessionRow) ? sessionRow[0]?.order_id : sessionRow?.order_id) ?? null;
+        const stamp = new Date().toISOString();
+        const refundId = orderId
+          ? await refundUnpayableAttempt({
+              attemptId,
+              orderId,
+              restaurantId: row.restaurantId,
+              amount: row.amount,
+              phone: row.phone,
+              reason: `Paiement reçu pour une addition qui ne l'attendait plus (${row.reference})`,
+            })
+          : null;
+        await supabase.from("dining_payments").update({ status: "refunded" }).eq("id", row.diningPaymentId).neq("status", "succeeded");
+        await supabase
+          .from("payment_attempts")
+          .update({
+            settled_at: stamp,
+            raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "billNotPayable", at: stamp, refundId } },
+          })
+          .eq("id", attemptId)
+          .is("settled_at", null);
+        if (refundId) {
+          await startRefundPayout(refundId).catch((err) => console.error("[pay:settle:dining] refund", refundId, err));
+        }
+        error = "Cette addition n'attend plus ce paiement ; il vous est remboursé.";
+        reason = "orderNotPayable";
+      } else {
+        console.error("[pay:settle:dining] settlement", message);
+        error = "Le paiement est confirmé mais l'addition n'a pas pu être mise à jour.";
+        reason = "orderSettlementFailed";
+      }
+    } else {
+      const result = (settlement ?? {}) as {
+        alreadySettled?: boolean;
+        closed?: boolean;
+        sessionId?: string;
+        amount?: number;
+        tip?: number;
+        guestId?: string | null;
+      };
+      if (!result.alreadySettled && result.sessionId) {
+        await notifyDiningPartPaid({
+          sessionId: result.sessionId,
+          restaurantId: row.restaurantId,
+          amount: result.amount ?? 0,
+          tip: result.tip ?? 0,
+          closed: Boolean(result.closed),
+          payerGuestId: result.guestId ?? null,
+        }).catch((err) => console.error("[pay:settle:dining] notify", err));
+      }
+      ok = true;
+    }
   } else if (row.kind === "order" && row.orderId) {
     /*
      * The RPC locks the order, credits the restaurant only with the amount it
@@ -1089,7 +1184,7 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
       .eq("id", row.reservationId)
       .eq("status", "awaiting_payment")
       .eq("deposit_paid", false)
-      .select("id, reference, customer_id, guest_name")
+      .select("id, reference, customer_id, guest_name, deposit_amount")
       .maybeSingle();
 
     if (claimError) {
@@ -1145,14 +1240,41 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
         reference: string;
         customer_id: string | null;
         guest_name: string | null;
+        deposit_amount: number | null;
       };
+      /*
+        THE PAYMENT FEE STAYS WITH THE PLATFORM (0068).
+
+        Since 0068 the customer pays the deposit PLUS the payment service fee
+        (the gateway takes its percentage on every Mobile Money payment). The
+        restaurant is credited the deposit — the amount it set, the amount
+        refunds are computed from — and the difference is platform revenue.
+        An attempt started before 0068 carried no fee: its amount equals the
+        deposit and the whole of it goes to the restaurant, as before.
+      */
+      const depositDue = Math.max(0, Math.round(Number(booking.deposit_amount ?? row.amount)));
+      const depositFee = Math.max(0, row.amount - depositDue);
       const { error: creditError } = await supabase.rpc("wallet_credit", {
         p_restaurant_id: row.restaurantId,
-        p_amount: row.amount,
+        p_amount: row.amount - depositFee,
         p_kind: "deposit",
         p_note: `Acompte ${booking.reference} (paiement en ligne)`,
         p_reference: booking.reference,
       });
+
+      if (!creditError && depositFee > 0) {
+        const { error: feeError } = await supabase.from("platform_revenue_ledger").insert({
+          source_type: "online_payment_fee",
+          source_id: row.id,
+          restaurant_id: row.restaurantId,
+          gross: row.amount,
+          amount: depositFee,
+          reference: booking.reference,
+          note: "Reservation deposit payment fee",
+        });
+        // A duplicate is the retry of a settlement that already booked it.
+        if (feeError && feeError.code !== "23505") console.error("[pay:settle:reservation] fee", feeError.message);
+      }
 
       if (!creditError) {
         /*
@@ -1296,11 +1418,21 @@ async function notifyReservationPaid(input: {
   });
 
   if (input.customerId) {
+    // The confirmation opens the booking voucher (0068) — the QR the customer
+    // shows at the door. Read on its own and tolerated when missing, so a
+    // database without 0068 still confirms the booking.
+    const { data: voucher } = await createAdminClient()
+      .from("reservations")
+      .select("voucher_code")
+      .eq("reference", input.reference)
+      .eq("restaurant_id", input.restaurantId)
+      .maybeSingle();
+    const code = (voucher as { voucher_code?: string | null } | null)?.voucher_code;
     await notify({
       event: "reservation_decision",
       tone: "success",
       customerId: input.customerId,
-      href: "/reservations",
+      href: code ? `/v/${code}` : "/reservations",
       params: { reference: input.reference, status: "confirmed" },
     });
   }

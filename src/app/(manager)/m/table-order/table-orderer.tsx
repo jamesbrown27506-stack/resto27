@@ -9,6 +9,7 @@ import { Input, Textarea } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { formatMoney } from "@/lib/format/currency";
 import { createTableOrder } from "@/lib/data/order-actions";
+import { staffOrderToBill } from "@/lib/data/dining-actions";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { MenuCategory, MenuItem, RestaurantTable } from "@/lib/data/manager";
 import { cn } from "@/lib/utils";
@@ -41,23 +42,44 @@ interface TicketLine {
  * Optimised for speed over ceremony: big tap targets, search-first, and the
  * running ticket always visible. A waiter is standing at a table.
  */
+/** An open table bill (Enterprise, 0068) the waiter can add dishes to. */
+export interface OpenBill {
+  id: string;
+  tableId: string;
+  label: string | null;
+  code: string | null;
+  confirmed: boolean;
+}
+
 export function TableOrderer({
   tables,
   categories,
   items,
-  chargePercent,
+  bills,
+  focusBillId,
 }: {
   tables: RestaurantTable[];
   categories: MenuCategory[];
   items: MenuItem[];
-  chargePercent: number;
+  /**
+   * Enterprise table service: dishes go onto a BILL on the table (an open one,
+   * or a new one) — never a separate ticket beside the guests' bills.
+   * Undefined on the Professional plan, which keeps plain table orders.
+   */
+  bills?: OpenBill[];
+  focusBillId?: string;
 }) {
   const { t } = useLocale();
   const { toast } = useToast();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
-  const [tableId, setTableId] = useState<string | null>(null);
+  const focusBill = bills?.find((bill) => bill.id === focusBillId);
+  const [tableId, setTableId] = useState<string | null>(focusBill?.tableId ?? null);
+  /** "new" opens a fresh bill on the table; otherwise the id of the bill to add to. */
+  const [billTarget, setBillTarget] = useState<string>(focusBill?.id ?? "new");
+  const [billLabel, setBillLabel] = useState("");
+  const tableBills = (bills ?? []).filter((bill) => bill.tableId === tableId && bill.confirmed);
   const [query, setQuery] = useState("");
   const [lines, setLines] = useState<TicketLine[]>([]);
   const [notes, setNotes] = useState("");
@@ -88,9 +110,13 @@ export function TableOrderer({
     return byCategory.filter((g) => g.items.length > 0);
   }, [categories, items, query]);
 
-  const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
-  const serviceCharge = Math.round((subtotal * chargePercent) / 100);
-  const total = subtotal + serviceCharge;
+  /*
+    NO SERVICE FEE HERE. The payment service fee is charged only on Mobile
+    Money payments (the gateway's cut) — createTableOrder() stores 0 for a
+    table order, and this preview used to add it anyway, so the waiter
+    quoted a total the customer was never asked for.
+  */
+  const total = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
 
   function addItem(item: MenuItem) {
     // Required single-select groups default to their first available option so
@@ -136,6 +162,26 @@ export function TableOrderer({
     const target = table;
     if (!target || lines.length === 0) return;
 
+    if (bills) {
+      startTransition(async () => {
+        const result = await staffOrderToBill({
+          tableId: target.id,
+          sessionId: billTarget === "new" ? null : billTarget,
+          label: billLabel,
+          lines: lines.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity, optionIds: l.optionIds })),
+          notes: notes || undefined,
+        });
+        if (!result.ok) return toast(result.error ?? t("common.error"), "error");
+        toast(t("mt.sent", { ref: result.reference ?? "", table: target.number }), "success");
+        setLines([]);
+        setNotes("");
+        setBillLabel("");
+        setBillTarget(result.sessionId ?? "new");
+        router.refresh();
+      });
+      return;
+    }
+
     startTransition(async () => {
       const result = await createTableOrder({
         tableId: target.id,
@@ -160,7 +206,7 @@ export function TableOrderer({
   }
 
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[1fr_22rem]">
+    <div id="waiter-order" className="grid scroll-mt-20 items-start gap-6 lg:grid-cols-[1fr_22rem]">
       <div className="flex flex-col gap-5">
         {/* ── Table picker ───────────────────────────────────────────── */}
         <section>
@@ -190,6 +236,7 @@ export function TableOrderer({
                       title={x.planLocked ? t("tbl.frozen") : undefined}
                       onClick={() => {
                         setTableId(x.id);
+                        setBillTarget("new");
                         // A new party takes over the table — the old
                         // party's guest count must not follow.
                         setGuests(null);
@@ -295,7 +342,23 @@ export function TableOrderer({
         {/* How many people are sitting. The table stays a single unit — a
             party of 3 at a 5-seat table IS the table — but the count is
             genuinely useful to the kitchen and the floor overview. */}
-        {table && (
+        {table && bills && (
+          <div className="flex flex-col gap-2 border-b border-border px-5 py-3">
+            <label className="text-xs font-semibold text-text-secondary" htmlFor="bill-target">{t("ons.m.billFor")}</label>
+            <select id="bill-target" value={billTarget} onChange={(e) => setBillTarget(e.target.value)}
+              className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm">
+              {tableBills.map((bill) => (
+                <option key={bill.id} value={bill.id}>{bill.label || t("ons.m.bill")}{bill.code ? ` · ${bill.code}` : ""}</option>
+              ))}
+              <option value="new">{t("ons.m.newBill")}</option>
+            </select>
+            {billTarget === "new" && (
+              <Input value={billLabel} maxLength={60} onChange={(e) => setBillLabel(e.target.value)} placeholder={t("ons.m.billLabelPh")} aria-label={t("ons.m.billLabelPh")} />
+            )}
+          </div>
+        )}
+
+        {table && !bills && (
           <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
             <span className="flex items-center gap-2 text-sm text-text-secondary">
               <Users className="size-4" aria-hidden />
@@ -382,16 +445,6 @@ export function TableOrderer({
               />
 
               <dl className="flex flex-col gap-1 text-sm">
-                <div className="flex justify-between gap-3">
-                  <dt className="text-text-secondary">{t("mo.subtotal")}</dt>
-                  <dd className="tnum">{formatMoney(subtotal)}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-text-secondary">
-                    <span>{t("mo.serviceCharge")}</span> <span className="tnum">({chargePercent}%)</span>
-                  </dt>
-                  <dd className="tnum">{formatMoney(serviceCharge)}</dd>
-                </div>
                 <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border pt-2">
                   <dt className="font-semibold">{t("m.orders.total")}</dt>
                   <dd className="tnum font-display text-lg font-bold text-primary">

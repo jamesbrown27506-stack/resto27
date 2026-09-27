@@ -1,4 +1,6 @@
 "use client";
+import { todayInDisplayTz } from "@/lib/reservations/slots";
+import { lastBookableDate } from "@/lib/reservations/rules";
 import { LocationButton } from "@/components/capacitor/location-button";
 
 import Link from "next/link";
@@ -65,11 +67,14 @@ export function CheckoutClient({
   addresses,
   quartiers,
   wallet,
+  scheduleMaxDays = 7,
 }: {
   user: SessionUser | null;
   addresses: CustomerAddress[];
   quartiers: string[];
   wallet: { balance: number; available: boolean };
+  /** Admin limit on scheduling ahead (0068); the date picker greys what lies beyond. */
+  scheduleMaxDays?: number;
 }) {
   const router = useRouter();
   const { lines, totals, promoCode, loyaltyPointsUsed, clear } = useCart();
@@ -715,6 +720,8 @@ export function CheckoutClient({
                     id="ck-date"
                     type="date"
                     value={scheduleDate}
+                    min={todayInDisplayTz()}
+                    max={lastBookableDate(scheduleMaxDays)}
                     onChange={(e) => setScheduleDate(e.target.value)}
                   />
                 </Field>

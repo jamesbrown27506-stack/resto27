@@ -1,5 +1,6 @@
 "use server";
 
+import { notifyWaitlist } from "./waitlist";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
@@ -1022,10 +1023,20 @@ export async function cancelInvite(staffId: string): Promise<ActionResult> {
 export async function decideReservation(
   reservationId: string,
   decision: "confirmed" | "cancelled",
-  input: { tableId?: string | null; reason?: string } = {},
+  input: { tableId?: string | null; tableIds?: string[]; reason?: string } = {},
 ): Promise<ActionResult> {
   const t = await getTranslator();
   const { active, profile } = await requireCapability("reservations.decide");
+
+  /*
+    SEVERAL TABLES FOR ONE BOOKING (0068). A big group sits at tables pushed
+    together; `tableIds` carries them all, the first one is the booking's
+    main table (reservations.table_id, what older screens read). Each table is
+    checked like the single one always was, and together they must seat the
+    party.
+  */
+  const tableIds = [...new Set((input.tableIds ?? (input.tableId ? [input.tableId] : [])).filter(Boolean))].slice(0, 12);
+  input = { ...input, tableId: tableIds[0] ?? null };
 
   if (decision === "cancelled" && !input.reason?.trim()) {
     // A refusal with no reason is the thing guests complain about, so the
@@ -1076,26 +1087,38 @@ export async function decideReservation(
     }
   }
 
-  if (decision === "confirmed" && input.tableId) {
+  if (decision === "confirmed" && tableIds.length > 0) {
     const access = await fetchTableAccess(active.restaurantId).catch(() => null);
     if (!access) return { ok: false, error: DICTIONARIES[await getLocale()]["tbl.accessError"] };
-    const table = access.tables.find((table) => table.id === input.tableId);
+    const chosen = tableIds.map((id) => access.tables.find((table) => table.id === id));
+    const seats = chosen.reduce((sum, table) => sum + (table?.capacity ?? 0), 0);
 
-    if (!table || table.planLocked || table.status === "out_of_service" || table.capacity < booking.party_size) {
+    if (chosen.some((table) => !table || table.planLocked || table.status === "out_of_service") || seats < booking.party_size) {
       return { ok: false, error: t("est.tableUnavailableOrSmall") };
     }
 
-    const { data: assigned } = await supabase
-      .from("reservations")
-      .select("id, reserved_for, duration_min")
-      .eq("restaurant_id", active.restaurantId)
-      .eq("table_id", input.tableId)
-      .in("status", ["awaiting_payment", "confirmed", "seated"])
-      .neq("id", booking.id);
+    // Other bookings holding any of these tables, by main table or by link.
+    const [{ data: byMain }, links] = await Promise.all([
+      supabase
+        .from("reservations")
+        .select("id, reserved_for, duration_min")
+        .eq("restaurant_id", active.restaurantId)
+        .in("table_id", tableIds)
+        .in("status", ["awaiting_payment", "confirmed", "seated"])
+        .neq("id", booking.id),
+      supabase
+        .from("reservation_tables")
+        .select("reservations!inner ( id, reserved_for, duration_min, status, restaurant_id )")
+        .in("table_id", tableIds),
+    ]);
+    const linked = ((links.error ? [] : links.data ?? []) as { reservations: { id: string; reserved_for: string; duration_min: number; status: string; restaurant_id: string } | { id: string; reserved_for: string; duration_min: number; status: string; restaurant_id: string }[] | null }[])
+      .map((row) => (Array.isArray(row.reservations) ? row.reservations[0] : row.reservations))
+      .filter((r): r is NonNullable<typeof r> => Boolean(r) && r!.id !== booking.id &&
+        r!.restaurant_id === active.restaurantId && ["awaiting_payment", "confirmed", "seated"].includes(r!.status));
 
     const startsAt = Date.parse(booking.reserved_for);
     const endsAt = startsAt + Math.max(1, booking.duration_min) * 60_000;
-    const conflicts = (assigned ?? []).some((other) => {
+    const conflicts = [...(byMain ?? []), ...linked].some((other) => {
       const otherStart = Date.parse(other.reserved_for as string);
       const otherEnd = otherStart + Math.max(1, Number(other.duration_min)) * 60_000;
       return otherStart < endsAt && otherEnd > startsAt;
@@ -1159,6 +1182,16 @@ export async function decideReservation(
   if (!decided) {
     return { ok: false, error: t("est.reservationChangedDeciding") };
   }
+
+  // Every table the booking holds (0068) — tolerated on a database without it.
+  {
+    const { error: unlinkError } = await supabase.from("reservation_tables").delete().eq("reservation_id", booking.id);
+    if (!unlinkError && decision === "confirmed" && tableIds.length > 0) {
+      await supabase.from("reservation_tables").insert(tableIds.map((tableId) => ({ reservation_id: booking.id, table_id: tableId })));
+    }
+  }
+  // A declined request frees its slot for whoever is waiting.
+  if (decision === "cancelled") await notifyWaitlist(active.restaurantId, booking.reserved_for);
 
   // The guest hears the verdict — and a refusal must never arrive without the
   // reason the restaurant was forced to give. An approval that still needs
@@ -1394,6 +1427,9 @@ export async function cancelConfirmedReservation(
       if (table) await releaseTableIfFree(supabase, active.restaurantId, table.number);
     }
 
+    const { data: freed } = await supabase.from("reservations").select("reserved_for").eq("id", reservationId).maybeSingle();
+    if (freed?.reserved_for) await notifyWaitlist(active.restaurantId, freed.reserved_for as string);
+
     if (result.customerId) {
       await notify({
         event: "reservation_decision",
@@ -1606,6 +1642,8 @@ export async function upsertTable(input: {
   id?: string;
   number: string;
   capacity: number;
+  /** "Terrasse", "Salle"… (0068). Undefined leaves it unchanged; "" clears it. */
+  zone?: string;
 }): Promise<ActionResult> {
   const t = await getTranslator();
   const { active } = await requireCapability("tables.manage");
@@ -1639,6 +1677,17 @@ export async function upsertTable(input: {
   if (error) {
     if (error.code === "23505") return { ok: false, error: t("est.tableNumberInUse") };
     return { ok: false, error: t("est.tableSaveFailed") };
+  }
+
+  // The zone is written on its own, so a database without 0068 still saves the table.
+  if (input.zone !== undefined) {
+    const zone = input.zone.trim().slice(0, 40) || null;
+    const { error: zoneError } = await supabase
+      .from("restaurant_tables")
+      .update({ zone })
+      .eq("restaurant_id", active.restaurantId)
+      .eq("number", number);
+    if (zoneError) console.error("[manager:upsertTable] zone", zoneError.code ?? "", zoneError.message);
   }
 
   revalidatePath("/m/tables");

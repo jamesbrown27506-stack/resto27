@@ -56,7 +56,7 @@ export function TableManager({
   const dates = useDates();
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
-  const [editing, setEditing] = useState<{ id?: string; number: string; capacity: number } | null>(null);
+  const [editing, setEditing] = useState<{ id?: string; number: string; capacity: number; zone?: string } | null>(null);
 
   const atLimit = limit !== null && tables.length >= limit;
 
@@ -76,7 +76,7 @@ export function TableManager({
           <Button
             disabled={atLimit}
             title={atLimit ? t("tbl.planLimit") : undefined}
-            onClick={() => setEditing({ number: "", capacity: 2 })}
+            onClick={() => setEditing({ number: "", capacity: 2, zone: "" })}
           >
             <Plus className="size-4" aria-hidden />
             {t("tbl.new")}
@@ -130,6 +130,7 @@ export function TableManager({
                   </p>
                   <p className="tnum mt-0.5 text-sm text-text-secondary">
                     {t("m.tables.seats", { count: table.capacity })}
+                    {table.zone ? ` · ${table.zone}` : ""}
                   </p>
                   {/* Live occupancy, straight from the open dine-in orders —
                       "3 of 5 seats" beats a status badge when the floor is
@@ -214,7 +215,7 @@ export function TableManager({
                       size="icon-sm"
                       aria-label={`${t("common.edit")} ${table.number}`}
                       disabled={table.planLocked}
-                      onClick={() => setEditing({ id: table.id, number: table.number, capacity: table.capacity })}
+                      onClick={() => setEditing({ id: table.id, number: table.number, capacity: table.capacity, zone: table.zone ?? "" })}
                     >
                       <Pencil className="size-3.5" aria-hidden />
                     </Button>
@@ -241,7 +242,7 @@ export function TableManager({
                 disabled={!editing.number.trim() || editing.capacity < 1}
                 onClick={() => {
                   run(
-                    () => upsertTable({ id: editing.id, number: editing.number, capacity: editing.capacity }),
+                    () => upsertTable({ id: editing.id, number: editing.number, capacity: editing.capacity, zone: editing.zone ?? "" }),
                     editing.id ? t("tbl.saved") : t("tbl.added"),
                   );
                   setEditing(null);
@@ -278,6 +279,21 @@ export function TableManager({
                 value={String(editing.capacity)}
                 onChange={(e) => setEditing({ ...editing, capacity: Math.trunc(Number(e.target.value) || 0) })}
               />
+            </Field>
+
+            {/* Zone (0068): what a guest's seating preference matches. */}
+            <Field label={t("ons.m.zone")} htmlFor="table-zone" hint={t("ons.m.zoneHint")}>
+              <Input
+                id="table-zone"
+                value={editing.zone ?? ""}
+                maxLength={40}
+                list="table-zones"
+                onChange={(e) => setEditing({ ...editing, zone: e.target.value })}
+                placeholder={t("ons.m.zonePh")}
+              />
+              <datalist id="table-zones">
+                {[...new Set(tables.map((table) => table.zone).filter(Boolean))].map((zone) => <option key={zone!} value={zone!} />)}
+              </datalist>
             </Field>
 
           </div>

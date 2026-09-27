@@ -15,6 +15,7 @@ import {
   Share2,
   Settings as Cog,
   Smartphone,
+  CalendarClock,
 } from "lucide-react";
 import { SocialIcon } from "@/components/icons/social-icon";
 import { Button } from "@/components/ui/button";
@@ -67,6 +68,10 @@ const TABS = [
   { id: "mobile", label: "Mobile app", icon: Smartphone, hint: "The download section and install popup on the public site, and whether the installed Android app must update before it can be used." },
   { id: "money", label: "Money", icon: Banknote, hint: "XAF is zero-decimal — every amount is whole francs." },
   { id: "billing", label: "Billing", icon: ReceiptText, hint: "Grace exists because mobile money renewal is not instant." },
+  // Orders & bookings (0059, 0068): the order/booking time limits and how far
+  // ahead a table can be booked or a delivery scheduled. The category existed
+  // since 0059 with no tab here, which left those limits unreachable.
+  { id: "orders", label: "Orders & bookings", icon: CalendarClock, hint: "Time limits for restaurants and customers, and how far ahead tables can be booked and deliveries or pickups scheduled." },
   { id: "loyalty", label: "Loyalty", icon: Gift, hint: "Points are earned per 1 000 FCFA spent. The minimum is what a customer must hold before any of it can be spent." },
   { id: "operations", label: "Operations", icon: Bike, hint: "Defaults for restaurants that do not carry their own riders." },
   { id: "notifications", label: "Notifications", icon: Bell, hint: "The sound played on realtime notifications, and the web push master switch." },

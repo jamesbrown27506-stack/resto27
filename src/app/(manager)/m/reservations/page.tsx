@@ -4,7 +4,8 @@ import { ReservationBoard } from "./reservation-board";
 import { requireCapability } from "@/lib/auth/branch";
 import { can } from "@/lib/capabilities";
 import { createAdminClient } from "@/lib/supabase/server";
-import { fetchReservations, fetchTables } from "@/lib/data/manager";
+import { fetchReservations, fetchTables, withBookingDetails } from "@/lib/data/manager";
+import { VoucherCheck } from "./voucher-check";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 import { normaliseDepositType } from "@/lib/reservations/deposit";
@@ -30,7 +31,7 @@ export default async function ReservationsPage() {
   from.setHours(0, 0, 0, 0);
 
   const [reservations, tables, depositRow, limits] = await Promise.all([
-    fetchReservations(active.restaurantId, { from }),
+    fetchReservations(active.restaurantId, { from }).then((rows) => withBookingDetails(active.restaurantId, rows)),
     fetchTables(active.restaurantId),
     (async () => {
       const supabase = createAdminClient();
@@ -56,6 +57,7 @@ export default async function ReservationsPage() {
       titleKey="m.reservations.title"
       descriptionKey="m.reservations.subtitle"
     >
+      <VoucherCheck />
       <ReservationBoard
         reservations={reservations}
         tables={tables}
@@ -67,6 +69,7 @@ export default async function ReservationsPage() {
         canTakeDeposit={can(active.role, "payments.collect")}
         responseMinutes={limits.reservationMinutes}
         now={now}
+        tableService={active.planTier === "enterprise"}
       />
     </ManagerPage>
   );

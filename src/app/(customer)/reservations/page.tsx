@@ -1,6 +1,8 @@
 import { ReservationsClient } from "./reservations-client";
 import { requireUser } from "@/lib/auth/session";
-import { fetchCustomerReservations } from "@/lib/data/customer";
+import { fetchCustomerReservations, fetchCustomerWaitlist } from "@/lib/data/customer";
+import { bookingMaxDays } from "@/lib/data/booking-rules";
+import { getSettingsMap, settingNumber } from "@/lib/settings-map";
 import { fetchActiveRestaurants } from "@/lib/data/public";
 
 /**
@@ -19,9 +21,12 @@ export default async function ReservationsPage({
   const user = await requireUser();
   const params = await searchParams;
 
-  const [reservations, restaurants] = await Promise.all([
+  const [reservations, restaurants, waitlist, maxDays, settings] = await Promise.all([
     fetchCustomerReservations(user.id),
     fetchActiveRestaurants(),
+    fetchCustomerWaitlist(user.id),
+    bookingMaxDays(),
+    getSettingsMap(),
   ]);
 
   /*
@@ -45,6 +50,10 @@ export default async function ReservationsPage({
       initialGuests={params.guests ?? ""}
       initialDate={params.date ?? ""}
       now={now}
+      waitlist={waitlist}
+      bookingMaxDays={maxDays}
+      // The payment service fee, charged on the deposit too (0068).
+      feePercent={settingNumber(settings, "service_charge_percent", 0)}
     />
   );
 }

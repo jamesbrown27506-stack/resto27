@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "@/components/layout/public-link";
-import { CalendarCheck, Check, Smartphone, Users } from "lucide-react";
+import { BellRing, CalendarCheck, CalendarPlus, Check, MapPin, Pencil, Smartphone, Star, Ticket, Users, X } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,16 @@ import {
   createOwnReservation,
   fetchDayAvailability,
   payReservationDeposit,
+  joinWaitlist,
+  leaveWaitlist,
+  requestReservationChange,
+  cancelReservationChange,
+  submitReservationReview,
 } from "@/lib/data/customer-actions";
+import type { CustomerWaitlistEntry } from "@/lib/data/customer";
+import { groupSlotsByService, lastBookableDate, OCCASIONS, type Occasion } from "@/lib/reservations/rules";
+import { mapsUrl, reservationIcs } from "@/lib/reservations/ics";
+import { paymentFee } from "@/lib/dining/bill";
 import { reservationStatusLabel, RESERVATION_STATUS_TONE } from "@/lib/format/reservation-status";
 import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { CustomerReservation } from "@/lib/data/customer";
@@ -44,6 +53,7 @@ import {
   weekdayOfDate,
 } from "@/lib/reservations/slots";
 import type { SessionUser } from "@/lib/session";
+import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
 const POLL_INTERVAL_MS = 4_000;
 /** Five minutes at a four-second polling interval. */
@@ -62,6 +72,9 @@ export function ReservationsClient({
   initialGuests = "",
   initialDate = "",
   now: nowIso,
+  waitlist = [],
+  bookingMaxDays = 60,
+  feePercent = 0,
 }: {
   user: SessionUser;
   initial: CustomerReservation[];
@@ -72,6 +85,12 @@ export function ReservationsClient({
   initialDate?: string;
   /** The server's instant, ISO — see the comment on the page that passes it. */
   now: string;
+  /** Live waitlist entries (0068). */
+  waitlist?: CustomerWaitlistEntry[];
+  /** Admin limit: how far ahead a table can be booked (0068). */
+  bookingMaxDays?: number;
+  /** The payment service fee, added to an online deposit (0068). */
+  feePercent?: number;
 }) {
   const { toast } = useToast();
   const { locale, t } = useLocale();
@@ -97,7 +116,7 @@ export function ReservationsClient({
 
   function resolveGuests(raw: string): string {
     const n = Number(raw);
-    return Number.isFinite(n) && n >= 1 && n <= 20 ? String(n) : "2";
+    return Number.isFinite(n) && n >= 1 && n <= 200 ? String(n) : "2";
   }
 
   // Only a well-formed YYYY-MM-DD is allowed through — anything else would
@@ -149,6 +168,24 @@ export function ReservationsClient({
     ─────────────────────────────────────────────────────────────────────────
   */
   const [fullSlotList, setFullSlotList] = useState<string[]>([]);
+  /** What else the day's availability said (0068): closed, too far, group request, zones. */
+  const [dayInfo, setDayInfo] = useState<{
+    tooFar?: boolean; maxDays?: number; closed?: boolean; closedReason?: string | null;
+    groupRequest?: boolean; maxParty?: number; zones?: string[];
+  }>({});
+  const [occasion, setOccasion] = useState<Occasion | "">("");
+  const [seatingPreference, setSeatingPreference] = useState("");
+  const [waitTime, setWaitTime] = useState("");
+  const [changing, setChanging] = useState<CustomerReservation | null>(null);
+  const [changeDate, setChangeDate] = useState("");
+  const [changeTime, setChangeTime] = useState("");
+  const [changeGuests, setChangeGuests] = useState(2);
+  const [changeSlots, setChangeSlots] = useState<{ slots: string[]; full: string[] }>({ slots: [], full: [] });
+  const [reviewing, setReviewing] = useState<CustomerReservation | null>(null);
+  const [reviewRating, setReviewRating] = useState(0);
+  const [reviewBody, setReviewBody] = useState("");
+  const [platformRating, setPlatformRating] = useState(0);
+  const [platformBody, setPlatformBody] = useState("");
   const [checkingSlots, setCheckingSlots] = useState(false);
   const [availabilityFailed, setAvailabilityFailed] = useState(false);
 
@@ -469,6 +506,10 @@ export function ReservationsClient({
         .then((result) => {
           if (seq !== availabilitySeq.current) return;
           setFullSlotList(result.ok ? result.full : []);
+          setDayInfo(result.ok
+            ? { tooFar: result.tooFar, maxDays: result.maxDays, closed: result.closed, closedReason: result.closedReason,
+                groupRequest: result.groupRequest, maxParty: result.maxParty, zones: result.zones }
+            : {});
           // A failed check leaves every slot enabled. Greying the whole grid
           // because a query failed would refuse bookings the restaurant could
           // have taken; the server re-checks at submit either way.
@@ -486,6 +527,73 @@ export function ReservationsClient({
 
     return () => clearTimeout(timer);
   }, [restaurantId, date, guestCount]);
+
+  // The change dialog asks the same availability question for its own date.
+  const changingRestaurantId = changing?.restaurantId ?? null;
+  useEffect(() => {
+    if (!changingRestaurantId || !changeDate) return;
+    let alive = true;
+    const timer = setTimeout(() => {
+      void fetchDayAvailability({ restaurantId: changingRestaurantId, date: changeDate, partySize: changeGuests })
+        .then((result) => { if (alive) setChangeSlots({ slots: result.slots, full: result.full }); })
+        .catch(() => { if (alive) setChangeSlots({ slots: [], full: [] }); });
+    }, 250);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [changingRestaurantId, changeDate, changeGuests]);
+
+  function downloadIcs(r: CustomerReservation) {
+    const ics = reservationIcs({
+      uid: r.reference,
+      title: t("ons.c.icsTitle", { restaurant: r.restaurantName, count: r.partySize }),
+      start: new Date(r.reservedFor),
+      durationMin: r.durationMin,
+      location: [r.restaurantName, r.restaurantAddress].filter(Boolean).join(", "),
+      description: r.voucherCode ? t("ons.c.icsVoucher", { code: r.voucherCode }) : r.reference,
+      url: r.voucherCode ? `${window.location.origin}/v/${r.voucherCode}` : null,
+    });
+    const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `reservation-${r.reference}.ics`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function sendChange() {
+    if (!changing || !changeDate || !changeTime) return;
+    setBusy(true);
+    const result = await requestReservationChange(changing.id, { date: changeDate, time: changeTime, partySize: changeGuests });
+    setBusy(false);
+    if (!result.ok) return toast(result.error, "error");
+    toast(t(result.note === "moved" ? "ons.c.changeMoved" : "ons.c.changeRequested"), "success");
+    setChanging(null);
+    router.refresh();
+  }
+
+  async function sendReview() {
+    if (!reviewing || reviewRating < 1) return;
+    setBusy(true);
+    const result = await submitReservationReview(reviewing.id, {
+      rating: reviewRating, body: reviewBody, platformRating: platformRating || null, platformBody,
+    });
+    setBusy(false);
+    if (!result.ok) return toast(result.error, "error");
+    toast(t("ons.g.reviewThanks"), "success");
+    setReviewing(null);
+    router.refresh();
+  }
+
+  async function addToWaitlist() {
+    const restaurant = restaurants.find((r) => r.slug === restaurantSlug);
+    if (!restaurant || !date || !waitTime) return;
+    setBusy(true);
+    const result = await joinWaitlist({ restaurantId: restaurant.id, date, time: waitTime, partySize: guestCount });
+    setBusy(false);
+    if (!result.ok) return toast(result.error, "error");
+    toast(t("ons.c.waitlistJoined"), "success");
+    setWaitTime("");
+    router.refresh();
+  }
 
   /**
    * "lundi 24 août 2026" — the weekday of the chosen date, spelled out.
@@ -543,6 +651,8 @@ export function ReservationsClient({
       partySize: Number(guests),
       notes,
       phone,
+      occasion: occasion || null,
+      seatingPreference: seatingPreference || null,
     });
     setBusy(false);
 
@@ -557,10 +667,12 @@ export function ReservationsClient({
       The old code polled a payment attempt from this point, which is what made
       a decline into a refund.
     */
-    toast(t("crs.sent"), "success");
+    toast(t(dayInfo.groupRequest ? "ons.c.groupSent" : "crs.sent"), "success");
     setDate("");
     setTime("");
     setNotes("");
+    setOccasion("");
+    setSeatingPreference("");
     router.refresh();
   }
 
@@ -707,6 +819,44 @@ export function ReservationsClient({
                           {r.notes && (
                             <p className="mt-1 text-xs text-text-light italic">« {r.notes} »</p>
                           )}
+                          {(r.occasion || r.isGroupRequest) && (
+                            <p className="mt-1 flex flex-wrap gap-1.5">
+                              {r.occasion && <Badge tone="accent">{t(`ons.c.occasion.${r.occasion}` as TranslationKey)}</Badge>}
+                              {r.isGroupRequest && <Badge tone="info">{t("ons.c.groupRequest")}</Badge>}
+                            </p>
+                          )}
+                          {r.pendingChange && (
+                            <p className="mt-2 flex flex-wrap items-center gap-2 rounded-md bg-info-light p-2 text-xs text-info">
+                              <span>{t("ons.c.changePending", {
+                                when: `${formatDayLabel(r.pendingChange.reservedFor, dateLocale)} ${formatTime(r.pendingChange.reservedFor, dateLocale)}`,
+                                count: r.pendingChange.partySize,
+                              })}</span>
+                              <button type="button" className="font-semibold underline" disabled={busy}
+                                onClick={async () => { const res = await cancelReservationChange(r.id); if (!res.ok) toast(res.error, "error"); router.refresh(); }}>
+                                {t("ons.c.changeWithdraw")}
+                              </button>
+                            </p>
+                          )}
+                          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold">
+                            {r.voucherCode && (r.status === "confirmed" || r.status === "seated") && (
+                              <Link href={`/v/${r.voucherCode}`} className="inline-flex items-center gap-1 text-primary hover:underline"><Ticket className="size-3.5" aria-hidden />{t("ons.c.myVoucher")}</Link>
+                            )}
+                            {(r.status === "confirmed" || r.status === "awaiting_payment" || r.status === "pending") && (
+                              <button type="button" onClick={() => downloadIcs(r)} className="inline-flex items-center gap-1 text-primary hover:underline"><CalendarPlus className="size-3.5" aria-hidden />{t("ons.c.addCalendar")}</button>
+                            )}
+                            {mapsUrl([r.restaurantName, r.restaurantAddress]) && (
+                              <a href={mapsUrl([r.restaurantName, r.restaurantAddress])!} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline"><MapPin className="size-3.5" aria-hidden />{t("ons.c.directions")}</a>
+                            )}
+                            {["pending", "awaiting_payment", "confirmed"].includes(r.status) && !r.pendingChange &&
+                              new Date(r.reservedFor).getTime() - now.getTime() > 2 * 60 * 60_000 && (
+                              <button type="button" onClick={() => {
+                                setChanging(r);
+                                setChangeDate(r.reservedFor ? new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Douala" }).format(new Date(r.reservedFor)) : "");
+                                setChangeTime("");
+                                setChangeGuests(r.partySize);
+                              }} className="inline-flex items-center gap-1 text-primary hover:underline"><Pencil className="size-3.5" aria-hidden />{t("ons.c.change")}</button>
+                            )}
+                          </div>
                           {canCustomerCancelReservation(r.status) && r.depositPaid && (
                             <p className={new Date(r.reservedFor).getTime() - now.getTime() < 60 * 60_000 ? "mt-2 text-xs font-semibold text-warning" : "mt-2 text-xs font-semibold text-success"}>
                               {new Date(r.reservedFor).getTime() - now.getTime() < 60 * 60_000
@@ -760,6 +910,16 @@ export function ReservationsClient({
                             </strong>{" "}
                             {t("crs.depositDueBody")}
                           </p>
+                          {feePercent > 0 && (
+                            <p className="tnum text-xs text-warning/90">
+                              {t("ons.c.depositFee", {
+                                deposit: formatMoney(r.depositAmount),
+                                fee: formatMoney(paymentFee(r.depositAmount, feePercent)),
+                                total: formatMoney(r.depositAmount + paymentFee(r.depositAmount, feePercent)),
+                                pct: feePercent,
+                              })}
+                            </p>
+                          )}
 
                           <Field
                             label={t("crs.phone")}
@@ -790,7 +950,7 @@ export function ReservationsClient({
                             <span>
                               {busyHere
                                 ? t("crs.payPendingTitle")
-                                : t("crs.payDeposit", { amount: formatMoney(r.depositAmount) })}
+                                : t("crs.payDeposit", { amount: formatMoney(r.depositAmount + paymentFee(r.depositAmount, feePercent)) })}
                             </span>
                           </Button>
 
@@ -831,6 +991,28 @@ export function ReservationsClient({
             )}
           </Panel>
 
+          {waitlist.length > 0 && (
+            <Panel title={t("ons.c.waitlistTitle")}>
+              <ul className="divide-y divide-border">
+                {waitlist.map((entry) => (
+                  <li key={entry.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
+                    <BellRing className="size-4 shrink-0 text-primary" aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{entry.restaurantName}</p>
+                      <p className="tnum text-sm text-text-secondary">
+                        {formatDayLabel(`${entry.date}T12:00:00+01:00`, dateLocale)} · {entry.time} · {t("crs.people", { count: entry.partySize })}
+                      </p>
+                    </div>
+                    {entry.status === "notified" && <Badge tone="success">{t("ons.c.waitlistNotified")}</Badge>}
+                    <Button variant="ghost" size="sm" disabled={busy} onClick={async () => { const res = await leaveWaitlist(entry.id); if (!res.ok) toast(res.error, "error"); router.refresh(); }}>
+                      <X className="size-3.5" aria-hidden />{t("ons.c.waitlistLeave")}
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          )}
+
           <Panel title={t("crs.history")}>
             {past.length === 0 ? (
               <EmptyState title={t("crs.historyEmpty")} />
@@ -863,6 +1045,11 @@ export function ReservationsClient({
                         variant="ghost"
                         size="sm"
                       />
+                      {(r.status === "completed" || (r.status === "seated" && Date.parse(r.reservedFor) < now.getTime())) && !r.reviewed && (
+                        <Button variant="outline" size="sm" onClick={() => { setReviewing(r); setReviewRating(0); setReviewBody(""); setPlatformRating(0); setPlatformBody(""); }}>
+                          <Star className="size-3.5" aria-hidden />{t("ons.c.review")}
+                        </Button>
+                      )}
                       {r.refundStatus && (
                         <Badge tone={r.refundStatus === "completed" ? "success" : r.refundStatus === "rejected" ? "error" : "warning"}>
                           {t(
@@ -983,13 +1170,18 @@ export function ReservationsClient({
                 </button>
               </div>
 
+              {dayInfo.groupRequest && (
+                <p className="mt-2 rounded-md border border-info/30 bg-info-light p-2.5 text-xs leading-relaxed text-info">
+                  {t("ons.c.groupRequestBody", { max: dayInfo.maxParty ?? 12 })}
+                </p>
+              )}
               {bigParty && (
                 <div className="mt-2.5 flex items-center gap-3">
                   <Users className="size-4 shrink-0 text-text-light" aria-hidden />
                   <QtyStepper
                     value={guestCount}
                     min={8}
-                    max={20}
+                    max={200}
                     onChange={(n) => setGuests(String(n))}
                   />
                   <span className="text-xs text-text-light">
@@ -1012,6 +1204,7 @@ export function ReservationsClient({
                     than being built, paid for, and then refused by the server.
                   */
                   min={minDate}
+                  max={lastBookableDate(bookingMaxDays, now)}
                   onChange={(e) => {
                     const value = e.target.value;
                     // Belt and braces: a keyboard-typed date bypasses the
@@ -1050,10 +1243,22 @@ export function ReservationsClient({
                 <p className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-text-light">
                   {t("crs.pickDateFirst")}
                 </p>
+              ) : dayInfo.closed || dayInfo.tooFar ? (
+                <p className="rounded-md border border-warning/30 bg-warning-light px-3 py-4 text-center text-xs leading-relaxed text-warning">
+                  {dayInfo.tooFar
+                    ? t("ons.err.tooFarAhead", { days: dayInfo.maxDays ?? bookingMaxDays })
+                    : dayInfo.closedReason ? t("ons.c.closedReason", { reason: dayInfo.closedReason }) : t("ons.err.closedOnDate")}
+                </p>
               ) : slots.length > 0 ? (
                 <>
+                  {(["lunch", "dinner"] as const).map((service) => {
+                    const serviceSlots = groupSlotsByService(slots)[service];
+                    if (serviceSlots.length === 0) return null;
+                    return (
+                  <div key={service} className="mb-3">
+                  <p className="mb-1.5 text-xs font-semibold text-text-secondary">{t(service === "lunch" ? "ons.c.lunch" : "ons.c.dinner")}</p>
                   <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
-                    {slots.map((slot) => {
+                    {serviceSlots.map((slot) => {
                       const chosen = time === slot;
                       const taken = fullSlots.includes(slot);
                       return (
@@ -1083,6 +1288,24 @@ export function ReservationsClient({
                       );
                     })}
                   </div>
+                  </div>
+                    );
+                  })}
+
+                  {fullSlots.length > 0 && (
+                    <div className="mt-2 flex min-w-0 flex-wrap items-end gap-2 rounded-md border border-border bg-surface-2 p-2.5">
+                      <label className="min-w-0 flex-1 text-xs font-semibold text-text-secondary">
+                        {t("ons.c.waitlistAsk")}
+                        <Select className="mt-1" value={waitTime} onChange={(e) => setWaitTime(e.target.value)}>
+                          <option value="">{t("ons.c.waitlistPick")}</option>
+                          {fullSlots.map((slot) => <option key={slot} value={slot}>{slot}</option>)}
+                        </Select>
+                      </label>
+                      <Button size="sm" variant="outline" disabled={busy || !waitTime} onClick={() => void addToWaitlist()}>
+                        <BellRing className="size-3.5" aria-hidden />{t("ons.c.waitlistJoin")}
+                      </Button>
+                    </div>
+                  )}
 
                   {wholeDayFull ? (
                     <p className="mt-2 rounded-md border border-warning/30 bg-warning-light px-3 py-2.5 text-xs leading-relaxed text-warning">
@@ -1110,6 +1333,23 @@ export function ReservationsClient({
                 </p>
               )}
             </fieldset>
+
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
+              <Field label={t("ons.c.occasionLabel")} htmlFor="res-occasion" hint={t("ons.g.optional")}>
+                <Select id="res-occasion" value={occasion} onChange={(e) => setOccasion(e.target.value as Occasion | "")}>
+                  <option value="">{t("ons.c.occasionNone")}</option>
+                  {OCCASIONS.map((o) => <option key={o} value={o}>{t(`ons.c.occasion.${o}` as TranslationKey)}</option>)}
+                </Select>
+              </Field>
+              {(dayInfo.zones?.length ?? 0) > 0 && (
+                <Field label={t("ons.c.preference")} htmlFor="res-zone" hint={t("ons.c.preferenceHint")}>
+                  <Select id="res-zone" value={seatingPreference} onChange={(e) => setSeatingPreference(e.target.value)}>
+                    <option value="">{t("ons.c.preferenceNone")}</option>
+                    {dayInfo.zones!.map((zone) => <option key={zone} value={zone}>{zone}</option>)}
+                  </Select>
+                </Field>
+              )}
+            </div>
 
             <Field label={t("crs.notes")} htmlFor="res-notes">
               <Textarea
@@ -1246,6 +1486,80 @@ export function ReservationsClient({
         </div>
       </Dialog>
 
+      <Dialog
+        open={changing !== null}
+        onClose={() => setChanging(null)}
+        title={t("ons.c.changeTitle")}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" disabled={busy} onClick={() => setChanging(null)}>{t("common.cancel")}</Button>
+            <Button loading={busy} disabled={busy || !changeDate || !changeTime} onClick={() => void sendChange()}>{t("ons.c.changeSend")}</Button>
+          </>
+        }
+      >
+        {changing && (
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-text-secondary">{t(changing.status === "pending" ? "ons.c.changeBodyPending" : "ons.c.changeBodyConfirmed")}</p>
+            <Field label={t("crs.guests")} htmlFor="change-guests">
+              <QtyStepper value={changeGuests} min={1} max={200} onChange={setChangeGuests} />
+            </Field>
+            <Field label={t("crs.date")} htmlFor="change-date">
+              <Input id="change-date" type="date" value={changeDate} min={minDate} max={lastBookableDate(bookingMaxDays, now)}
+                onChange={(e) => { setChangeDate(e.target.value); setChangeTime(""); }} />
+            </Field>
+            <div className="grid grid-cols-3 gap-2">
+              {changeSlots.slots.map((slot) => {
+                const taken = changeSlots.full.includes(slot);
+                return (
+                  <button key={slot} type="button" disabled={taken} aria-pressed={changeTime === slot} onClick={() => setChangeTime(slot)}
+                    className={`tnum min-h-10 rounded-md border text-sm font-medium ${taken ? "cursor-not-allowed bg-surface-2 text-text-light line-through opacity-60" : changeTime === slot ? "border-primary bg-primary text-primary-fg" : "border-border"}`}>
+                    {slot}
+                  </button>
+                );
+              })}
+            </div>
+            {changeDate && changeSlots.slots.length === 0 && <p className="text-xs text-warning">{t("crs.closedThatDay")}</p>}
+          </div>
+        )}
+      </Dialog>
+
+      <Dialog
+        open={reviewing !== null}
+        onClose={() => setReviewing(null)}
+        title={t("ons.g.rateTitle", { name: reviewing?.restaurantName ?? "" })}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" disabled={busy} onClick={() => setReviewing(null)}>{t("common.cancel")}</Button>
+            <Button loading={busy} disabled={busy || reviewRating < 1} onClick={() => void sendReview()}>{t("ons.g.sendReview")}</Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <div className="flex gap-1" role="radiogroup" aria-label={t("ons.c.review")}>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button key={n} type="button" role="radio" aria-checked={reviewRating === n} aria-label={`${n}/5`} onClick={() => setReviewRating(n)} className="grid size-10 place-items-center rounded-full hover:bg-surface-2">
+                <Star className={`size-6 ${n <= reviewRating ? "fill-warning text-warning" : "text-text-light"}`} aria-hidden />
+              </button>
+            ))}
+          </div>
+          <Textarea rows={3} maxLength={2000} value={reviewBody} onChange={(e) => setReviewBody(e.target.value)} placeholder={t("ons.g.reviewBody")} aria-label={t("ons.g.reviewBody")} />
+          <div className="rounded-md bg-surface-2 p-3">
+            <p className="text-sm font-semibold">{t("ons.g.platformTitle")}</p>
+            <p className="text-xs text-text-secondary">{t("ons.g.platformOptional")}</p>
+            <div className="mt-2 flex gap-1">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button key={n} type="button" aria-label={`${n}/5`} onClick={() => setPlatformRating(n)} className="grid size-9 place-items-center rounded-full hover:bg-surface">
+                  <Star className={`size-5 ${n <= platformRating ? "fill-warning text-warning" : "text-text-light"}`} aria-hidden />
+                </button>
+              ))}
+            </div>
+            <Textarea className="mt-2" rows={2} maxLength={2000} value={platformBody} onChange={(e) => setPlatformBody(e.target.value)} placeholder={t("ons.g.platformPh")} aria-label={t("ons.g.platformTitle")} />
+          </div>
+        </div>
+      </Dialog>
+
       {(() => {
         const reservation = mine.find((row) => row.id === paymentScreenId);
         if (!reservation) return null;
@@ -1283,7 +1597,7 @@ export function ReservationsClient({
                 body={t("crs.payPendingBody")}
                 hint={t("crs.payPendingHint")}
                 amountLabel={t("crs.paymentAmount")}
-                amount={formatMoney(reservation.depositAmount)}
+                amount={formatMoney(reservation.depositAmount + (reservation.depositFee || paymentFee(reservation.depositAmount, feePercent)))}
                 referenceLabel={t("crs.paymentReference")}
                 reference={reservation.reference}
                 phoneLabel={t("crs.paymentPhone")}

@@ -152,6 +152,8 @@ export interface NotifyParams {
   stage?: "day" | "soon";
   /** A pre-formatted, recipient-facing time ("sam. 30 août, 20:00"). */
   whenLabel?: string;
+  /** 0068 booking events that are not a status change. */
+  reservationUpdate?: "waitlist_open" | "change_requested" | "change_accepted" | "change_declined";
 }
 
 export interface NotifyInput {
@@ -522,6 +524,18 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
     }
 
     case "reservation":
+      // A customer asks to move a booking (0068) — the board must answer.
+      if (p.reservationUpdate === "change_requested") {
+        return fr
+          ? {
+              title: `Modification demandée — ${p.reference ?? ""}`,
+              body: `${p.customerName ?? "Le client"} souhaite déplacer sa réservation${p.whenLabel ? ` au ${p.whenLabel}` : ""}${p.partySize ? ` (${p.partySize} pers.)` : ""}.`,
+            }
+          : {
+              title: `Change requested — ${p.reference ?? ""}`,
+              body: `${p.customerName ?? "The customer"} wants to move the booking${p.whenLabel ? ` to ${p.whenLabel}` : ""}${p.partySize ? ` (${p.partySize} people)` : ""}.`,
+            };
+      }
       if (p.status === "confirmed") {
         return fr
           ? {
@@ -583,17 +597,49 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
               body: `The deposit was not paid in time — the table is available again.`,
             };
       }
+      // A group request (0068) says so: its tables are arranged by hand.
       return fr
         ? {
             title: `Nouvelle réservation ${p.reference ?? ""}`,
-            body: `${p.customerName ?? "Client"} · ${p.partySize ?? 1} pers.`,
+            body: `${p.customerName ?? "Client"} · ${p.partySize ?? 1} pers.${p.detail ? ` — ${p.detail}` : ""}`,
           }
         : {
             title: `New reservation ${p.reference ?? ""}`,
-            body: `${p.customerName ?? "Guest"} · ${p.partySize ?? 1} people`,
+            body: `${p.customerName ?? "Guest"} · ${p.partySize ?? 1} people${p.detail ? " — group request, tables to arrange by hand" : ""}`,
           };
 
     case "reservation_decision": {
+      /*
+        0068: a table came free on a day this customer was waiting for, or
+        the restaurant answered a change they asked for.
+      */
+      if (p.reservationUpdate === "waitlist_open") {
+        return fr
+          ? {
+              title: `Une table s’est libérée chez ${p.restaurantName ?? "le restaurant"}`,
+              body: `Pour ${p.partySize ?? 1} pers.${p.whenLabel ? `, le ${p.whenLabel}` : ""}. Réservez vite : la première demande l’emporte.`,
+            }
+          : {
+              title: `A table opened up at ${p.restaurantName ?? "the restaurant"}`,
+              body: `For ${p.partySize ?? 1} people${p.whenLabel ? `, ${p.whenLabel}` : ""}. Book quickly: the first request gets it.`,
+            };
+      }
+      if (p.reservationUpdate === "change_accepted" || p.reservationUpdate === "change_declined") {
+        const accepted = p.reservationUpdate === "change_accepted";
+        return fr
+          ? {
+              title: accepted ? `Modification acceptée — ${p.reference ?? ""}` : `Modification refusée — ${p.reference ?? ""}`,
+              body: accepted
+                ? `${p.restaurantName ?? "Le restaurant"} a accepté : votre réservation est désormais ${p.whenLabel ? `le ${p.whenLabel}` : "mise à jour"}.`
+                : `${p.restaurantName ?? "Le restaurant"} garde votre réservation d’origine.${p.reason ? ` Raison : ${p.reason}` : ""}`,
+            }
+          : {
+              title: accepted ? `Change accepted — ${p.reference ?? ""}` : `Change declined — ${p.reference ?? ""}`,
+              body: accepted
+                ? `${p.restaurantName ?? "The restaurant"} accepted: your booking is now ${p.whenLabel ?? "updated"}.`
+                : `${p.restaurantName ?? "The restaurant"} kept your original booking.${p.reason ? ` Reason: ${p.reason}` : ""}`,
+            };
+      }
       /*
         THREE OUTCOMES, NOT TWO. The third is the one that needs an action.
 

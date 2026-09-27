@@ -376,6 +376,59 @@ export interface CustomerReservation {
   declineReason: string | null;
   notes: string | null;
   createdAt: string;
+  /** 0068 — the booking voucher (R237-XXXX-XXXX), shown as a QR at the door. */
+  voucherCode: string | null;
+  voucherRedeemedAt: string | null;
+  occasion: string | null;
+  seatingPreference: string | null;
+  isGroupRequest: boolean;
+  /** A change the customer asked for that the restaurant has not answered. */
+  pendingChange: { reservedFor: string; partySize: number; requestedAt: string } | null;
+  /** The payment service fee paid on top of the deposit. */
+  depositFee: number;
+  /** Already reviewed after the visit. */
+  reviewed: boolean;
+  /** For "Itinéraire" — a place, never a phone number. */
+  restaurantAddress: string | null;
+}
+
+export interface CustomerWaitlistEntry {
+  id: string;
+  restaurantId: string;
+  restaurantName: string;
+  restaurantSlug: string;
+  date: string;
+  time: string;
+  partySize: number;
+  status: "waiting" | "notified";
+}
+
+/** The customer's live waitlist entries (0068). Empty on a database without it. */
+export async function fetchCustomerWaitlist(profileId: string): Promise<CustomerWaitlistEntry[]> {
+  const { data, error } = await createAdminClient()
+    .from("reservation_waitlist")
+    .select("id, restaurant_id, wanted_date, wanted_time, party_size, status, restaurants ( name, slug )")
+    .eq("customer_id", profileId)
+    .in("status", ["waiting", "notified"])
+    .gte("wanted_date", new Date().toISOString().slice(0, 10))
+    .order("wanted_date");
+  if (error) return [];
+  return ((data ?? []) as unknown as {
+    id: string; restaurant_id: string; wanted_date: string; wanted_time: string; party_size: number; status: "waiting" | "notified";
+    restaurants: { name: string; slug: string } | { name: string; slug: string }[] | null;
+  }[]).map((row) => {
+    const restaurant = Array.isArray(row.restaurants) ? row.restaurants[0] : row.restaurants;
+    return {
+      id: row.id,
+      restaurantId: row.restaurant_id,
+      restaurantName: restaurant?.name ?? "",
+      restaurantSlug: restaurant?.slug ?? "",
+      date: row.wanted_date,
+      time: row.wanted_time,
+      partySize: row.party_size,
+      status: row.status,
+    };
+  });
 }
 
 export {
@@ -413,18 +466,19 @@ export async function fetchCustomerReservations(
     notes: string | null;
     decline_reason: string | null;
     created_at: string;
-    restaurants: { name: string; slug: string }[] | null;
-    restaurant_tables: { number: string }[] | null;
+    restaurants: { name: string; slug: string } | { name: string; slug: string }[] | null;
+    restaurant_tables: { number: string } | { number: string }[] | null;
   }[]).map((r) => ({
     id: r.id,
     reference: r.reference,
     restaurantId: r.restaurant_id,
-    restaurantName: r.restaurants?.[0]?.name ?? "",
-    restaurantSlug: r.restaurants?.[0]?.slug ?? "",
+    // A many-to-one embed comes back as an object; older typings said array.
+    restaurantName: (Array.isArray(r.restaurants) ? r.restaurants[0] : r.restaurants)?.name ?? "",
+    restaurantSlug: (Array.isArray(r.restaurants) ? r.restaurants[0] : r.restaurants)?.slug ?? "",
     reservedFor: r.reserved_for,
     durationMin: Number(r.duration_min ?? 90),
     partySize: r.party_size,
-    tableNumber: r.restaurant_tables?.[0]?.number ?? null,
+    tableNumber: (Array.isArray(r.restaurant_tables) ? r.restaurant_tables[0] : r.restaurant_tables)?.number ?? null,
     status: r.status as CustomerReservationStatus,
     depositAmount: Number(r.deposit_amount ?? 0),
     depositPaid: r.deposit_paid === true,
@@ -440,9 +494,74 @@ export async function fetchCustomerReservations(
     declineReason: r.decline_reason ?? null,
     notes: r.notes,
     createdAt: r.created_at,
+    voucherCode: null as string | null,
+    voucherRedeemedAt: null as string | null,
+    occasion: null as string | null,
+    seatingPreference: null as string | null,
+    isGroupRequest: false,
+    pendingChange: null as CustomerReservation["pendingChange"],
+    depositFee: 0,
+    reviewed: false,
+    restaurantAddress: null as string | null,
   }));
 
   if (reservations.length === 0) return reservations;
+
+  /*
+    THE 0068 DETAILS, READ ON THEIR OWN.
+
+    A separate query so a database that has not run 0068 still lists every
+    booking — only the voucher, occasion and change fields stay empty.
+  */
+  const ids = reservations.map((reservation) => reservation.id);
+  const [extras, reviewRows, places] = await Promise.all([
+    supabase
+      .from("reservations")
+      .select("id, voucher_code, voucher_redeemed_at, occasion, seating_preference, is_group_request, pending_change, deposit_fee")
+      .in("id", ids),
+    supabase.from("reviews").select("reservation_id").in("reservation_id", ids),
+    supabase
+      .from("restaurants")
+      .select("id, name, address_line, quartiers ( name )")
+      .in("id", [...new Set(reservations.map((reservation) => reservation.restaurantId))]),
+  ]);
+  const extraById = new Map(
+    (extras.error ? [] : (extras.data ?? []) as {
+      id: string; voucher_code: string | null; voucher_redeemed_at: string | null; occasion: string | null;
+      seating_preference: string | null; is_group_request: boolean | null;
+      pending_change: { reservedFor?: string; partySize?: number; requestedAt?: string } | null; deposit_fee: number | null;
+    }[]).map((row) => [row.id, row]),
+  );
+  const reviewed = new Set(
+    (reviewRows.error ? [] : (reviewRows.data ?? []) as { reservation_id: string | null }[])
+      .map((row) => row.reservation_id).filter(Boolean),
+  );
+  const addressById = new Map(
+    ((places.data ?? []) as { id: string; address_line: string | null; quartiers: { name: string } | { name: string }[] | null }[])
+      .map((row) => {
+        const quartier = Array.isArray(row.quartiers) ? row.quartiers[0] : row.quartiers;
+        return [row.id, [row.address_line, quartier?.name].filter(Boolean).join(", ") || null] as const;
+      }),
+  );
+  for (const reservation of reservations) {
+    const extra = extraById.get(reservation.id);
+    reservation.restaurantAddress = addressById.get(reservation.restaurantId) ?? null;
+    reservation.reviewed = reviewed.has(reservation.id);
+    if (!extra) continue;
+    reservation.voucherCode = extra.voucher_code;
+    reservation.voucherRedeemedAt = extra.voucher_redeemed_at;
+    reservation.occasion = extra.occasion;
+    reservation.seatingPreference = extra.seating_preference;
+    reservation.isGroupRequest = Boolean(extra.is_group_request);
+    reservation.depositFee = Number(extra.deposit_fee ?? 0);
+    reservation.pendingChange = extra.pending_change?.reservedFor
+      ? {
+          reservedFor: extra.pending_change.reservedFor,
+          partySize: Number(extra.pending_change.partySize ?? reservation.partySize),
+          requestedAt: extra.pending_change.requestedAt ?? "",
+        }
+      : null;
+  }
 
   const { data: attempts, error: attemptsError } = await supabase
     .from("payment_attempts")
