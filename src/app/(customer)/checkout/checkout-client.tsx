@@ -94,6 +94,8 @@ export function CheckoutClient({
         return t("cct.err.belowMinimum", { amount: formatMoney(Number(detail) || 0) });
       case "belowMinPoints":
         return t("cct.err.belowMinPoints", { points: detail ?? "" });
+      case "describeCustom":
+        return t("ons.d.describeRequiredDish", { dish: detail ?? "" });
       default:
         return t(`cct.err.${reason}` as TranslationKey);
     }

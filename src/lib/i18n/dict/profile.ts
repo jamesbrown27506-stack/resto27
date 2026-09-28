@@ -83,6 +83,7 @@ export const profileDict = defineDict({
     "mpf.minutes": "min",
     "mpf.acceptsDelivery": "Accepter la livraison",
     "mpf.acceptsDeliveryDesc": "Vos clients pourront commander en livraison.",
+    "mpf.ownDeliveryQuestion": "Proposez-vous vous-même la livraison ? Si non, la plateforme s’en charge pour vous.",
     "mpf.acceptsPickup": "Accepter les commandes à emporter",
     "mpf.acceptsPickupDesc": "Vos clients viendront chercher leur commande sur place.",
     "mpf.noChannel":
@@ -174,6 +175,7 @@ export const profileDict = defineDict({
     "mpf.minutes": "min",
     "mpf.acceptsDelivery": "Accept delivery",
     "mpf.acceptsDeliveryDesc": "Customers will be able to order for delivery.",
+    "mpf.ownDeliveryQuestion": "Do you run deliveries yourself? If not, the platform takes care of them for you.",
     "mpf.acceptsPickup": "Accept pickup orders",
     "mpf.acceptsPickupDesc": "Customers will collect their order from you.",
     "mpf.noChannel": "Neither delivery nor pickup: customers will not be able to order online.",

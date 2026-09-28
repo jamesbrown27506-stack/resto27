@@ -59,6 +59,12 @@ export interface MenuItem {
   allergens: string;
   sortOrder: number;
   optionGroups: MenuOptionGroup[];
+  /**
+   * "Prix confirmé par le restaurant" (0069): `price` is the minimum, the
+   * restaurant confirms the real price when accepting. Absent before 0069.
+   */
+  priceToConfirm?: boolean;
+  priceMax?: number | null;
 }
 
 export interface MenuCategory {
@@ -196,6 +202,17 @@ export async function fetchMenu(restaurantId: string): Promise<MenuItem[]> {
     groupsByItem.set(g.menu_item_id, list);
   }
 
+  // The 0069 pricing columns, read on their own: a database without them
+  // still serves the whole menu, every dish at its fixed price.
+  const { data: pricing } = await supabase
+    .from("menu_items")
+    .select("id, price_to_confirm, price_max")
+    .eq("restaurant_id", restaurantId);
+  const pricingById = new Map(
+    ((pricing ?? []) as { id: string; price_to_confirm: boolean | null; price_max: number | null }[])
+      .map((row) => [row.id, row]),
+  );
+
   return (items ?? []).map((i) => ({
     id: i.id,
     restaurantId: i.restaurant_id,
@@ -214,6 +231,8 @@ export async function fetchMenu(restaurantId: string): Promise<MenuItem[]> {
     allergens: i.allergens,
     sortOrder: i.sort_order,
     optionGroups: groupsByItem.get(i.id) ?? [],
+    priceToConfirm: Boolean(pricingById.get(i.id)?.price_to_confirm),
+    priceMax: pricingById.get(i.id)?.price_max ?? null,
   }));
 }
 

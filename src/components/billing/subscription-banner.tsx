@@ -8,6 +8,7 @@ import { SUBSCRIPTION_STATE_META, type SubscriptionState } from "@/lib/format/su
 import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
+import { graceDaysLeft } from "@/lib/billing/grace";
 
 /**
  * The banner a restaurant sees at the top of every manager screen.
@@ -28,16 +29,22 @@ import { cn } from "@/lib/utils";
 export function SubscriptionBanner({
   state,
   endDate,
+  graceEndsAt,
   freeModeEndsAt,
 }: {
   state: SubscriptionState;
   endDate?: string | null;
+  /** End date + grace days: the real deadline while in grace. */
+  graceEndsAt?: string | null;
   freeModeEndsAt?: string | null;
 }) {
   const { t } = useLocale();
   const dates = useDates();
   const [dismissed, setDismissed] = useState(false);
   const meta = SUBSCRIPTION_STATE_META[state];
+  // While in grace the deadline that matters is the END of the grace period,
+  // not the end date that has already passed.
+  const left = state === "grace" ? graceDaysLeft(graceEndsAt) : null;
 
   if (meta.tone === null) return null;
   if (dismissed && meta.dismissible) return null;
@@ -47,9 +54,17 @@ export function SubscriptionBanner({
       Icon: AlertTriangle,
       classes: "bg-warning-light text-warning border-warning/30",
       title: t("common.sub.expiredTitle"),
-      body: endDate
-        ? t("common.sub.expiredBodyDate", { date: dates.date(endDate) })
-        : t("common.sub.expiredBody"),
+      body: endDate && graceEndsAt && left !== null && left >= 0
+        ? left === 0
+          ? t("common.sub.graceLastDay", { expired: dates.date(endDate) })
+          : t("common.sub.graceBody", {
+              expired: dates.date(endDate),
+              deadline: dates.date(graceEndsAt),
+              left: t("common.sub.daysLeft", { count: left }),
+            })
+        : endDate
+          ? t("common.sub.expiredBodyDate", { date: dates.date(endDate) })
+          : t("common.sub.expiredBody"),
     },
     error: {
       Icon: Lock,

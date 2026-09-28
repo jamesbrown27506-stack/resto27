@@ -110,6 +110,7 @@ const loadBranches = cache(async (profileId: string): Promise<Branch[]> => {
         planTier: sub.tier,
         planName: sub.name,
         expiresAt: sub.endDate,
+        graceEndsAt: sub.graceEndsAt,
         hasSubscription: sub.exists,
       } satisfies Branch;
     })
@@ -121,6 +122,7 @@ interface SubscriptionSummary {
   tier: string;
   name: string;
   endDate: string | null;
+  graceEndsAt: string | null;
   /** False when the restaurant has never had a subscription row. */
   exists: boolean;
 }
@@ -144,7 +146,7 @@ async function fetchSubscriptionStates(restaurantIds: string[]) {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("subscription_state")
-    .select("restaurant_id, plan_id, state, end_date")
+    .select("restaurant_id, plan_id, state, end_date, grace_days")
     .in("restaurant_id", restaurantIds);
 
   if (error) {
@@ -154,7 +156,7 @@ async function fetchSubscriptionStates(restaurantIds: string[]) {
     return map;
   }
 
-  const rows = (data ?? []) as { restaurant_id: string; plan_id: string; state: string; end_date: string | null }[];
+  const rows = (data ?? []) as { restaurant_id: string; plan_id: string; state: string; end_date: string | null; grace_days: number | null }[];
   const planIds = [...new Set(rows.map((r) => r.plan_id))];
 
   const plans = new Map<string, { tier: string; name: string }>();
@@ -180,6 +182,10 @@ async function fetchSubscriptionStates(restaurantIds: string[]) {
       tier: plan?.tier ?? "starter",
       name: plan?.name ?? "—",
       endDate: row.end_date,
+      // Same arithmetic as the view: end_date + grace_days.
+      graceEndsAt: row.end_date
+        ? new Date(Date.parse(row.end_date) + Math.max(0, Number(row.grace_days ?? 0)) * 86_400_000).toISOString()
+        : null,
       exists: true,
     });
   }
@@ -213,6 +219,7 @@ const NO_SUBSCRIPTION: SubscriptionSummary = {
   tier: "starter",
   name: "Starter",
   endDate: null,
+  graceEndsAt: null,
   exists: false,
 };
 
@@ -255,6 +262,7 @@ export const getBranchContext = cache(async (): Promise<BranchContext | null> =>
       planTier: sub.tier,
       planName: sub.name,
       expiresAt: sub.endDate,
+      graceEndsAt: sub.graceEndsAt,
       hasSubscription: sub.exists,
     };
 

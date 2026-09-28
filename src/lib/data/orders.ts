@@ -18,6 +18,14 @@ export interface OrderItemRow {
   quantity: number;
   optionsLabel: string | null;
   notes: string | null;
+  /**
+   * Customizable dish (0069): sold at `priceMin`, the restaurant confirms
+   * the real price (at most `priceMax`) when accepting the order.
+   */
+  priceToConfirm?: boolean;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  priceConfirmedAt?: string | null;
 }
 
 export interface OrderEvent {
@@ -193,13 +201,18 @@ async function fetchItemsFor(orderIds: string[]): Promise<Map<string, OrderItemR
   if (orderIds.length === 0) return map;
 
   const supabase = createAdminClient();
-  const { data } = await supabase
+  const base = "id, order_id, name, unit_price, quantity, options_label, notes";
+  // The 0069 range columns, dropped on a database that does not have them.
+  let result: { data: unknown[] | null; error: { message: string } | null } = await supabase
     .from("order_items")
-    .select("id, order_id, name, unit_price, quantity, options_label, notes")
+    .select(`${base}, price_to_confirm, price_min, price_max, price_confirmed_at`)
     .in("order_id", orderIds)
     .order("created_at");
+  if (result.error) {
+    result = await supabase.from("order_items").select(base).in("order_id", orderIds).order("created_at");
+  }
 
-  for (const row of (data ?? []) as {
+  for (const row of (result.data ?? []) as {
     id: string;
     order_id: string;
     name: string;
@@ -207,6 +220,10 @@ async function fetchItemsFor(orderIds: string[]): Promise<Map<string, OrderItemR
     quantity: number;
     options_label: string | null;
     notes: string | null;
+    price_to_confirm?: boolean | null;
+    price_min?: number | null;
+    price_max?: number | null;
+    price_confirmed_at?: string | null;
   }[]) {
     const list = map.get(row.order_id) ?? [];
     list.push({
@@ -216,6 +233,10 @@ async function fetchItemsFor(orderIds: string[]): Promise<Map<string, OrderItemR
       quantity: row.quantity,
       optionsLabel: row.options_label,
       notes: row.notes,
+      priceToConfirm: Boolean(row.price_to_confirm),
+      priceMin: row.price_min ?? null,
+      priceMax: row.price_max ?? null,
+      priceConfirmedAt: row.price_confirmed_at ?? null,
     });
     map.set(row.order_id, list);
   }

@@ -42,6 +42,17 @@ export function CartLineRow({ line }: { line: CartLine }) {
           <p className="mt-1 text-xs text-text-light italic">« {line.notes} »</p>
         )}
 
+        {/* A customizable dish: the price shown is the minimum. */}
+        {line.priceToConfirm && (
+          <p className="mt-1 text-xs font-semibold text-info">
+            {t("ons.d.lineToConfirm", {
+              max: formatMoney(
+                lineUnitPrice(line.priceMax ?? line.basePrice, line.options.map((o) => o.priceDelta)),
+              ),
+            })}
+          </p>
+        )}
+
         <div className="mt-3 flex items-center gap-4">
           <QtyStepper
             value={line.quantity}
@@ -290,12 +301,20 @@ export function CartSummary({
   deliveryFeeDetail?: string | null;
   children?: React.ReactNode;
 }) {
-  const { totals, promoCode } = useCart();
+  const { totals, promoCode, lines } = useCart();
   const { t } = useLocale();
+  // Customizable dishes are counted at their minimum until the restaurant
+  // confirms the price (0069) — the total is an estimate until then.
+  const estimated = lines.some((line) => line.priceToConfirm);
 
   return (
     <div className="rounded-lg border border-border bg-surface p-5">
       <h2 className="font-display text-lg font-bold">{t("cct.sum.title")}</h2>
+      {estimated && (
+        <p className="mt-2 rounded-md border border-info/30 bg-info-light p-2.5 text-xs leading-relaxed text-info">
+          {t("ons.d.estimatedTotal")}
+        </p>
+      )}
 
       <dl className="mt-4 flex flex-col gap-2.5 text-sm">
         <Row label={t("cct.sum.subtotal")} value={formatMoney(totals.subtotal)} />

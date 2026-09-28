@@ -56,6 +56,7 @@ export default async function BillingPage() {
           planName: active.planName,
           subscriptionState: active.subscriptionState,
           expiresAt: active.expiresAt,
+          graceEndsAt: active.graceEndsAt ?? null,
         }}
         plans={plans}
         invoices={invoices}

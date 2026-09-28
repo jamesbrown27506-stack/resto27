@@ -1,5 +1,6 @@
 "use server";
 
+import { normalisePriceMax } from "@/lib/menu/custom-price";
 import { notifyWaitlist } from "./waitlist";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -405,6 +406,27 @@ export interface MenuItemInput {
   lowStockThreshold?: number | null;
   dietaryTags?: string;
   allergens?: string;
+  /** "Prix confirmé par le restaurant" (0069): `price` becomes the minimum. */
+  priceToConfirm?: boolean;
+  /** The ceiling of that range; null = the minimum is also the maximum. */
+  priceMax?: number | null;
+}
+
+/**
+ * The 0069 pricing columns, written on their own after the dish itself, so a
+ * database without the migration still saves every dish (at a fixed price).
+ */
+async function savePricing(itemId: string, restaurantId: string, input: MenuItemInput): Promise<void> {
+  if (input.priceToConfirm === undefined && input.priceMax === undefined) return;
+  const { error } = await createAdminClient()
+    .from("menu_items")
+    .update({
+      price_to_confirm: Boolean(input.priceToConfirm),
+      price_max: input.priceToConfirm ? normalisePriceMax(input.price, input.priceMax) : null,
+    })
+    .eq("id", itemId)
+    .eq("restaurant_id", restaurantId);
+  if (error) console.error("[manager:savePricing]", error.code ?? "", error.message);
 }
 
 /**
@@ -462,14 +484,17 @@ export async function createMenuItem(input: MenuItemInput): Promise<ActionResult
     .limit(1)
     .maybeSingle();
 
-  const { error } = await supabase
+  const { data: created, error } = await supabase
     .from("menu_items")
-    .insert({ ...itemPatch(input), restaurant_id: active.restaurantId, sort_order: (last?.sort_order ?? 0) + 1 });
+    .insert({ ...itemPatch(input), restaurant_id: active.restaurantId, sort_order: (last?.sort_order ?? 0) + 1 })
+    .select("id")
+    .single();
 
-  if (error) {
-    console.error("[manager:createMenuItem]", error.message);
+  if (error || !created) {
+    console.error("[manager:createMenuItem]", error?.message);
     return { ok: false, error: t("est.dishAddFailed") };
   }
+  await savePricing(created.id as string, active.restaurantId, input);
 
   revalidatePath("/m/menu");
   return { ok: true };
@@ -490,6 +515,7 @@ export async function updateMenuItem(id: string, input: MenuItemInput): Promise<
     .eq("restaurant_id", active.restaurantId);
 
   if (error) return { ok: false, error: t("est.dishSaveFailed") };
+  await savePricing(id, active.restaurantId, input);
 
   revalidatePath("/m/menu");
   return { ok: true };
@@ -2306,6 +2332,8 @@ export async function updateRestaurantProfile(input: {
   maxDeliveryFee?: number;
   acceptsDelivery?: boolean;
   acceptsPickup?: boolean;
+  /** Own riders, or the platform delivers (0032). */
+  hasOwnDelivery?: boolean;
 }): Promise<ActionResult> {
   const t = await getTranslator();
   const { active, profile } = await requireCapability("profile.edit");
@@ -2354,6 +2382,7 @@ export async function updateRestaurantProfile(input: {
 
   if (input.acceptsDelivery !== undefined) patch.accepts_delivery = input.acceptsDelivery;
   if (input.acceptsPickup !== undefined) patch.accepts_pickup = input.acceptsPickup;
+  if (input.hasOwnDelivery !== undefined) patch.has_own_delivery = input.hasOwnDelivery;
 
   // The slug is deliberately absent. Changing it breaks every link a
   // restaurant has ever shared, and there is no redirect table yet.

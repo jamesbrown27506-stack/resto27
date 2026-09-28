@@ -17,6 +17,8 @@ import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale, getTranslator } from "@/lib/i18n/locale-server";
 import { fetchTableAccess } from "./table-access";
 import { canCloseDiningOrder } from "@/lib/dining/access";
+import { computeTotals } from "@/lib/orders/totals";
+import { isPriceInRange } from "@/lib/menu/custom-price";
 
 /**
  * The statuses `notify` has copy for. `awaiting_customer` is included: the
@@ -133,9 +135,79 @@ export async function releaseTableIfFree(
  *  is the rule.
  * ─────────────────────────────────────────────────────────────────────────
  */
+/**
+ * The confirmed prices of an order's customizable dishes (0069), checked and
+ * turned into the new order figures. Null when nothing is to confirm.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  Acceptance is the one moment this can happen: the customer has not paid
+ *  yet (payment-first, 0059), so the total they are asked for is the
+ *  confirmed one. Every price must be inside the range the line was sold
+ *  under — the same promise as the delivery fee ceiling — and the new total
+ *  comes from computeTotals, the one money function, with the order's own
+ *  snapshotted discount, service-charge rate and loyalty value.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+async function confirmCustomPrices(
+  orderId: string,
+  prices: Record<string, number> | undefined,
+): Promise<
+  | { ok: true; lines: { id: string; price: number }[]; subtotal: number; serviceCharge: number; total: number }
+  | { ok: true; lines: null }
+  | { ok: false; key: "est.customPricesRequired" | "est.customPriceOutOfRange" }
+> {
+  const supabase = createAdminClient();
+  const [{ data: items, error }, { data: order }] = await Promise.all([
+    supabase
+      .from("order_items")
+      .select("id, unit_price, quantity, price_to_confirm, price_min, price_max, price_confirmed_at")
+      .eq("order_id", orderId),
+    supabase
+      .from("orders")
+      .select("discount_amount, service_charge_percent, loyalty_value")
+      .eq("id", orderId)
+      .maybeSingle(),
+  ]);
+  // No 0069 columns: nothing can be to confirm.
+  if (error || !items) return { ok: true, lines: null };
+  const rows = items as {
+    id: string; unit_price: number; quantity: number; price_to_confirm: boolean | null;
+    price_min: number | null; price_max: number | null; price_confirmed_at: string | null;
+  }[];
+  const pending = rows.filter((row) => row.price_to_confirm && !row.price_confirmed_at);
+  if (pending.length === 0) return { ok: true, lines: null };
+
+  const lines: { id: string; price: number }[] = [];
+  for (const row of pending) {
+    const price = Math.round(Number(prices?.[row.id]));
+    if (!Number.isFinite(price)) return { ok: false, key: "est.customPricesRequired" };
+    if (!isPriceInRange(price, row.price_min ?? row.unit_price, row.price_max)) {
+      return { ok: false, key: "est.customPriceOutOfRange" };
+    }
+    lines.push({ id: row.id, price });
+  }
+
+  const byId = new Map(lines.map((line) => [line.id, line.price]));
+  const subtotal = rows.reduce((sum, row) => sum + (byId.get(row.id) ?? row.unit_price) * row.quantity, 0);
+  const snapshot = (order ?? {}) as { discount_amount?: number; service_charge_percent?: number; loyalty_value?: number };
+  const totals = computeTotals({
+    subtotal,
+    discount: Number(snapshot.discount_amount ?? 0),
+    serviceChargePercent: Number(snapshot.service_charge_percent ?? 0),
+    // The delivery fee is paid in cash to the rider and never in the online total (0059).
+    deliveryFee: 0,
+    loyaltyValue: Number(snapshot.loyalty_value ?? 0),
+  });
+  return { ok: true, lines, subtotal: totals.subtotal, serviceCharge: totals.serviceCharge, total: totals.total };
+}
+
 export async function advanceOrder(
   orderId: string,
-  input: { deliveryFee?: number } = {},
+  input: {
+    deliveryFee?: number;
+    /** order_items.id → confirmed unit price, for customizable dishes (0069). */
+    itemPrices?: Record<string, number>;
+  } = {},
 ): Promise<ActionResult & { status?: OrderStatus }> {
   const t = await getTranslator();
   const { active, profile } = await requireCapability("orders.advance");
@@ -171,6 +243,11 @@ export async function advanceOrder(
   let target: OrderStatus = next;
   let quotedFee: number | undefined;
 
+  // Accepting an order with customizable dishes needs their prices first.
+  const custom = order.status === "pending" ? await confirmCustomPrices(order.id, input.itemPrices) : null;
+  if (custom && !custom.ok) return { ok: false, error: t(custom.key) };
+  const confirmedPrices = custom && custom.ok && custom.lines ? custom : null;
+
   if (next === "awaiting_customer" && order.type === "delivery" && order.delivery_fee_set_at === null) {
     const fee = input.deliveryFee;
     // Zero is a legitimate quote ("we deliver free nearby") — only absence and
@@ -201,6 +278,12 @@ export async function advanceOrder(
   }
 
   const patch: Record<string, unknown> = { status: target };
+
+  if (confirmedPrices) {
+    patch.subtotal = confirmedPrices.subtotal;
+    patch.service_charge = confirmedPrices.serviceCharge;
+    patch.total = confirmedPrices.total;
+  }
 
   if (quotedFee !== undefined) {
     /*
@@ -234,6 +317,21 @@ export async function advanceOrder(
     console.error("[orders:advanceOrder]", orderId, error.message);
     return { ok: false, error: t("est.orderUpdateFailed") };
   }
+
+  // The confirmed prices land on the lines once the order itself moved (the
+  // status guard above is what stops two tabs confirming different prices).
+  if (confirmedPrices?.lines) {
+    const stamp = new Date().toISOString();
+    for (const line of confirmedPrices.lines) {
+      const { error: lineError } = await supabase
+        .from("order_items")
+        .update({ unit_price: line.price, price_confirmed_at: stamp })
+        .eq("id", line.id)
+        .eq("order_id", orderId);
+      if (lineError) console.error("[orders:advanceOrder] price", line.id, lineError.message);
+    }
+  }
+  const payableTotal = confirmedPrices?.total ?? order.total;
 
   // The meal is over — the table goes back to the floor, unless another
   // party is still mid-service on it (releaseTableIfFree re-checks).
@@ -274,7 +372,7 @@ export async function advanceOrder(
         restaurantName: active.restaurantName,
         deliveryFee: quotedFee,
         orderType: order.type as "delivery" | "pickup" | "dine_in",
-        amount: target === "awaiting_customer" ? order.total : undefined,
+        amount: target === "awaiting_customer" ? payableTotal : undefined,
         whenLabel: payBy,
       },
     });
@@ -465,6 +563,8 @@ export interface TableOrderLine {
   quantity: number;
   /** Chosen option names, display only — the price is recomputed server-side. */
   optionIds: string[];
+  /** Customizable dish (0069): the waiter's price, checked against its range. */
+  unitPrice?: number;
 }
 
 /**
@@ -534,6 +634,17 @@ export async function createTableOrder(input: {
     }[]).map((m) => [m.id, m]),
   );
 
+  // Customizable dishes (0069): the waiter prices them on the line, in range.
+  const { data: pricingRows } = await supabase
+    .from("menu_items")
+    .select("id, price_to_confirm, price_max")
+    .eq("restaurant_id", active.restaurantId)
+    .in("id", itemIds);
+  const pricing = new Map(
+    ((pricingRows ?? []) as { id: string; price_to_confirm: boolean | null; price_max: number | null }[])
+      .map((row) => [row.id, row]),
+  );
+
   const optionIds = [...new Set(input.lines.flatMap((l) => l.optionIds))];
   const { data: optionRows } = optionIds.length
     ? await supabase.from("menu_options").select("id, name, price_delta").in("id", optionIds)
@@ -560,8 +671,16 @@ export async function createTableOrder(input: {
       name: string;
       price_delta: number;
     }[];
-    const unitPrice = item.price + chosen.reduce((sum, o) => sum + o.price_delta, 0);
-    if (unitPrice < 0) return { ok: false, error: t("est.invalidPrice") };
+    const basePrice = item.price + chosen.reduce((sum, o) => sum + o.price_delta, 0);
+    if (basePrice < 0) return { ok: false, error: t("est.invalidPrice") };
+
+    const custom = pricing.get(line.menuItemId);
+    let unitPrice = basePrice;
+    if (custom?.price_to_confirm) {
+      const max = Math.max(basePrice, (custom.price_max ?? item.price) + (basePrice - item.price));
+      unitPrice = line.unitPrice === undefined ? basePrice : Math.round(Number(line.unitPrice));
+      if (!isPriceInRange(unitPrice, basePrice, max)) return { ok: false, error: t("est.customPriceOutOfRange") };
+    }
 
     subtotal += unitPrice * line.quantity;
     itemInserts.push({

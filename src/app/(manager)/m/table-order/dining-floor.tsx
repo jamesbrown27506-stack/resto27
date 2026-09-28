@@ -29,7 +29,12 @@ import { localizeActionError } from "@/lib/i18n/staff-errors";
 import { billDue } from "@/lib/dining/bill";
 
 type Guest = { id: string; display_name: string; status: string; created_at: string };
-type Item = { id: string; name: string; quantity: number; unit_price: number; options_label: string | null; status: string; rejection_reason: string | null };
+type Item = {
+  id: string; name: string; quantity: number; unit_price: number; options_label: string | null; status: string; rejection_reason: string | null;
+  /** Customizable dish (0069): the waiter sets the price when accepting. */
+  price_to_confirm?: boolean | null;
+  price_max?: number | null;
+};
 type Round = { id: string; guest_id: string | null; status: string; subtotal: number; notes: string | null; created_at: string; added_by_staff?: string | null; dining_round_items: Item[] };
 type Msg = { id: string; guest_id: string | null; sender_kind: string; kind: string; body: string; created_at: string };
 type Payment = { id: string; guest_id: string | null; method: string; split_mode: string; amount: number; tip: number; service_fee: number; status: string; created_at: string };
@@ -138,6 +143,11 @@ const copy = {
     alertsFailed: "Could not save the table alert preference",
     error: "Something went wrong. Refresh and try again.",
     waiting: "waiting",
+    priceTitle: "Price of this dish",
+    priceHint: "The guest described what they want. Set the price within the range they were shown.",
+    priceRange: "Between {min} and {max}",
+    priceAccept: "Accept at this price",
+    toConfirm: "price to confirm",
   },
   fr: {
     empty: "Aucune addition ouverte",
@@ -219,6 +229,11 @@ const copy = {
     alertsFailed: "Impossible d’enregistrer la préférence d’alerte",
     error: "Une erreur est survenue. Actualisez et réessayez.",
     waiting: "en attente",
+    priceTitle: "Prix de ce plat",
+    priceHint: "Le client a décrit ce qu’il veut. Fixez le prix dans la fourchette qui lui a été annoncée.",
+    priceRange: "Entre {min} et {max}",
+    priceAccept: "Accepter à ce prix",
+    toConfirm: "prix à confirmer",
   },
 } as const;
 
@@ -277,6 +292,8 @@ export function DiningFloor({
   const [cashSessionId, setCashSessionId] = useState<string | null>(null);
   const [cashAcknowledged, setCashAcknowledged] = useState(false);
   const [voucherCode, setVoucherCode] = useState("");
+  /** A customizable dish being accepted: its price is asked first (0069). */
+  const [pricing, setPricing] = useState<{ item: Item; note: string | null; draft: string } | null>(null);
 
   /*
     FAST ONLY WHILE A BILL IS WAITING ON US. Live (0066): the branch signal
@@ -444,7 +461,7 @@ export function DiningFloor({
           const replyGuestId = replyGuests[session.id] ?? liveGuests[0]?.id ?? "";
           const guestMessages = messages.filter((message) => !message.guest_id || message.guest_id === replyGuestId);
           const guestName = (id: string | null) => id ? guests.find((guest) => guest.id === id)?.display_name ?? "—" : t.byStaff;
-          const pendingItems = rounds.flatMap((round) => round.dining_round_items.filter((item) => item.status === "pending"));
+          const pendingItems = rounds.flatMap((round) => round.dining_round_items.filter((item) => item.status === "pending" && !item.price_to_confirm));
           const activeSelection = selectedItems.filter((id) => pendingItems.some((item) => item.id === id));
           const accepted = rounds.flatMap((round) => round.dining_round_items.filter((item) => item.status === "accepted").map((item) => ({ ...item, guestId: round.guest_id })));
           const byGuest = new Map<string | null, typeof accepted>();
@@ -509,14 +526,20 @@ export function DiningFloor({
                       <ul className="mt-3 space-y-2">
                         {round.dining_round_items.filter((item) => item.status === "pending").map((item) => (
                           <li key={item.id} className="flex min-w-0 flex-wrap items-center gap-2 rounded-md bg-surface p-3">
-                            {confirmed && <input type="checkbox" aria-label={`${t.selectAll}: ${item.name}`} checked={activeSelection.includes(item.id)} onChange={(event) => setSelectedItems((current) => event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id))} />}
+                            {confirmed && !item.price_to_confirm && <input type="checkbox" aria-label={`${t.selectAll}: ${item.name}`} checked={activeSelection.includes(item.id)} onChange={(event) => setSelectedItems((current) => event.target.checked ? [...new Set([...current, item.id])] : current.filter((id) => id !== item.id))} />}
                             <div className="min-w-0 flex-1">
                               <p className="break-words text-sm font-semibold">{item.quantity}× {item.name}</p>
                               {item.options_label && <p className="text-xs text-text-secondary">{item.options_label}</p>}
-                              <p className="text-xs text-text-secondary">{formatMoney(item.unit_price * item.quantity)}</p>
+                              <p className="text-xs text-text-secondary">
+                                {item.price_to_confirm
+                                  ? `${formatMoney(item.unit_price)} – ${formatMoney(Math.max(item.unit_price, item.price_max ?? item.unit_price))} · ${t.toConfirm}`
+                                  : formatMoney(item.unit_price * item.quantity)}
+                              </p>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                              <Button size="sm" disabled={pending || !confirmed} onClick={() => run(() => decideDiningItem(item.id, true), t.dishAccepted)}>{t.accept}</Button>
+                              <Button size="sm" disabled={pending || !confirmed} onClick={() => item.price_to_confirm
+                                ? setPricing({ item, note: round.notes, draft: String(item.unit_price) })
+                                : run(() => decideDiningItem(item.id, true), t.dishAccepted)}>{t.accept}</Button>
                               <Button variant="outline" size="sm" disabled={pending || !confirmed} onClick={() => { setRejectItem({ id: item.id, name: item.name }); setRejectReason(""); }}>{t.rejectDish}</Button>
                             </div>
                           </li>
@@ -626,6 +649,29 @@ export function DiningFloor({
       </>}>
         <p className="mb-3 text-sm text-text-secondary">{selectedItems.length} {t.selected}. {t.rejectHint}</p>
         <label className="block text-sm font-medium">{t.rejectReason}<Input className="mt-2" value={bulkReason} maxLength={240} onChange={(event) => setBulkReason(event.target.value)} /></label>
+      </Dialog>
+      <Dialog open={pricing !== null} onClose={() => setPricing(null)} title={t.priceTitle} size="sm" footer={<>
+        <Button variant="outline" disabled={pending} onClick={() => setPricing(null)}>{t.cancel}</Button>
+        <Button disabled={pending || !pricing || !(Number(pricing.draft) >= pricing.item.unit_price && Number(pricing.draft) <= Math.max(pricing.item.unit_price, pricing.item.price_max ?? pricing.item.unit_price))}
+          loading={pending}
+          onClick={() => {
+            if (!pricing) return;
+            const target = pricing;
+            run(() => decideDiningItem(target.item.id, true, undefined, Math.round(Number(target.draft))), t.dishAccepted, () => setPricing(null));
+          }}>{t.priceAccept}</Button>
+      </>}>
+        {pricing && (
+          <div className="flex flex-col gap-3">
+            <p className="font-semibold">{pricing.item.quantity}× {pricing.item.name}</p>
+            {pricing.note && <p className="rounded bg-surface-2 p-2 text-sm italic">« {pricing.note} »</p>}
+            <p className="text-sm text-text-secondary">{t.priceHint}</p>
+            <Input type="number" inputMode="numeric" step={1} suffix="FCFA"
+              min={pricing.item.unit_price} max={Math.max(pricing.item.unit_price, pricing.item.price_max ?? pricing.item.unit_price)}
+              value={pricing.draft} aria-label={t.priceTitle}
+              onChange={(event) => setPricing((current) => current ? { ...current, draft: event.target.value } : current)} />
+            <p className="tnum text-xs text-text-secondary">{t.priceRange.replace("{min}", formatMoney(pricing.item.unit_price)).replace("{max}", formatMoney(Math.max(pricing.item.unit_price, pricing.item.price_max ?? pricing.item.unit_price)))}</p>
+          </div>
+        )}
       </Dialog>
       <Dialog open={rejectItem !== null} onClose={() => setRejectItem(null)} title={t.rejectTitle} size="sm" footer={<>
         <Button variant="outline" disabled={pending} onClick={() => setRejectItem(null)}>{t.cancel}</Button>

@@ -142,7 +142,7 @@ export function ManagerShell({
         )}
 
         <div className="no-print">
-          <SubscriptionBanner state={active.subscriptionState} endDate={active.expiresAt} freeModeEndsAt={freeModeEndsAt} />
+          <SubscriptionBanner state={active.subscriptionState} endDate={active.expiresAt} graceEndsAt={active.graceEndsAt} freeModeEndsAt={freeModeEndsAt} />
         </div>
 
         {/* The restaurant's own pause, not the platform's. Shown here rather

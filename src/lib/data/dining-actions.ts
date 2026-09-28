@@ -157,6 +157,14 @@ export async function getTableLanding(tableToken: string) {
     // Tolerated when 0068 has not run: tips simply stay off.
     db.from("restaurants").select("tips_enabled").eq("id", data.restaurant_id).maybeSingle(),
   ]);
+  // Customizable dishes (0069): the range, read on its own.
+  const { data: pricing } = await db.from("menu_items").select("id,price_to_confirm,price_max").eq("restaurant_id", data.restaurant_id);
+  const pricingById = new Map(((pricing ?? []) as { id: string; price_to_confirm: boolean | null; price_max: number | null }[]).map((p) => [p.id, p]));
+  const pricedItems = (items ?? []).map((item) => ({
+    ...item,
+    price_to_confirm: Boolean(pricingById.get(item.id)?.price_to_confirm),
+    price_max: pricingById.get(item.id)?.price_max ?? null,
+  }));
   const itemIds = new Set((items ?? []).map((x) => x.id));
   const filteredGroups = (groups ?? []).filter((x) => itemIds.has(x.menu_item_id));
   const groupIds = new Set(filteredGroups.map((x) => x.id));
@@ -164,7 +172,7 @@ export async function getTableLanding(tableToken: string) {
     table: { id: data.id, token: tableToken, number: data.number, capacity: data.capacity, status: data.status },
     restaurant,
     categories: categories ?? [],
-    items: items ?? [],
+    items: pricedItems,
     groups: filteredGroups,
     options: (options ?? []).filter((x) => groupIds.has(x.group_id)),
     serviceChargePercent: Number(feeSetting?.value ?? 0) || 0,
@@ -258,10 +266,16 @@ export async function getGuestDiningState(raw: string) {
   const session = one(ctx.dining_sessions);
   if (!session) return null;
   const db = createAdminClient();
-  const [{ data: rounds }, { data: messages }, { data: order }, { data: guests }, { data: payments }, reviewed] = await Promise.all([
-    db.from("dining_rounds")
-      .select("id,guest_id,status,subtotal,notes,created_at,dining_round_items(id,name,quantity,unit_price,options_label,status,rejection_reason)")
-      .eq("session_id", session.id).order("created_at"),
+  // Two literal selects (not a template) so the query types stay precise.
+  const roundsQuery = (withRange: boolean) => withRange
+    ? db.from("dining_rounds")
+        .select("id,guest_id,status,subtotal,notes,created_at,dining_round_items(id,name,quantity,unit_price,options_label,status,rejection_reason,price_to_confirm,price_max)")
+        .eq("session_id", session.id).order("created_at")
+    : db.from("dining_rounds")
+        .select("id,guest_id,status,subtotal,notes,created_at,dining_round_items(id,name,quantity,unit_price,options_label,status,rejection_reason)")
+        .eq("session_id", session.id).order("created_at");
+  const [roundsResult, { data: messages }, { data: order }, { data: guests }, { data: payments }, reviewed] = await Promise.all([
+    roundsQuery(true),
     db.from("dining_messages").select("id,guest_id,sender_kind,kind,body,created_at")
       .eq("session_id", session.id).or(`guest_id.eq.${ctx.id},guest_id.is.null`)
       .order("created_at", { ascending: false }).limit(100),
@@ -274,6 +288,10 @@ export async function getGuestDiningState(raw: string) {
     db.from("reviews").select("id").eq("dining_guest_id", ctx.id).maybeSingle(),
   ]);
 
+  // 0069 missing: read the rounds without the range columns.
+  type RoundItem = { id: string; name: string; quantity: number; unit_price: number; options_label: string | null; status: string; rejection_reason: string | null; price_to_confirm?: boolean | null; price_max?: number | null };
+  type Round = { id: string; guest_id: string | null; status: string; subtotal: number; notes: string | null; created_at: string; dining_round_items: RoundItem[] };
+  const rounds = (roundsResult.error ? (await roundsQuery(false)).data : roundsResult.data) as Round[] | null;
   const paymentRows = (payments ?? []) as PaymentRow[];
   const now = Date.now();
   const due = billDue(Number(order?.subtotal ?? 0), Number(session.deposit_credit ?? 0));
@@ -679,11 +697,14 @@ export async function setMyDiningNotifications(enabled: boolean): Promise<Dining
 
 /** Every active bill of the branch, with what the floor needs to run it. */
 export async function fetchDiningFloor(restaurantId: string) {
-  const { data, error } = await createAdminClient().from("dining_sessions")
-    .select("id,status,kind,join_code,label,presence_confirmed_at,deposit_credit,reservation_id,opened_by_staff,order_id,created_at,payment_requested_at,restaurant_tables(id,number,public_token),dining_guests(id,display_name,status,created_at),dining_rounds(id,guest_id,status,subtotal,notes,created_at,added_by_staff,dining_round_items(id,name,quantity,unit_price,options_label,status,rejection_reason)),dining_messages(id,guest_id,sender_kind,kind,body,created_at),dining_payments(id,guest_id,method,split_mode,amount,tip,service_fee,status,created_at),orders!dining_sessions_order_id_fkey(id,reference,status,subtotal,total,service_charge,is_paid,payment_method,order_items(id,name,quantity,unit_price,options_label))")
+  const query = (extra: string) => createAdminClient().from("dining_sessions")
+    .select(`id,status,kind,join_code,label,presence_confirmed_at,deposit_credit,reservation_id,opened_by_staff,order_id,created_at,payment_requested_at,restaurant_tables(id,number,public_token),dining_guests(id,display_name,status,created_at),dining_rounds(id,guest_id,status,subtotal,notes,created_at,added_by_staff,dining_round_items(id,name,quantity,unit_price,options_label,status,rejection_reason${extra})),dining_messages(id,guest_id,sender_kind,kind,body,created_at),dining_payments(id,guest_id,method,split_mode,amount,tip,service_fee,status,created_at),orders!dining_sessions_order_id_fkey(id,reference,status,subtotal,total,service_charge,is_paid,payment_method,order_items(id,name,quantity,unit_price,options_label))`)
     .eq("restaurant_id", restaurantId)
     .in("status", [...ACTIVE])
     .order("created_at");
+  let { data, error } = await query(",price_to_confirm,price_max");
+  // 0069 missing: the floor still loads, every dish at its fixed price.
+  if (error) ({ data, error } = await query(""));
   if (error) {
     console.error("[dining:floor]", error.message);
     return [];
@@ -752,7 +773,7 @@ export async function decideDiningGuest(guestId: string, approve: boolean): Prom
   return { ok: true };
 }
 
-export async function decideDiningItem(itemId: string, approve: boolean, reason?: string): Promise<DiningAction> {
+export async function decideDiningItem(itemId: string, approve: boolean, reason?: string, unitPrice?: number): Promise<DiningAction> {
   const t = await getTranslator();
   const { active, profile } = await requireCapability("orders.advance");
   if (!approve && (!reason?.trim() || reason.trim().length < 5 || reason.trim().length > 240)) {
@@ -771,6 +792,8 @@ export async function decideDiningItem(itemId: string, approve: boolean, reason?
     p_staff_id: profile.id,
     p_approve: approve,
     p_reason: approve ? null : reason?.trim(),
+    // Customizable dish (0069): the waiter's price, checked against the range.
+    ...(approve && unitPrice !== undefined ? { p_unit_price: Math.round(Number(unitPrice)) } : {}),
   });
   if (error) {
     console.error("[dining:item-decision]", error.message);
@@ -780,7 +803,11 @@ export async function decideDiningItem(itemId: string, approve: boolean, reason?
         ? t("est.notEnoughStock")
         : error.message.includes("guest_not_confirmed")
           ? t("ons.err.confirmPresenceFirst")
-          : t("est.dishUpdateFailed"),
+          : error.message.includes("price_required")
+            ? t("est.customPricesRequired")
+            : error.message.includes("price_out_of_range")
+              ? t("est.customPriceOutOfRange")
+              : t("est.dishUpdateFailed"),
     };
   }
   const result = data as { guestId: string | null; orderId?: string; reference?: string; created?: boolean; itemName: string; quantity: number; amount: number };
@@ -846,7 +873,7 @@ export async function staffOrderToBill(input: {
   tableId: string;
   sessionId?: string | null;
   label?: string;
-  lines: { menuItemId: string; quantity: number; optionIds: string[] }[];
+  lines: { menuItemId: string; quantity: number; optionIds: string[]; unitPrice?: number }[];
   notes?: string;
 }): Promise<DiningAction & { sessionId?: string; reference?: string; code?: string | null }> {
   const t = await getTranslator();
@@ -857,6 +884,7 @@ export async function staffOrderToBill(input: {
     menuItemId: String(line.menuItemId),
     quantity: Math.max(1, Math.min(50, Math.round(Number(line.quantity) || 1))),
     optionIds: (line.optionIds ?? []).map(String).slice(0, 20),
+    ...(line.unitPrice !== undefined && Number.isFinite(Number(line.unitPrice)) ? { unitPrice: Math.round(Number(line.unitPrice)) } : {}),
   }));
   const db = createAdminClient();
 
@@ -889,7 +917,8 @@ export async function staffOrderToBill(input: {
       ok: false,
       error: error.message.includes("insufficient_stock") ? t("est.notEnoughStock")
         : error.message.includes("item_unavailable") ? t("tbg.err.itemUnavailable")
-          : t("est.dishUpdateFailed"),
+          : error.message.includes("price_out_of_range") ? t("est.customPriceOutOfRange")
+            : t("est.dishUpdateFailed"),
     };
   }
   const result = data as { orderId?: string; reference?: string; created?: boolean; total?: number };

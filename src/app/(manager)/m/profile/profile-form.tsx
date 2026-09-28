@@ -8,7 +8,7 @@ import { Button, buttonClasses } from "@/components/ui/button";
 import { CardBody, Panel } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ImageUpload } from "@/components/ui/image-upload";
-import { Field, Input, Select, Switch, Textarea } from "@/components/ui/input";
+import { Field, Input, Select, Switch, Textarea, Radio } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { parseMoney } from "@/lib/format/currency";
 import { updateRestaurantProfile } from "@/lib/data/manager-actions";
@@ -44,6 +44,8 @@ interface Draft {
   maxDeliveryFee: string;
   acceptsDelivery: boolean;
   acceptsPickup: boolean;
+  /** Own riders, or the platform delivers (0032). */
+  hasOwnDelivery: boolean;
 }
 
 interface HourDraft {
@@ -102,6 +104,7 @@ export function ProfileForm({
     maxDeliveryFee: profile.maxDeliveryFee > 0 ? String(profile.maxDeliveryFee) : "",
     acceptsDelivery: profile.acceptsDelivery,
     acceptsPickup: profile.acceptsPickup,
+    hasOwnDelivery: profile.hasOwnDelivery,
   };
 
   const [draft, setDraft] = useState<Draft>(saved);
@@ -312,6 +315,7 @@ export function ProfileForm({
         maxDeliveryFee: maxFee,
         acceptsDelivery: draft.acceptsDelivery,
         acceptsPickup: draft.acceptsPickup,
+        hasOwnDelivery: draft.hasOwnDelivery,
       });
       if (!result.ok) return toast(result.error, "error");
 
@@ -616,7 +620,7 @@ export function ProfileForm({
                   suffix="FCFA"
                   placeholder={t("mpf.feeNotSet")}
                   value={draft.minDeliveryFee}
-                  disabled={pending || !draft.acceptsDelivery}
+                  disabled={pending || !draft.acceptsDelivery || !draft.hasOwnDelivery}
                   onChange={(e) => patch({ minDeliveryFee: e.target.value })}
                 />
               </Field>
@@ -632,7 +636,7 @@ export function ProfileForm({
                   suffix="FCFA"
                   placeholder={t("mpf.feeNotSet")}
                   value={draft.maxDeliveryFee}
-                  disabled={pending || !draft.acceptsDelivery}
+                  disabled={pending || !draft.acceptsDelivery || !draft.hasOwnDelivery}
                   onChange={(e) => patch({ maxDeliveryFee: e.target.value })}
                 />
               </Field>
@@ -645,6 +649,36 @@ export function ProfileForm({
                   disabled={pending}
                   onChange={(e) => patch({ acceptsDelivery: e.target.checked })}
                 />
+
+                {/*
+                  WHO DELIVERS? Asked in the setup wizard and editable here.
+                  A restaurant without riders still offers delivery: the
+                  platform assigns a rider and the admin sets the fee, so the
+                  fee band above only applies to restaurants with their own.
+                */}
+                {draft.acceptsDelivery && (
+                  <fieldset className="rounded-lg border border-border p-3">
+                    <legend className="px-1 text-sm font-semibold">{t("mpf.ownDeliveryQuestion")}</legend>
+                    <div className="mt-1 flex flex-col gap-2">
+                      {(
+                        [
+                          [true, t("stp.delivery.own"), t("stp.delivery.ownDesc")],
+                          [false, t("stp.delivery.platform"), t("stp.delivery.platformDesc")],
+                        ] as const
+                      ).map(([value, label, desc]) => (
+                        <Radio
+                          key={String(value)}
+                          name="profile-delivery-mode"
+                          checked={draft.hasOwnDelivery === value}
+                          disabled={pending}
+                          onChange={() => patch({ hasOwnDelivery: value })}
+                          label={label}
+                          description={desc}
+                        />
+                      ))}
+                    </div>
+                  </fieldset>
+                )}
                 <Switch
                   label={t("mpf.acceptsPickup")}
                   description={t("mpf.acceptsPickupDesc")}

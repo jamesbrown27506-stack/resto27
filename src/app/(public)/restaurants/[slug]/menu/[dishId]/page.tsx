@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { dishPriceLabel } from "@/lib/menu/custom-price";
 import Link from "@/components/layout/public-link";
 import { notFound, permanentRedirect } from "next/navigation";
 import { fetchPublicRestaurantBySlug, fetchMenuSections } from "@/lib/data/public";
@@ -52,7 +53,7 @@ export async function generateMetadata({ params }: Props) {
     are how people search a dish, and the one dish site ranking in Douala
     ("Poulet DG 5000 — Mimosa · Douala") leads with it.
   */
-  const price = c.dish.price > 0 ? formatMoney(c.dish.price) : null;
+  const price = c.dish.price > 0 ? dishPriceLabel(c.dish, (amount) => formatMoney(amount)) : null;
   const title = price
     ? `${c.dish.name} ${fr ? "à" : "for"} ${price} — ${c.restaurant.name}, Douala`
     : `${c.dish.name} — ${c.restaurant.name}, Douala`;

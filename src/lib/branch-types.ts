@@ -27,6 +27,12 @@ export interface Branch {
   planName: string;
   /** Null when the plan never expires, or when there is no subscription yet. */
   expiresAt: string | null;
+  /**
+   * The last moment of the grace period (end date + grace days). The plan
+   * keeps working until then; "Due: <expiresAt>" alone read as a deadline
+   * already missed. Null without an end date.
+   */
+  graceEndsAt?: string | null;
   /** False means "never chose a plan", which reads differently from "expired". */
   hasSubscription: boolean;
 }

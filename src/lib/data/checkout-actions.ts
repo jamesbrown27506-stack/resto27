@@ -262,6 +262,22 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     }[]).map((m) => [m.id, m]),
   );
 
+  /*
+    CUSTOMIZABLE DISHES (0069), read on their own so a database without the
+    migration sells every dish at its fixed price. Such a line is priced at
+    its minimum now; the restaurant confirms the real price (at most the
+    snapshotted maximum) when it accepts — before the customer pays.
+  */
+  const { data: pricingRows } = await supabase
+    .from("menu_items")
+    .select("id, price_to_confirm, price_max")
+    .eq("restaurant_id", input.restaurantId)
+    .in("id", itemIds);
+  const pricing = new Map(
+    ((pricingRows ?? []) as { id: string; price_to_confirm: boolean | null; price_max: number | null }[])
+      .map((row) => [row.id, row]),
+  );
+
   const optionIds = [...new Set(input.lines.flatMap((l) => l.optionIds ?? []))];
   const { data: optionRows } = optionIds.length
     ? await supabase
@@ -314,6 +330,13 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     const unitPrice = item.price + chosen.reduce((sum, o) => sum + o.price_delta, 0);
     if (unitPrice < 0) return { ok: false, reason: "badPrice" };
 
+    const custom = pricing.get(line.menuItemId);
+    const toConfirm = Boolean(custom?.price_to_confirm);
+    // The customer must say what they want — it is what the restaurant prices.
+    if (toConfirm && (line.notes?.trim().length ?? 0) < 3) {
+      return { ok: false, reason: "describeCustom", detail: item.name };
+    }
+
     subtotal += unitPrice * line.quantity;
     itemInserts.push({
       menu_item_id: line.menuItemId,
@@ -324,6 +347,13 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       quantity: line.quantity,
       options_label: chosen.map((o) => o.name).join(" · ") || null,
       notes: line.notes?.trim() || null,
+      ...(toConfirm
+        ? {
+            price_to_confirm: true,
+            price_min: unitPrice,
+            price_max: Math.max(unitPrice, (custom?.price_max ?? item.price) + (unitPrice - item.price)),
+          }
+        : {}),
     });
   }
 
@@ -648,9 +678,19 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     return { ok: false, reason: "failed" };
   }
 
-  const { error: itemsError } = await supabase
+  let { error: itemsError } = await supabase
     .from("order_items")
     .insert(itemInserts.map((i) => ({ ...i, order_id: created.id })));
+
+  // 0069 not applied: the range columns are unknown — keep the lines without them.
+  if (itemsError && isMissingColumn(itemsError, "price_")) {
+    const plain = itemInserts.map((i) => {
+      const { price_to_confirm: _p, price_min: _min, price_max: _max, ...rest } = i as Record<string, unknown>;
+      void _p; void _min; void _max;
+      return { ...rest, order_id: created.id };
+    });
+    ({ error: itemsError } = await supabase.from("order_items").insert(plain));
+  }
 
   if (itemsError) {
     // An order without its lines is worse than no order: the kitchen would see

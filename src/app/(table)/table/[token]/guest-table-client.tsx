@@ -1,5 +1,6 @@
 "use client";
 
+import { dishPriceLabel } from "@/lib/menu/custom-price";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   Bell, Check, ChefHat, Clock3, Copy, CreditCard, Droplets, HandPlatter, Minus, Plus, ReceiptText, Send,
@@ -296,6 +297,8 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
     dietaryTags: "",
     allergens: "",
     sortOrder: item.sort_order ?? 0,
+    priceToConfirm: Boolean(item.price_to_confirm),
+    priceMax: item.price_max ?? null,
     optionGroups: landing.groups
       .filter((group) => group.menu_item_id === item.id)
       .map((group) => ({
@@ -403,7 +406,8 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
 
   function add(item: Landing["items"][number]) {
     const menuItem = menuItems.get(item.id);
-    if (menuItem && menuItem.optionGroups.length > 0) {
+    // Options to choose, or a customizable dish (0069) to describe: the sheet.
+    if (menuItem && (menuItem.optionGroups.length > 0 || menuItem.priceToConfirm)) {
       setSheetItem(menuItem);
       return;
     }
@@ -529,8 +533,8 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
   if (!token) return (
     <main className="mx-auto min-h-[100dvh] max-w-lg px-4 py-10">
       {noticeToast}
-      <p className="text-sm font-semibold text-primary">{landing.restaurant?.name}</p>
-      <h1 className="mt-2 font-display text-3xl font-bold">{t("ons.g.welcome", { table: landing.table.number })}</h1>
+      <p className="text-sm font-semibold text-primary">{t("ons.g.table", { number: landing.table.number })}</p>
+      <h1 className="mt-2 font-display text-3xl font-bold">{t("ons.g.welcome", { name: landing.restaurant?.name ?? "" })}</h1>
       <p className="mt-3 text-text-secondary">{t("ons.g.welcomeBody")}</p>
       <div className="mt-8 rounded-lg border border-border bg-surface p-5">
         <Field label={t("ons.g.yourName")} htmlFor="guest-name" hint={t("ons.g.yourNameHint")}>
@@ -700,7 +704,6 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
       {noticeToast}
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-primary">{landing.restaurant?.name}</p>
           <h1 className="font-display text-2xl font-bold">{t("ons.g.table", { number: landing.table.number })}</h1>
           <p className="text-sm text-text-secondary">
             {state.guest.name}
@@ -860,6 +863,12 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
               const badge = itemBadge(item.status);
               return <div key={item.id} className="flex flex-wrap items-start justify-between gap-2 border-b border-border py-2 last:border-0">
                 <div className="min-w-0"><p className="text-sm font-semibold">{item.quantity}× {item.name}</p>
+                  {"price_to_confirm" in item && item.price_to_confirm && item.status === "pending" && (
+                    <p className="text-xs text-info">{t("ons.d.toConfirmShort")}</p>
+                  )}
+                  {"price_to_confirm" in item && item.price_to_confirm && item.status === "accepted" && (
+                    <p className="tnum text-xs text-text-secondary">{t("ons.d.confirmedAt", { amount: formatMoney(item.unit_price) })}</p>
+                  )}
                   {item.rejection_reason && <p className="mt-1 text-xs text-error">{t("ons.g.reason")}: {item.rejection_reason}</p>}</div>
                 <Badge tone={badge.tone}>{item.status === "accepted" && <ChefHat className="size-3" aria-hidden />}{badge.label}</Badge>
               </div>;
@@ -910,7 +919,8 @@ export function GuestTableClient({ landing }: { landing: Landing }) {
                 <div className="min-w-0 flex-1">
                   <p className="break-words font-semibold">{item.name}</p>
                   {item.description && <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{item.description}</p>}
-                  <p className="mt-2 font-bold text-primary">{formatMoney(item.price)}</p>
+                  <p className="mt-2 font-bold text-primary">{dishPriceLabel({ price: Number(item.price), priceToConfirm: Boolean(item.price_to_confirm), priceMax: item.price_max }, (amount) => formatMoney(amount))}</p>
+                  {item.price_to_confirm && <p className="text-xs text-text-light">{t("ons.d.toConfirmShort")}</p>}
                   {hasOptions && <p className="mt-0.5 text-xs text-text-light">{t("tbg.options")}</p>}
                 </div>
                 <Plus className="size-5 shrink-0" />

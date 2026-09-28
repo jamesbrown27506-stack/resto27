@@ -13,6 +13,7 @@
   restaurant that filled them in keeps its data and this is reversible by
   putting the markup back. What is gone is the UI.
 */
+import { dishPriceLabel } from "@/lib/menu/custom-price";
 import Link from "@/components/layout/public-link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, Plus, ShoppingBag, SlidersHorizontal } from "lucide-react";
@@ -198,7 +199,9 @@ export function MenuOrderer({
                   and making those ten dishes ten sheet-openings was the
                   friction being reported.
                 */
-                const quickAddable = item.optionGroups.length === 0;
+                // A customizable dish (0069) always opens the sheet: the
+                // customer has to say what they want.
+                const quickAddable = item.optionGroups.length === 0 && !item.priceToConfirm;
 
                 return (
                   <li key={item.id} className="relative">
@@ -249,7 +252,12 @@ export function MenuOrderer({
                         )}
 
                         <p className="tnum mt-2.5 font-display text-lg font-bold text-primary">
-                          {formatMoney(item.price)}
+                          {dishPriceLabel(item, (amount) => formatMoney(amount))}
+                          {item.priceToConfirm && (
+                            <span className="ml-1.5 text-xs font-normal text-text-light">
+                              {t("ons.d.toConfirmShort")}
+                            </span>
+                          )}
                           {item.optionGroups.length > 0 && (
                             <span className="ml-1.5 text-xs font-normal text-text-light">
                               {t("cbr.plusOptions")}

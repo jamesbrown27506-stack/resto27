@@ -49,6 +49,12 @@ export interface CartLine {
   menuItemId: string;
   name: string;
   basePrice: number;
+  /**
+   * Customizable dish (0069): `basePrice` is the minimum and the restaurant
+   * confirms the real price, at most `priceMax`, before the customer pays.
+   */
+  priceToConfirm?: boolean;
+  priceMax?: number | null;
   quantity: number;
   options: CartOptionChoice[];
   notes: string | null;

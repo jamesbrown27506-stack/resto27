@@ -197,6 +197,14 @@ export function OrderCard({ order, now }: { order: Order; now?: Date }) {
 
 /* ── Receipt ───────────────────────────────────────────────────────────── */
 
+type PricedLine = { priceToConfirm?: boolean; priceConfirmedAt?: string | null; priceMax?: number | null };
+
+/** A customizable dish whose price the restaurant has not confirmed yet (0069). */
+function awaitingPrice(item: object): boolean {
+  const line = item as PricedLine;
+  return Boolean(line.priceToConfirm) && !line.priceConfirmedAt;
+}
+
 /**
  * The money breakdown, shown identically on the customer receipt, the manager
  * order detail and the printed ticket. Every figure comes off the ORDER — the
@@ -220,12 +228,27 @@ export function OrderReceipt({ order }: { order: Order }) {
                 <p className="mt-0.5 text-xs text-text-light italic">« {item.notes} »</p>
               )}
             </div>
-            <p className="tnum shrink-0 font-medium">
-              {formatMoney(item.unitPrice * item.quantity)}
-            </p>
+            {/* A customizable dish (0069) still waiting for the restaurant's price. */}
+            {awaitingPrice(item) ? (
+              <p className="shrink-0 text-right text-xs font-semibold text-info">
+                {t("ons.d.toConfirmShort")}
+                <span className="tnum block font-normal text-text-secondary">
+                  {formatMoney(item.unitPrice)} – {formatMoney(Math.max(item.unitPrice, (item as PricedLine).priceMax ?? item.unitPrice))}
+                </span>
+              </p>
+            ) : (
+              <p className="tnum shrink-0 font-medium">
+                {formatMoney(item.unitPrice * item.quantity)}
+              </p>
+            )}
           </li>
         ))}
       </ul>
+      {order.items.some(awaitingPrice) && (
+        <p className="mt-3 rounded-md border border-info/30 bg-info-light p-2.5 text-xs leading-relaxed text-info">
+          {t("ons.d.orderEstimated")}
+        </p>
+      )}
 
       <dl className="mt-4 flex flex-col gap-2 border-t border-border pt-4 text-sm">
         <div className="flex justify-between gap-3">

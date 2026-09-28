@@ -34,6 +34,9 @@ export const billingDict = defineDict({
     "mbl.current.commission": "{rate} de commission par commande livrée",
     "mbl.current.due": "Échéance : {date}",
     "mbl.current.noExpiry": "N'expire pas",
+    "mbl.current.expiredOn": "Expiré le {date}",
+    "mbl.current.graceUntil": "Période de grâce jusqu’au {date}",
+    "mbl.current.graceLastDay": "Dernier jour de grâce — renouvelez aujourd’hui",
     "mbl.current.unknown": "Formule inconnue",
 
     /* ── Mode gratuit (plateforme gratuite pour tous) ────────────────── */
@@ -199,6 +202,9 @@ export const billingDict = defineDict({
     "mbl.current.commission": "{rate} commission on each delivered order",
     "mbl.current.due": "Due: {date}",
     "mbl.current.noExpiry": "Never expires",
+    "mbl.current.expiredOn": "Expired on {date}",
+    "mbl.current.graceUntil": "Grace period until {date}",
+    "mbl.current.graceLastDay": "Last day of grace — renew today",
     "mbl.current.unknown": "Unknown plan",
 
     /* ── Free mode (platform free for everyone) ───────────────────────── */

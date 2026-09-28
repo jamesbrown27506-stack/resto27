@@ -1,5 +1,6 @@
 "use client";
 
+import { graceDaysLeft } from "@/lib/billing/grace";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { AlertTriangle, Check, FileText, Handshake, Sparkles, Wallet } from "lucide-react";
@@ -83,6 +84,8 @@ export function BillingView({
     planName: string;
     subscriptionState: SubscriptionState;
     expiresAt: string | null;
+    /** End date + grace days (the real deadline while in grace). */
+    graceEndsAt?: string | null;
   };
   plans: BillingPlan[];
   invoices: Invoice[];
@@ -311,13 +314,31 @@ export function BillingView({
                 {t(`common.subState.${branch.subscriptionState}` as TranslationKey)}
               </span>
             </Badge>
-            <p className="text-sm text-text-secondary">
-              <span>
-                {branch.expiresAt
-                  ? t("mbl.current.due", { date: dates.date(branch.expiresAt) })
-                  : t("mbl.current.noExpiry")}
-              </span>
-            </p>
+            {branch.subscriptionState === "grace" && branch.expiresAt ? (
+              /* In grace: when it ended, and until when it still works. */
+              <div className="text-sm sm:text-right">
+                <p className="text-text-secondary"><span>{t("mbl.current.expiredOn", { date: dates.date(branch.expiresAt) })}</span></p>
+                {branch.graceEndsAt && (
+                  <p className="font-semibold text-warning">
+                    <span>
+                      {graceDaysLeft(branch.graceEndsAt) === 0
+                        ? t("mbl.current.graceLastDay")
+                        : t("mbl.current.graceUntil", { date: dates.date(branch.graceEndsAt) })}
+                    </span>
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-text-secondary">
+                <span>
+                  {branch.expiresAt
+                    ? branch.subscriptionState === "locked"
+                      ? t("mbl.current.expiredOn", { date: dates.date(branch.expiresAt) })
+                      : t("mbl.current.due", { date: dates.date(branch.expiresAt) })
+                    : t("mbl.current.noExpiry")}
+                </span>
+              </p>
+            )}
           </div>
         </CardBody>
       </Card>

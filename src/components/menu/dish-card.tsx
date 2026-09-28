@@ -11,6 +11,7 @@
   restaurant that filled them in keeps its data and this is reversible by
   putting the markup back. What is gone is the UI.
 */
+import { dishPriceLabel } from "@/lib/menu/custom-price";
 import Link from "@/components/layout/public-link";
 import { useState } from "react";
 import { MapPin, Plus, UtensilsCrossed } from "lucide-react";
@@ -125,7 +126,7 @@ export function DishCard({
         )}
 
         <span className="tnum absolute bottom-3 left-3 rounded-full bg-surface/95 px-3 py-1 text-sm font-bold text-text shadow-sm">
-          {formatMoney(item.price)}
+          {dishPriceLabel(item, (amount) => formatMoney(amount))}
         </span>
 
         <span

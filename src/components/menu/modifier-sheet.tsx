@@ -1,5 +1,6 @@
 "use client";
 
+import { dishPriceLabel } from "@/lib/menu/custom-price";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/dialog";
@@ -68,7 +69,7 @@ export function ModifierSheet({
    * chase. Passing this lets it reuse this exact picker; the delivery cart,
    * and its one-restaurant replace prompt, are then left untouched.
    */
-  onAddLine?: (line: { menuItemId: string; name: string; unitPrice: number; quantity: number; options: CartOptionChoice[]; notes: string | null }) => void;
+  onAddLine?: (line: { menuItemId: string; name: string; unitPrice: number; quantity: number; options: CartOptionChoice[]; notes: string | null; priceToConfirm?: boolean; priceMax?: number | null }) => void;
 }) {
   const { addLine, itemCount, restaurantId: cartRestaurantId } = useCart();
   const { t } = useLocale();
@@ -118,7 +119,10 @@ export function ModifierSheet({
   const unmet = item.optionGroups.filter(
     (g) => g.isRequired && (selected[g.id]?.length ?? 0) < Math.max(1, g.minSelect),
   );
-  const canAdd = unmet.length === 0;
+  /** A customizable dish (0069) needs the customer to say what they want. */
+  const customizable = Boolean(item.priceToConfirm);
+  const described = !customizable || notes.trim().length >= 3;
+  const canAdd = unmet.length === 0 && described;
 
   function toggle(groupId: string, optionId: string, single: boolean, max: number) {
     setSelected((current) => {
@@ -144,6 +148,8 @@ export function ModifierSheet({
         quantity,
         options: choices,
         notes: notes.trim() || null,
+        priceToConfirm: item!.priceToConfirm ?? false,
+        priceMax: item!.priceMax ?? null,
       });
       onClose();
       onAdded?.(item!.name);
@@ -153,6 +159,8 @@ export function ModifierSheet({
       menuItemId: item!.id,
       name: item!.name,
       basePrice: item!.price,
+      priceToConfirm: item!.priceToConfirm ?? false,
+      priceMax: item!.priceMax ?? null,
       quantity,
       options: choices,
       notes: notes.trim() || null,
@@ -200,7 +208,9 @@ export function ModifierSheet({
             className="min-w-0 rounded-md px-4 sm:px-8"
           >
             <span className="truncate">
-              {t("cbr.add", { price: formatMoney(unitPrice * quantity) })}
+              {customizable
+                ? t("ons.d.addToConfirm")
+                : t("cbr.add", { price: formatMoney(unitPrice * quantity) })}
             </span>
           </Button>
         </div>
@@ -276,20 +286,34 @@ export function ModifierSheet({
         })}
 
         <div>
+          {/*
+            A CUSTOMIZABLE DISH (0069) is described here, not picked from a
+            list: the note is required, and it is what the restaurant prices.
+          */}
           <label htmlFor="line-notes" className="mb-2 block font-semibold">
-            {t("cbr.instructions")}{" "}
-            <span className="text-xs font-normal text-text-light">
-              {t("cbr.instructionsOptional")}
-            </span>
+            {customizable ? t("ons.d.describe") : t("cbr.instructions")}{" "}
+            {!customizable && (
+              <span className="text-xs font-normal text-text-light">
+                {t("cbr.instructionsOptional")}
+              </span>
+            )}
           </label>
+          {customizable && (
+            <p className="mb-2 rounded-md border border-info/30 bg-info-light p-2.5 text-xs leading-relaxed text-info">
+              {t("ons.d.sheetHint", { range: dishPriceLabel(item!, (amount) => formatMoney(amount), choices.reduce((sum, c) => sum + c.priceDelta, 0)) })}
+            </p>
+          )}
           <Textarea
             id="line-notes"
             rows={3}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            placeholder={t("cbr.instructionsPh")}
+            placeholder={customizable ? t("ons.d.describePh") : t("cbr.instructionsPh")}
           />
-        </div>        {!canAdd && (
+        </div>        {unmet.length === 0 && !described && (
+          <p role="status" className="text-sm font-medium text-warning">{t("ons.d.describeRequired")}</p>
+        )}
+        {unmet.length > 0 && (
           <p role="status" className="text-sm font-medium text-warning">
             {t("cbr.chooseRequired", { groups: unmet.map((g) => g.name).join(", ") })}
           </p>

@@ -3,6 +3,8 @@
 import { useEffect, useState, useTransition } from "react";
 import { Clock, Timer } from "lucide-react";
 import { DeliveryFeeDialog } from "@/components/order/delivery-fee-dialog";
+import { CustomPriceDialog } from "@/components/order/custom-price-dialog";
+import { linesToPrice } from "@/lib/menu/custom-price";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field, Textarea } from "@/components/ui/input";
@@ -82,6 +84,8 @@ export type OrderActionTarget = Pick<
   | "createdAt"
   | "scheduledFor"
   | "acceptedAt"
+  // Customizable dishes (0069) are priced while accepting.
+  | "items"
 >;
 
 /** The countdown re-renders twice a minute — minutes are all it shows. */
@@ -121,6 +125,9 @@ export function OrderActionBar({
   const [pending, startTransition] = useTransition();
 
   const [feeOpen, setFeeOpen] = useState(false);
+  const [pricesOpen, setPricesOpen] = useState(false);
+  /** Prices confirmed in the first dialog, carried into the fee step. */
+  const [confirmedPrices, setConfirmedPrices] = useState<Record<string, number> | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [pickupRequestSent, setPickupRequestSent] = useState(false);
@@ -178,8 +185,16 @@ export function OrderActionBar({
   const needsPickupConfirmation = order.type === "pickup" && order.status === "shipped";
   const isAccept = order.status === "pending";
 
-  function advance(fee?: number) {
+  const toPrice = linesToPrice(order.items ?? []);
+
+  function advance(fee?: number, prices: Record<string, number> | null = confirmedPrices) {
     if (!next) return;
+
+    // CUSTOMIZABLE DISHES (0069): their prices come first, then the fee.
+    if (order.status === "pending" && toPrice.length > 0 && !prices) {
+      setPricesOpen(true);
+      return;
+    }
 
     // The gate. A delivery order cannot be accepted without a fee.
     if (
@@ -193,8 +208,13 @@ export function OrderActionBar({
     }
 
     startTransition(async () => {
-      const result = await advanceOrder(order.id, fee !== undefined ? { deliveryFee: fee } : {});
+      const result = await advanceOrder(order.id, {
+        ...(fee !== undefined ? { deliveryFee: fee } : {}),
+        ...(prices ? { itemPrices: prices } : {}),
+      });
       setFeeOpen(false);
+      setPricesOpen(false);
+      setConfirmedPrices(null);
       if (!result.ok) return toast(localizeActionError(result.error, locale, t("common.error")), "error");
 
       // Stop the ring in this tab now, not at the alarm's next check.
@@ -327,6 +347,20 @@ export function OrderActionBar({
         first render, the prefill never fires, and the field paints empty — a
         silent regression of the migration-0035 band with nothing to catch it.
       */}
+      {pricesOpen && (
+        <CustomPriceDialog
+          items={toPrice}
+          open
+          pending={pending}
+          onClose={() => setPricesOpen(false)}
+          onConfirm={(prices) => {
+            setConfirmedPrices(prices);
+            setPricesOpen(false);
+            advance(undefined, prices);
+          }}
+        />
+      )}
+
       <DeliveryFeeDialog
         order={feeOpen ? order : null}
         open={feeOpen}

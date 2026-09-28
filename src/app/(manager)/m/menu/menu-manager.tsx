@@ -15,7 +15,7 @@
 */
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
-import { Lock, Pencil, Plus, Sliders, Trash2, UtensilsCrossed } from "lucide-react";
+import { ListChecks, Lock, Pencil, Plus, Sliders, Trash2, UtensilsCrossed } from "lucide-react";
 import { FilterBar } from "@/components/data/filter-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
@@ -34,6 +34,7 @@ import {
   type MenuItemInput,
 } from "@/lib/data/manager-actions";
 import { uploadMenuImage } from "./image-actions";
+import { OptionTemplateSheet } from "./option-template-sheet";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { MenuCategory, MenuItem } from "@/lib/data/manager";
@@ -99,6 +100,8 @@ const EMPTY: MenuItemInput = {
   lowStockThreshold: null,
   dietaryTags: "",
   allergens: "",
+  priceToConfirm: false,
+  priceMax: null,
 };
 
 export function MenuManager({
@@ -130,6 +133,8 @@ export function MenuManager({
 
   const [editing, setEditing] = useState<Editing | null>(null);
   const [deleting, setDeleting] = useState<MenuItem | null>(null);
+  /** "Accompagnements & choix": one list applied to many dishes. */
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   const atLimit = limit !== null && items.length >= limit;
 
@@ -188,6 +193,8 @@ export function MenuManager({
         lowStockThreshold: item.lowStockThreshold,
         dietaryTags: item.dietaryTags,
         allergens: item.allergens,
+        priceToConfirm: item.priceToConfirm ?? false,
+        priceMax: item.priceMax ?? null,
       },
       photo: null,
     });
@@ -330,6 +337,11 @@ export function MenuManager({
         ]}
         trailing={
           canEdit && (
+            <div className="flex flex-wrap gap-2">
+            <Button variant="outline" disabled={items.length === 0} onClick={() => setTemplatesOpen(true)}>
+              <ListChecks className="size-4" aria-hidden />
+              <span>{t("ons.o.open")}</span>
+            </Button>
             <Button
               disabled={atLimit || categories.length === 0}
               title={
@@ -344,6 +356,7 @@ export function MenuManager({
               <Plus className="size-4" aria-hidden />
               <span>{t("mm.new")}</span>
             </Button>
+            </div>
           )
         }
       />
@@ -479,7 +492,14 @@ export function MenuManager({
                   </div>
 
                   <p className="tnum font-display text-lg font-bold text-primary md:shrink-0 md:text-right">
-                    <span>{formatMoney(item.price)}</span>
+                    <span>
+                      {item.priceToConfirm && (item.priceMax ?? 0) > item.price
+                        ? `${formatMoney(item.price)} – ${formatMoney(item.priceMax ?? item.price)}`
+                        : formatMoney(item.price)}
+                    </span>
+                    {item.priceToConfirm && (
+                      <span className="block text-xs font-normal text-text-secondary">{t("ons.d.toConfirmShort")}</span>
+                    )}
                   </p>
 
                   {canToggleAvailability && !canEdit && (
@@ -617,7 +637,12 @@ export function MenuManager({
                 there is no 2 500,50 FCFA, and letting the field accept one only
                 produces a validation error the server has to explain later.
               */}
-              <Field label={t("mm.price")} htmlFor="item-price" required hint={t("mm.priceHint")}>
+              <Field
+                label={editing.draft.priceToConfirm ? t("ons.d.minPrice") : t("mm.price")}
+                htmlFor="item-price"
+                required
+                hint={editing.draft.priceToConfirm ? t("ons.d.minPriceHint") : t("mm.priceHint")}
+              >
                 <Input
                   id="item-price"
                   type="number"
@@ -640,6 +665,34 @@ export function MenuManager({
                   onChange={(e) => patch({ prepMinutes: Math.trunc(Number(e.target.value) || 0) })}
                 />
               </Field>
+            </div>
+
+            {/*
+              CUSTOMIZABLE DISH (0069). One switch instead of twenty option
+              lists: the customer says what they want, the restaurant confirms
+              the price when accepting — before anyone pays — within the range.
+            */}
+            <div className="flex flex-col gap-3 rounded-md border border-border p-4">
+              <Switch
+                label={t("ons.d.toggle")}
+                description={t("ons.d.toggleHint")}
+                checked={editing.draft.priceToConfirm ?? false}
+                onChange={(e) => patch({ priceToConfirm: e.target.checked })}
+              />
+              {editing.draft.priceToConfirm && (
+                <Field label={t("ons.d.maxPrice")} htmlFor="item-price-max" hint={t("ons.d.maxPriceHint")}>
+                  <Input
+                    id="item-price-max"
+                    type="number"
+                    min={editing.draft.price}
+                    step={1}
+                    inputMode="numeric"
+                    suffix="FCFA"
+                    value={editing.draft.priceMax ? String(editing.draft.priceMax) : ""}
+                    onChange={(e) => patch({ priceMax: Math.trunc(Number(e.target.value) || 0) || null })}
+                  />
+                </Field>
+              )}
             </div>
 
             <Field
@@ -726,6 +779,10 @@ export function MenuManager({
           </div>
         )}
       </Sheet>
+
+      {templatesOpen && (
+        <OptionTemplateSheet open onClose={() => setTemplatesOpen(false)} items={items} categories={categories} />
+      )}
 
       <ConfirmDialog
         open={deleting !== null}

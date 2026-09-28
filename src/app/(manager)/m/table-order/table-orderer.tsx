@@ -1,5 +1,6 @@
 "use client";
 
+import { dishPriceRange } from "@/lib/menu/custom-price";
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Armchair, Minus, Plus, Search, Send, Trash2, Users } from "lucide-react";
@@ -23,6 +24,8 @@ interface TicketLine {
   optionLabel: string;
   /** Display estimate only — the server reprices every line from the database. */
   unitPrice: number;
+  /** Customizable dish (0069): the waiter sets this price, within [min, max]. */
+  priceRange?: { min: number; max: number } | null;
 }
 
 /**
@@ -145,6 +148,7 @@ export function TableOrderer({
           optionIds,
           optionLabel: defaults.map((o) => o.name).join(" · "),
           unitPrice,
+          priceRange: dishPriceRange(item, defaults.reduce((sum, o) => sum + o.priceDelta, 0)),
         },
       ];
     });
@@ -168,7 +172,10 @@ export function TableOrderer({
           tableId: target.id,
           sessionId: billTarget === "new" ? null : billTarget,
           label: billLabel,
-          lines: lines.map((l) => ({ menuItemId: l.menuItemId, quantity: l.quantity, optionIds: l.optionIds })),
+          lines: lines.map((l) => ({
+            menuItemId: l.menuItemId, quantity: l.quantity, optionIds: l.optionIds,
+            ...(l.priceRange ? { unitPrice: l.unitPrice } : {}),
+          })),
           notes: notes || undefined,
         });
         if (!result.ok) return toast(result.error ?? t("common.error"), "error");
@@ -189,6 +196,7 @@ export function TableOrderer({
           menuItemId: l.menuItemId,
           quantity: l.quantity,
           optionIds: l.optionIds,
+          ...(l.priceRange ? { unitPrice: l.unitPrice } : {}),
         })),
         notes: notes || undefined,
         guests: guests ?? undefined,
@@ -407,9 +415,30 @@ export function TableOrderer({
                     {line.optionLabel && (
                       <p className="truncate text-xs text-text-light">{line.optionLabel}</p>
                     )}
-                    <p className="tnum text-xs text-text-secondary">
-                      {formatMoney(line.unitPrice)}
-                    </p>
+                    {line.priceRange ? (
+                      /* The waiter prices a customizable dish here (0069). */
+                      <label className="mt-1 flex items-center gap-2 text-xs text-text-secondary">
+                        <Input
+                          className="h-8 w-28"
+                          type="number"
+                          inputMode="numeric"
+                          step={1}
+                          min={line.priceRange.min}
+                          max={line.priceRange.max}
+                          value={String(line.unitPrice)}
+                          aria-label={t("ons.d.unitPriceOf", { name: line.name })}
+                          onChange={(e) => {
+                            const price = Math.round(Number(e.target.value) || 0);
+                            setLines((current) => current.map((l) => (l.key === line.key ? { ...l, unitPrice: price } : l)));
+                          }}
+                        />
+                        <span className="tnum">{t("ons.d.rangeHint", { min: formatMoney(line.priceRange.min), max: formatMoney(line.priceRange.max) })}</span>
+                      </label>
+                    ) : (
+                      <p className="tnum text-xs text-text-secondary">
+                        {formatMoney(line.unitPrice)}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1.5">
