@@ -789,9 +789,15 @@ export function ReservationsClient({
         `order-*` moves it visually without touching the DOM order, so the
         heading structure a screen reader walks is unchanged and the desktop
         rail keeps its position.
+
+        `minmax(0,1fr)`, not the implicit column: a grid column is at least as
+        wide as its widest unbreakable content by default, so on a 360 px phone
+        the column grew to ~350 px of content plus the page padding and the
+        whole page scrolled sideways. The zero minimum makes the column the
+        screen's width and lets the content wrap inside it.
       */}
-      <div className="grid items-start gap-6 lg:grid-cols-[1fr_20rem]">
-        <div className="order-2 flex flex-col gap-6 lg:order-1">
+      <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <div className="order-2 flex min-w-0 flex-col gap-6 lg:order-1">
           <Panel title={t("crs.upcoming")}>
             {upcoming.length === 0 ? (
               <EmptyState
@@ -1091,7 +1097,7 @@ export function ReservationsClient({
           </Panel>
         </div>
 
-        <aside className="order-1 rounded-lg border border-border bg-surface p-5 lg:order-2 lg:sticky lg:top-24">
+        <aside className="order-1 min-w-0 rounded-lg border border-border bg-surface p-5 lg:order-2 lg:sticky lg:top-24">
           <h2 className="font-display text-lg font-bold">{t("crs.book")}</h2>
 
           <div className="mt-4 flex flex-col gap-4">
