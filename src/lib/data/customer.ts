@@ -463,7 +463,10 @@ export async function fetchCustomerReservations(
   const { data, error } = await supabase
     .from("reservations")
     .select(
-      "id, reference, restaurant_id, reserved_for, duration_min, party_size, status, deposit_amount, deposit_paid, notes, decline_reason, created_at, restaurants ( name, slug ), restaurant_tables ( number )",
+      // `!table_id`: since 0068 (reservation_tables) a booking reaches a table two
+      // ways, and the unnamed embed is refused as ambiguous — which emptied this
+      // list. See fetchReservations in manager.ts.
+      "id, reference, restaurant_id, reserved_for, duration_min, party_size, status, deposit_amount, deposit_paid, notes, decline_reason, created_at, restaurants ( name, slug ), restaurant_tables!table_id ( number )",
     )
     .eq("customer_id", profileId)
     .order("reserved_for", { ascending: false });

@@ -204,8 +204,11 @@ export async function listWithdrawalRequests(limit = 50): Promise<AdminWithdrawa
       `id, restaurant_id, amount, phone, status, note, fee, net, requested_at, decided_at,
        reply_to,
        restaurants ( name ),
-       profiles ( name )`,
+       profiles!requested_by ( name )`,
     )
+    // `!requested_by`: a request points at two profiles — who asked and who
+    // decided — so the unnamed embed is ambiguous and the whole list came back
+    // empty (PGRST201). The name shown is the requester's.
     .order("requested_at", { ascending: false })
     .limit(limit);
 

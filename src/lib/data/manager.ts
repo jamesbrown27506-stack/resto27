@@ -360,13 +360,24 @@ export async function fetchReservations(
 ): Promise<Reservation[]> {
   const supabase = createAdminClient();
 
+  /*
+    `restaurant_tables!table_id` — THE RELATIONSHIP IS NAMED, AND MUST STAY SO.
+
+    0068 let a booking hold several tables (reservation_tables). From that
+    moment the database knew TWO ways from a booking to a table — its own
+    `table_id`, and the new link table — and refused the unnamed embed as
+    ambiguous (PGRST201). This function logs an error and returns [], so the
+    board went empty while the menu badge and the notifications, which only
+    count, kept announcing bookings nobody could see. The hint says which one
+    is meant: the booking's main table.
+  */
   let query = supabase
     .from("reservations")
     .select(
       `id, reference, guest_name, guest_phone, guest_email, party_size, reserved_for,
        duration_min, status, table_id, notes, decline_reason, deposit_amount, deposit_percent,
        deposit_paid, created_at,
-       restaurant_tables ( number )`,
+       restaurant_tables!table_id ( number )`,
     )
     .eq("restaurant_id", restaurantId)
     .order("reserved_for");
