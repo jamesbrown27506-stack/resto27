@@ -660,16 +660,25 @@ export async function probeIdentify(phone: string): Promise<ProbeResult> {
     const response = await identifyNumber(normalised);
 
     /**
-     * `IDENTIFIE` lives under the TRANSACTION service, and every transaction
-     * call is asynchronous: the answer is an acceptance ("Votre requête est en
-     * cours de traitement", with a `replyTo`), and the identified name arrives
-     * on the callback rather than in this response.
+     * `IDENTIFIE` answers on the spot: etat true, "Le compte associé au numéro
+     * … appartient à …" and `data.nomClient` (live, 2026-09-30).
      *
-     * Reading `etat` as the verdict — which this did — reports a perfectly
-     * good acceptance as a failure, and sends you debugging a number that was
-     * never the problem. The console then reads the callback for that replyTo
-     * (probeIdentifyResult) so the name appears here without leaving the page.
+     * The deferred shape is still handled below — an acceptance carrying only
+     * a `replyTo`, whose name arrives on the callback and is read back by
+     * probeIdentifyResult — because that is what the docs describe and what
+     * CamerPay may return under load.
      */
+    const name = response.data?.nomClient?.trim();
+    if (response.etat && name) {
+      return {
+        ok: true,
+        label: "Identify",
+        detail: response.message ?? `This number belongs to ${name}.`,
+        payload: response.data,
+        request: response.request,
+      };
+    }
+
     const replyTo = response.data?.replyTo?.trim();
     if (response.httpStatus === 202 || (response.etat && replyTo)) {
       return {
@@ -734,7 +743,7 @@ export async function probeIdentifyResult(replyTo: string): Promise<ProbeResult 
     let body: {
       etat?: boolean;
       message?: string;
-      data?: { etat?: boolean; message?: string; nom?: string; name?: string };
+      data?: { etat?: boolean; message?: string; nomClient?: string; nom?: string; name?: string };
     } = {};
     try {
       body = JSON.parse(String(data.raw_body ?? "{}"));
@@ -742,7 +751,7 @@ export async function probeIdentifyResult(replyTo: string): Promise<ProbeResult 
       // Shown as an empty payload below; the message says what is known.
     }
     const identified = (body.etat ?? body.data?.etat) !== false;
-    const name = body.data?.nom ?? body.data?.name;
+    const name = body.data?.nomClient ?? body.data?.nom ?? body.data?.name;
     const message = body.data?.message ?? body.message;
     return {
       ok: identified,

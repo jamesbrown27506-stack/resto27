@@ -416,10 +416,20 @@ export async function refundUnpayableAttempt(input: {
     .maybeSingle();
   if (existing?.id) return existing.id as string;
 
+  /*
+    ONE ATTEMPT, ONE REFUND — ENFORCED BY THE DATABASE.
+
+    The look-up above and the insert below are two statements, so two callers
+    arriving together both found nothing and both inserted: two refund rows,
+    each with its own payout claim, two payouts for one payment. The reference
+    is now derived from the attempt, and `refunds.reference` is UNIQUE (0005):
+    the second insert is refused and the first row is returned instead.
+  */
+  const reference = "RF-" + input.attemptId.replace(/-/g, "").slice(0, 20).toUpperCase();
   const { data: created, error } = await supabase
     .from("refunds")
     .insert({
-      reference: "RF-" + randomUUID().replace(/-/g, "").slice(0, 12).toUpperCase(),
+      reference,
       restaurant_id: input.restaurantId,
       order_id: input.orderId,
       type: "refund",
@@ -432,6 +442,10 @@ export async function refundUnpayableAttempt(input: {
     })
     .select("id")
     .single();
+  if (error?.code === "23505") {
+    const { data: winner } = await supabase.from("refunds").select("id").eq("reference", reference).maybeSingle();
+    return (winner?.id as string | undefined) ?? null;
+  }
   if (error || !created) {
     console.error("[refund:unpayable]", input.attemptId, error?.message);
     return null;

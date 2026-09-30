@@ -1,7 +1,13 @@
 import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/server";
-import { confirmationWindowMs, MOBILE_MONEY_CONFIRMATION_WINDOW_MS, resolveAttemptOutcome, settlePayment } from "@/lib/payments/collect";
+import {
+  confirmationWindowMs,
+  MOBILE_MONEY_CONFIRMATION_WINDOW_MS,
+  recheckExpiredDialAttempt,
+  resolveAttemptOutcome,
+  settlePayment,
+} from "@/lib/payments/collect";
 import { sweepRefunds } from "@/lib/payments/refund-payouts";
 import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
 
@@ -46,6 +52,21 @@ const STALE_AFTER_MS = 2 * 60_000;
  * could not be confirmed or expired during that call.
  */
 const ABANDON_AFTER_MS = MOBILE_MONEY_CONFIRMATION_WINDOW_MS;
+
+/**
+ * How long an attempt is kept open while CamerPay cannot be read at all. An
+ * outage is not a refusal, so the ordinary window does not apply — but a
+ * payment nobody can ever confirm must end somewhere.
+ */
+const UNREADABLE_GIVE_UP_MS = 6 * 60 * 60_000;
+
+/**
+ * When an expired Orange dial attempt is asked about one last time: late
+ * enough that the customer has given up on the screen, and not for ever.
+ * Mirrored in cron_due_payments() (0070).
+ */
+const LATE_DIAL_AFTER_MS = 20 * 60_000;
+const LATE_DIAL_UNTIL_MS = 3 * 60 * 60_000;
 
 /**
  * Attempts examined per run, per queue. Each pending attempt costs one
@@ -122,6 +143,12 @@ export async function runReconciliation(): Promise<ReconciliationSummary> {
       summary.stillPending += 1;
       continue;
     }
+    if (outcome.error === "providerUnavailable" && now - startedAt < UNREADABLE_GIVE_UP_MS) {
+      // CamerPay could not be asked. Not knowing is not a verdict: the attempt
+      // waits for a readable answer rather than being closed on a deadline.
+      summary.stillPending += 1;
+      continue;
+    }
     if (now - startedAt > Math.max(ABANDON_AFTER_MS, confirmationWindowMs(String(row.provider ?? "camerpay"), row.raw_response))) {
       const abandoned = await abandon(attemptId, row.raw_response, outcome.error ?? "unresolved");
       if (abandoned) summary.failed += 1;
@@ -130,6 +157,33 @@ export async function runReconciliation(): Promise<ReconciliationSummary> {
     }
 
     summary.stillPending += 1;
+  }
+
+  /* ── 1b. Orange codes dialled after their attempt expired ─────────────── */
+
+  // One late ask per expired dial attempt (see recheckExpiredDialAttempt): the
+  // code still works after we stopped waiting, and a customer who dials it
+  // then must get their money back. cron_due_payments() counts these rows
+  // (0070) — without that the sweep would only reach them by accident.
+  const { data: lateDial, error: lateDialError } = await supabase
+    .from("payment_attempts")
+    .select("id")
+    .eq("status", "failed")
+    .eq("provider", "camerpay")
+    .eq("raw_response->>customerDial", "true")
+    .is("raw_response->>lateCheck", null)
+    .lt("created_at", new Date(now - LATE_DIAL_AFTER_MS).toISOString())
+    .gt("created_at", new Date(now - LATE_DIAL_UNTIL_MS).toISOString())
+    .order("created_at", { ascending: true })
+    .limit(10);
+
+  if (lateDialError) {
+    console.error("[pay:reconcile] late dial queue", lateDialError.message);
+  }
+  for (const row of lateDial ?? []) {
+    summary.checked += 1;
+    const outcome = await recheckExpiredDialAttempt(row.id as string);
+    if (outcome === "reopened") summary.settled += 1;
   }
 
   /* ── 2. Successes whose money side never completed ────────────────────── */
@@ -229,6 +283,11 @@ async function abandon(
     })
     .eq("id", attemptId)
     .eq("status", "pending")
+    // Never over an Orange ask CamerPay accepted while this run was working:
+    // `previous` is a copy read before that, and writing it back would both
+    // fail a paid attempt and erase the record of the acceptance. The
+    // resolver closes such an attempt itself once its grace is over.
+    .is("raw_response->>claimAcceptedAt", null)
     .select("id")
     .maybeSingle();
 

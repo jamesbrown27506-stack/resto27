@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/server";
 import { activateFromInvoice } from "@/lib/data/invoice-activation";
+import { isMissingColumn } from "@/lib/data/missing-column";
 import { paymentMode } from "@/lib/data/billing";
 import { notify } from "@/lib/notify";
 import { notifyDiningPartPaid, notifyDiningPaymentSettled } from "@/lib/dining/guest-alerts";
@@ -13,6 +14,7 @@ import { startSaspayPayment, verifySaspayPayment } from "@/lib/payments/saspay/c
 import { siteUrl } from "@/lib/site-url";
 import { dialInstructionFromRefusal, type PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import { PROVIDER_REFUSED_FALLBACK } from "@/lib/payments/payment-error";
+import { orderCouldBePaidBy, orderNamesItsPayer, orderPayerVerdict } from "@/lib/payments/order-payer";
 import {
   acceptedTransactionId,
   confirmTransaction,
@@ -206,8 +208,20 @@ const DIAL_RECEIVED: PaymentInstruction = { message: "", customerInitiated: true
  */
 const DIAL_ACCEPTED_GRACE_MS = 5 * 60_000;
 
-/** How often a waiting dial payment is asked about again (see claimDialledCollection). */
-const DIAL_RECLAIM_EVERY_MS = 6_000;
+/**
+ * How long to wait before asking CamerPay again about a dial payment.
+ *
+ * EVERY ASK LEAVES A ROW in CamerPay's transaction report ("Aucun retrait
+ * Orange… détecté"), and that report is where every other payment is looked
+ * up. Asking every few seconds for ten minutes would bury it. So: often while
+ * the customer is most likely dialling, then less and less — about 25 asks
+ * over the whole window instead of a hundred.
+ */
+export function dialReaskDelayMs(attemptAgeMs: number): number {
+  if (attemptAgeMs < 2 * 60_000) return 10_000;
+  if (attemptAgeMs < 5 * 60_000) return 20_000;
+  return 40_000;
+}
 
 export function confirmationWindowMs(provider: string, rawResponse?: unknown): number {
   if (provider === "saspay") return SASPAY_CONFIRMATION_WINDOW_MS;
@@ -234,7 +248,10 @@ function storedDialInstruction(row: PaymentAttemptRow): PaymentInstruction | nul
  * or poll can settle first, but a late report can never revive an expired
  * request and credit money twice.
  */
-async function expireUnconfirmedMobileMoneyAttempt(row: PaymentAttemptRow): Promise<boolean> {
+async function expireUnconfirmedMobileMoneyAttempt(
+  row: PaymentAttemptRow,
+  options: { evenIfDialAccepted?: boolean } = {},
+): Promise<boolean> {
   if (row.provider !== "camerpay" && row.provider !== "saspay") return false;
   const windowMs = confirmationWindowMs(row.provider, row.rawResponse);
 
@@ -246,14 +263,22 @@ async function expireUnconfirmedMobileMoneyAttempt(row: PaymentAttemptRow): Prom
   const supabase = createAdminClient();
   const now = new Date().toISOString();
   const cutoff = new Date(Date.now() - windowMs).toISOString();
-  const { data, error } = await supabase
+  let expire = supabase
     .from("payment_attempts")
     .update({ status: "failed", settled_at: now })
     .eq("id", row.id)
     .eq("status", "pending")
-    .lt("created_at", cutoff)
-    .select("id")
-    .maybeSingle();
+    .lt("created_at", cutoff);
+  /*
+    A dial payment is checked by several routes at once. One of them, holding
+    a copy of the row read a second ago, must not close an attempt whose ask
+    another route has JUST had accepted — the customer has paid. The condition
+    is on the database row, not on the stale copy.
+  */
+  if (row.rawResponse?.customerDial === true && !options.evenIfDialAccepted) {
+    expire = expire.is("raw_response->>claimAcceptedAt", null);
+  }
+  const { data, error } = await expire.select("id").maybeSingle();
 
   if (error) {
     console.error("[pay:expire]", row.id, error.message);
@@ -484,6 +509,34 @@ export async function initiatePaymentAttempt(input: {
       .eq("id", attemptId);
     if (dialError) console.error("[pay:initiate:live] dial instruction", attemptId, dialError.message);
     return { ok: true, status: "pending", attemptId, instruction: dial };
+  }
+
+  /*
+    A GATEWAY ERROR IS NOT A REFUSAL. A 5xx (or a body with no verdict in it)
+    says CamerPay broke, not that it declined: the prompt may already be on
+    the customer's phone. It is left pending like a transport failure, for the
+    window to close — marking it failed would be asserting what nobody knows.
+  */
+  if (accepted.httpStatus >= 500 || typeof accepted.etat !== "boolean") {
+    console.error("[pay:initiate:live] gateway error", attemptId, accepted.httpStatus, accepted.message ?? "");
+    await supabase
+      .from("payment_attempts")
+      .update({
+        raw_response: {
+          requested_at: startedAt,
+          afterId,
+          notificationAfterId,
+          orderId: input.orderId,
+          walletFunding: input.kind === "wallet", diningPaymentId: input.diningPaymentId,
+          gateway_error: { httpStatus: accepted.httpStatus, message: accepted.message ?? null },
+        },
+      })
+      .eq("id", attemptId);
+    return {
+      ok: false,
+      reason: "providerUnavailable",
+      error: "Le service de paiement est indisponible, réessayez dans un instant.",
+    };
   }
 
   if (!accepted.etat || !trackingId) {
@@ -830,24 +883,70 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
 
   if (confirmed.status !== "success" && dial) {
     // Ask again: this is what makes CamerPay look for the customer's dial.
-    const claimed = await claimDialledCollection(row, dial, hint);
+    let claimed = await claimDialledCollection(row, dial, hint);
+
+    const alreadyAccepted =
+      typeof row.rawResponse?.claimAcceptedAt === "string" ? Date.parse(row.rawResponse.claimAcceptedAt) : NaN;
+    const windowOver =
+      Date.now() - Date.parse(row.createdAt) >= confirmationWindowMs(row.provider, row.rawResponse);
+
+    /*
+      THE LAST WORD BEFORE GIVING UP IS CAMERPAY'S, AND IT IS ASKED FOR NOW.
+
+      The ask above may have been skipped (asked a few seconds ago) or may
+      have failed to reach CamerPay. Closing the attempt on that would fail a
+      customer who dialled in the last half minute: nothing looks at a failed
+      attempt again, so their money would sit with Orange, unclaimed. So when
+      the window is over, one ask is made with no throttle — and if CamerPay
+      cannot be reached, the attempt is kept rather than closed.
+    */
+    if (windowOver && !claimed.asked && !claimed.accepted && !Number.isFinite(alreadyAccepted)) {
+      claimed = await claimDialledCollection(
+        { ...row, rawResponse: { ...(row.rawResponse ?? {}), lastClaimAt: null } },
+        dial,
+        hint,
+      );
+      if (!claimed.asked) {
+        return { status: "pending", settled: false, error: "providerUnavailable", instruction: dial };
+      }
+    }
+
     if (claimed.confirmed?.status === "success") {
       confirmed = claimed.confirmed;
     } else {
-      const acceptedAt = claimed.accepted
-        ? Date.now()
-        : typeof row.rawResponse?.claimAcceptedAt === "string"
-          ? Date.parse(row.rawResponse.claimAcceptedAt)
-          : NaN;
+      const acceptedAt = claimed.accepted ? Date.now() : alreadyAccepted;
       if (Number.isFinite(acceptedAt) && Date.now() - acceptedAt < DIAL_ACCEPTED_GRACE_MS) {
         // "dialClaimAccepted" also tells the reconciler not to abandon it yet.
         return { status: "pending", settled: false, error: "dialClaimAccepted", instruction: claimed.instruction ?? undefined };
       }
-      if (await expireUnconfirmedMobileMoneyAttempt(row)) {
+      /*
+        CamerPay accepted this customer's dial and the report that would prove
+        the money cannot be READ. That is not "the report does not show it":
+        the grace running out during an outage must not close a payment the
+        customer has made. It waits for a readable report (the reconciler keeps
+        such attempts for hours).
+      */
+      if (Number.isFinite(acceptedAt) && (confirmed.unavailable || claimed.confirmed?.unavailable)) {
+        return { status: "pending", settled: false, error: "providerUnavailable", instruction: claimed.instruction ?? undefined };
+      }
+      if (await expireUnconfirmedMobileMoneyAttempt(row, { evenIfDialAccepted: Number.isFinite(acceptedAt) })) {
         if (Number.isFinite(acceptedAt)) {
-          // Worth a human look: CamerPay accepted the ask after the customer
-          // dialled, and its report never showed the money.
+          // CamerPay accepted the ask after the customer dialled, and its
+          // readable report never showed the money. Nothing automatic can be
+          // right here, so a person is told — once: only the caller that
+          // closed the attempt reaches this line.
           console.error("[pay:resolve] accepted dial claim never confirmed", attemptId);
+          await notify({
+            event: "broadcast",
+            tone: "error",
+            admins: true,
+            href: "/a/payments",
+            params: {
+              reference: `dial-unconfirmed:${attemptId}`,
+              subject: `Orange payment ${row.reference} needs checking`,
+              bodyText: `CamerPay accepted an Orange payment of ${row.amount} FCFA from ${row.phone ?? "an unknown number"} after the customer dialled the code, but its reports never showed the money, so nothing was credited. Check the CamerPay transaction report for that number and amount, and refund or apply it by hand.`,
+            },
+          });
         }
         return { status: "failed", settled: false, error: "confirmationExpired" };
       }
@@ -856,6 +955,16 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
   }
 
   if (confirmed.status !== "success") {
+    /*
+      "Pending" because CamerPay's report could not be read is not "pending
+      because nobody paid". Closing the attempt on it would defeat asking
+      before expiring: a PIN entered at minute four, during a report outage,
+      would be lost. The attempt waits for a readable answer instead (the
+      reconciler gives up only after hours of that).
+    */
+    if (confirmed.unavailable) {
+      return { status: "pending", settled: false, error: "providerUnavailable", instruction: confirmed.instruction };
+    }
     if (await expireUnconfirmedMobileMoneyAttempt(row)) {
       return { status: "failed", settled: false, error: "confirmationExpired" };
     }
@@ -863,10 +972,18 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
   }
 
   if (!confirmed.rowId) {
-    // The row carried neither an id nor a ref, so it cannot be claimed and the
-    // constraint that stops two attempts settling from it cannot apply. Worth
-    // seeing: it means the report's shape changed under us.
-    console.warn("[pay:resolve] confirmed row has no identity", attemptId);
+    /*
+      NO IDENTITY, NO MONEY.
+
+      A payment is claimed under the operator's reference, and the unique index
+      on that claim is the only thing that stops two attempts settling from one
+      real payment (the second would then be "refunded" — money paid out that
+      was received once). A verdict with nothing to claim cannot have that
+      protection, so it is not settled: it stays pending and says so loudly.
+      It means the report's shape changed under us.
+    */
+    console.error("[pay:resolve] confirmed payment has no claimable identity — NOT settled", attemptId);
+    return { status: "pending", settled: false, error: "noProviderIdentity" };
   }
 
   const claim = await claimAttempt(attemptId, "succeeded", confirmed.rowId);
@@ -954,6 +1071,120 @@ export async function releaseUndialledAttempt(attemptId: string): Promise<boolea
 }
 
 /**
+ * One look back at an Orange payment that expired undialled.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE CODE DOES NOT EXPIRE WHEN OUR ATTEMPT DOES.
+ *
+ *  "#150*14*…*amount#" is a fixed code. A customer who copied it, was
+ *  interrupted, and dials it fifteen minutes later is debited by Orange all
+ *  the same — and nothing here would ever know: a failed attempt is never
+ *  looked at again, so the money would sit with Orange, claimed by nobody,
+ *  the order long cancelled.
+ *
+ *  So the reconciler asks CamerPay ONE more time, a while after such an
+ *  attempt closed:
+ *
+ *    "not detected"  nobody dialled. Noted on the attempt; never asked again.
+ *    accepted        they did dial. The attempt is reopened and goes through
+ *                    the ordinary resolver: the report confirms the money, and
+ *                    settlement either pays the order (if it is still waiting)
+ *                    or — the usual case — refunds the customer automatically
+ *                    as a late payment.
+ *
+ *  Skipped while the same number has a live attempt for the same amount: that
+ *  attempt is the one the customer is dialling for, and this ask would take
+ *  the payment from under it.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function recheckExpiredDialAttempt(attemptId: string): Promise<"notDialled" | "reopened" | "skipped"> {
+  const supabase = createAdminClient();
+  const { data } = await supabase.from("payment_attempts").select("*").eq("id", attemptId).maybeSingle();
+  if (!data) return "skipped";
+
+  const row = attemptRow(data);
+  const raw = row.rawResponse ?? {};
+  if (row.status !== "failed" || row.provider !== "camerpay" || raw.customerDial !== true || raw.lateCheck || !row.phone) {
+    return "skipped";
+  }
+
+  const { data: live, error: liveError } = await supabase
+    .from("payment_attempts")
+    .select("id")
+    .eq("provider", "camerpay")
+    .eq("status", "pending")
+    .eq("phone", row.phone)
+    .eq("amount", row.amount)
+    .limit(1);
+  if (liveError || (live ?? []).length > 0) return "skipped";
+
+  let again;
+  try {
+    again = await requestCollection(row.phone, row.amount);
+  } catch (error) {
+    console.warn("[pay:dial-late]", row.id, error);
+    return "skipped";
+  }
+  // A gateway error says nothing either way: try again on a later sweep.
+  if (again.httpStatus >= 500 || typeof again.etat !== "boolean") return "skipped";
+
+  const now = new Date().toISOString();
+
+  if (!again.etat) {
+    // Only CamerPay's own "not detected — dial this" is a final answer. Any
+    // other refusal (a lapsed token, a rate limit) says nothing about the
+    // customer, and the attempt is asked about again on a later sweep.
+    if (!dialInstructionFromRefusal(again.message, row.amount)) {
+      console.warn("[pay:dial-late] inconclusive answer", row.id, again.httpStatus, again.message ?? "");
+      return "skipped";
+    }
+    await supabase
+      .from("payment_attempts")
+      .update({ raw_response: { ...raw, lateCheck: { at: now, result: "notDialled" } } })
+      .eq("id", row.id)
+      .eq("status", "failed");
+    return "notDialled";
+  }
+
+  const trackingId = acceptedTransactionId(again) ?? row.transactionId ?? row.reference;
+  console.error("[pay:dial-late] PAID AFTER EXPIRY — reopening", row.id, trackingId);
+
+  await recordAcceptedRequest({
+    replyTo: trackingId,
+    direction: "collect",
+    phone: row.phone,
+    amount: row.amount,
+    afterId: typeof raw.afterId === "number" ? raw.afterId : null,
+    startedAt: typeof raw.requested_at === "string" ? raw.requested_at : row.createdAt,
+  });
+
+  const { data: reopened, error: reopenError } = await supabase
+    .from("payment_attempts")
+    .update({
+      status: "pending",
+      settled_at: null,
+      transaction_id: trackingId,
+      raw_response: {
+        ...raw,
+        claimAcceptedAt: now,
+        lateCheck: { at: now, result: "accepted" },
+        claimResponse: { etat: again.etat, httpStatus: again.httpStatus, message: again.message, data: again.data },
+      },
+    })
+    .eq("id", row.id)
+    .eq("status", "failed")
+    .select("id")
+    .maybeSingle();
+  if (reopenError || !reopened) {
+    console.error("[pay:dial-late] could not reopen — LOOK AT THIS ATTEMPT BY HAND", row.id, reopenError?.message);
+    return "skipped";
+  }
+
+  await resolveAttemptOutcome(row.id);
+  return "reopened";
+}
+
+/**
  * Ask CamerPay again for an Orange payment the customer must start.
  *
  * ─────────────────────────────────────────────────────────────────────────
@@ -973,9 +1204,13 @@ export async function releaseUndialledAttempt(attemptId: string): Promise<boolea
  *  AN ACCEPTANCE IS STILL NOT A PAYMENT. For MTN the same answer only means a
  *  prompt was pushed, so believing it would hand out unpaid orders the day
  *  Orange's behaviour changes again. The verdict stays with confirmTransaction
- *  — the report row or the operator's receipt — like every other payment. Once
- *  accepted, the ask is not repeated: the attempt is an ordinary accepted
- *  collection from then on.
+ *  — a report row carrying the operator's reference, or the operator's
+ *  receipt — like every other payment. (Seen live on 2026-09-30: the refused
+ *  ask is row "used, no reference, Aucun retrait… détecté"; the ask sent after
+ *  the customer dialled is a new row with reference CO260930.0949.B50907 and a
+ *  "RETRAIT_ORANGE validé avec succès" receipt beside it.) Once accepted, the
+ *  ask is not repeated: the attempt is an ordinary accepted collection from
+ *  then on.
  *
  *  Safe under concurrency: two racing asks can at most both be accepted for
  *  one withdrawal, and the claim that follows is a compare-and-swap on the
@@ -993,6 +1228,8 @@ async function claimDialledCollection(
   accepted?: boolean;
   /** CamerPay answered THIS ask with "not detected — dial the code". */
   refused?: boolean;
+  /** CamerPay was reached and answered (false when throttled or unreachable). */
+  asked?: boolean;
 }> {
   const raw = row.rawResponse ?? {};
 
@@ -1001,13 +1238,23 @@ async function claimDialledCollection(
   if (!row.phone) return { instruction: dial };
 
   const last = typeof raw.lastClaimAt === "string" ? Date.parse(raw.lastClaimAt) : NaN;
-  if (Number.isFinite(last) && Date.now() - last < DIAL_RECLAIM_EVERY_MS) return { instruction: dial };
+  const age = Date.now() - Date.parse(row.createdAt);
+  if (Number.isFinite(last) && Date.now() - last < dialReaskDelayMs(Number.isFinite(age) ? age : 0)) {
+    return { instruction: dial };
+  }
 
   let again;
   try {
     again = await requestCollection(row.phone, row.amount);
   } catch (error) {
     console.warn("[pay:dial-claim]", row.id, error);
+    return { instruction: dial };
+  }
+
+  // A 5xx, or a body with no verdict in it, is CamerPay breaking — not CamerPay
+  // saying "not detected". It is no answer at all, so nothing may be closed on it.
+  if (again.httpStatus >= 500 || typeof again.etat !== "boolean") {
+    console.warn("[pay:dial-claim] gateway error", row.id, again.httpStatus);
     return { instruction: dial };
   }
 
@@ -1028,9 +1275,12 @@ async function claimDialledCollection(
         },
       })
       .eq("id", row.id)
-      .eq("status", "pending");
+      .eq("status", "pending")
+      // Never over an acceptance another route recorded a moment ago: this
+      // write is built from a copy of the row that predates it.
+      .is("raw_response->>claimAcceptedAt", null);
     if (error) console.error("[pay:dial-claim] stamp", row.id, error.message);
-    return { instruction: fresh ?? dial, refused: Boolean(fresh) };
+    return { instruction: fresh ?? dial, refused: Boolean(fresh), asked: true };
   }
 
   const trackingId = acceptedTransactionId(again) ?? row.transactionId ?? row.reference;
@@ -1068,11 +1318,11 @@ async function claimDialledCollection(
   if (linkError) console.error("[pay:dial-claim] tracking id", row.id, linkError.message);
 
   try {
-    return { confirmed: await confirmTransaction(trackingId, hint), accepted: true, instruction: DIAL_RECEIVED };
+    return { confirmed: await confirmTransaction(trackingId, hint), accepted: true, asked: true, instruction: DIAL_RECEIVED };
   } catch (error) {
     // A read failure cannot turn an accepted ask into a failed payment.
     console.warn("[pay:dial-claim] confirm", row.id, error);
-    return { accepted: true, instruction: DIAL_RECEIVED };
+    return { accepted: true, asked: true, instruction: DIAL_RECEIVED };
   }
 }
 
@@ -1323,20 +1573,32 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
               reason: `Paiement reçu pour une addition qui ne l'attendait plus (${row.reference})`,
             })
           : null;
-        await supabase.from("dining_payments").update({ status: "refunded" }).eq("id", row.diningPaymentId).neq("status", "succeeded");
-        await supabase
-          .from("payment_attempts")
-          .update({
-            settled_at: stamp,
-            raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "billNotPayable", at: stamp, refundId } },
-          })
-          .eq("id", attemptId)
-          .is("settled_at", null);
-        if (refundId) {
-          await startRefundPayout(refundId).catch((err) => console.error("[pay:settle:dining] refund", refundId, err));
+        if (orderId && !refundId) {
+          // The refund could not be recorded: nothing is stamped, so the next
+          // sweep comes back to it instead of leaving the money owed to nobody.
+          console.error("[pay:settle:dining] refund row could not be recorded — will retry", attemptId);
+          error = "Le paiement est confirmé mais son remboursement n'a pas pu être enregistré.";
+          reason = "orderSettlementFailed";
+        } else {
+          if (!refundId) {
+            // A bill with no order behind it has nothing a refund can hang on.
+            console.error("[pay:settle:dining] LATE PAYMENT WITH NO ORDER — refund by hand", attemptId, row.amount, row.phone);
+          }
+          await supabase.from("dining_payments").update({ status: "refunded" }).eq("id", row.diningPaymentId).neq("status", "succeeded");
+          await supabase
+            .from("payment_attempts")
+            .update({
+              settled_at: stamp,
+              raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "billNotPayable", at: stamp, refundId } },
+            })
+            .eq("id", attemptId)
+            .is("settled_at", null);
+          if (refundId) {
+            await startRefundPayout(refundId).catch((err) => console.error("[pay:settle:dining] refund", refundId, err));
+          }
+          error = "Cette addition n'attend plus ce paiement ; il vous est remboursé.";
+          reason = "orderNotPayable";
         }
-        error = "Cette addition n'attend plus ce paiement ; il vous est remboursé.";
-        reason = "orderNotPayable";
       } else {
         console.error("[pay:settle:dining] settlement", message);
         error = "Le paiement est confirmé mais l'addition n'a pas pu être mise à jour.";
@@ -1370,14 +1632,39 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
      * one database transaction. A callback and a poll can race safely: the
      * losing caller receives `alreadySettled` and creates no second ledger row.
      */
-    const { data: order } = await supabase
-      .from("orders")
-      .select("id, reference, delivery_name, status, payment_method, total, is_paid, dining_session_id")
-      .eq("id", row.orderId)
-      .eq("restaurant_id", row.restaurantId)
-      .maybeSingle();
+    const order = await readOrderForSettlement(row.orderId, row.restaurantId);
+    const payable =
+      order !== null &&
+      order !== "unreadable" &&
+      order.status === "awaiting_customer" &&
+      order.payment_method === "mobile_money" &&
+      Number(order.total) === row.amount;
 
-    if (!order || order.status !== "awaiting_customer" || order.payment_method !== "mobile_money" || Number(order.total) !== row.amount) {
+    /*
+      WHO PAID THIS ORDER? — asked before any money goes back.
+
+      The order is no longer waiting. That is the late-payment case (cancelled
+      by the time limit, paid by another attempt, total changed) — and it is
+      ALSO exactly what this attempt's own settlement looks like from a second
+      caller: the first one marked the order paid a second ago and is still
+      sending its notifications, so `settled_at` is not stamped yet. That second
+      caller (the webhook beside the poll, a re-tap, the reconciler after a
+      crash) used to take the refund branch: the restaurant was credited, the
+      order stayed paid, and the customer got the whole amount back.
+
+      So the refund is only issued when this attempt is NOT the one that paid.
+      "Unknown" refunds nothing and stamps nothing — the next sweep asks again.
+    */
+    const paidByThis =
+      payable || order === null || order === "unreadable" ? "no" : await orderPaidByAttempt(order, row);
+
+    if (order === "unreadable" || paidByThis === "unknown") {
+      error = "Le paiement est confirmé mais la commande n'a pas pu être relue.";
+      reason = "orderSettlementFailed";
+    } else if (!payable && paidByThis === "yes") {
+      // Applied by an earlier or concurrent run of this same attempt.
+      ok = true;
+    } else if (!payable) {
       /*
         THE MONEY ARRIVED FOR AN ORDER NO LONGER WAITING FOR IT — cancelled
         by the time limit, already paid by another attempt, total changed.
@@ -1385,6 +1672,10 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
         row keyed on this attempt (idempotent), and the payout starts now.
         `refund_due` used to be written here and read by nothing, which
         charged the customer for a cancelled order in silence.
+
+        The attempt is stamped finished ONLY once the refund row exists. It
+        used to be stamped whatever the insert answered, and a refund that
+        failed to record was then owed to nobody and retried by nothing.
       */
       const stamp = new Date().toISOString();
       const refundId = await refundUnpayableAttempt({
@@ -1395,27 +1686,47 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
         phone: row.phone,
         reason: `Paiement reçu pour une commande qui ne l'attendait plus (${order?.reference ?? row.reference})`,
       });
-      await supabase
-        .from("payment_attempts")
-        .update({
-          settled_at: stamp,
-          raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "orderNotPayable", at: stamp, refundId } },
-        })
-        .eq("id", attemptId)
-        .is("settled_at", null);
-      if (refundId) {
-        await startRefundPayout(refundId).catch((err) => console.error("[pay:settle:order] refund", refundId, err));
-      }
-      error = "Cette commande n'attend plus ce paiement ; il vous est remboursé.";
-      reason = "orderNotPayable";
-    } else {
-      const { data: settlement, error: settlementError } = await supabase.rpc("settle_online_order_payment", {
-        p_order_id: row.orderId,
-      });
-      if (settlementError) {
-        console.error("[pay:settle:order] settlement", settlementError.message);
-        error = "Le paiement est confirmé mais la répartition n'a pas pu être enregistrée.";
+      if (!refundId) {
+        console.error("[pay:settle:order] refund row could not be recorded — will retry", attemptId);
+        error = "Le paiement est confirmé mais son remboursement n'a pas pu être enregistré.";
         reason = "orderSettlementFailed";
+      } else {
+        await supabase
+          .from("payment_attempts")
+          .update({
+            settled_at: stamp,
+            raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "orderNotPayable", at: stamp, refundId } },
+          })
+          .eq("id", attemptId)
+          .is("settled_at", null);
+        await startRefundPayout(refundId).catch((err) => console.error("[pay:settle:order] refund", refundId, err));
+        error = "Cette commande n'attend plus ce paiement ; il vous est remboursé.";
+        reason = "orderNotPayable";
+      }
+    } else {
+      // The attempt id travels with the settlement (0070): the order records
+      // which attempt paid it, in the same transaction that marks it paid.
+      let { data: settlement, error: settlementError } = await supabase.rpc("settle_online_order_payment", {
+        p_order_id: row.orderId,
+        p_attempt_id: attemptId,
+      });
+      if (settlementError && isMissingFunction(settlementError)) {
+        // 0070 not applied yet: the function takes the order alone.
+        ({ data: settlement, error: settlementError } = await supabase.rpc("settle_online_order_payment", {
+          p_order_id: row.orderId,
+        }));
+      }
+      if (settlementError) {
+        // Lost a race to another run of this attempt (it paid the order between
+        // our read and this call)? Then there is nothing left to do here.
+        const again = await readOrderForSettlement(row.orderId, row.restaurantId);
+        if (again && again !== "unreadable" && (await orderPaidByAttempt(again, row)) === "yes") {
+          ok = true;
+        } else {
+          console.error("[pay:settle:order] settlement", settlementError.message);
+          error = "Le paiement est confirmé mais la répartition n'a pas pu être enregistrée.";
+          reason = "orderSettlementFailed";
+        }
       } else {
         const alreadySettled = Boolean((settlement as { alreadySettled?: boolean } | null)?.alreadySettled);
         if (!alreadySettled) {
@@ -1506,6 +1817,51 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
       } else {
         // A late provider success may never turn a cancelled or completed
         // booking back into a live table or credit the restaurant for it.
+        /*
+          BUT THE MONEY IS REAL, AND IT IS OURS TO GIVE BACK.
+
+          This branch used to return an error and nothing else: the attempt
+          stayed "succeeded, unsettled" for ever, re-tried by every sweep, and
+          the customer's deposit sat in the platform's balance with nobody
+          told. Booking refunds carry their own bookkeeping (one per booking,
+          compensation, 0050), so this one is not sent automatically: the
+          attempt is closed with the debt written on it, and the admins are
+          told once — whoever wins the stamp sends the alert.
+
+          ONLY when the booking shows the deposit was never applied. A booking
+          whose deposit IS marked paid may have been paid by this very attempt
+          (a settlement that crashed before its stamp, the customer seated
+          since): telling an admin to refund that would give away a deposit
+          the restaurant earned. That case stays as it was.
+        */
+        const stamp = new Date().toISOString();
+        // Nor when the booking is still waiting for its deposit: a concurrent
+        // run handed its claim back a moment ago, and the next one pays it.
+        const notLate = existing.deposit_paid || existing.status === "awaiting_payment";
+        const { data: flagged } = notLate ? { data: null } : await supabase
+          .from("payment_attempts")
+          .update({
+            settled_at: stamp,
+            raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "reservationNotPayable", at: stamp, manual: true } },
+          })
+          .eq("id", attemptId)
+          .is("settled_at", null)
+          .select("id")
+          .maybeSingle();
+        if (flagged) {
+          console.error("[pay:settle:reservation] LATE DEPOSIT — refund by hand", attemptId, row.amount, row.phone);
+          await notify({
+            event: "broadcast",
+            tone: "error",
+            admins: true,
+            href: "/a/payments",
+            params: {
+              reference: `late-deposit:${attemptId}`,
+              subject: `Late deposit ${row.reference} needs a refund`,
+              bodyText: `A deposit of ${row.amount} FCFA from ${row.phone ?? "an unknown number"} arrived for booking ${String(existing.reference ?? "")}, which no longer expects it. It was not credited to the restaurant. Refund it from Payments → CamerPay → Withdraw to a wallet.`,
+            },
+          });
+        }
         error = "La réservation n'attend plus ce paiement.";
         reason = "reservationNotPayable";
       }
@@ -1634,6 +1990,76 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
   }
 
   return { ok, error, reason };
+}
+
+/** PostgREST could not find the function with those arguments (a migration not applied yet). */
+function isMissingFunction(error: { code?: string; message?: string } | null | undefined): boolean {
+  if (!error) return false;
+  return error.code === "PGRST202" || /could not find the function/i.test(error.message ?? "");
+}
+
+interface SettlementOrder {
+  id: string;
+  reference: string;
+  delivery_name: string | null;
+  status: string;
+  payment_method: string;
+  total: number;
+  is_paid: boolean;
+  dining_session_id: string | null;
+  /** The attempt whose settlement marked the order paid (0070). Undefined before that migration. */
+  paid_attempt_id?: string | null;
+}
+
+/** The order an attempt is settling: null when it does not exist, "unreadable" when the read failed. */
+async function readOrderForSettlement(orderId: string, restaurantId: string): Promise<SettlementOrder | null | "unreadable"> {
+  const supabase = createAdminClient();
+  const columns = "id, reference, delivery_name, status, payment_method, total, is_paid, dining_session_id";
+
+  const read = (select: string) =>
+    supabase.from("orders").select(select).eq("id", orderId).eq("restaurant_id", restaurantId).maybeSingle();
+
+  let result = await read(columns + ", paid_attempt_id");
+  if (result.error && isMissingColumn(result.error)) result = await read(columns);
+  if (result.error) {
+    console.error("[pay:settle:order] read", orderId, result.error.message);
+    return "unreadable";
+  }
+  return (result.data as unknown as SettlementOrder | null) ?? null;
+}
+
+/**
+ * Did THIS attempt's settlement pay the order? The rule is orderPayerVerdict
+ * (./order-payer, tested); this only fetches what it needs — the other
+ * confirmed attempts for the order, and only when the order cannot answer
+ * by itself.
+ */
+async function orderPaidByAttempt(order: SettlementOrder, row: PaymentAttemptRow): Promise<"yes" | "no" | "unknown"> {
+  const attempt = { id: row.id, createdAt: row.createdAt, amount: row.amount };
+  if (!orderCouldBePaidBy(order, attempt) || orderNamesItsPayer(order)) {
+    return orderPayerVerdict(order, attempt, []);
+  }
+
+  const { data, error } = await createAdminClient()
+    .from("payment_attempts")
+    .select("id, created_at, settled_at, raw_response")
+    .eq("raw_response->>orderId", order.id)
+    .eq("status", "succeeded")
+    .neq("id", row.id)
+    .limit(50);
+  if (error) {
+    console.error("[pay:settle:order] payer lookup", order.id, error.message);
+    return orderPayerVerdict(order, attempt, null);
+  }
+
+  const others = ((data ?? []) as { id: string; created_at: string; settled_at: string | null; raw_response: Record<string, unknown> | null }[])
+    .map((other) => ({
+      id: other.id,
+      createdAt: other.created_at,
+      settledAt: other.settled_at,
+      refundDue: Boolean(other.raw_response?.refund_due),
+    }));
+  return orderPayerVerdict(order, attempt, others);
 }
 
 /**

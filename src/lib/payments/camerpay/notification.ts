@@ -1,3 +1,5 @@
+import { referenceClaimId } from "./match";
+
 export interface CamerPayNotificationEntry {
   id?: number;
   date?: string;
@@ -34,6 +36,12 @@ export interface PaymentNotification {
    * customer who dials it a second time pays a second time.
    */
   received?: boolean;
+  /**
+   * The operator's transaction reference on a receipt ("Réf. Transaction :
+   * CO260930.0949.B50907") — the same value the transaction row carries as
+   * `ref`, and what a settled payment is claimed under.
+   */
+  reference?: string;
   status: "instruction" | "success" | "failed";
 }
 
@@ -45,13 +53,23 @@ export interface PaymentNotificationHint {
   afterNotificationId?: number;
   /** Which way the money was meant to go. A collection unless said otherwise. */
   direction?: "collect" | "payout";
-  /** Receipts other attempts already settled from, as `notificationRowId` values. */
+  /**
+   * Payments other attempts already settled from: `referenceClaimId` values
+   * (the operator's reference), or `notificationRowId` values for claims made
+   * before references were used.
+   */
   excludeIds?: string[];
   /**
    * The customer starts this payment themselves, and we ask again until they
    * have: repeated instructions are then the SAME request, not a retry.
    */
   customerInitiated?: boolean;
+  /**
+   * The id of the request being judged (its tracking id). A failure notice
+   * names the request it is about — "• Réf. : 3bc9ef5c-4016-…" — so one that
+   * names ANOTHER request is not this one's failure.
+   */
+  requestId?: string;
 }
 
 /** How a settled notification is claimed on `payment_attempts.provider_row_id`. */
@@ -110,9 +128,18 @@ function isForAmount(message: string, amount: number): boolean {
   return containsAmount(message, amount);
 }
 
-const SUCCESS = /(?:valid[ée]|effectu[ée]|r[ée]ussi|succ[eè]s|successful)/i;
+// "effectué", never "effectuer": the Orange refusal reads "Veuillez inviter le
+// client à effectuer le retrait", and an infinitive is not a receipt.
+const SUCCESS = /(?:valid[ée]|effectu(?:é|ée|e)(?![a-zà-ÿ])|r[ée]ussi|succ[eè]s|successful)/i;
 const FAILURE = /(?:[ée]chec|failed|failure|refus[ée]?|rejet[ée]?|insuffisant|expir[ée]?)/i;
 const TRANSACTION_REFERENCE = /(?:r[ée]f(?:[ée]rence)?\.?\s*transaction|transaction\s*(?:id|n[o°]))/i;
+/** "• Réf. Transaction : CO260930.0949.B50907" — the operator's own reference. */
+const REFERENCE_VALUE = /r[ée]f(?:[ée]rence)?\.?\s*transaction\s*:?\s*([A-Za-z0-9][A-Za-z0-9._-]*)/i;
+/** "• Réf. : 3bc9ef5c-4016-4a2e-b2ad-9fdedc582a14" on a failure notice: OUR request's id. */
+const FAILED_REQUEST = /r[ée]f\.?\s*:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+const REQUEST_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** "RETRAIT_ORANGE validé…", "Échec : DEPOT_MTN" — the operation, as CamerPay labels it. */
+const OPERATION_LABEL = /(?:^|[^A-Za-z])(RETRAIT|DEPOT)_[A-Z]+/;
 const USSD_CODE = /[#*][0-9*#]{3,}#/;
 const OPEN_PHONE = /(?:composer|dial|ouvrir|open).{0,40}(?:t[ée]l[ée]phone|phone|ussd)/i;
 
@@ -124,6 +151,10 @@ const OPEN_PHONE = /(?:composer|dial|ouvrir|open).{0,40}(?:t[ée]l[ée]phone|pho
  * collection otherwise, and must never settle one.
  */
 function operationOf(message: string): "collect" | "payout" | undefined {
+  // The label settles it when there is one: a payout receipt that happened to
+  // mention a withdrawal in its prose must still read as a payout.
+  const label = message.match(OPERATION_LABEL)?.[1];
+  if (label) return label === "RETRAIT" ? "collect" : "payout";
   if (/(?:^|[^a-z])(?:retrait|withdraw)/i.test(message)) return "collect";
   if (/(?:^|[^a-z])(?:d[ée]p[ôo]t|depot|deposit)/i.test(message)) return "payout";
   return undefined;
@@ -189,10 +220,28 @@ export function findPaymentNotification(
     if (operationOf(message) !== direction) continue;
 
     if (FAILURE.test(message)) {
+      /*
+        A failure notice is only THIS request's failure if it names it. A
+        customer whose first try failed (no balance) and who tries again for
+        the same amount has the first try's notice sitting above the second
+        try's counter whenever it is published late — and it used to fail the
+        second try, the one they were about to pay. A failed attempt is never
+        looked at again, so that customer paid and was not served.
+      */
+      const named = message.match(FAILED_REQUEST)?.[1]?.toLowerCase();
+      // Only a request id of the same shape can be compared: an older tracking
+      // id (a `replyTo`) is not the id the notice prints.
+      const ours = hint.requestId?.trim().toLowerCase();
+      if (named && ours && REQUEST_ID_SHAPE.test(ours) && named !== ours) continue;
       return { id: row.id, date: row.date, message, status: "failed" };
     }
     if (SUCCESS.test(message) && TRANSACTION_REFERENCE.test(message)) {
-      return { id: row.id, date: row.date, message, status: "success" };
+      const reference = message.match(REFERENCE_VALUE)?.[1]?.replace(/[._-]+$/, "");
+      // One real payment, one claim: a receipt whose reference another attempt
+      // already settled from — through this report or the transaction report —
+      // is not ours to take.
+      if (reference && excluded.has(referenceClaimId(reference))) continue;
+      return { id: row.id, date: row.date, message, status: "success", reference };
     }
   }
 

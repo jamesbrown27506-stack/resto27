@@ -2,11 +2,24 @@ import "server-only";
 
 import { createAdminClient } from "@/lib/supabase/server";
 import {
+  dialInstructionFromRefusal,
   findPaymentNotification,
+  notificationRowId,
   type CamerPayNotificationEntry,
   type PaymentInstruction,
 } from "./notification";
-import { directionFor, normalisePhone, reportRowId, rowAmount, rowPhone, selectReportRow } from "./match";
+import {
+  directionFor,
+  normalisePhone,
+  referenceClaimId,
+  reportRowId,
+  rowAmount,
+  rowOutcome,
+  rowPhone,
+  rowRef,
+  rowResponse,
+  selectReportRow,
+} from "./match";
 
 // The matching rules are pure and live in ./match (tested against real rows);
 // these two are part of this module's public surface and stay importable here.
@@ -600,21 +613,34 @@ export async function sendPayout(
   return authed<TransactionAccepted>("transaction", "depot", { numeroClient, montant: amount });
 }
 
+/** What `IDENTIFIE` answers. `replyTo` only if CamerPay ever defers it to the callback. */
+export interface IdentifiedNumber {
+  nomClient?: string;
+  replyTo?: string;
+}
+
 /**
  * Look up whose wallet a number is, before charging it.
  *
- * The action is `IDENTIFIE`, not `identifier`. doc.camerpay.net tags it that
- * way and the API answers "L'action identifier est invalide pour le service
- * transaction" (HTTP 400) to the infinitive — the French verb was a guess
- * that read naturally and was never the action's name.
+ * ─────────────────────────────────────────────────────────────────────────
+ *  BOTH HALVES OF THIS CALL WERE WRONG, AND THE DOCS ARE WRONG ABOUT ONE.
  *
- * Asynchronous like every transaction call: the answer is an acceptance with
- * a `replyTo`, and the identified name arrives on the callback.
+ *    action  `IDENTIFIE`, not `identifier` — the infinitive is answered
+ *            "L'action identifier est invalide pour le service transaction".
+ *    DATA    `{ numeroClient }`, not `{ numero }`. doc.camerpay.net prints
+ *            `{"numero":"6XXXXXXXX"}`, and the API answers that with "Données
+ *            invalides pour cette action" (HTTP 404). Like `depot` and
+ *            `retrait`, the customer's number is `numeroClient`.
+ *
+ *  Verified against the live API on 2026-09-30. The answer is SYNCHRONOUS:
+ *  HTTP 200, etat true, "Le compte associé au numéro … appartient à …" and
+ *  `data.nomClient` — no callback to wait for.
+ * ─────────────────────────────────────────────────────────────────────────
  */
-export async function identifyNumber(phone: string): Promise<CamerPayResponse<TransactionAccepted>> {
-  const numero = normalisePhone(phone);
-  if (!numero) throw new Error(`Invalid phone number "${phone}".`);
-  return authed<TransactionAccepted>("transaction", "IDENTIFIE", { numero });
+export async function identifyNumber(phone: string): Promise<CamerPayResponse<IdentifiedNumber>> {
+  const numeroClient = normalisePhone(phone);
+  if (!numeroClient) throw new Error(`Invalid phone number "${phone}".`);
+  return authed<IdentifiedNumber>("transaction", "IDENTIFIE", { numeroClient });
 }
 
 /* ── Reporting — the trust anchor ──────────────────────────────────────── */
@@ -637,8 +663,10 @@ export async function identifyNumber(phone: string): Promise<CamerPayResponse<Tr
  *  returned by the 202 is never echoed back here, so matching on it could
  *  only ever fail, and every settled transaction read as pending for ever.
  *
- *  `used` is the outcome. `ref` is the operator's reference and is null until
- *  the customer confirms — the two agree, and `used` is the one to trust.
+ *  `ref` IS THE OUTCOME. It is the operator's reference, set only when money
+ *  moved. `used` merely says the request is finished — it is true on refused
+ *  and failed rows too (seen live 2026-09-30), so it proves nothing alone.
+ *  The reading of a row lives in ./match (rowOutcome), tested on real rows.
  * ─────────────────────────────────────────────────────────────────────────
  */
 export interface TransactionReportEntry {
@@ -655,9 +683,9 @@ export interface TransactionReportEntry {
   Amount?: number;
   /** "MTN_WITHDRAWAL" (a collection) or "DEPOT_MTN" (a payout). */
   action?: string;
-  /** TRUE once the customer has entered their PIN. This is the outcome. */
+  /** TRUE once the request is FINISHED — paid, refused or failed. Not proof of payment. */
   used?: boolean;
-  /** Capital R — the ACKNOWLEDGEMENT text, not the result. */
+  /** Capital R — the operator's answer text. */
   Response?: string;
 
   // Variants observed on a live account (2026-08-12): the report answered with
@@ -762,15 +790,44 @@ export async function latestNotificationId(): Promise<number | undefined> {
 }
 
 /**
- * Response text that means the collection is DEAD, not merely unfinished.
+ * Every report row above a counter, not just the newest hundred.
  *
- * Age is not evidence: mobile-money PIN entry regularly runs past any grace
- * period worth setting, and a row that is simply "not confirmed yet" must stay
- * pending so the reconciler keeps sweeping it. Only an operator saying so
- * counts. Deliberately excludes "annul"/"cancel" — the acknowledgement text
- * itself says "ne pas annuler", and matching that would fail live payments.
+ * A report call returns at most 100 rows, newest first. An Orange payment the
+ * customer has to dial leaves one row per ask, so a busy quarter of an hour
+ * can push the row a payment is waiting for off the first page — and a paid
+ * payment would then read "pending" until it expired. When the counter is
+ * known and the page does not reach down to it, the next pages are read (the
+ * `id` cursor), bounded so a bad cursor cannot loop.
  */
-const CONCLUSIVE_FAILURE = /(echec|échec|failed|failure|refus|rejet|insuffis|expir)/i;
+const REPORT_PAGE = 100;
+const REPORT_MAX_PAGES = 5;
+
+async function reportSince<T extends { id?: number }>(
+  fetchPage: (options: { limit: number; id?: number }) => Promise<CamerPayResponse<T[]>>,
+  afterId: number | undefined,
+): Promise<{ available: boolean; rows: T[]; first: CamerPayResponse<T[]> }> {
+  const first = await fetchPage({ limit: REPORT_PAGE });
+  if (!first.etat || !Array.isArray(first.data)) return { available: false, rows: [], first };
+
+  const rows = [...first.data];
+  let page = first.data;
+  for (let pages = 1; pages < REPORT_MAX_PAGES; pages += 1) {
+    if (afterId === undefined || page.length < REPORT_PAGE) break;
+    const ids = page.map((row) => row.id).filter((id): id is number => typeof id === "number");
+    if (ids.length === 0) break;
+    const oldest = Math.min(...ids);
+    if (oldest <= afterId + 1) break;
+
+    const next = await fetchPage({ limit: REPORT_PAGE, id: oldest });
+    if (!next.etat || !Array.isArray(next.data)) break;
+    const seen = new Set(rows.map((row) => row.id));
+    const fresh = next.data.filter((row) => !seen.has(row.id));
+    if (fresh.length === 0) break;
+    rows.push(...fresh);
+    page = next.data;
+  }
+  return { available: true, rows, first };
+}
 
 
 /**
@@ -790,13 +847,18 @@ const CONCLUSIVE_FAILURE = /(echec|échec|failed|failure|refus|rejet|insuffis|ex
  *  made: the number, the amount, the direction, and the fact that it must
  *  have happened AFTER we asked. The newest row satisfying all four is ours.
  *
- *  Then `used` decides:
- *      used === true   the customer entered their PIN. Settled.
- *      used === false  no PIN yet — PENDING however old the row looks; only
- *                      the provider saying so makes it failed.
+ *  Then the ROW is read (rowOutcome in ./match), never `used` alone:
+ *      paid     finished, WITH the operator's reference. Settled.
+ *      failed   finished without one, and the operator says why.
+ *      dial     Orange: the customer has to dial a code first. Pending.
+ *      pending  anything else — however old the row looks.
  *
- *  `ref` corroborates — it is null until confirmation — but `used` is the
- *  field to trust, and a disagreement is resolved as NOT settled.
+ *  `used === true` alone settled payments until 2026-09-30. It is true on
+ *  refused and failed rows as well, so it handed out orders nobody paid for.
+ *
+ *  A settled payment is claimed under the operator's reference ("ref:…"),
+ *  the one identity it has in both reports — so the row and its receipt can
+ *  never be claimed by two different attempts.
  * ─────────────────────────────────────────────────────────────────────────
  *
  * Without a hint there is nothing to match on, so it reports pending and
@@ -997,10 +1059,13 @@ export async function confirmTransaction(
   raw?: unknown;
   searched?: unknown;
   instruction?: PaymentInstruction;
+  /**
+   * The transaction report could not be read. A "pending" carrying this is
+   * "we could not look", not "nobody paid" — the caller must not let a
+   * deadline close the payment on it.
+   */
+  unavailable?: boolean;
 }> {
-  const report = await listTransactions({ limit: 100 });
-  const transactionReportAvailable = report.etat && Array.isArray(report.data);
-  const rows: TransactionReportEntry[] = transactionReportAvailable ? (report.data ?? []) : [];
   const needle = replyTo.trim();
   const consumed = new Set(hint.excludeRowIds ?? []);
 
@@ -1049,6 +1114,12 @@ export async function confirmTransaction(
 
   const phone = effective.phone ? normalisePhone(effective.phone) : null;
 
+  // Read AFTER the ledger fill, so the counter it supplies bounds the paging.
+  const { available: transactionReportAvailable, rows, first: report } = await reportSince<TransactionReportEntry>(
+    listTransactions,
+    effective.afterId,
+  );
+
   /*
    * Orange currently publishes the conclusive operator receipt in the
    * authenticated notification report while its transaction row can remain
@@ -1073,21 +1144,27 @@ export async function confirmTransaction(
       return { status: "pending" as const, searched };
     }
 
-    const notifications = await listNotifications({ limit: 100 });
-    if (!notifications.etat || !Array.isArray(notifications.data)) {
+    const notifications = await reportSince<CamerPayNotificationEntry>(
+      listNotifications as (options: { limit: number; id?: number }) => Promise<CamerPayResponse<CamerPayNotificationEntry[]>>,
+      effective.notificationAfterId,
+    );
+    if (!notifications.available) {
       return { status: "pending" as const, searched };
     }
 
     const match = findPaymentNotification(
-      notifications.data as CamerPayNotificationEntry[],
+      notifications.rows,
       {
         phone: effective.phone,
         amount: effective.amount,
         afterNotificationId: effective.notificationAfterId,
         direction,
         customerInitiated: effective.customerInitiated,
-        // A receipt another attempt already settled from is not ours to take.
-        excludeIds: [...consumed].filter((id) => id.startsWith("notification:")),
+        // A failure notice names the request it is about.
+        requestId: needle || undefined,
+        // A payment another attempt already settled from is not ours to take —
+        // whether it was claimed by its reference or (before) by its notice.
+        excludeIds: [...consumed],
       },
     );
 
@@ -1110,7 +1187,12 @@ export async function confirmTransaction(
     return {
       status: match.status,
       amount: effective.amount,
-      rowId: match.id === undefined ? undefined : "notification:" + match.id,
+      // Claimed by the operator's reference, so the transaction row for the
+      // same payment cannot be claimed a second time by another attempt.
+      rowId:
+        match.status === "success" && match.reference
+          ? referenceClaimId(match.reference)
+          : match.id === undefined ? undefined : notificationRowId(match.id),
       raw: match,
       searched,
     };
@@ -1126,7 +1208,8 @@ export async function confirmTransaction(
    * conclusive Orange receipts.
    */
   if (!transactionReportAvailable) {
-    return notificationVerdict(report.data ?? report.message);
+    const verdict = await notificationVerdict(report.data ?? report.message);
+    return verdict.status === "pending" ? { ...verdict, unavailable: true } : verdict;
   }
 
   const startedAt = effective.startedAt ? new Date(effective.startedAt).getTime() : null;
@@ -1146,7 +1229,8 @@ export async function confirmTransaction(
   });
   if (!match) return notificationVerdict(rows);
   const amount = rowAmount(match);
-  const rowId = reportRowId(match);
+  const reference = rowRef(match);
+  const rowId = reference ? referenceClaimId(reference) : reportRowId(match);
 
   /**
    * A VERDICT OF `failed` NEEDS EVIDENCE, NOT A STOPWATCH.
@@ -1159,20 +1243,15 @@ export async function confirmTransaction(
    * fixed here: unresolved is PENDING, and the reconciler's abandonment horizon
    * (hours, not minutes) is the only thing that gives up on it.
    */
-  const responseText = String(match.Response ?? match.reponse ?? match.message ?? "");
-
-  let status: "success" | "failed" | "pending";
-  if (match.used === true) {
-    // The customer entered their PIN. Settled.
-    status = "success";
-  } else if (match.etat === false) {
-    // An explicit failure from the synchronous shape still wins if present.
-    status = "failed";
-  } else if (CONCLUSIVE_FAILURE.test(responseText)) {
-    status = "failed";
-  } else {
-    status = "pending";
-  }
+  /**
+   * THE ROW IS READ AS A WHOLE — `used` ALONE SETTLES NOTHING.
+   *
+   * See rowOutcome: money needs the operator's reference. A finished row
+   * without one is a refusal or a failure, however "used" it is.
+   */
+  const outcome = rowOutcome(match);
+  const status: "success" | "failed" | "pending" =
+    outcome === "paid" ? "success" : outcome === "failed" ? "failed" : "pending";
 
   if (status === "pending") {
     const fromNotification = await notificationVerdict(rows);
@@ -1190,8 +1269,12 @@ export async function confirmTransaction(
 
     // A pending transaction row and an Orange USSD instruction are expected
     // to coexist. Keep the report row as evidence that the request exists,
-    // but never discard the handset action the notification report supplied.
-    return { status, amount, rowId, raw: match, instruction: fromNotification.instruction };
+    // but never discard the handset action the notification report supplied —
+    // or, since Orange stopped pushing prompts, the code in the row's own
+    // refusal text. No rowId: an unpaid row is nothing to claim.
+    const dialFromRow =
+      outcome === "dial" ? dialInstructionFromRefusal(rowResponse(match), effective.amount) ?? undefined : undefined;
+    return { status, amount, raw: match, instruction: fromNotification.instruction ?? dialFromRow };
   }
 
   // Persist the outcome — and, if this check started from a ledger row, the

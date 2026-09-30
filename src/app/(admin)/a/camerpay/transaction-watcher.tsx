@@ -158,7 +158,9 @@ export function TransactionWatcher({
           replyTo,
           { phone, amount, direction, startedAt, afterId, notificationAfterId, customerInitiated },
           instructionRef.current === null,
-          claimRef.current,
+          // Not on the very first check: the request was sent a second ago,
+          // and every ask leaves a row in CamerPay's report.
+          claimRef.current && attempt > 0,
         );
       } catch {
         // A failed CHECK is not a failed PAYMENT. The attempt still counts,

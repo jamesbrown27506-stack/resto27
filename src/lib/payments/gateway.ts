@@ -121,7 +121,18 @@ export async function sendGatewayPayout(input: {
     return { kind: "unknown", gateway, message: error instanceof Error ? error.message : String(error) };
   }
   if (!(response.httpStatus === 202 || response.etat)) {
-    return { kind: "refused", gateway, message: response.message ?? `HTTP ${response.httpStatus}` };
+    /*
+      ONLY AN ANSWER IS A REFUSAL. "Refused" tells the caller nothing left our
+      balance — it puts the money back in the wallet, or sends the refund
+      again. A 5xx, or a body with no verdict in it (an HTML error page), is
+      CamerPay breaking, not declining: the payout may have gone out. Treating
+      that as a refusal is how one refund becomes two. Same rule the SasPay
+      branch above already applies.
+    */
+    const message = response.message ?? `HTTP ${response.httpStatus}`;
+    return response.etat === false && response.httpStatus < 500
+      ? { kind: "refused", gateway, message }
+      : { kind: "unknown", gateway, message };
   }
   const replyTo = acceptedTransactionId(response);
   if (!replyTo) return { kind: "unknown", gateway, message: "accepted without a replyTo" };

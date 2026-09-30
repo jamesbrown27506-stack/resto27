@@ -194,7 +194,7 @@ const PRESETS: {
     label: "IDENTIFIE",
     service: "transaction",
     action: "IDENTIFIE",
-    data: '{ "numero": "6XXXXXXXX" }',
+    data: '{ "numeroClient": "6XXXXXXXX" }',
     authenticated: true,
   },
   {
