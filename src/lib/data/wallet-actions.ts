@@ -21,6 +21,7 @@ import type { ActionResult } from "./admin-actions";
 import { checkPaymentAttempt, initiatePaymentAttempt, settlePayment } from "@/lib/payments/collect";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
+import { identifyRecipient, requireConfirmedRecipient, type RecipientGate } from "@/lib/payments/recipient";
 
 /**
  * Wallet mutations (migration 0024).
@@ -217,6 +218,57 @@ export async function checkWalletFunding(
   revalidatePath("/m/wallet");
   return { ok: true, status: result.status, instruction: result.instruction };
 }
+/* ── Who receives a withdrawal ─────────────────────────────────────────── */
+
+/** A recipient check that failed, in the viewer's words. */
+function recipientRefusal(gate: Extract<RecipientGate, { ok: false }>, t: Translate): WalletResult {
+  switch (gate.reason) {
+    case "badPhone":
+      return { ok: false, reason: "badPhone", error: t("est.withdrawPhoneInvalid") };
+    case "notIdentified":
+      return { ok: false, reason: "recipientUnidentified", error: t("est.recipientUnidentified") };
+    case "notConfirmed":
+      return { ok: false, reason: "recipientNotConfirmed", error: t("est.recipientNotConfirmed") };
+    case "changed":
+      return { ok: false, reason: "recipientChanged", error: t("est.recipientChanged", { name: gate.name ?? "?" }) };
+    default:
+      return { ok: false, reason: "recipientUnavailable", error: t("est.recipientUnavailable") };
+  }
+}
+
+/**
+ * Step 1 of a withdrawal: whose account is this number?
+ *
+ * The restaurant types a number; before it can confirm anything it is shown
+ * the name registered on that Mobile Money account (lib/payments/recipient).
+ * The name returned here is what the confirmation dialog displays — and what
+ * requestWithdrawal / processOwnWithdrawal must be handed back, where it is
+ * checked against the operator again before any money moves.
+ *
+ * In sandbox nothing is sent anywhere, so nothing is looked up: `name` is
+ * null and the screen says the holder is not checked in test mode.
+ */
+export async function verifyWithdrawalRecipient(
+  phone: string,
+): Promise<ActionResult & { reason?: string; name?: string | null }> {
+  const t = await getTranslator();
+  const { active } = await requireCapability("finance.manage");
+
+  if ((await paymentMode()) === "sandbox") return { ok: true, name: null };
+
+  const limited = await rateLimit({
+    key: "wallet:identify",
+    limit: 30,
+    windowMs: 60 * 60_000,
+    identifier: active.restaurantId,
+  });
+  if (!limited.ok) return { ok: false, reason: "rateLimited", error: t("est.recipientRateLimited") };
+
+  const lookup = await identifyRecipient(phone);
+  if (!lookup.ok) return recipientRefusal(lookup, t);
+  return { ok: true, name: lookup.name };
+}
+
 /* ── Withdrawal requests ───────────────────────────────────────────────── */
 
 /**
@@ -227,6 +279,8 @@ export async function requestWithdrawal(input: {
   amount: number;
   phone: string;
   note?: string;
+  /** The account holder's name the sender was shown and confirmed (verifyWithdrawalRecipient). */
+  confirmedName?: string | null;
 }): Promise<WalletResult> {
   const t = await getTranslator();
   const { active, profile } = await requireCapability("finance.manage");
@@ -311,6 +365,15 @@ export async function requestWithdrawal(input: {
     };
   }
 
+  // The holder is checked BEFORE the request exists: a number that fails the
+  // check must not leave a "pending" request behind asking to be sent.
+  let recipientName: string | null = null;
+  if ((await paymentMode()) === "live") {
+    const gate = await requireConfirmedRecipient(phone, input.confirmedName);
+    if (!gate.ok) return recipientRefusal(gate, t);
+    recipientName = gate.name;
+  }
+
   const { data: created, error } = await supabase
     .from("withdrawal_requests")
     .insert({
@@ -328,7 +391,7 @@ export async function requestWithdrawal(input: {
     return { ok: false, reason: "insertFailed", error: t("est.withdrawStartFailed") };
   }
 
-  return executeWithdrawal(String(created.id), profile, t, active.restaurantId);
+  return executeWithdrawal(String(created.id), profile, t, active.restaurantId, { verifiedName: recipientName });
 }
 
 /**
@@ -365,14 +428,18 @@ export async function requestWithdrawal(input: {
  *  approving a withdrawal in sandbox must never send real ones back out.
  * ─────────────────────────────────────────────────────────────────────────
  */
-export async function approveWithdrawal(requestId: string): Promise<WalletResult> {
+export async function approveWithdrawal(requestId: string, confirmedName?: string | null): Promise<WalletResult> {
   const gate = await superAdminOrError(); // sends real money out — super admins only
   if (!gate.ok) return { ...gate, reason: "superAdminOnly" };
-  return executeWithdrawal(requestId, gate.admin, englishT);
+  return executeWithdrawal(requestId, gate.admin, englishT, undefined, { confirmedName });
 }
 
-/** Start or retry a withdrawal belonging to the manager's active branch. */
-export async function processOwnWithdrawal(requestId: string): Promise<WalletResult> {
+/**
+ * Start or retry a withdrawal belonging to the manager's active branch.
+ * `confirmedName` is the account holder the sender was shown for the request's
+ * number — a retry is a payout like any other, and goes through the same check.
+ */
+export async function processOwnWithdrawal(requestId: string, confirmedName?: string | null): Promise<WalletResult> {
   const t = await getTranslator();
   const { active, profile } = await requireCapability("finance.manage");
   const limited = await rateLimit({
@@ -384,7 +451,7 @@ export async function processOwnWithdrawal(requestId: string): Promise<WalletRes
   if (!limited.ok) {
     return { ok: false, reason: "rateLimited", error: t("est.payoutRateLimited") };
   }
-  return executeWithdrawal(requestId, profile, t, active.restaurantId);
+  return executeWithdrawal(requestId, profile, t, active.restaurantId, { confirmedName });
 }
 
 async function executeWithdrawal(
@@ -392,6 +459,14 @@ async function executeWithdrawal(
   actor: AuthProfile,
   t: Translate,
   scopedRestaurantId?: string,
+  /**
+   * The recipient check. `verifiedName` means the caller has just run it for
+   * this number (requestWithdrawal does, before creating the request);
+   * otherwise `confirmedName` is what the sender was shown and the check runs
+   * here. Neither is a way round it: in live mode a payout with no confirmed
+   * holder is refused below.
+   */
+  recipient: { verifiedName?: string | null; confirmedName?: string | null } = {},
 ): Promise<WalletResult> {
   const supabase = createAdminClient();
 
@@ -452,6 +527,19 @@ async function executeWithdrawal(
   }
 
   const mode = await paymentMode();
+
+  /*
+    WHO GETS THIS MONEY — asked of the operator before anything is claimed.
+    Still nothing has moved at this point, so a refusal costs nothing. In
+    sandbox no transfer is made, so there is no recipient to protect.
+  */
+  let recipientName: string | null = recipient.verifiedName ?? null;
+  if (mode === "live" && !recipientName) {
+    const gate = await requireConfirmedRecipient(phone, recipient.confirmedName);
+    if (!gate.ok) return recipientRefusal(gate, t);
+    recipientName = gate.name;
+  }
+
   if (mode === "live" && net > payoutRange.max) {
     return {
       ok: false,
@@ -648,8 +736,9 @@ async function executeWithdrawal(
     action: "wallet.withdrawal_approved",
     entityType: "withdrawal_request",
     entityId: requestId,
-    summary: `${mode === "sandbox" ? "Simulated a payout of" : "Paid"} ${net.toLocaleString("fr-CM")} FCFA to ${phone}${fee > 0 ? ` (${fee.toLocaleString("fr-CM")} FCFA fee withheld)` : ""}`,
-    metadata: { gross, fee, net, replyTo, mode },
+    summary: `${mode === "sandbox" ? "Simulated a payout of" : "Paid"} ${net.toLocaleString("fr-CM")} FCFA to ${phone}${recipientName ? ` (${recipientName})` : ""}${fee > 0 ? ` (${fee.toLocaleString("fr-CM")} FCFA fee withheld)` : ""}`,
+    // The holder's name as the operator gave it when the sender confirmed.
+    metadata: { gross, fee, net, replyTo, mode, recipientName },
   });
 
   revalidatePath("/a/wallet");

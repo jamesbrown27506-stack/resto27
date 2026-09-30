@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpFromLine, Wallet } from "lucide-react";
+import { ArrowUpFromLine, ShieldCheck, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import {
   checkOwnWithdrawalPayout,
   processOwnWithdrawal,
   requestWithdrawal,
+  verifyWithdrawalRecipient,
 } from "@/lib/data/wallet-actions";
 import type { WalletState } from "@/lib/data/wallet";
 import { cn } from "@/lib/utils";
@@ -60,7 +61,19 @@ export function WalletClient({
   const [amount, setAmount] = useState("");
   const [phone, setPhone] = useState("");
   const [note, setNote] = useState("");
-  const [confirmOpen, setConfirmOpen] = useState(false);
+  /**
+   * The withdrawal waiting to be confirmed — a new one (`requestId` null) or a
+   * queued one being sent. It carries the number and amount as they were when
+   * the account holder was looked up, so what is confirmed is what was checked
+   * even if the form is edited underneath.
+   */
+  const [confirmTarget, setConfirmTarget] = useState<{
+    requestId: string | null;
+    amount: number;
+    phone: string;
+    /** The name on the Mobile Money account; null in test mode, where it is not looked up. */
+    recipientName: string | null;
+  } | null>(null);
   const [payoutRequestId, setPayoutRequestId] = useState<string | null>(initialPayout?.id ?? null);
   const [payoutOpen, setPayoutOpen] = useState(Boolean(initialPayout));
   const [payoutAmount, setPayoutAmount] = useState(initialPayout?.amount ?? 0);
@@ -101,20 +114,32 @@ export function WalletClient({
     router.refresh();
   }
 
-  function confirmWithdrawal() {
-    setConfirmOpen(false);
-    const requestAmount = gross;
-    const requestPhone = phone.trim();
+  /**
+   * Step 1 of every withdrawal: whose account is this number? The operator is
+   * asked, and the confirmation dialog only opens once it has answered — so
+   * nobody confirms a transfer without having read the name it goes to. The
+   * server checks the same name again before it sends (wallet-actions.ts).
+   */
+  function reviewWithdrawal(requestId: string | null, requestAmount: number, requestPhone: string) {
     startTransition(async () => {
-      const result = await requestWithdrawal({ amount: requestAmount, phone: requestPhone, note });
-      finishStart(result, requestAmount, requestPhone, true);
+      const check = await verifyWithdrawalRecipient(requestPhone);
+      if (!check.ok) {
+        toast(localizeActionError(check.error, locale, t("common.error")), "error");
+        return;
+      }
+      setConfirmTarget({ requestId, amount: requestAmount, phone: requestPhone, recipientName: check.name ?? null });
     });
   }
 
-  function retryWithdrawal(requestId: string, requestAmount: number, requestPhone: string) {
+  function confirmWithdrawal() {
+    const target = confirmTarget;
+    if (!target) return;
+    setConfirmTarget(null);
     startTransition(async () => {
-      const result = await processOwnWithdrawal(requestId);
-      finishStart(result, requestAmount, requestPhone, false);
+      const result = target.requestId
+        ? await processOwnWithdrawal(target.requestId, target.recipientName)
+        : await requestWithdrawal({ amount: target.amount, phone: target.phone, note, confirmedName: target.recipientName });
+      finishStart(result, target.amount, target.phone, target.requestId === null);
     });
   }
 
@@ -257,7 +282,7 @@ export function WalletClient({
             className="self-start"
             disabled={pending || !valid || phone.trim().length < 9}
             loading={pending}
-            onClick={() => setConfirmOpen(true)}
+            onClick={() => reviewWithdrawal(null, gross, phone.trim())}
           >
             <ArrowUpFromLine className="size-4" aria-hidden />
             <span>{t("mops.wal.withdrawNow")}</span>
@@ -298,7 +323,7 @@ export function WalletClient({
                       size="sm"
                       loading={pending}
                       disabled={pending}
-                      onClick={() => retryWithdrawal(request.id, request.amount, request.phone)}
+                      onClick={() => reviewWithdrawal(request.id, request.amount, request.phone)}
                     >
                       {t("mops.wal.sendNow")}
                     </Button>
@@ -338,47 +363,72 @@ export function WalletClient({
       )}
 
       <Dialog
-        open={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
+        open={confirmTarget !== null}
+        onClose={() => setConfirmTarget(null)}
         title={t("mops.wal.confirmTitle")}
         size="sm"
         footer={
           <>
-            <Button variant="outline" disabled={pending} onClick={() => setConfirmOpen(false)}>
+            <Button variant="outline" disabled={pending} onClick={() => setConfirmTarget(null)}>
               {t("mops.wal.cancel")}
             </Button>
-            <Button loading={pending} disabled={!valid} onClick={confirmWithdrawal}>
+            <Button loading={pending} disabled={pending || confirmTarget === null} onClick={confirmWithdrawal}>
               {t("mops.wal.confirmSend")}
             </Button>
           </>
         }
       >
-        <div className="flex flex-col gap-4 text-sm">
-          <p className="leading-relaxed text-text-secondary">{t("mops.wal.confirmBody")}</p>
-          <dl className="divide-y divide-border rounded-md border border-border bg-surface-2 px-4">
-            <div className="flex items-center justify-between gap-4 py-3">
-              <dt className="text-text-secondary">{t("mops.wal.balance")}</dt>
-              <dd className="tnum font-semibold">{money(state.balance)}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-4 py-3">
-              <dt className="text-text-secondary">{t("mops.wal.withdrawn")}</dt>
-              <dd className="tnum font-semibold">{money(gross)}</dd>
-            </div>
-            {feeEnabled && (
-              <div className="flex items-center justify-between gap-4 py-3">
-                <dt className="text-text-secondary">{t("mops.wal.youReceive")}</dt>
-                <dd className="tnum font-semibold text-success">{money(net)}</dd>
+        {confirmTarget && (
+          <div className="flex flex-col gap-4 text-sm">
+            <p className="leading-relaxed text-text-secondary">{t("mops.wal.confirmBody")}</p>
+
+            {/* WHO RECEIVES IT — first, and larger than anything else in the
+                dialog: a wrong digit in the number is only visible here. */}
+            {confirmTarget.recipientName ? (
+              <div className="rounded-md border border-success/35 bg-success-light p-3">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-success">
+                  <ShieldCheck className="size-3.5" aria-hidden />
+                  {t("mops.wal.recipient")}
+                </p>
+                <p className="mt-1 break-words text-lg font-bold leading-tight">{confirmTarget.recipientName}</p>
+                <p className="mt-1 text-xs leading-relaxed text-text-secondary">{t("mops.wal.recipientHint")}</p>
               </div>
+            ) : (
+              <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs text-warning">
+                {t("mops.wal.recipientUnverified")}
+              </p>
             )}
-            <div className="flex items-center justify-between gap-4 py-3">
-              <dt className="text-text-secondary">{t("mops.wal.number")}</dt>
-              <dd className="tnum font-semibold">{phone.trim()}</dd>
-            </div>
-          </dl>
-          <p className={cn("text-xs font-medium", withdrawable >= gross ? "text-success" : "text-error")}>
-            {withdrawable >= gross ? t("mops.wal.covered") : t("mops.wal.notCovered")}
-          </p>
-        </div>
+
+            <dl className="divide-y divide-border rounded-md border border-border bg-surface-2 px-4">
+              <div className="flex items-center justify-between gap-4 py-3">
+                <dt className="text-text-secondary">{t("mops.wal.number")}</dt>
+                <dd className="tnum font-semibold">{confirmTarget.phone}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-4 py-3">
+                <dt className="text-text-secondary">{t("mops.wal.withdrawn")}</dt>
+                <dd className="tnum font-semibold">{money(confirmTarget.amount)}</dd>
+              </div>
+              {feeEnabled && (
+                <div className="flex items-center justify-between gap-4 py-3">
+                  <dt className="text-text-secondary">{t("mops.wal.youReceive")}</dt>
+                  <dd className="tnum font-semibold text-success">
+                    {money(computeWithdrawalFee(confirmTarget.amount, fee.percent).net)}
+                  </dd>
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-4 py-3">
+                <dt className="text-text-secondary">{t("mops.wal.balance")}</dt>
+                <dd className="tnum font-semibold">{money(state.balance)}</dd>
+              </div>
+            </dl>
+            {/* A queued request is already counted against the balance. */}
+            {confirmTarget.requestId === null && (
+              <p className={cn("text-xs font-medium", withdrawable >= confirmTarget.amount ? "text-success" : "text-error")}>
+                {withdrawable >= confirmTarget.amount ? t("mops.wal.covered") : t("mops.wal.notCovered")}
+              </p>
+            )}
+          </div>
+        )}
       </Dialog>
 
       <Dialog

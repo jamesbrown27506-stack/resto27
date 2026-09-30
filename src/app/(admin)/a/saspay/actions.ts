@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { requireRole, superAdminOrError } from "@/lib/auth/session";
 import { writeAudit } from "@/lib/data/platform-actions";
 import { normalisePhone } from "@/lib/payments/camerpay/client";
+import { identifyRecipient, recipientRefusalInEnglish, requireConfirmedRecipient } from "@/lib/payments/recipient";
 import { cameroonNetwork, SASPAY_MAX_XAF, SASPAY_MIN_XAF } from "@/lib/payments/saspay/cameroon";
 import {
   saspayCameroonBalance,
@@ -118,11 +119,33 @@ export async function testCollection(phone: string, amount: number): Promise<Con
   }
 }
 
-export async function testPayout(phone: string, amount: number): Promise<ConsoleResult> {
+/**
+ * Whose account is this number? — step 1 of a payout from this console.
+ * The name comes from CamerPay's identification whichever gateway sends the
+ * money: it is a question about the phone number, not about the transfer.
+ */
+export async function identifyTestPayoutRecipient(phone: string): Promise<ConsoleResult & { recipientName?: string }> {
+  await requireRole("admin");
+  const lookup = await identifyRecipient(phone);
+  if (!lookup.ok) return { ok: false, label: "Recipient not confirmed", detail: recipientRefusalInEnglish(lookup) };
+  return { ok: true, label: "Account holder", detail: `${lookup.phone} belongs to ${lookup.name}.`, recipientName: lookup.name };
+}
+
+export async function testPayout(
+  phone: string,
+  amount: number,
+  /** The account holder the operator was shown and confirmed (identifyTestPayoutRecipient). */
+  confirmedName?: string | null,
+): Promise<ConsoleResult> {
   const gate = await superAdminOrError();
   if (!gate.ok) return { ok: false, label: "Refused", detail: gate.error };
   const checked = checkInput(phone, amount);
   if ("error" in checked) return { ok: false, label: "Invalid input", detail: checked.error };
+
+  // A payout cannot be recalled: it only goes to a name somebody has read,
+  // and the operator is asked again here so a changed number cannot slip by.
+  const recipient = await requireConfirmedRecipient(checked.phone, confirmedName);
+  if (!recipient.ok) return { ok: false, label: "Recipient not confirmed", detail: recipientRefusalInEnglish(recipient) };
 
   try {
     const result = await startSaspayPayout({
@@ -134,7 +157,7 @@ export async function testPayout(phone: string, amount: number): Promise<Console
     await writeAudit(gate.admin, {
       action: "saspay.test_payout",
       entityType: "payment",
-      summary: `SasPay test payout of ${amount} FCFA to ${checked.phone}`,
+      summary: `SasPay test payout of ${amount} FCFA to ${checked.phone} (${recipient.name})`,
       metadata: { ok: result.ok, id: result.ok ? result.data.id : undefined },
     });
     if (!result.ok) {

@@ -6,6 +6,7 @@ import { MIN_AMOUNT_XAF } from "@/lib/payments/camerpay/client";
 import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 import { getWithdrawalFeeConfig } from "@/lib/data/settings";
 import { createAdminClient } from "@/lib/supabase/server";
+import { identifyRecipient, recipientRefusalInEnglish, requireConfirmedRecipient } from "@/lib/payments/recipient";
 import {
   acceptedTransactionId,
   confirmTransaction,
@@ -354,10 +355,40 @@ export async function checkTransaction(
  * where it is actually enforced, so a stale or edited client can never bypass
  * the fee.
  */
-export async function probePayout(phone: string, amount: number): Promise<ProbeResult> {
+/**
+ * Step 1 of a payout from this console: whose account is the number?
+ *
+ * The name returned is shown to the operator, and must be handed back to
+ * probePayout — which asks CamerPay again before sending (lib/payments/
+ * recipient). Read-only, so any admin may look a number up; sending stays
+ * a super admin's.
+ */
+export async function identifyPayoutRecipient(phone: string): Promise<ProbeResult & { recipientName?: string }> {
+  await requireRole("admin");
+  const lookup = await identifyRecipient(phone);
+  if (!lookup.ok) return { ok: false, label: "Recipient", detail: recipientRefusalInEnglish(lookup) };
+  return {
+    ok: true,
+    label: "Recipient",
+    detail: `${lookup.phone} belongs to ${lookup.name}.`,
+    recipientName: lookup.name,
+  };
+}
+
+export async function probePayout(
+  phone: string,
+  amount: number,
+  /** The account holder the operator was shown and confirmed (identifyPayoutRecipient). */
+  confirmedName?: string | null,
+): Promise<ProbeResult> {
   const admin = await requireRole("admin");
   if (!admin.isSuperAdmin) return refusedToSimpleAdmin("Payout");
   try {
+    // WHO GETS IT — before the fee, the counters or anything else. A transfer
+    // cannot be recalled, so it only goes to a name somebody has read.
+    const recipient = await requireConfirmedRecipient(phone, confirmedName);
+    if (!recipient.ok) return { ok: false, label: "Payout", detail: recipientRefusalInEnglish(recipient) };
+
     // The fee is read on the server, at send time — never trusted from the
     // client. It may have been switched on or off since the page loaded.
     const feeConfig = await getWithdrawalFeeConfig();
@@ -406,6 +437,8 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
       console.info(
         "[camerpay] payout requested",
         replyTo,
+        "to",
+        recipient.name,
         "gross",
         gross,
         fee > 0 ? `fee ${fee}` : "no fee",

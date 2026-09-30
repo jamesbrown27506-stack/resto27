@@ -22,6 +22,7 @@ import {
   probeBalance,
   probeConfirm,
   probeCollection,
+  identifyPayoutRecipient,
   probeIdentify,
   probeIdentifyResult,
   probeLogin,
@@ -280,6 +281,12 @@ export function CamerPayConsole({
   const [payoutPhone, setPayoutPhone] = useState("");
   const [payoutAmount, setPayoutAmount] = useState("500");
   const [watchingPayout, setWatchingPayout] = useState<RecentTx | null>(null);
+  /**
+   * The account holder looked up for the destination number. Tied to the
+   * exact number it was looked up for: editing the number clears it, so the
+   * Send button can never show one person's name over another's number.
+   */
+  const [payoutRecipient, setPayoutRecipient] = useState<{ phone: string; name: string } | null>(null);
 
   /**
    * Everything charged or sent from this console, newest first.
@@ -358,6 +365,9 @@ export function CamerPayConsole({
     });
 
   const payoutValue = Number(payoutAmount);
+  // Only while it is still the number that was looked up.
+  const verifiedRecipient =
+    payoutRecipient && payoutRecipient.phone === payoutPhone.trim() ? payoutRecipient : null;
 
   // The tax is a dial in settings (migration 0020). The console
   // computes the same math the server action enforces at send time — the one
@@ -1052,7 +1062,10 @@ export function CamerPayConsole({
               <Input
                 id="po-phone"
                 value={payoutPhone}
-                onChange={(e) => setPayoutPhone(e.target.value)}
+                onChange={(e) => {
+                  setPayoutPhone(e.target.value);
+                  setPayoutRecipient(null);
+                }}
                 placeholder="6XXXXXXXX"
                 inputMode="numeric"
               />
@@ -1108,14 +1121,57 @@ export function CamerPayConsole({
             </div>
           )}
 
+          {/*
+            TWO STEPS, ON PURPOSE. A transfer cannot be recalled, and a wallet
+            number is nine digits typed by hand. First CamerPay is asked whose
+            account the number is; only then does the Send button exist, and
+            it names the person. The server asks again before sending, so the
+            money only goes to the name that was read here.
+          */}
+          {verifiedRecipient ? (
+            <div className="rounded-md border border-success/35 bg-success-light p-3 text-sm">
+              <p className="text-xs font-semibold text-success">Account holder</p>
+              <p className="mt-0.5 text-lg font-bold leading-tight break-words">{verifiedRecipient.name}</p>
+              <p className="mt-1 text-xs text-text-secondary">
+                <span>
+                  Name registered on {verifiedRecipient.phone}. Make sure it is the right person — a payout
+                  cannot be undone once sent.
+                </span>
+              </p>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              className="self-start"
+              disabled={pending || !payoutPhone.trim()}
+              loading={running === "payoutCheck"}
+              onClick={() =>
+                run("payoutCheck", async () => {
+                  const checkedPhone = payoutPhone.trim();
+                  const result = await identifyPayoutRecipient(checkedPhone);
+                  if (result.ok && result.recipientName) {
+                    setPayoutRecipient({ phone: checkedPhone, name: result.recipientName });
+                  }
+                  return result;
+                })
+              }
+            >
+              <Play className="size-4" aria-hidden />
+              <span>Check who receives it</span>
+            </Button>
+          )}
+          {!verifiedRecipient && results.payoutCheck && !results.payoutCheck.ok && (
+            <ResultLine result={results.payoutCheck} />
+          )}
+
           <Button
             variant="danger"
             className="self-start"
-            disabled={pending || !payoutPhone.trim() || !payoutValid}
+            disabled={pending || !payoutPhone.trim() || !payoutValid || !verifiedRecipient}
             loading={running === "payout"}
             onClick={() =>
               run("payout", async () => {
-                const result = await probePayout(payoutPhone, payoutValue);
+                const result = await probePayout(payoutPhone, payoutValue, verifiedRecipient?.name);
                 // The server picks the tracking id out of whichever shape the
                 // acceptance took. Reading `payload.replyTo` here found
                 // nothing on an HTTP 200 acceptance, so no watcher opened and
@@ -1147,6 +1203,7 @@ export function CamerPayConsole({
             <span>
               Send {payoutValid ? payoutNet.toLocaleString("fr-CM") : "…"} FCFA
               {feeEnabled && payoutValid ? ` (${payoutFee.toLocaleString("fr-CM")} fee)` : ""}
+              {verifiedRecipient ? ` to ${verifiedRecipient.name}` : ""}
             </span>
           </Button>
 

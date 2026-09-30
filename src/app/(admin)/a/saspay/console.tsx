@@ -7,7 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { formatMoney } from "@/lib/format/currency";
-import { checkStatus, consoleOverview, testCollection, testPayout, type ConsoleResult } from "./actions";
+import {
+  checkStatus,
+  consoleOverview,
+  identifyTestPayoutRecipient,
+  testCollection,
+  testPayout,
+  type ConsoleResult,
+} from "./actions";
 
 type Overview = Awaited<ReturnType<typeof consoleOverview>>;
 
@@ -54,6 +61,14 @@ function TestForm({ kind, disabled }: { kind: "collection" | "payout"; disabled:
   const [busy, setBusy] = useState(false);
   const [polling, setPolling] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  /**
+   * A payout is two steps: the account holder of the number is looked up and
+   * shown, and only then can it be sent — to that name, which the server
+   * checks again. Tied to the number it was looked up for.
+   */
+  const [recipient, setRecipient] = useState<{ phone: string; name: string } | null>(null);
+  const verified = recipient && recipient.phone === phone.trim() ? recipient : null;
+  const needsRecipient = kind === "payout" && !verified;
 
   const stop = useCallback(() => {
     if (timer.current) clearInterval(timer.current);
@@ -62,11 +77,25 @@ function TestForm({ kind, disabled }: { kind: "collection" | "payout"; disabled:
   }, []);
   useEffect(() => stop, [stop]);
 
+  async function checkRecipient() {
+    stop();
+    setBusy(true);
+    setLatest(null);
+    const checkedPhone = phone.trim();
+    const result = await identifyTestPayoutRecipient(checkedPhone);
+    if (result.ok && result.recipientName) setRecipient({ phone: checkedPhone, name: result.recipientName });
+    setStarted(result.ok ? null : result);
+    setBusy(false);
+  }
+
   async function start() {
     stop();
     setBusy(true);
     setLatest(null);
-    const result = kind === "collection" ? await testCollection(phone, Number(amount)) : await testPayout(phone, Number(amount));
+    const result =
+      kind === "collection"
+        ? await testCollection(phone, Number(amount))
+        : await testPayout(phone, Number(amount), verified?.name);
     setStarted(result);
     setBusy(false);
     if (result.ok && result.id && result.status === "pending") {
@@ -84,15 +113,38 @@ function TestForm({ kind, disabled }: { kind: "collection" | "payout"; disabled:
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
         <Field label={kind === "collection" ? "Number to charge" : "Number to pay"} htmlFor={`sp-${kind}-phone`}>
-          <Input id={`sp-${kind}-phone`} inputMode="tel" placeholder="6XXXXXXXX" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          <Input
+            id={`sp-${kind}-phone`}
+            inputMode="tel"
+            placeholder="6XXXXXXXX"
+            value={phone}
+            onChange={(e) => {
+              setPhone(e.target.value);
+              setRecipient(null);
+            }}
+          />
         </Field>
         <Field label="Amount (FCFA)" htmlFor={`sp-${kind}-amount`}>
           <Input id={`sp-${kind}-amount`} type="number" min={200} value={amount} onChange={(e) => setAmount(e.target.value)} />
         </Field>
-        <Button disabled={disabled || busy || !phone.trim()} loading={busy} onClick={() => void start()}>
-          {kind === "collection" ? "Charge" : "Send"}
+        <Button
+          variant={needsRecipient ? "outline" : undefined}
+          disabled={disabled || busy || !phone.trim()}
+          loading={busy}
+          onClick={() => void (needsRecipient ? checkRecipient() : start())}
+        >
+          {kind === "collection" ? "Charge" : needsRecipient ? "Check who receives it" : "Send"}
         </Button>
       </div>
+      {kind === "payout" && verified && (
+        <div className="rounded-md border border-success/35 bg-success-light p-3 text-sm">
+          <p className="text-xs font-semibold text-success">Account holder</p>
+          <p className="mt-0.5 text-lg font-bold leading-tight break-words">{verified.name}</p>
+          <p className="mt-1 text-xs text-text-secondary">
+            Name registered on {verified.phone}. Make sure it is the right person — a payout cannot be undone once sent.
+          </p>
+        </div>
+      )}
       <ResultBox result={started} />
       {latest && (
         <div className="flex items-center gap-2 text-sm">

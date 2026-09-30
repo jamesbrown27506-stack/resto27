@@ -125,7 +125,11 @@ export const managerOpsDict = defineDict({
     "mops.wal.cancel": "Annuler",
     "mops.wal.confirmSend": "Confirmer et envoyer",
     "mops.wal.confirmBody":
-      "Vérifiez le montant et le numéro. Le paiement sera lancé immédiatement après votre confirmation.",
+      "Vérifiez le montant, le numéro et le nom du titulaire. Le paiement sera lancé immédiatement après votre confirmation.",
+    "mops.wal.recipient": "Titulaire du compte",
+    "mops.wal.recipientHint":
+      "C'est le nom enregistré sur ce numéro Mobile Money. Assurez-vous que c'est bien la bonne personne : un retrait envoyé ne peut pas être annulé.",
+    "mops.wal.recipientUnverified": "Mode test : le titulaire du numéro n'est pas vérifié.",
     "mops.wal.balance": "Solde disponible",
     "mops.wal.withdrawn": "Montant retiré",
     "mops.wal.number": "Numéro",
@@ -245,7 +249,11 @@ export const managerOpsDict = defineDict({
     "mops.wal.confirmTitle": "Confirm the withdrawal",
     "mops.wal.cancel": "Cancel",
     "mops.wal.confirmSend": "Confirm and send",
-    "mops.wal.confirmBody": "Check the amount and the number. The payment starts as soon as you confirm.",
+    "mops.wal.confirmBody": "Check the amount, the number and the account holder's name. The payment starts as soon as you confirm.",
+    "mops.wal.recipient": "Account holder",
+    "mops.wal.recipientHint":
+      "This is the name registered on this Mobile Money number. Make sure it is the right person: a withdrawal cannot be undone once sent.",
+    "mops.wal.recipientUnverified": "Test mode: the account holder is not checked.",
     "mops.wal.balance": "Available balance",
     "mops.wal.withdrawn": "Amount withdrawn",
     "mops.wal.number": "Number",
