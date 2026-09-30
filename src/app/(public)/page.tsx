@@ -3,6 +3,7 @@ import { faqJsonLd, jsonLdString, publicMetadata } from "@/lib/seo";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import { getLocale as seoLocale } from "@/lib/i18n/locale-server";
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { HomeContent } from "./home-content";
 import { getBranding } from "@/lib/branding";
 import { getSettingsMap } from "@/lib/settings-map";
@@ -138,6 +139,19 @@ export default async function HomePage() {
       getFreeModeInfo(),
       getSettingsMap(),
     ]);
+
+  /*
+    A RESTAURANT'S HOME IS ITS DASHBOARD.
+
+    Restaurant staff do not come to the marketing page: they come to run the
+    service. The installed app opens on this page, so a signed-in manager
+    used to land on a pitch for customers and have to find their way to /m
+    every time. Staff (and an admin acting as a restaurant, whose area is the
+    tenant's) are sent to their dashboard; customers and visitors are not
+    touched. The rest of the public site stays open to staff — only "/" moves.
+  */
+  if (user?.area === "manager") redirect("/m");
+
   const [socialLinks, t] = await Promise.all([getSocialLinks(), getTranslator()]);
   const JSON_LD = jsonLd(brand, socialLinks.map(link => link.url), t("mk.about.subtitle"));
   // The same six questions the FAQ section shows (home-content.tsx), marked up
