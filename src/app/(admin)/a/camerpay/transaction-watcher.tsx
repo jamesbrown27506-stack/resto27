@@ -69,10 +69,17 @@ export function TransactionWatcher({
   hint,
   /** Called once, when a terminal answer arrives. */
   onSettled,
+  /**
+   * Orange refused to push a prompt and gave this code for the customer to
+   * dial. The watcher then ASKS AGAIN on every check — CamerPay only looks for
+   * the customer's withdrawal when asked — until an ask is accepted.
+   */
+  dial,
 }: {
   replyTo: string;
   hint?: TransactionHint;
   onSettled?: (status: TransactionStatus) => void;
+  dial?: NonNullable<TransactionStatus["instruction"]>;
 }) {
   /**
    * ─────────────────────────────────────────────────────────────────────────
@@ -101,6 +108,7 @@ export function TransactionWatcher({
   const startedAt = hint?.startedAt;
   const afterId = hint?.afterId;
   const notificationAfterId = hint?.notificationAfterId;
+  const customerInitiated = hint?.customerInitiated === true;
 
   const [result, setResult] = useState<TransactionStatus | null>(null);
   const [attempts, setAttempts] = useState(0);
@@ -109,14 +117,16 @@ export function TransactionWatcher({
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [instruction, setInstruction] = useState<
     NonNullable<TransactionStatus["instruction"]> | null
-  >(null);
+  >(dial ?? null);
+  /** True while every check must send the collection again (Orange dial). */
+  const claimRef = useRef(Boolean(dial));
   const [copied, setCopied] = useState(false);
   /** One line per completed check — the panel's own flight recorder. */
   const [history, setHistory] = useState<{ n: number; at: string; status: string }[]>([]);
 
   /** Set on a terminal answer, readable by BOTH the loop and a manual check. */
   const doneRef = useRef(false);
-  const instructionRef = useRef<NonNullable<TransactionStatus["instruction"]> | null>(null);
+  const instructionRef = useRef<NonNullable<TransactionStatus["instruction"]> | null>(dial ?? null);
 
   /** Latest callback without it being a reason to restart the loop. */
   const onSettledRef = useRef(onSettled);
@@ -146,8 +156,9 @@ export function TransactionWatcher({
       try {
         next = await checkTransaction(
           replyTo,
-          { phone, amount, direction, startedAt, afterId, notificationAfterId },
+          { phone, amount, direction, startedAt, afterId, notificationAfterId, customerInitiated },
           instructionRef.current === null,
+          claimRef.current,
         );
       } catch {
         // A failed CHECK is not a failed PAYMENT. The attempt still counts,
@@ -164,6 +175,9 @@ export function TransactionWatcher({
 
       if (next) {
         setResult(next);
+        // Accepted once: from here the report decides, and asking again would
+        // only send a second charge request.
+        if (next.claimed) claimRef.current = false;
         if (next.instruction) {
           instructionRef.current = next.instruction;
           setInstruction(next.instruction);
@@ -187,7 +201,7 @@ export function TransactionWatcher({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [auto, replyTo, phone, amount, direction, startedAt, afterId, notificationAfterId]);
+  }, [auto, replyTo, phone, amount, direction, startedAt, afterId, notificationAfterId, customerInitiated]);
 
   /**
    * Manual check — plain async, no transition, nothing shared with the loop
@@ -205,8 +219,10 @@ export function TransactionWatcher({
         startedAt,
         afterId,
         notificationAfterId,
-      }, instructionRef.current === null);
+        customerInitiated,
+      }, instructionRef.current === null, claimRef.current);
       setResult(next);
+      if (next.claimed) claimRef.current = false;
       if (next.instruction) {
         instructionRef.current = next.instruction;
         setInstruction(next.instruction);
@@ -247,18 +263,24 @@ export function TransactionWatcher({
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold">
             {settled ? (
-              <span>{result?.status === "success" ? "Settled" : "Not confirmed"}</span>
+              <span>
+                {result?.status === "success"
+                  ? direction === "payout" ? "Done — delivered" : "Settled"
+                  : direction === "payout" ? "Failed — not delivered" : "Not confirmed"}
+              </span>
             ) : exhausted ? (
-              <span>Stopped watching</span>
+              <span>Stopped watching — still pending</span>
             ) : (
-              <span>Waiting for CamerPay…</span>
+              <span>{direction === "payout" ? "Pending — waiting for the operator…" : "Waiting for CamerPay…"}</span>
             )}
           </p>
 
           <p className="mt-0.5 text-xs opacity-90">
             <span>
               {result?.detail ??
-                "The customer approves on their handset. This checks every few seconds until CamerPay answers."}
+                (direction === "payout"
+                  ? "The payout was accepted. This checks every few seconds until the operator confirms the money arrived."
+                  : "The customer approves on their handset. This checks every few seconds until CamerPay answers.")}
             </span>
           </p>
 
@@ -267,10 +289,18 @@ export function TransactionWatcher({
               className="mt-3 rounded-md border border-warning/50 bg-surface p-3 text-text"
               aria-live="polite"
             >
-              <p className="text-sm font-bold">Orange action required</p>
+              <p className="text-sm font-bold">
+                {instruction.customerInitiated ? "Orange: the customer must dial this code" : "Orange action required"}
+              </p>
               <p className="mt-1 text-xs leading-relaxed text-text-secondary">
                 {instruction.message}
               </p>
+              {instruction.merchantName && (
+                <p className="mt-2 text-xs text-text-secondary">
+                  <span>Name Orange shows when they confirm: </span>
+                  <strong className="text-text">{instruction.merchantName}</strong>
+                </p>
+              )}
               {instruction.code && (
                 <>
                   <code className="mt-2 block rounded bg-surface-2 p-2 text-center text-sm font-bold break-all">
@@ -327,7 +357,7 @@ export function TransactionWatcher({
             {afterId !== undefined && <span> · after #{afterId}</span>}
             {/* v4 — so a screenshot of this panel says which watcher it is.
                 Chasing a fixed bug through a stale deploy cost an afternoon. */}
-            <span> · v5</span>
+            <span> · v6</span>
           </p>
 
           {/* Appended, never rewritten: each check leaves its own line, so the

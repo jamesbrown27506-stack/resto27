@@ -5,7 +5,7 @@ import { requireCronAuth, stampHeartbeat } from "@/lib/cron";
 import { orderDeadline } from "@/lib/orders/deadline";
 import { getTimeLimits } from "@/lib/orders/time-limit-settings";
 import { releaseOrderHoldings } from "@/lib/orders/cancellation-effects";
-import { resolveAttemptOutcome, MOBILE_MONEY_CONFIRMATION_WINDOW_MS } from "@/lib/payments/collect";
+import { resolveAttemptOutcome, confirmationWindowMs } from "@/lib/payments/collect";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { AUTO_CLOSE_HOURS, prepNudgeDue, PAID_NOT_STARTED_MINUTES } from "@/lib/orders/stage-watch";
 
@@ -126,7 +126,7 @@ export async function GET(request: Request) {
           // Settle any payment still open on it before giving up on it.
           const { data: attempts } = await supabase
             .from("payment_attempts")
-            .select("id, created_at")
+            .select("id, created_at, provider, raw_response")
             .eq("raw_response->>orderId", order.id as string)
             .eq("status", "pending");
           let paidMeanwhile = false;
@@ -136,12 +136,17 @@ export async function GET(request: Request) {
             if (outcome.status === "succeeded") paidMeanwhile = true;
             else if (
               outcome.status === "pending" &&
-              now - Date.parse(attempt.created_at as string) < MOBILE_MONEY_CONFIRMATION_WINDOW_MS
+              // An Orange ask accepted after the dial is being held open for
+              // the report: the order must not be cancelled under it.
+              (outcome.error === "dialClaimAccepted" ||
+                now - Date.parse(attempt.created_at as string) <
+                  confirmationWindowMs(String(attempt.provider ?? "camerpay"), attempt.raw_response))
             ) {
               stillInFlight = true;
             }
           }
-          // A prompt still live on the phone gets its five minutes.
+          // A prompt still live on the phone gets its five minutes (ten when the
+          // customer has to dial an Orange code themselves).
           if (paidMeanwhile || stillInFlight) continue;
         }
 

@@ -58,7 +58,21 @@ export function PaymentPendingView({
   // a mangled code there. Copy-and-paste is the path that works on iPhone.
   const appleMobile = useAppleMobile();
   const [copied, setCopied] = useState(false);
-  const steps = [t("sui.pay.step1"), t("sui.pay.step2"), t("sui.pay.step3"), t("sui.pay.step4")];
+  /*
+    Orange since 2026-09: no prompt is pushed, the customer dials the code and
+    Orange then shows a merchant name to confirm. The box below says so in our
+    own words — CamerPay's sentence is written for the merchant ("veuillez
+    inviter le client à…") and is not shown.
+  */
+  const dial = Boolean(instruction?.customerInitiated && instruction.code);
+  const steps = dial
+    ? [
+        t(appleMobile ? "sui.pay.dialStep1Copy" : "sui.pay.dialStep1"),
+        t("sui.pay.dialStep2"),
+        t("sui.pay.dialStep3"),
+        t("sui.pay.dialStep4"),
+      ]
+    : [t("sui.pay.step1"), t("sui.pay.step2"), t("sui.pay.step3"), t("sui.pay.step4")];
 
   function copyCode(code: string) {
     void navigator.clipboard?.writeText(code).then(() => setCopied(true), () => setCopied(false));
@@ -76,7 +90,9 @@ export function PaymentPendingView({
         </span>
       </div>
 
-      <p className="mx-auto mt-4 max-w-sm text-sm leading-relaxed text-text-secondary">{body}</p>
+      <p className="mx-auto mt-4 max-w-sm text-sm leading-relaxed text-text-secondary">
+        {instruction?.received ? t("sui.pay.dialReceivedBody") : dial ? t("sui.pay.dialPendingBody") : body}
+      </p>
 
       <dl className="mt-5 grid w-full min-w-0 gap-3 rounded-lg border border-border bg-surface-2 p-4 text-left text-sm">
         <div className="grid w-full min-w-0 grid-cols-2 items-center gap-3">
@@ -126,15 +142,36 @@ export function PaymentPendingView({
         </div>
       )}
 
-      {instruction && !instruction.url && (
+      {instruction?.received && (
+        <div className="mt-4 w-full min-w-0 rounded-lg border border-success/35 bg-success-light p-4 text-left">
+          <p className="flex items-center gap-2 font-semibold text-success">
+            <Check className="size-4" aria-hidden />
+            {t("sui.pay.dialReceivedTitle")}
+          </p>
+        </div>
+      )}
+
+      {instruction && !instruction.url && !instruction.received && (
         <div className="mt-4 w-full min-w-0 rounded-lg border border-warning/35 bg-warning-light p-4 text-left">
-          <p className="font-semibold text-warning">{t("sui.pay.orangeTitle")}</p>
-          <p className="mt-1 text-sm leading-relaxed text-text-secondary">{instruction.message}</p>
+          <p className="font-semibold text-warning">{t(dial ? "sui.pay.dialTitle" : "sui.pay.orangeTitle")}</p>
+          <p className="mt-1 text-sm leading-relaxed text-text-secondary">
+            {dial ? t("sui.pay.dialBody", { phone }) : instruction.message}
+          </p>
           {instruction.code && (
             <>
-              <code className="mt-3 block break-all rounded bg-surface px-3 py-2 text-sm font-bold">
+              <code className="mt-3 block break-all rounded bg-surface px-3 py-2 text-center text-base font-bold tracking-wide">
                 {instruction.code}
               </code>
+              {dial && instruction.merchantName && (
+                <div className="mt-3 rounded border border-border bg-surface px-3 py-2">
+                  <p className="flex items-center gap-1.5 text-xs text-text-light">
+                    <ShieldCheck className="size-3.5" aria-hidden />
+                    {t("sui.pay.dialName")}
+                  </p>
+                  <p className="mt-0.5 break-words text-sm font-bold">{instruction.merchantName}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-text-secondary">{t("sui.pay.dialNameHint")}</p>
+                </div>
+              )}
               <ol className="mt-3 grid gap-1.5 text-xs leading-relaxed text-text-secondary">
                 {steps.map((step, index) => (
                   <li key={step} className="flex gap-2"><span className="tnum font-bold text-warning">{index + 1}.</span><span>{step}</span></li>
@@ -155,7 +192,7 @@ export function PaymentPendingView({
                     href={"tel:" + encodeURIComponent(instruction.code)}
                   >
                     <PhoneCall className="size-4" aria-hidden />
-                    {t("sui.pay.openPhone")}
+                    {t(dial ? "sui.pay.dialCall" : "sui.pay.openPhone")}
                   </a>
                 )}
               </div>

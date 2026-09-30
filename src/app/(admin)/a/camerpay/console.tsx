@@ -23,6 +23,7 @@ import {
   probeConfirm,
   probeCollection,
   probeIdentify,
+  probeIdentifyResult,
   probeLogin,
   probePayout,
   probeRaw,
@@ -190,9 +191,9 @@ const PRESETS: {
   },
   { label: "balance", service: "account", action: "balance", data: "", authenticated: true },
   {
-    label: "identifier",
+    label: "IDENTIFIE",
     service: "transaction",
-    action: "identifier",
+    action: "IDENTIFIE",
     data: '{ "numero": "6XXXXXXXX" }',
     authenticated: true,
   },
@@ -234,6 +235,8 @@ interface RecentTx {
   afterId?: number;
   /** Notification counter before the call, used to reject stale Orange codes. */
   notificationAfterId?: number;
+  /** Orange: the code the customer must dial before this can be paid. */
+  dial?: ProbeResult["dial"];
 }
 
 /** The five jobs this console does, in the order you do them. */
@@ -839,7 +842,24 @@ export function CamerPayConsole({
             className="mt-4"
             disabled={pending || phone.trim().length < 9}
             loading={running === "identify"}
-            onClick={() => run("identify", () => probeIdentify(phone))}
+            onClick={() =>
+              run("identify", async () => {
+                const accepted = await probeIdentify(phone);
+                if (!accepted.ok || !accepted.trackingId) return accepted;
+                // The name is not in the acceptance: it arrives on the
+                // callback a moment later. Read it back for the operator
+                // rather than sending them to look for it.
+                for (let tries = 0; tries < 8; tries += 1) {
+                  await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+                  const answer = await probeIdentifyResult(accepted.trackingId);
+                  if (!answer.pending) return { ...answer, request: accepted.request };
+                }
+                return {
+                  ...accepted,
+                  detail: `Accepted, replyTo ${accepted.trackingId} — but no callback arrived within 16 seconds. Check that the callback URL is registered (Setup).`,
+                };
+              })
+            }
           >
             <Play className="size-3.5" aria-hidden />
             <span>Identify</span>
@@ -902,6 +922,7 @@ export function CamerPayConsole({
                     startedAt: result.startedAt ?? now.toISOString(),
                     afterId: result.afterId,
                     notificationAfterId: result.notificationAfterId,
+                    dial: result.dial,
                   };
                   setWatching(tx);
                   // Prefilled, so "check this one" never means retyping a
@@ -928,7 +949,9 @@ export function CamerPayConsole({
                 startedAt: watching.startedAt,
                 afterId: watching.afterId,
                 notificationAfterId: watching.notificationAfterId,
+                customerInitiated: Boolean(watching.dial),
               }}
+              dial={watching.dial}
             />
           )}
         </CardBody>
@@ -1093,7 +1116,11 @@ export function CamerPayConsole({
             onClick={() =>
               run("payout", async () => {
                 const result = await probePayout(payoutPhone, payoutValue);
-                const id = (result.payload as { replyTo?: string } | undefined)?.replyTo;
+                // The server picks the tracking id out of whichever shape the
+                // acceptance took. Reading `payload.replyTo` here found
+                // nothing on an HTTP 200 acceptance, so no watcher opened and
+                // a payout showed "accepted" with no state after it.
+                const id = result.trackingId;
                 if (result.ok && id) {
                   const now = new Date();
                   const tx: RecentTx = {
@@ -1104,8 +1131,9 @@ export function CamerPayConsole({
                     // needs to match the row in CamerPay's report.
                     amount: result.fee?.net ?? payoutValue,
                     at: now.toLocaleTimeString(),
-                    startedAt: now.toISOString(),
+                    startedAt: result.startedAt ?? now.toISOString(),
                     afterId: result.afterId,
+                    notificationAfterId: result.notificationAfterId,
                   };
                   setWatchingPayout(tx);
                   setReplyTo(id);
@@ -1133,6 +1161,7 @@ export function CamerPayConsole({
                 direction: watchingPayout.kind,
                 startedAt: watchingPayout.startedAt,
                 afterId: watchingPayout.afterId,
+                notificationAfterId: watchingPayout.notificationAfterId,
               }}
             />
           )}

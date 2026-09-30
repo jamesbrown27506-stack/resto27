@@ -600,11 +600,21 @@ export async function sendPayout(
   return authed<TransactionAccepted>("transaction", "depot", { numeroClient, montant: amount });
 }
 
-/** Look up which operator a number belongs to, before charging it. */
-export async function identifyNumber(phone: string): Promise<CamerPayResponse> {
+/**
+ * Look up whose wallet a number is, before charging it.
+ *
+ * The action is `IDENTIFIE`, not `identifier`. doc.camerpay.net tags it that
+ * way and the API answers "L'action identifier est invalide pour le service
+ * transaction" (HTTP 400) to the infinitive — the French verb was a guess
+ * that read naturally and was never the action's name.
+ *
+ * Asynchronous like every transaction call: the answer is an acceptance with
+ * a `replyTo`, and the identified name arrives on the callback.
+ */
+export async function identifyNumber(phone: string): Promise<CamerPayResponse<TransactionAccepted>> {
   const numero = normalisePhone(phone);
   if (!numero) throw new Error(`Invalid phone number "${phone}".`);
-  return authed("transaction", "identifier", { numero });
+  return authed<TransactionAccepted>("transaction", "IDENTIFIE", { numero });
 }
 
 /* ── Reporting — the trust anchor ──────────────────────────────────────── */
@@ -680,6 +690,12 @@ export interface TransactionHint {
   startedAt?: string;
   /** Notification report counter captured before initiating the request. */
   notificationAfterId?: number;
+  /**
+   * The customer starts the payment themselves (Orange: dial a code, then we
+   * ask again). Several asks then belong to ONE payment, so the paid row and
+   * the receipt are looked for past the unpaid asks — see selectReportRow.
+   */
+  customerInitiated?: boolean;
   /**
    * Report rows another attempt has already consumed.
    *
@@ -1039,9 +1055,17 @@ export async function confirmTransaction(
    * unused. Only inspect notifications above the counter captured before this
    * request, and require the exact customer plus amount.
    */
+  /*
+   * Payouts are read the same way when the caller captured the counter: the
+   * operator's "DEPOT_… validé" receipt can land here before (or without) the
+   * transaction row flipping to used. findPaymentNotification only settles a
+   * notice naming the SAME operation, so a collection's receipt can never
+   * confirm a payout to that number, nor the other way round.
+   */
   const notificationVerdict = async (searched: unknown) => {
+    const direction = effective.direction;
     if (
-      effective.direction !== "collect" ||
+      !direction ||
       !effective.phone ||
       effective.amount === undefined ||
       effective.notificationAfterId === undefined
@@ -1060,7 +1084,8 @@ export async function confirmTransaction(
         phone: effective.phone,
         amount: effective.amount,
         afterNotificationId: effective.notificationAfterId,
-        direction: "collect",
+        direction,
+        customerInitiated: effective.customerInitiated,
         // A receipt another attempt already settled from is not ours to take.
         excludeIds: [...consumed].filter((id) => id.startsWith("notification:")),
       },
@@ -1068,6 +1093,8 @@ export async function confirmTransaction(
 
     if (!match) return { status: "pending" as const, searched };
     if (match.status === "instruction") {
+      // A dial instruction is only ever addressed to a paying customer.
+      if (direction !== "collect") return { status: "pending" as const, searched };
       return {
         status: "pending" as const,
         searched,
@@ -1115,6 +1142,7 @@ export async function confirmTransaction(
     afterId: effective.afterId,
     startedAt,
     exclude: consumed,
+    customerInitiated: effective.customerInitiated,
   });
   if (!match) return notificationVerdict(rows);
   const amount = rowAmount(match);

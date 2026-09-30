@@ -24,6 +24,8 @@ export interface ReportRow {
   Amount?: number;
   montant?: number;
   amount?: number;
+  /** TRUE once the operator confirmed the money moved. */
+  used?: boolean;
 }
 
 /** Phone numbers must be exactly 9 digits starting with 6, no +237 prefix. */
@@ -120,6 +122,11 @@ export interface ReportMatchFacts {
   startedAt?: number | null;
   /** Row ids other attempts have already settled from. */
   exclude: ReadonlySet<string>;
+  /**
+   * The customer starts this payment themselves (Orange: they dial a code,
+   * then we ask again). See selectReportRow.
+   */
+  customerInitiated?: boolean;
 }
 
 /**
@@ -185,5 +192,22 @@ export function selectReportRow<T extends ReportRow>(rows: T[], facts: ReportMat
   const byId = facts.afterId !== undefined
     ? (a: T, b: T) => (a.id ?? 0) - (b.id ?? 0)
     : (a: T, b: T) => (b.id ?? 0) - (a.id ?? 0);
-  return candidates.sort(byId)[0];
+  const ordered = candidates.sort(byId);
+
+  /*
+    A CUSTOMER-INITIATED PAYMENT ASKS SEVERAL TIMES, AND ONLY ONE ASK IS PAID.
+
+    Orange no longer accepts a collection pushed by the merchant: the first
+    `retrait` is refused with a code to dial, and the same request is sent
+    again until the customer has dialled it. Each ask may leave its own row,
+    so "the first row above the counter" is an unpaid one and the payment
+    would read pending for ever. Here the paid row IS the payment: the oldest
+    used row above the counter wins, and only without one does the first row
+    stand in as evidence that the request exists.
+  */
+  if (facts.customerInitiated) {
+    const paid = ordered.find((row) => row.used === true);
+    if (paid) return paid;
+  }
+  return ordered[0];
 }

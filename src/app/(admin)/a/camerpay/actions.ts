@@ -5,6 +5,7 @@ import { SUPER_ADMIN_ONLY_ERROR } from "@/lib/auth/super-admin-rules";
 import { MIN_AMOUNT_XAF } from "@/lib/payments/camerpay/client";
 import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 import { getWithdrawalFeeConfig } from "@/lib/data/settings";
+import { createAdminClient } from "@/lib/supabase/server";
 import {
   acceptedTransactionId,
   confirmTransaction,
@@ -28,6 +29,7 @@ import {
   type TransactionHint,
 } from "@/lib/payments/camerpay/client";
 import {
+  dialInstructionFromRefusal,
   findPaymentInstruction,
   type CamerPayNotificationEntry,
   type PaymentInstruction,
@@ -69,6 +71,11 @@ export interface ProbeResult {
    * recipient is owed, the withheld fee, and the net actually sent.
    */
   fee?: { gross: number; fee: number; net: number };
+  /**
+   * Orange refused to push a prompt: the customer must dial this code first.
+   * The watcher shows it and keeps asking CamerPay until it is paid.
+   */
+  dial?: PaymentInstruction;
 }
 
 /**
@@ -183,6 +190,8 @@ export interface TransactionStatus {
   amount?: number;
   raw?: unknown;
   instruction?: PaymentInstruction;
+  /** An Orange ask was ACCEPTED this time — stop asking, the report decides now. */
+  claimed?: boolean;
 }
 
 /**
@@ -205,15 +214,77 @@ export async function checkTransaction(
   replyTo: string,
   hint: TransactionHint = {},
   includeInstruction = true,
+  /**
+   * Send the same `retrait` again. Only the watcher of an Orange collection
+   * that was refused with a code to dial asks for this: CamerPay looks for the
+   * customer's withdrawal only when asked, so asking again IS the check.
+   */
+  claim = false,
 ): Promise<TransactionStatus> {
-  await requireRole("admin");
+  const admin = await requireRole("admin");
 
   const trimmed = replyTo.trim();
   if (!trimmed) return { status: "pending", detail: "No transaction reference to check." };
 
   try {
-    const result = await confirmTransaction(trimmed, hint);
+    let result = await confirmTransaction(trimmed, hint);
     let instruction: PaymentInstruction | undefined;
+
+    // A repeated ask is a charge request, so it is a super admin's like the
+    // first one. It never settles anything by itself: an acceptance is handed
+    // to the report, exactly as for a pushed prompt.
+    if (
+      claim &&
+      admin.isSuperAdmin &&
+      result.status === "pending" &&
+      hint.direction === "collect" &&
+      hint.phone &&
+      hint.amount !== undefined
+    ) {
+      const again = await requestCollection(hint.phone, hint.amount);
+      const dial = again.etat ? null : dialInstructionFromRefusal(again.message, hint.amount);
+
+      if (dial) {
+        return {
+          status: "pending",
+          instruction: dial,
+          detail: "Not dialled yet. Orange debits nothing until the customer dials the code below.",
+          raw: { httpStatus: again.httpStatus, message: again.message },
+        };
+      }
+
+      if (again.etat) {
+        const trackingId = acceptedTransactionId(again) ?? trimmed;
+        await recordAcceptedRequest({
+          replyTo: trackingId,
+          direction: "collect",
+          phone: hint.phone,
+          amount: hint.amount,
+          afterId: hint.afterId ?? null,
+          startedAt: hint.startedAt,
+        });
+        result = await confirmTransaction(trackingId, hint);
+        const answer = `CamerPay accepted the request after the dial (HTTP ${again.httpStatus}${again.message ? `: ${again.message}` : ""}).`;
+        return {
+          status: result.status,
+          amount: result.amount,
+          claimed: true,
+          // The acceptance itself is shown: its exact shape is what tells us
+          // how CamerPay reports a customer-initiated payment.
+          raw: { accepted: { httpStatus: again.httpStatus, message: again.message, data: again.data, id: again.id }, report: result.raw ?? null },
+          detail:
+            result.status === "success"
+              ? `Settled${result.amount ? ` — ${result.amount} FCFA` : ""}. ${answer}`
+              : `${answer} Waiting for the report to show the money.`,
+        };
+      }
+
+      return {
+        status: "pending",
+        detail: `CamerPay answered: ${again.message ?? `HTTP ${again.httpStatus}`}`,
+        raw: { httpStatus: again.httpStatus, message: again.message },
+      };
+    }
 
     if (
       includeInstruction &&
@@ -243,11 +314,17 @@ export async function checkTransaction(
       raw: result.raw ?? result.searched,
       instruction,
       detail:
-        result.status === "success"
-          ? `Settled${result.amount ? ` — ${result.amount} FCFA` : ""}.`
-          : result.status === "failed"
-            ? "Not confirmed — the PIN was never entered, so no money moved."
-            : "Waiting for CamerPay. The customer has to enter their PIN on the handset.",
+        hint.direction === "payout"
+          ? result.status === "success"
+            ? `Delivered${result.amount ? ` — ${result.amount} FCFA` : ""}. The money is in the recipient's wallet.`
+            : result.status === "failed"
+              ? "The operator rejected this payout — nothing reached the wallet."
+              : "Sent to CamerPay, not yet confirmed by the operator. Nothing to do on the recipient's phone."
+          : result.status === "success"
+            ? `Settled${result.amount ? ` — ${result.amount} FCFA` : ""}.`
+            : result.status === "failed"
+              ? "Not confirmed — the PIN was never entered, so no money moved."
+              : "Waiting for CamerPay. The customer has to confirm on the handset.",
     };
   } catch (error) {
     // A network blip must not read as "failed" — that is the one status that
@@ -310,10 +387,22 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
     }
 
     const afterId = await latestTransactionId();
+    const notificationAfterId = await latestNotificationId();
+    const startedAt = new Date().toISOString();
     const response = await sendPayout(phone, net);
 
     if (response.httpStatus === 202 || response.etat) {
-      const replyTo = response.data?.replyTo ?? "(none returned)";
+      /**
+       * THE TRACKING ID IS NOT ALWAYS IN `data.replyTo`.
+       *
+       * Acceptances now often come back HTTP 200 with `data: null` and the id
+       * at the top level. Reading only `data.replyTo` left this payout with no
+       * id at all: no ledger row, no fee record, and — what the operator saw —
+       * no watcher, so money left the balance and the screen never said
+       * whether it arrived. Same extraction as the collection side.
+       */
+      const trackingId = acceptedTransactionId(response);
+      const replyTo = trackingId ?? "(none returned)";
       console.info(
         "[camerpay] payout requested",
         replyTo,
@@ -331,14 +420,14 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
       // in the report by number/amount/direction. The report never echoes it.
       // The NET is recorded: that is the amount the CamerPay report shows for
       // this transaction, so the reconciler can match the row.
-      if (response.data?.replyTo) {
+      if (trackingId) {
         await recordAcceptedRequest({
-          replyTo: response.data.replyTo,
+          replyTo: trackingId,
           direction: "payout",
           phone,
           amount: net,
           afterId: afterId ?? null,
-          startedAt: new Date().toISOString(),
+          startedAt,
         });
 
         // The withheld fee is the platform's revenue — one row per payout,
@@ -346,7 +435,7 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
         // bookkeeping: the fee is withheld regardless, this only records it.
         if (fee > 0) {
           await recordWithdrawalFee({
-            replyTo: response.data.replyTo,
+            replyTo: trackingId,
             phone,
             gross,
             fee,
@@ -362,9 +451,12 @@ export async function probePayout(phone: string, amount: number): Promise<ProbeR
           fee > 0
             ? `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — ${net.toLocaleString("fr-CM")} FCFA sent (${fee.toLocaleString("fr-CM")} FCFA tax withheld). Money is on its way OUT of your balance.`
             : `Accepted (HTTP ${response.httpStatus}). replyTo ${replyTo} — money is on its way OUT of your balance. Watch it settle below.`,
-        payload: response.data,
+        payload: { trackingId, replyTo: response.data?.replyTo, requestId: response.id, message: response.message },
         request: response.request,
         afterId: afterId ?? undefined,
+        trackingId: trackingId ?? undefined,
+        startedAt,
+        notificationAfterId,
         fee: fee > 0 ? { gross, fee, net } : undefined,
       };
     }
@@ -568,22 +660,25 @@ export async function probeIdentify(phone: string): Promise<ProbeResult> {
     const response = await identifyNumber(normalised);
 
     /**
-     * `identifier` lives under the TRANSACTION service, and every transaction
-     * call is asynchronous: HTTP 202 means accepted, and the identified name
-     * arrives on the callback rather than in this response.
+     * `IDENTIFIE` lives under the TRANSACTION service, and every transaction
+     * call is asynchronous: the answer is an acceptance ("Votre requête est en
+     * cours de traitement", with a `replyTo`), and the identified name arrives
+     * on the callback rather than in this response.
      *
      * Reading `etat` as the verdict — which this did — reports a perfectly
      * good acceptance as a failure, and sends you debugging a number that was
-     * never the problem.
+     * never the problem. The console then reads the callback for that replyTo
+     * (probeIdentifyResult) so the name appears here without leaving the page.
      */
-    if (response.httpStatus === 202) {
-      const replyTo = (response.data as { replyTo?: string } | undefined)?.replyTo;
+    const replyTo = response.data?.replyTo?.trim();
+    if (response.httpStatus === 202 || (response.etat && replyTo)) {
       return {
         ok: true,
         label: "Identify",
-        detail: `Accepted (HTTP 202)${replyTo ? `, replyTo ${replyTo}` : ""}. The identified name arrives on the callback, not here — use Confirm with that replyTo.`,
+        detail: `Accepted (HTTP ${response.httpStatus})${replyTo ? `, replyTo ${replyTo}` : ""}. Waiting for the name on the callback…`,
         payload: response.data,
         request: response.request,
+        trackingId: replyTo,
       };
     }
 
@@ -598,6 +693,64 @@ export async function probeIdentify(phone: string): Promise<ProbeResult> {
       payload: response.data,
       request: response.request,
       response: { ...response, request: undefined },
+    };
+  } catch (error) {
+    return fail("Identify", error);
+  }
+}
+
+/**
+ * The answer to an accepted `IDENTIFIE`, read from the callback it arrived on.
+ *
+ * The webhook stores every delivery verbatim in payment_webhook_events BEFORE
+ * judging it, keyed by its replyTo — so the identification is already in the
+ * database a second or two after the acceptance, and nothing new has to be
+ * asked of CamerPay. `pending` means the callback has not arrived yet.
+ */
+export async function probeIdentifyResult(replyTo: string): Promise<ProbeResult & { pending?: boolean }> {
+  await requireRole("admin");
+  const needle = replyTo.trim();
+  if (!needle) return { ok: false, label: "Identify", detail: "No replyTo to look up." };
+
+  try {
+    const { data, error } = await createAdminClient()
+      .from("payment_webhook_events")
+      .select("raw_body")
+      .eq("provider", "camerpay")
+      .eq("transaction_id", needle)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) return { ok: false, label: "Identify", detail: error.message };
+    if (!data) {
+      return {
+        ok: true,
+        pending: true,
+        label: "Identify",
+        detail: `Accepted, replyTo ${needle}. The callback with the name has not arrived yet.`,
+      };
+    }
+
+    let body: {
+      etat?: boolean;
+      message?: string;
+      data?: { etat?: boolean; message?: string; nom?: string; name?: string };
+    } = {};
+    try {
+      body = JSON.parse(String(data.raw_body ?? "{}"));
+    } catch {
+      // Shown as an empty payload below; the message says what is known.
+    }
+    const identified = (body.etat ?? body.data?.etat) !== false;
+    const name = body.data?.nom ?? body.data?.name;
+    const message = body.data?.message ?? body.message;
+    return {
+      ok: identified,
+      label: "Identify",
+      detail: name
+        ? `Identified: ${name}${message ? ` — ${message}` : ""}`
+        : (message ?? (identified ? "Identified. See the callback below." : "Not identified.")),
+      payload: body,
     };
   } catch (error) {
     return fail("Identify", error);
@@ -697,6 +850,34 @@ export async function probeCollection(phone: string, amount: number): Promise<Pr
         trackingId,
         startedAt,
         notificationAfterId,
+      };
+    }
+
+    /*
+      ORANGE: NOT A REFUSAL, A CODE TO DIAL (2026-09).
+
+      Orange no longer lets a merchant pull money at a distance. CamerPay
+      answers etat:false / HTTP 404 with the code the customer must dial and
+      the name Orange will show them. The watcher below shows both and sends
+      this same request again every few seconds — it is accepted once the
+      customer has dialled.
+    */
+    const dial = dialInstructionFromRefusal(response.message, amount);
+    if (dial) {
+      const trackingId = acceptedTransactionId(response) ?? `dial-${startedAt}`;
+      console.info("[camerpay] collection needs a customer dial", trackingId, "by", admin.email);
+      return {
+        ok: true,
+        label: "Collection",
+        detail: `Orange: the customer starts this payment. They dial ${dial.code}${dial.merchantName ? ` and Orange shows "${dial.merchantName}"` : ""}. Nothing is debited until then — this is being watched below.`,
+        payload: { trackingId, httpStatus: response.httpStatus, message: response.message },
+        request: response.request,
+        response: { ...response, request: undefined },
+        afterId: afterId ?? undefined,
+        trackingId,
+        startedAt,
+        notificationAfterId,
+        dial,
       };
     }
 

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { findPaymentInstruction, findPaymentNotification, notificationRowId } from "./notification";
+import {
+  dialInstructionFromRefusal,
+  findPaymentInstruction,
+  findPaymentNotification,
+  notificationRowId,
+} from "./notification";
 
 describe("findPaymentInstruction", () => {
   it("extracts the exact code from a matching post-request Orange notification", () => {
@@ -173,5 +178,59 @@ describe("one request among its retries", () => {
   it("does not take a 2000 FCFA instruction for a 500 FCFA request", () => {
     expect(findPaymentNotification(SEPT_13, { phone: CUSTOMER, amount: 2000, afterNotificationId: 158 }))
       .toMatchObject({ id: 159, status: "instruction" });
+  });
+});
+
+describe("dialInstructionFromRefusal", () => {
+  // The refusal CamerPay returned on 2026-09-30 (HTTP 404, etat false).
+  const refusal =
+    "Aucun retrait Orange de 500 n'a été détecté pour le numéro 691098999.\n\nVeuillez inviter le client à effectuer le retrait en composant le #150*14*307053*656703911*500# (PHARMACIE MOTOS).";
+
+  it("reads the code and the name Orange will show from the live refusal", () => {
+    expect(dialInstructionFromRefusal(refusal, 500)).toEqual({
+      message:
+        "Aucun retrait Orange de 500 n'a été détecté pour le numéro 691098999. Veuillez inviter le client à effectuer le retrait en composant le #150*14*307053*656703911*500# (PHARMACIE MOTOS).",
+      code: "#150*14*307053*656703911*500#",
+      merchantName: "PHARMACIE MOTOS",
+      customerInitiated: true,
+    });
+  });
+
+  it("refuses a code for another amount than the one asked for", () => {
+    expect(dialInstructionFromRefusal(refusal, 2000)).toBeNull();
+  });
+
+  it("still gives the code when no name is in brackets", () => {
+    const result = dialInstructionFromRefusal("Composer le #150*14*307053*656703911*1500#.", 1500);
+    expect(result?.code).toBe("#150*14*307053*656703911*1500#");
+    expect(result?.merchantName).toBeUndefined();
+  });
+
+  it("is not fooled by an ordinary refusal", () => {
+    expect(dialInstructionFromRefusal("Solde insuffisant.", 500)).toBeNull();
+    expect(dialInstructionFromRefusal("L'action identifier est invalide pour le service transaction", 500)).toBeNull();
+    expect(dialInstructionFromRefusal(undefined, 500)).toBeNull();
+  });
+});
+
+describe("findPaymentNotification, customer-initiated", () => {
+  const rows = [
+    { id: 201, message: "Le propriétaire du numéro (691098999) doit composer le #150*14*307053*656703911*500#." },
+    { id: 202, message: "Le propriétaire du numéro (691098999) doit composer le #150*14*307053*656703911*500#." },
+    {
+      id: 203,
+      message:
+        "RETRAIT_ORANGE validé avec succès.\n• Client : 691098999\n• Montant : 500 FCFA\n• Réf. Transaction : CO260930.1101.B1\n• Vous : 679534849 (RESTO)",
+    },
+  ];
+  const hint = { phone: "691098999", amount: 500, afterNotificationId: 200 };
+
+  it("reads the receipt past our own repeated asks", () => {
+    expect(findPaymentNotification(rows, { ...hint, customerInitiated: true }))
+      .toMatchObject({ id: 203, status: "success" });
+  });
+
+  it("still stops at a second instruction for a pushed prompt", () => {
+    expect(findPaymentNotification(rows, hint)).toMatchObject({ id: 201, status: "instruction" });
   });
 });

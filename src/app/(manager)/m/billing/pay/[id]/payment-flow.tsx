@@ -12,6 +12,7 @@ import { useDates } from "@/lib/format/use-dates";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { checkInvoicePayment, payInvoice } from "@/lib/data/subscribe-actions";
 import type { InvoiceDetail } from "@/lib/data/invoices";
+import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 
 /**
  * Paying an invoice by Mobile Money.
@@ -59,6 +60,9 @@ export function PaymentFlow({
   const [error, setError] = useState<string | null>(null);
   const [attemptId, setAttemptId] = useState<string | null>(initialAttemptId);
   const [trackingPaused, setTrackingPaused] = useState(false);
+  // Orange makes the payer dial a code themselves; without this the screen
+  // waited for a prompt that would never come.
+  const [instruction, setInstruction] = useState<PaymentInstruction | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const initialPollStarted = useRef(false);
 
@@ -100,6 +104,7 @@ export function PaymentFlow({
 
         try {
           const result = await checkInvoicePayment(id);
+          if (result.instruction) setInstruction(result.instruction);
           if (result.status === "succeeded") {
             stopPolling();
             setPhase("succeeded");
@@ -143,6 +148,7 @@ export function PaymentFlow({
     setPhase("pending");
     setTrackingPaused(false);
     setError(null);
+    setInstruction(null);
 
     const started = await payInvoice({ invoiceId: invoice.id, phone: phone.trim() });
 
@@ -160,6 +166,7 @@ export function PaymentFlow({
     }
 
     if (started.status === "pending" && started.attemptId) {
+      if (started.instruction) setInstruction(started.instruction);
       startPolling(started.attemptId);
       return;
     }
@@ -288,6 +295,7 @@ export function PaymentFlow({
             phone={phone}
             gatewayLabel={t("mbl.checkout.pending.gateway")}
             requesting={busy && attemptId === null}
+            instruction={instruction}
           />
 
           {trackingPaused && (

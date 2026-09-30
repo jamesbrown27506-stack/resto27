@@ -77,3 +77,28 @@ describe("normalisePhone", () => {
     expect(normalisePhone("591098999")).toBeNull();
   });
 });
+
+describe("selectReportRow, customer-initiated (Orange since 2026-09)", () => {
+  // The first ask is refused with a code to dial (#160); the ask sent after
+  // the customer dialled is the one that was paid (#162).
+  const dialled: (ReportRow & { used: boolean })[] = [
+    { id: 162, action: "RETRAIT_ORANGE", Amount: 500, "customer number": ORANGE, used: true, ref: "CO260930.1101.B1" },
+    { id: 161, action: "RETRAIT_ORANGE", Amount: 500, "customer number": ORANGE, used: false },
+    { id: 160, action: "RETRAIT_ORANGE", Amount: 500, "customer number": ORANGE, used: false },
+  ];
+
+  it("takes the paid row, not the first unpaid ask", () => {
+    expect(selectReportRow(dialled, facts({ afterId: 159, customerInitiated: true }))?.id).toBe(162);
+  });
+
+  it("keeps the first-row rule for a pushed prompt", () => {
+    expect(selectReportRow(dialled, facts({ afterId: 159 }))?.id).toBe(160);
+  });
+
+  it("never reaches below the counter or into a row another attempt consumed", () => {
+    expect(selectReportRow(rows, facts({ afterId: 149, customerInitiated: true }))?.id).toBe(150);
+    expect(
+      selectReportRow(dialled, facts({ afterId: 159, customerInitiated: true, exclude: new Set(["162"]) }))?.id,
+    ).toBe(160);
+  });
+});

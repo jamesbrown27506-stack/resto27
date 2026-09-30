@@ -11,7 +11,7 @@ import { collectionGateway, gatewayRange, payableOn } from "@/lib/payments/gatew
 import { cameroonNetwork } from "@/lib/payments/saspay/cameroon";
 import { startSaspayPayment, verifySaspayPayment } from "@/lib/payments/saspay/client";
 import { siteUrl } from "@/lib/site-url";
-import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
+import { dialInstructionFromRefusal, type PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import { PROVIDER_REFUSED_FALLBACK } from "@/lib/payments/payment-error";
 import {
   acceptedTransactionId,
@@ -187,8 +187,45 @@ export const MOBILE_MONEY_CONFIRMATION_WINDOW_MS = 5 * 60_000;
  */
 export const SASPAY_CONFIRMATION_WINDOW_MS = 15 * 60_000;
 
-export function confirmationWindowMs(provider: string): number {
-  return provider === "saspay" ? SASPAY_CONFIRMATION_WINDOW_MS : MOBILE_MONEY_CONFIRMATION_WINDOW_MS;
+/**
+ * An Orange payment the customer starts themselves: leave the app, dial the
+ * code, enter the PIN, come back. Twice the time a pushed prompt gets.
+ */
+export const CUSTOMER_DIAL_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Shown in place of the code once an ask has been accepted: the customer has
+ * dialled, and dialling again would pay again.
+ */
+const DIAL_RECEIVED: PaymentInstruction = { message: "", customerInitiated: true, received: true };
+
+/**
+ * Once CamerPay has accepted an ask after the customer dialled, the window is
+ * not allowed to close on it for this long: the money has very probably moved,
+ * and the report showing it a minute late must not turn that into a failure.
+ */
+const DIAL_ACCEPTED_GRACE_MS = 5 * 60_000;
+
+/** How often a waiting dial payment is asked about again (see claimDialledCollection). */
+const DIAL_RECLAIM_EVERY_MS = 6_000;
+
+export function confirmationWindowMs(provider: string, rawResponse?: unknown): number {
+  if (provider === "saspay") return SASPAY_CONFIRMATION_WINDOW_MS;
+  const raw = rawResponse as { customerDial?: unknown } | null | undefined;
+  return raw?.customerDial === true ? CUSTOMER_DIAL_WINDOW_MS : MOBILE_MONEY_CONFIRMATION_WINDOW_MS;
+}
+
+/** The code-to-dial stored on an attempt Orange refused to push (null otherwise). */
+function storedDialInstruction(row: PaymentAttemptRow): PaymentInstruction | null {
+  if (row.rawResponse?.customerDial !== true) return null;
+  const stored = row.rawResponse.dialInstruction as Partial<PaymentInstruction> | undefined;
+  if (!stored || typeof stored.code !== "string") return null;
+  return {
+    message: typeof stored.message === "string" ? stored.message : "",
+    code: stored.code,
+    merchantName: typeof stored.merchantName === "string" ? stored.merchantName : undefined,
+    customerInitiated: true,
+  };
 }
 
 /**
@@ -199,7 +236,7 @@ export function confirmationWindowMs(provider: string): number {
  */
 async function expireUnconfirmedMobileMoneyAttempt(row: PaymentAttemptRow): Promise<boolean> {
   if (row.provider !== "camerpay" && row.provider !== "saspay") return false;
-  const windowMs = confirmationWindowMs(row.provider);
+  const windowMs = confirmationWindowMs(row.provider, row.rawResponse);
 
   const createdAt = Date.parse(row.createdAt);
   if (!Number.isFinite(createdAt) || Date.now() - createdAt < windowMs) {
@@ -406,6 +443,49 @@ export async function initiatePaymentAttempt(input: {
   }
 
   const trackingId = acceptedTransactionId(accepted);
+
+  /*
+    ORANGE: THE CUSTOMER STARTS IT (2026-09).
+
+    Orange stopped letting a merchant pull money at a distance — people were
+    being scammed by withdrawal requests they never asked for. CamerPay now
+    answers an Orange `retrait` with etat:false / HTTP 404 and the code the
+    customer must dial. That is not a refusal of the payment: it is its first
+    half. The attempt stays PENDING with the code stored on it, the customer is
+    shown the code (and the name Orange will display when they confirm), and
+    every later check sends the same request again — accepted once they have
+    dialled (claimDialledCollection). Treating this as providerRefused is what
+    showed customers CamerPay's raw sentence as a failed payment.
+
+    The tracking id of the refused ask is kept as transaction_id so the attempt
+    is "in flight" to every resume path (they look for a pending attempt with
+    one), and replaced by the accepted ask's id later.
+  */
+  const dial = accepted.etat ? null : dialInstructionFromRefusal(accepted.message, amount);
+  if (dial) {
+    const { error: dialError } = await supabase
+      .from("payment_attempts")
+      .update({
+        transaction_id: trackingId ?? reference,
+        raw_response: {
+          etat: accepted.etat,
+          httpStatus: accepted.httpStatus,
+          message: accepted.message,
+          afterId,
+          notificationAfterId,
+          orderId: input.orderId,
+          walletFunding: input.kind === "wallet", diningPaymentId: input.diningPaymentId,
+          requested_at: startedAt,
+          customerDial: true,
+          dialInstruction: dial,
+          lastClaimAt: startedAt,
+        },
+      })
+      .eq("id", attemptId);
+    if (dialError) console.error("[pay:initiate:live] dial instruction", attemptId, dialError.message);
+    return { ok: true, status: "pending", attemptId, instruction: dial };
+  }
+
   if (!accepted.etat || !trackingId) {
     console.error("[pay:initiate:live] refused", accepted.message ?? accepted.httpStatus);
     // A refusal IS conclusive — no charge was accepted, so the attempt is done.
@@ -725,37 +805,54 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
     for it is refunded automatically in settlePayment().
   */
 
+  // Set when Orange refused to push a prompt and the customer must dial.
+  const dial = storedDialInstruction(row);
+  const hint = await reportHint(row, Boolean(dial));
+
   let confirmed;
   try {
-    // No facts hint: the request ledger written at acceptance supplies the
-    // number, amount and direction the report is matched on. The exclusion
-    // list keeps a retry off the row its own first try already consumed.
-    confirmed = await confirmTransaction(row.transactionId, {
-      phone: row.phone ?? undefined,
-      amount: row.amount,
-      direction: "collect",
-      startedAt:
-        typeof row.rawResponse?.requested_at === "string"
-          ? row.rawResponse.requested_at
-          : row.createdAt,
-      afterId:
-        typeof row.rawResponse?.afterId === "number"
-          ? row.rawResponse.afterId
-          : undefined,
-      notificationAfterId:
-        typeof row.rawResponse?.notificationAfterId === "number"
-          ? row.rawResponse.notificationAfterId
-          : undefined,
-      excludeRowIds: await consumedRowIds(row),
-    });
+    confirmed = await confirmTransaction(row.transactionId, hint);
   } catch (error) {
     console.error("[pay:resolve]", attemptId, error);
-    return { status: "pending", settled: false, error: "providerUnavailable" };
+    return { status: "pending", settled: false, error: "providerUnavailable", instruction: dial ?? undefined };
   }
 
-  if (confirmed.status === "failed") {
+  /*
+    A dial payment is never failed by a report row. Until the customer dials,
+    every ask of ours is "refused" by design, and a row or notice saying so is
+    the normal state of a payment that has not started — only the window
+    closing ends it.
+  */
+  if (confirmed.status === "failed" && !dial) {
     await claimAttempt(attemptId, "failed");
     return { status: "failed", settled: false };
+  }
+
+  if (confirmed.status !== "success" && dial) {
+    // Ask again: this is what makes CamerPay look for the customer's dial.
+    const claimed = await claimDialledCollection(row, dial, hint);
+    if (claimed.confirmed?.status === "success") {
+      confirmed = claimed.confirmed;
+    } else {
+      const acceptedAt = claimed.accepted
+        ? Date.now()
+        : typeof row.rawResponse?.claimAcceptedAt === "string"
+          ? Date.parse(row.rawResponse.claimAcceptedAt)
+          : NaN;
+      if (Number.isFinite(acceptedAt) && Date.now() - acceptedAt < DIAL_ACCEPTED_GRACE_MS) {
+        // "dialClaimAccepted" also tells the reconciler not to abandon it yet.
+        return { status: "pending", settled: false, error: "dialClaimAccepted", instruction: claimed.instruction ?? undefined };
+      }
+      if (await expireUnconfirmedMobileMoneyAttempt(row)) {
+        if (Number.isFinite(acceptedAt)) {
+          // Worth a human look: CamerPay accepted the ask after the customer
+          // dialled, and its report never showed the money.
+          console.error("[pay:resolve] accepted dial claim never confirmed", attemptId);
+        }
+        return { status: "failed", settled: false, error: "confirmationExpired" };
+      }
+      return { status: "pending", settled: false, instruction: claimed.instruction ?? undefined };
+    }
   }
 
   if (confirmed.status !== "success") {
@@ -799,6 +896,184 @@ export async function resolveAttemptOutcome(attemptId: string): Promise<AttemptR
   }
 
   return settledResolution(attemptId);
+}
+
+/**
+ * The facts a collection's report row is matched on. The exclusion list keeps
+ * a retry off the row its own first try already consumed.
+ */
+async function reportHint(row: PaymentAttemptRow, customerInitiated: boolean) {
+  return {
+    phone: row.phone ?? undefined,
+    amount: row.amount,
+    direction: "collect" as const,
+    startedAt:
+      typeof row.rawResponse?.requested_at === "string"
+        ? row.rawResponse.requested_at
+        : row.createdAt,
+    afterId:
+      typeof row.rawResponse?.afterId === "number"
+        ? row.rawResponse.afterId
+        : undefined,
+    notificationAfterId:
+      typeof row.rawResponse?.notificationAfterId === "number"
+        ? row.rawResponse.notificationAfterId
+        : undefined,
+    excludeRowIds: await consumedRowIds(row),
+    customerInitiated,
+  };
+}
+
+/**
+ * Give up an Orange payment nobody has dialled, so the customer can pay from
+ * another number.
+ *
+ * A pushed prompt may be answered at any moment, which is why a live attempt
+ * blocks a change of number. A code that was never dialled holds no money —
+ * but "never dialled" is CamerPay's to say, not ours: it is asked one last
+ * time, now, and only a fresh "not detected, dial this" closes the attempt.
+ * Accepted, unreachable or anything else, the attempt stays and the caller
+ * keeps refusing the second number.
+ */
+export async function releaseUndialledAttempt(attemptId: string): Promise<boolean> {
+  const supabase = createAdminClient();
+  const { data } = await supabase.from("payment_attempts").select("*").eq("id", attemptId).maybeSingle();
+  if (!data) return false;
+
+  const row = attemptRow(data);
+  const dial = storedDialInstruction(row);
+  if (row.status !== "pending" || row.provider !== "camerpay" || !dial) return false;
+  if (typeof row.rawResponse?.claimAcceptedAt === "string") return false;
+
+  // No throttle on this ask: the answer has to be from this instant.
+  const unthrottled: PaymentAttemptRow = { ...row, rawResponse: { ...row.rawResponse, lastClaimAt: null } };
+  const claimed = await claimDialledCollection(unthrottled, dial, await reportHint(row, true));
+  if (!claimed.refused) return false;
+
+  return (await claimAttempt(attemptId, "failed")) === "won";
+}
+
+/**
+ * Ask CamerPay again for an Orange payment the customer must start.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  THE SAME `retrait`, SENT AGAIN, IS HOW THE PAYMENT IS FOUND.
+ *
+ *  Nothing reaches us when the customer dials the code: CamerPay looks for
+ *  their Orange withdrawal only when asked. So every check of a waiting dial
+ *  payment — the customer's open page, the webhook, the reconciler — repeats
+ *  the request, at most once every few seconds:
+ *
+ *    refused again, with the code   the customer has not dialled yet. Pending,
+ *                                   and the code is shown again.
+ *    accepted                       CamerPay found the withdrawal. The new
+ *                                   tracking id replaces the refused one and
+ *                                   the report is asked for the verdict.
+ *
+ *  AN ACCEPTANCE IS STILL NOT A PAYMENT. For MTN the same answer only means a
+ *  prompt was pushed, so believing it would hand out unpaid orders the day
+ *  Orange's behaviour changes again. The verdict stays with confirmTransaction
+ *  — the report row or the operator's receipt — like every other payment. Once
+ *  accepted, the ask is not repeated: the attempt is an ordinary accepted
+ *  collection from then on.
+ *
+ *  Safe under concurrency: two racing asks can at most both be accepted for
+ *  one withdrawal, and the claim that follows is a compare-and-swap on the
+ *  attempt plus a unique index on the report row.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+async function claimDialledCollection(
+  row: PaymentAttemptRow,
+  dial: PaymentInstruction,
+  hint: Parameters<typeof confirmTransaction>[1],
+): Promise<{
+  confirmed?: Awaited<ReturnType<typeof confirmTransaction>>;
+  /** What to show while waiting: the code, until an ask has been accepted. */
+  instruction?: PaymentInstruction;
+  accepted?: boolean;
+  /** CamerPay answered THIS ask with "not detected — dial the code". */
+  refused?: boolean;
+}> {
+  const raw = row.rawResponse ?? {};
+
+  // Already accepted on an earlier check: the report decides from here.
+  if (typeof raw.claimAcceptedAt === "string") return { instruction: DIAL_RECEIVED };
+  if (!row.phone) return { instruction: dial };
+
+  const last = typeof raw.lastClaimAt === "string" ? Date.parse(raw.lastClaimAt) : NaN;
+  if (Number.isFinite(last) && Date.now() - last < DIAL_RECLAIM_EVERY_MS) return { instruction: dial };
+
+  let again;
+  try {
+    again = await requestCollection(row.phone, row.amount);
+  } catch (error) {
+    console.warn("[pay:dial-claim]", row.id, error);
+    return { instruction: dial };
+  }
+
+  const supabase = createAdminClient();
+  const now = new Date().toISOString();
+
+  if (!again.etat) {
+    const fresh = dialInstructionFromRefusal(again.message, row.amount);
+    const { error } = await supabase
+      .from("payment_attempts")
+      .update({
+        raw_response: {
+          ...raw,
+          lastClaimAt: now,
+          // An answer that is neither "accepted" nor "dial this" is kept for
+          // whoever investigates; the customer still holds a valid code.
+          ...(fresh ? { dialInstruction: fresh } : { lastClaimMessage: again.message ?? `HTTP ${again.httpStatus}` }),
+        },
+      })
+      .eq("id", row.id)
+      .eq("status", "pending");
+    if (error) console.error("[pay:dial-claim] stamp", row.id, error.message);
+    return { instruction: fresh ?? dial, refused: Boolean(fresh) };
+  }
+
+  const trackingId = acceptedTransactionId(again) ?? row.transactionId ?? row.reference;
+  console.info("[pay:dial-claim] accepted", row.id, trackingId, again.httpStatus, again.message ?? "");
+
+  // The webhook arrives carrying only this id — same bookkeeping as a pushed
+  // collection's acceptance.
+  await recordAcceptedRequest({
+    replyTo: trackingId,
+    direction: "collect",
+    phone: row.phone,
+    amount: row.amount,
+    afterId: hint?.afterId ?? null,
+    startedAt: hint?.startedAt,
+  });
+
+  const { error: linkError } = await supabase
+    .from("payment_attempts")
+    .update({
+      transaction_id: trackingId,
+      raw_response: {
+        ...raw,
+        lastClaimAt: now,
+        claimAcceptedAt: now,
+        claimResponse: {
+          etat: again.etat,
+          httpStatus: again.httpStatus,
+          message: again.message,
+          data: again.data,
+        },
+      },
+    })
+    .eq("id", row.id)
+    .eq("status", "pending");
+  if (linkError) console.error("[pay:dial-claim] tracking id", row.id, linkError.message);
+
+  try {
+    return { confirmed: await confirmTransaction(trackingId, hint), accepted: true, instruction: DIAL_RECEIVED };
+  } catch (error) {
+    // A read failure cannot turn an accepted ask into a failed payment.
+    console.warn("[pay:dial-claim] confirm", row.id, error);
+    return { accepted: true, instruction: DIAL_RECEIVED };
+  }
 }
 
 /** Run (or re-run) the money side of an attempt already known 'succeeded'. */
@@ -1382,7 +1657,7 @@ export async function orderPaymentInFlight(orderId: string): Promise<boolean> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("payment_attempts")
-    .select("provider, created_at")
+    .select("provider, created_at, raw_response")
     .eq("raw_response->>orderId", orderId)
     .eq("status", "pending")
     .gt("created_at", new Date(Date.now() - SASPAY_CONFIRMATION_WINDOW_MS).toISOString());
@@ -1394,8 +1669,8 @@ export async function orderPaymentInFlight(orderId: string): Promise<boolean> {
     return true;
   }
   // Each attempt is "in flight" for its own gateway's window.
-  return ((data ?? []) as { provider: string; created_at: string }[]).some(
-    (a) => Date.now() - Date.parse(a.created_at) < Math.max(IN_FLIGHT_MS, confirmationWindowMs(a.provider)),
+  return ((data ?? []) as { provider: string; created_at: string; raw_response: unknown }[]).some(
+    (a) => Date.now() - Date.parse(a.created_at) < Math.max(IN_FLIGHT_MS, confirmationWindowMs(a.provider, a.raw_response)),
   );
 }
 

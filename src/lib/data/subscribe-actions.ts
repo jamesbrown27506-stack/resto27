@@ -10,6 +10,7 @@ import { notify } from "@/lib/notify";
 import { getFreeModeWindow } from "./billing";
 import { ensureUnpaidInvoice } from "./subscription-lifecycle";
 import type { ActionResult } from "./admin-actions";
+import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import {
   checkPaymentAttempt,
   initiatePaymentAttempt,
@@ -324,7 +325,12 @@ export async function startTrial(planId: string): Promise<SubscribeResult> {
 export async function payInvoice(input: {
   invoiceId: string;
   phone: string;
-}): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed"; attemptId?: string }> {
+}): Promise<ActionResult & {
+  status?: "succeeded" | "pending" | "failed";
+  attemptId?: string;
+  /** Orange: the code the payer must dial themselves (see PaymentPendingView). */
+  instruction?: PaymentInstruction;
+}> {
   const t = await getTranslator();
   const { active, profile } = await requireCapability("billing.manage");
   const supabase = createAdminClient();
@@ -392,7 +398,7 @@ export async function payInvoice(input: {
   }
 
   if (initiated.status === "pending") {
-    return { ok: true, status: "pending", attemptId: initiated.attemptId };
+    return { ok: true, status: "pending", attemptId: initiated.attemptId, instruction: initiated.instruction };
   }
 
   // Sandbox: the attempt is already 'succeeded' — settle it and tell everyone.
@@ -439,7 +445,7 @@ export async function payInvoice(input: {
  */
 export async function checkInvoicePayment(
   attemptId: string,
-): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed" }> {
+): Promise<ActionResult & { status?: "succeeded" | "pending" | "failed"; instruction?: PaymentInstruction }> {
   const t = await getTranslator();
   const { active } = await requireCapability("billing.manage");
   const result = await checkPaymentAttempt(attemptId, active.restaurantId);
@@ -451,6 +457,6 @@ export async function checkInvoicePayment(
     revalidatePath("/a/subscriptions");
   }
 
-  return { ok: true, status: result.status };
+  return { ok: true, status: result.status, instruction: result.instruction };
 }
 

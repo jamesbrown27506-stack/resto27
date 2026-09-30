@@ -48,6 +48,7 @@ import {
   checkPaymentAttempt,
   initiatePaymentAttempt,
   orderPaymentInFlight,
+  releaseUndialledAttempt,
   settlePayment,
 } from "@/lib/payments/collect";
 import type { ActionResult } from "./admin-actions";
@@ -259,19 +260,27 @@ export async function payOwnOrder(
       return { ok: true, status: "succeeded" };
     }
     if (current.status === "pending") {
-      if (normalisePhone(String(open.phone ?? "")) !== requestedPhone) {
+      if (normalisePhone(String(open.phone ?? "")) === requestedPhone) {
+        return {
+          ok: true,
+          status: "pending",
+          attemptId: open.id as string,
+          instruction: current.instruction,
+        };
+      }
+      // An Orange code nobody dialled holds no money: it is given up so the
+      // customer can pay from the other number. Anything else stays blocked.
+      const released =
+        current.instruction?.customerInitiated === true &&
+        !current.instruction.received &&
+        (await releaseUndialledAttempt(open.id as string));
+      if (!released) {
         return {
           ok: false,
           error:
             t("ecu.otherMomoActive"),
         };
       }
-      return {
-        ok: true,
-        status: "pending",
-        attemptId: open.id as string,
-        instruction: current.instruction,
-      };
     }
   }
 
@@ -1380,19 +1389,27 @@ export async function payReservationDeposit(
       return { ok: true, status: "succeeded" };
     }
     if (current.status === "pending") {
-      if (normalisePhone(String(openAttempt.phone ?? "")) !== requestedPhone) {
+      if (normalisePhone(String(openAttempt.phone ?? "")) === requestedPhone) {
+        return {
+          ok: true,
+          status: "pending",
+          attemptId: openAttempt.id as string,
+          instruction: current.instruction,
+        };
+      }
+      // Same rule as an order: an undialled Orange code is given up for the
+      // number the customer now wants to pay from.
+      const released =
+        current.instruction?.customerInitiated === true &&
+        !current.instruction.received &&
+        (await releaseUndialledAttempt(openAttempt.id as string));
+      if (!released) {
         return {
           ok: false,
           error:
             t("ecu.otherMomoActive"),
         };
       }
-      return {
-        ok: true,
-        status: "pending",
-        attemptId: openAttempt.id as string,
-        instruction: current.instruction,
-      };
     }
   }
 

@@ -16,6 +16,24 @@ export interface PaymentNotification {
    * other operators that settle off-phone). Nothing is charged until they do.
    */
   url?: string;
+  /**
+   * The name Orange shows the customer when they confirm the dialled code
+   * ("PHARMACIE MOTOS"): the merchant account the money goes to. Shown before
+   * they dial, so an unfamiliar name on the handset does not read as a scam.
+   */
+  merchantName?: string;
+  /**
+   * True when the operator refuses to push a prompt at all: nothing is asked
+   * of the phone, and nothing is charged, until the customer dials `code`
+   * themselves (Orange, since 2026-09 — see dialInstructionFromRefusal).
+   */
+  customerInitiated?: boolean;
+  /**
+   * The dial was seen: CamerPay accepted the request and only the final
+   * confirmation is outstanding. The code must NOT be shown any more — a
+   * customer who dials it a second time pays a second time.
+   */
+  received?: boolean;
   status: "instruction" | "success" | "failed";
 }
 
@@ -29,6 +47,11 @@ export interface PaymentNotificationHint {
   direction?: "collect" | "payout";
   /** Receipts other attempts already settled from, as `notificationRowId` values. */
   excludeIds?: string[];
+  /**
+   * The customer starts this payment themselves, and we ask again until they
+   * have: repeated instructions are then the SAME request, not a retry.
+   */
+  customerInitiated?: boolean;
 }
 
 /** How a settled notification is claimed on `payment_attempts.provider_row_id`. */
@@ -151,8 +174,11 @@ export function findPaymentNotification(
     const code = message.match(USSD_CODE)?.[0];
 
     if (code || OPEN_PHONE.test(message)) {
-      // A second instruction for the same number and amount is a new request.
-      if (instruction) break;
+      // A second instruction for the same number and amount is a new request —
+      // except when we are the ones asking again, waiting for the customer to
+      // dial: there every ask repeats the instruction and the receipt follows.
+      if (instruction && !hint.customerInitiated) break;
+      if (instruction) continue;
       instruction = { id: row.id, date: row.date, message, code, status: "instruction" };
       continue;
     }
@@ -181,4 +207,53 @@ export function findPaymentInstruction(
   const match = findPaymentNotification(rows, hint);
   if (!match || match.status !== "instruction") return null;
   return { id: match.id, date: match.date, message: match.message, code: match.code };
+}
+
+/** "… en composant le #150*14*307053*656703911*500# (PHARMACIE MOTOS)." */
+const DIAL_MERCHANT = /#\s*\(\s*([^()]{2,80}?)\s*\)/;
+/** The amount is the code's last field: "…*500#". */
+const DIAL_AMOUNT = /\*(\d+)#$/;
+
+/**
+ * Orange's "the customer must start it" refusal, read as an instruction.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  SINCE 2026-09 ORANGE NO LONGER LETS A MERCHANT PULL MONEY AT A DISTANCE.
+ *
+ *  Too many people were scammed by withdrawal requests they did not ask for,
+ *  so an Orange `retrait` is no longer a prompt pushed to the phone. CamerPay
+ *  answers the request with etat:false / HTTP 404 and this message:
+ *
+ *    "Aucun retrait Orange de 500 n'a été détecté pour le numéro 691098999.
+ *     Veuillez inviter le client à effectuer le retrait en composant le
+ *     #150*14*307053*656703911*500# (PHARMACIE MOTOS)."
+ *
+ *  That is not a failed payment. It is the first half of one: the customer
+ *  dials the code, confirms with their PIN, and the SAME request sent again is
+ *  then accepted. The name in brackets is what Orange displays on the handset
+ *  at confirmation.
+ *
+ *  The code's last field is the amount. A code for a different amount than the
+ *  one we asked for is refused here rather than shown: the customer would pay
+ *  a sum that no retry of ours could ever match.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export function dialInstructionFromRefusal(
+  message: string | null | undefined,
+  amount?: number,
+): PaymentInstruction | null {
+  if (!message) return null;
+  const code = message.match(USSD_CODE)?.[0];
+  if (!code) return null;
+
+  const codeAmount = code.match(DIAL_AMOUNT)?.[1];
+  if (amount !== undefined && codeAmount !== undefined && Number(codeAmount) !== amount) return null;
+
+  const merchantName = message.match(DIAL_MERCHANT)?.[1]?.replace(/\s+/g, " ").trim();
+  return {
+    message: message.replace(/\s*\n\s*/g, " ").trim(),
+    code,
+    customerInitiated: true,
+    ...(merchantName ? { merchantName } : {}),
+  };
 }

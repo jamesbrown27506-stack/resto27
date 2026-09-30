@@ -114,8 +114,15 @@ export async function runReconciliation(): Promise<ReconciliationSummary> {
     }
 
     const startedAt = new Date(row.created_at as string).getTime();
-    // Each gateway keeps its own window (SasPay's hosted pages take longer).
-    if (now - startedAt > Math.max(ABANDON_AFTER_MS, confirmationWindowMs(String(row.provider ?? "camerpay")))) {
+    // Each gateway keeps its own window (SasPay's hosted pages take longer,
+    // and so does an Orange payment the customer has to dial themselves).
+    if (outcome.error === "dialClaimAccepted") {
+      // An Orange ask accepted after the customer dialled: the resolver is
+      // holding it open for the report, and abandoning it here would undo that.
+      summary.stillPending += 1;
+      continue;
+    }
+    if (now - startedAt > Math.max(ABANDON_AFTER_MS, confirmationWindowMs(String(row.provider ?? "camerpay"), row.raw_response))) {
       const abandoned = await abandon(attemptId, row.raw_response, outcome.error ?? "unresolved");
       if (abandoned) summary.failed += 1;
       else summary.stillPending += 1;
