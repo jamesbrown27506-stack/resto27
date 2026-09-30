@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, type MouseEvent } from "react";
 import { Check, Copy, LoaderCircle, PhoneCall, Radio, ShieldCheck, Smartphone } from "lucide-react";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { isAppleMobile } from "@/lib/device/ios";
+import { dialUssd } from "@/lib/capacitor/ussd";
+import { nativePlatform } from "@/lib/capacitor/platform";
 
 const noSubscribe = () => () => {};
 
@@ -73,6 +75,21 @@ export function PaymentPendingView({
         t("sui.pay.dialStep4"),
       ]
     : [t("sui.pay.step1"), t("sui.pay.step2"), t("sui.pay.step3"), t("sui.pay.step4")];
+
+  /**
+   * In the Android app the code is dialled straight away (UssdDialerPlugin);
+   * everywhere else the link opens the dialler with the code typed in. A
+   * false answer means "not handled natively" and the href takes over.
+   */
+  function launchCall(event: MouseEvent<HTMLAnchorElement>, code: string) {
+    // A browser follows the link as it always did.
+    if (nativePlatform() !== "android") return;
+    const href = event.currentTarget.href;
+    event.preventDefault();
+    void dialUssd(code).then((handled) => {
+      if (!handled) window.location.href = href;
+    });
+  }
 
   function copyCode(code: string) {
     void navigator.clipboard?.writeText(code).then(() => setCopied(true), () => setCopied(false));
@@ -190,6 +207,7 @@ export function PaymentPendingView({
                   <a
                     className="inline-flex min-h-11 w-full min-w-0 items-center justify-center gap-2 rounded-md bg-primary px-3 text-center text-sm leading-tight font-semibold text-white"
                     href={"tel:" + encodeURIComponent(instruction.code)}
+                    onClick={(event) => launchCall(event, instruction.code!)}
                   >
                     <PhoneCall className="size-4" aria-hidden />
                     {t(dial ? "sui.pay.dialCall" : "sui.pay.openPhone")}

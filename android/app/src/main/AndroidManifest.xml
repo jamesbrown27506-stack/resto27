@@ -61,6 +61,9 @@
     <!-- Permissions -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <!-- Not required: a tablet without a SIM still installs; UssdDialerPlugin
+         falls back to the Copy button there. -->
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -68,6 +71,10 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Dials the Orange Money payment code for the customer (UssdDialerPlugin).
+         Asked for the first time they tap "Lancer l'appel"; refused, the
+         dialler opens with the code typed in instead. -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
     <!-- In-app updates of the sideloaded APK (AppUpdaterPlugin). Google Play
          forbids this for self-updating apps: remove it for a Play build. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />

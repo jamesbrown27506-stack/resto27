@@ -1,10 +1,10 @@
 {
   "android": {
-    "url": "/downloads/resto237-1.4.apk",
-    "versionName": "1.4",
-    "versionCode": 5,
-    "sizeBytes": 9929241,
-    "sha256": "a2db256e17744da55b6907877d9c1faf211a2292c793d821a82bbb83b0538010",
-    "publishedAt": "2026-09-11"
+    "url": "/downloads/resto237-1.5.apk",
+    "versionName": "1.5",
+    "versionCode": 6,
+    "sizeBytes": 9929309,
+    "sha256": "1fd015c1fa2004479a9e1e12e7279dfc429b3feb02e347b582a8e7f3a5c8e05b",
+    "publishedAt": "2026-09-30"
   }
 }
