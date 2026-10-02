@@ -49,3 +49,40 @@ describe("priceRangesByRestaurant", () => {
     expect(ranges.has("c")).toBe(false);
   });
 });
+
+describe("groupDishes with placement", () => {
+  const placement = new Map([
+    ["paid", 0],
+    ["free", 1],
+  ]);
+
+  it("leads with the dishes of the best-placed restaurant, whatever the count", () => {
+    const groups = groupDishes([
+      { name: "Ndolé", price: 3000, imageUrl: "https://cdn.test/n.jpg", restaurantId: "free" },
+      { name: "Ndolé", price: 3200, imageUrl: "https://cdn.test/n2.jpg", restaurantId: "other" },
+      { name: "Koki", price: 2000, imageUrl: "https://cdn.test/k.jpg", restaurantId: "paid" },
+    ], 2, { placement });
+    expect(groups.map((g) => g.name)).toEqual(["Koki", "Ndolé"]);
+  });
+
+  it("shows the best-placed restaurant's photo on the tile", () => {
+    const [group] = groupDishes([
+      { name: "Eru", price: 2500, imageUrl: "https://cdn.test/free.jpg", restaurantId: "free" },
+      { name: "Eru", price: 2600, imageUrl: "https://cdn.test/paid.jpg", restaurantId: "paid" },
+    ], 1, { placement });
+    expect(group.imageUrl).toBe("https://cdn.test/paid.jpg");
+  });
+
+  it("rotates ties by day instead of running A to Z", () => {
+    const dishes = ["Achu", "Ekwang", "Eru", "Grillades", "Koki", "Ndolé", "Poulet DG", "Poisson braisé"].map((name) => ({
+      name,
+      price: 2500,
+      imageUrl: "https://cdn.test/x.jpg",
+      restaurantId: "paid",
+    }));
+    const firstSix = (day: string) => groupDishes(dishes, 6, { placement, day }).map((g) => g.name).join();
+    expect(firstSix("2026-10-02")).toBe(firstSix("2026-10-02"));
+    const days = ["2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"].map(firstSix);
+    expect(new Set(days).size).toBeGreaterThan(1);
+  });
+});

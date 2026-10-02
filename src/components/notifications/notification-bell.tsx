@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { AlertTriangle, Bell, BellOff, Check, CheckCheck, Info, XCircle } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, BellRing, Check, CheckCheck, ChevronRight, Info, XCircle } from "lucide-react";
 import { useNotifications } from "./notification-provider";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -42,7 +42,17 @@ const TONE: Record<NotifyTone, string> = {
  * so the badge can never be decremented by touching someone else's row.
  */
 export function NotificationBell() {
-  const { unread, decrementUnread, clearUnread } = useNotifications();
+  const { unread, needsAction, decrementUnread, clearUnread } = useNotifications();
+  /*
+    THE BELL GLOWS WHILE SOMETHING WAITS ON YOU (2026-10).
+
+    An accepted order cancels itself if nobody pays it, and the push that
+    asked for payment is easy to swipe away. So while the customer owes an
+    action (an order or a deposit to pay — `needsAction`, counted with the
+    unread badge), the bell pulses on every page, and its panel opens on a
+    line that leads to the home, where the order sits first.
+  */
+  const lit = needsAction > 0;
   const { toast } = useToast();
   const { t } = useLocale();
   const router = useRouter();
@@ -142,12 +152,30 @@ export function NotificationBell() {
       <Button
         variant="ghost"
         size="icon-sm"
-        aria-label={unread > 0 ? t("notif.unreadCount", { count: unread }) : t("notif.title")}
+        aria-label={
+          lit
+            ? t("notif.needsAction")
+            : unread > 0
+              ? t("notif.unreadCount", { count: unread })
+              : t("notif.title")
+        }
         aria-expanded={open}
         onClick={toggle}
-        className="relative"
+        className={cn("relative", lit && "text-primary ring-2 ring-primary/50 shadow-[0_0_14px_var(--primary)]")}
       >
-        {unread > 0 ? <Bell className="size-4.5" aria-hidden /> : <BellOff className="size-4.5" aria-hidden />}
+        {lit && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 animate-ping rounded-full bg-primary/30 motion-reduce:animate-none"
+          />
+        )}
+        {lit ? (
+          <BellRing className="relative size-4.5" aria-hidden />
+        ) : unread > 0 ? (
+          <Bell className="size-4.5" aria-hidden />
+        ) : (
+          <BellOff className="size-4.5" aria-hidden />
+        )}
         {unread > 0 && (
           <span className="tnum absolute -top-1 -right-1 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] leading-4 font-bold text-primary-fg">
             {unread > 99 ? "99+" : unread}
@@ -193,6 +221,24 @@ export function NotificationBell() {
               </Button>
             )}
           </div>
+
+          {lit && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                router.push("/");
+              }}
+              className="flex shrink-0 items-center gap-3 border-b border-primary/25 bg-primary-light px-4 py-3 text-left text-sm font-semibold text-primary"
+            >
+              <BellRing className="size-4 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1">{t("notif.actionBanner")}</span>
+              <span className="flex shrink-0 items-center gap-0.5">
+                {t("notif.actionOpen")}
+                <ChevronRight className="size-4" aria-hidden />
+              </span>
+            </button>
+          )}
 
           {items === null ? (
             <div className="px-4 py-8 text-center text-sm text-text-light">

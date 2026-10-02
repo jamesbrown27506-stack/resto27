@@ -13,6 +13,9 @@ import { fetchHomeDishGroups } from "@/lib/data/discovery";
 import { fetchActiveRestaurants, fetchCuisineNames, fetchQuartierNames, fetchPublicStats, fetchFeaturedReviews } from "@/lib/data/public";
 import { listPublicPlans } from "@/lib/data/plans";
 import { getHeaderUser } from "@/lib/auth/header-user";
+import { getCurrentProfile } from "@/lib/auth/session";
+import { fetchCustomerHome } from "@/lib/data/customer-home";
+import { CustomerHome } from "@/components/customer-home/customer-home";
 import { getFreeModeInfo } from "@/lib/data/billing";
 import { getSocialLinks } from "@/lib/social-links";
 import { telHref } from "@/lib/phone";
@@ -124,7 +127,37 @@ function jsonLd(
 }
 
 export default async function HomePage() {
-  const [brand, plans, restaurants, dishes, cuisines, quartiers, stats, testimonials, appearance, user, freeMode, settings] =
+  const user = await getHeaderUser();
+
+  /*
+    A RESTAURANT'S HOME IS ITS DASHBOARD.
+
+    Restaurant staff do not come to the marketing page: they come to run the
+    service. The installed app opens on this page, so a signed-in manager
+    used to land on a pitch for customers and have to find their way to /m
+    every time. Staff (and an admin acting as a restaurant, whose area is the
+    tenant's) are sent to their dashboard. The rest of the public site stays
+    open to staff — only "/" moves.
+  */
+  if (user?.area === "manager") redirect("/m");
+
+  /*
+    A CUSTOMER'S HOME IS THEIR OWN (2026-10).
+
+    A signed-in customer gets what they are part of right now and the food,
+    not the visitor's pitch — see components/customer-home. Rendered in place
+    rather than redirected, so "/" stays the Home tab. An account that is not
+    active falls through to the public page; the customer area explains the
+    rest when they go there.
+  */
+  if (user?.area === "customer") {
+    const profile = await getCurrentProfile();
+    if (profile?.status === "active") {
+      return <CustomerHome name={profile.name} data={await fetchCustomerHome(profile.id)} />;
+    }
+  }
+
+  const [brand, plans, restaurants, dishes, cuisines, quartiers, stats, testimonials, appearance, freeMode, settings] =
     await Promise.all([
       getBranding(),
       listPublicPlans(),
@@ -135,22 +168,9 @@ export default async function HomePage() {
       fetchPublicStats(),
       fetchFeaturedReviews(),
       getAppearance(),
-      getHeaderUser(),
       getFreeModeInfo(),
       getSettingsMap(),
     ]);
-
-  /*
-    A RESTAURANT'S HOME IS ITS DASHBOARD.
-
-    Restaurant staff do not come to the marketing page: they come to run the
-    service. The installed app opens on this page, so a signed-in manager
-    used to land on a pitch for customers and have to find their way to /m
-    every time. Staff (and an admin acting as a restaurant, whose area is the
-    tenant's) are sent to their dashboard; customers and visitors are not
-    touched. The rest of the public site stays open to staff — only "/" moves.
-  */
-  if (user?.area === "manager") redirect("/m");
 
   const [socialLinks, t] = await Promise.all([getSocialLinks(), getTranslator()]);
   const JSON_LD = jsonLd(brand, socialLinks.map(link => link.url), t("mk.about.subtitle"));
@@ -179,7 +199,9 @@ export default async function HomePage() {
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLdString(faqJsonLd(faq)) }} />
       <HomeContent
         plans={plans}
-        restaurants={restaurants}
+        // The featured six are the first six: placement order, so a paying
+        // restaurant is never listed after a free one (lib/discovery/placement).
+        restaurants={[...restaurants].sort((a, b) => (a.placement ?? Number.MAX_SAFE_INTEGER) - (b.placement ?? Number.MAX_SAFE_INTEGER))}
         dishes={dishes}
         cuisines={cuisines}
         quartiers={quartiers}

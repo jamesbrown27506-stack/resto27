@@ -6,6 +6,9 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { UNCATEGORIZED_SECTION_ID } from "@/lib/menu/constants";
 import { fetchCategories, fetchMenu, type MenuItem } from "./manager";
 import { priceRangesByRestaurant, type PriceRange } from "@/lib/menu-summary";
+import { isOpenNow } from "@/lib/format/hours";
+import { doualaClock } from "@/lib/seo-guides";
+import { placementDay, placementOrder, placementTier, type SubscriptionFacts } from "@/lib/discovery/placement";
 
 export { UNCATEGORIZED_SECTION_ID };
 
@@ -42,7 +45,13 @@ export interface PublicRestaurant {
   quartier: string;
   /** Street address — how a pickup customer actually finds the place. */
   addressLine: string;
-  phone: string | null;
+  /*
+    No phone number. Contact between customers and restaurants is in-app chat
+    only (it is what keeps both sides on the platform), and this object is
+    serialised into every public page — the homepage shipped each
+    restaurant's number to every visitor's browser until 2026-10, unseen but
+    one "view source" away.
+  */
   logoUrl: string | null;
   coverUrl: string | null;
   rating: number;
@@ -76,6 +85,12 @@ export interface PublicRestaurant {
    * restaurant's own page shows the menu itself.
    */
   priceRange?: PriceRange | null;
+  /**
+   * Where the platform places this restaurant when it chooses the order,
+   * 0 = first (lib/discovery/placement: plan, then open now, photo, rating,
+   * the day's rotation). Only `fetchActiveRestaurants` fills it.
+   */
+  placement?: number;
 }
 
 interface DbRestaurant {
@@ -87,7 +102,6 @@ interface DbRestaurant {
   status: string;
   is_verified: boolean;
   description: string;
-  phone: string | null;
   rating: number;
   review_count: number;
   delivery_estimate_min: number;
@@ -108,7 +122,7 @@ interface DbRestaurant {
 }
 
 const BASE_RESTAURANT_COLUMNS =
-  "id, slug, name, branch_label, is_primary, status, is_verified, description, phone, address_line, logo_url, cover_url, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, min_delivery_fee, max_delivery_fee, deposit_amount, created_at, cuisines ( name ), quartiers ( name )";
+  "id, slug, name, branch_label, is_primary, status, is_verified, description, address_line, logo_url, cover_url, rating, review_count, delivery_estimate_min, minimum_order, accepts_delivery, accepts_pickup, is_accepting_orders, min_delivery_fee, max_delivery_fee, deposit_amount, created_at, cuisines ( name ), quartiers ( name )";
 
 /*
   ───────────────────────────────────────────────────────────────────────────
@@ -244,6 +258,46 @@ async function attachPriceRanges(rows: DbRestaurant[]): Promise<Map<string, Pric
   );
 }
 
+/**
+ * Each restaurant's subscription, as placement needs it: the plan's tier, the
+ * state from the `subscription_state` view (active / grace / locked /
+ * cancelled — the view owns that rule, see lib/auth/branch) and whether it
+ * is still a free trial. Two queries because PostgREST cannot embed a plan
+ * onto a view. A failure places everyone as Starter — the list still shows,
+ * in its fallback order.
+ */
+async function attachSubscriptions(rows: DbRestaurant[]): Promise<Map<string, SubscriptionFacts>> {
+  const facts = new Map<string, SubscriptionFacts>();
+  if (rows.length === 0) return facts;
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("subscription_state")
+    .select("restaurant_id, plan_id, state, is_trialing")
+    .in("restaurant_id", rows.map((r) => r.id));
+  if (error) {
+    console.error("[public:attachSubscriptions]", error.message);
+    return facts;
+  }
+
+  const subs = (data ?? []) as { restaurant_id: string; plan_id: string; state: string; is_trialing: boolean | null }[];
+  const planIds = [...new Set(subs.map((s) => s.plan_id))];
+  const tiers = new Map<string, string>();
+  if (planIds.length > 0) {
+    const { data: plans } = await supabase.from("subscription_plans").select("id, tier").in("id", planIds);
+    for (const p of (plans ?? []) as { id: string; tier: string }[]) tiers.set(p.id, p.tier);
+  }
+
+  for (const sub of subs) {
+    facts.set(sub.restaurant_id, {
+      tier: tiers.get(sub.plan_id) ?? "starter",
+      state: sub.state,
+      isTrialing: Boolean(sub.is_trialing),
+    });
+  }
+  return facts;
+}
+
 function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
   return {
     id: r.id,
@@ -257,7 +311,6 @@ function shape(r: DbRestaurant, hours: RestaurantHours[]): PublicRestaurant {
     description: r.description,
     quartier: relationOne(r.quartiers)?.name ?? "",
     addressLine: r.address_line ?? "",
-    phone: r.phone,
     logoUrl: r.logo_url,
     coverUrl: r.cover_url,
     rating: Number(r.rating),
@@ -296,8 +349,27 @@ export const fetchActiveRestaurants = cache(async (): Promise<PublicRestaurant[]
   // literal-type inference has nothing to work from and types the rows as its
   // error shape. The runtime value is the row set either way.
   const rows = (data ?? []) as unknown as DbRestaurant[];
-  const [hours, prices] = await Promise.all([attachHours(rows), attachPriceRanges(rows)]);
-  return rows.map((r) => ({ ...shape(r, hours.get(r.id) ?? []), priceRange: prices.get(r.id) ?? null }));
+  const [hours, prices, subscriptions] = await Promise.all([
+    attachHours(rows),
+    attachPriceRanges(rows),
+    attachSubscriptions(rows),
+  ]);
+  const restaurants = rows.map((r) => ({ ...shape(r, hours.get(r.id) ?? []), priceRange: prices.get(r.id) ?? null }));
+
+  const now = new Date();
+  const clock = doualaClock(now);
+  const placement = placementOrder(
+    restaurants.map((r) => ({
+      id: r.id,
+      tier: placementTier(subscriptions.get(r.id)),
+      openNow: isOpenNow(r.hours, clock),
+      hasPhoto: Boolean(r.coverUrl || r.logoUrl),
+      rating: r.rating,
+      reviewCount: r.reviewCount,
+    })),
+    placementDay(now),
+  );
+  return restaurants.map((r) => ({ ...r, placement: placement.get(r.id) ?? restaurants.length }));
 });
 
 /**

@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { getNotificationState } from "@/lib/data/notify-actions";
 import { useToast } from "@/components/ui/toast";
@@ -57,6 +58,12 @@ export type RealtimeStatus = "connecting" | "connected" | "error" | "signed-out"
 
 interface NotificationContextValue {
   unread: number;
+  /**
+   * Things waiting on the signed-in customer's own action (an order or a
+   * deposit to pay) — the bell glows while this is above 0. Re-read with the
+   * unread count, so it follows the notifications that announce both.
+   */
+  needsAction: number;
   /** The stored setting: a built-in name, or the URL of an uploaded file. */
   soundName: string;
   /** Live health of the browser's realtime channel. */
@@ -116,6 +123,7 @@ const DEDUPE_WINDOW_MS = 10_000;
 export function NotificationProvider({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const [unread, setUnread] = useState(0);
+  const [needsAction, setNeedsAction] = useState(0);
   const [soundName, setSoundName] = useState("chime");
   const [realtime, setRealtime] = useState<RealtimeStatus>("connecting");
   const [realtimeDetail, setRealtimeDetail] = useState<string | null>(null);
@@ -345,6 +353,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       if (cancelled || !state?.profileId) return null;
       setSoundName(state.sound);
       setUnread(state.unread);
+      setNeedsAction(state.needsAction ?? 0);
       return state;
     }
 
@@ -565,10 +574,23 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /*
+    While something waits on the customer, re-read on every navigation:
+    paying happens on the order page, and the bell must stop glowing when
+    they come back from it — not at the next notification. Only while lit,
+    so a quiet bell costs nothing extra.
+  */
+  const pathname = usePathname();
+  useEffect(() => {
+    if (needsAction > 0) refreshSoonRef.current?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
   return (
     <NotificationContext.Provider
       value={{
         unread,
+        needsAction,
         soundName,
         realtime,
         realtimeDetail,

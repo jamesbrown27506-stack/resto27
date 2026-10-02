@@ -6,15 +6,12 @@ import { SocialIcon } from "@/components/icons/social-icon";
 import { BrandMark } from "./brand-mark";
 import { AppDownloadFooterLinks } from "./app-download";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { useNativeApp } from "@/lib/capacitor/platform";
+import { DEVELOPER, developerWhatsAppHref } from "@/lib/developer";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SocialLink } from "@/lib/social-platforms";
 import { formatPhoneDisplay, telHref } from "@/lib/phone";
 
-/**
- * The developer's credit, which doubles as the WhatsApp contact. The chat
- * opens with a message already written, so reaching out is one tap.
- */
-const DEVELOPER = { name: "Mrcode27", whatsappNumber: "237691098999" };
 
 const GROUPS: { heading: TranslationKey; links: { href: string; label: TranslationKey }[] }[] = [
   {
@@ -68,6 +65,15 @@ export function SiteFooter({
   showAppLinks?: boolean;
 }) {
   const { t } = useLocale();
+  const native = useNativeApp();
+
+  /*
+    No footer inside the installed app (2026-10). A phone app does not end in
+    a website's footer: the tab bar is the whole navigation there, and the
+    developer credit moved into its "Plus" menu (nav-menu-sheet). The web,
+    phone browsers included, keeps the full footer.
+  */
+  if (native) return null;
 
   return (
     <footer className="mt-auto bg-brand-solid text-brand-on-solid">
@@ -175,9 +181,7 @@ export function SiteFooter({
           </p>
           {/* The one accent-coloured element in the footer, on purpose. */}
           <a
-            href={`https://wa.me/${DEVELOPER.whatsappNumber}?text=${encodeURIComponent(
-              t("footer.whatsappMessage", { name: brand.name }),
-            )}`}
+            href={developerWhatsAppHref(t("footer.whatsappMessage", { name: brand.name }))}
             target="_blank"
             rel="noreferrer"
             className="group inline-flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 rounded-full bg-accent/15 px-4 py-1.5 text-brand-on-solid ring-1 ring-accent/40 transition-colors hover:bg-accent hover:text-accent-fg"

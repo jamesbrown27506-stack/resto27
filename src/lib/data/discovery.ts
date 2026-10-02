@@ -3,8 +3,9 @@ import { cache } from "react";
 import { createAdminClient } from "@/lib/supabase/server";
 import { fetchActiveRestaurants } from "./public";
 import { relationOne } from "@/lib/public-utils";
-import { discoverySlug } from "@/lib/seo-config";
+import { discoverySlug, dishPath } from "@/lib/seo-config";
 import { groupDishes, type DishGroup } from "@/lib/menu-summary";
+import { pickMenuDishes, placementDay } from "@/lib/discovery/placement";
 
 export const fetchDiscoveryCatalog = cache(async () => {
   const restaurants = await fetchActiveRestaurants();
@@ -51,7 +52,7 @@ export function groupRestaurantCount(catalog: Pick<DiscoveryCatalog, "restaurant
  */
 export async function fetchHomeDishGroups(limit = 6): Promise<DishGroup[]> {
   try {
-    const { dishes } = await fetchDiscoveryCatalog();
+    const { dishes, restaurants } = await fetchDiscoveryCatalog();
     return groupDishes(
       dishes.map((dish) => ({
         name: dish.name,
@@ -60,9 +61,55 @@ export async function fetchHomeDishGroups(limit = 6): Promise<DishGroup[]> {
         restaurantId: dish.restaurant_id,
       })),
       limit,
+      { placement: placementMap(restaurants), day: placementDay(new Date()) },
     );
   } catch (error) {
     console.error("[discovery:fetchHomeDishGroups]", (error as Error).message);
+    return [];
+  }
+}
+
+function placementMap(restaurants: { id: string; placement?: number }[]): Map<string, number> {
+  return new Map(restaurants.map((r, index) => [r.id, r.placement ?? index]));
+}
+
+/** One dish as the signed-in home's "on the menu today" grid shows it. */
+export interface MenuPick {
+  id: string;
+  name: string;
+  price: number;
+  imageUrl: string | null;
+  href: string;
+  restaurantName: string;
+}
+
+/**
+ * Real dishes from real menus for the signed-in home — each opens its own
+ * dish page, where the menu's add-to-basket (options, one-kitchen basket)
+ * already lives. Ordered by lib/discovery/placement: the better-placed
+ * restaurant leads every round, each dish name once, the photo first.
+ * Free items (a glass of water) are not suggestions. Never throws.
+ */
+export async function fetchMenuPicks(limit = 6): Promise<MenuPick[]> {
+  try {
+    const { dishes, restaurants } = await fetchDiscoveryCatalog();
+    const priced = dishes.filter((dish) => Number(dish.price) > 0);
+    const picks = pickMenuDishes(
+      priced.map((dish) => ({ ...dish, restaurantId: dish.restaurant_id, hasPhoto: Boolean(dish.image_url) })),
+      placementMap(restaurants),
+      placementDay(new Date()),
+      limit,
+    );
+    return picks.map((dish) => ({
+      id: dish.id,
+      name: dish.name,
+      price: Number(dish.price),
+      imageUrl: dish.image_url,
+      href: dishPath(dish.restaurant.slug, dish),
+      restaurantName: dish.restaurant.name,
+    }));
+  } catch (error) {
+    console.error("[discovery:fetchMenuPicks]", (error as Error).message);
     return [];
   }
 }

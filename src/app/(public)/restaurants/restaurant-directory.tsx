@@ -18,6 +18,11 @@ import type { PublicRestaurant } from "@/lib/data/public";
  * half the parameters. The data comes in as props so the public page and the
  * signed-in page each fetch it once, server-side.
  */
+
+/** The platform's order, computed server-side (PublicRestaurant.placement). */
+function byPlacement(a: PublicRestaurant, b: PublicRestaurant): number {
+  return (a.placement ?? Number.MAX_SAFE_INTEGER) - (b.placement ?? Number.MAX_SAFE_INTEGER);
+}
 export function RestaurantDirectory({
   restaurants,
   cuisines,
@@ -70,8 +75,15 @@ export function RestaurantDirectory({
      or from a link someone shared, and both mean something specific.
     ──────────────────────────────────────────────────────────────────────
   */
+  /*
+    Without a home quartier the default is "recommended" — the platform's own
+    order (lib/discovery/placement: plan first, so a paying restaurant is
+    never listed after a free one, then open now, photo, rating). "Near me"
+    keeps the customer's quartier first and uses the same order inside it.
+    "Best rated" stays exactly that, for whoever picks it.
+  */
   const [sort, setSort] = useState(
-    params.get("sort") ?? (homeQuartier ? "nearMe" : "rating"),
+    params.get("sort") ?? (homeQuartier ? "nearMe" : "recommended"),
   );
 
   const results = useMemo(() => {
@@ -99,14 +111,15 @@ export function RestaurantDirectory({
 
     return [...filtered].sort((a, b) => {
       if (sort === "nearMe" && homeQuartier) {
-        // Same neighbourhood first, then best-rated within each group — so
-        // "near me" never degenerates into an arbitrary order among the
-        // dozen restaurants that are all equally near.
+        // Same neighbourhood first, then the recommended order within each
+        // group — so "near me" never degenerates into an arbitrary order
+        // among the dozen restaurants that are all equally near.
         const aHome = a.quartier === homeQuartier ? 0 : 1;
         const bHome = b.quartier === homeQuartier ? 0 : 1;
         if (aHome !== bHome) return aHome - bHome;
-        return b.rating - a.rating;
+        return byPlacement(a, b) || b.rating - a.rating;
       }
+      if (sort === "recommended") return byPlacement(a, b);
       if (sort === "delivery") return a.deliveryEstimateMin - b.deliveryEstimateMin;
       if (sort === "name") return a.name.localeCompare(b.name, "fr");
       return b.rating - a.rating;
@@ -122,7 +135,7 @@ export function RestaurantDirectory({
     setDelivery("all");
     // Back to the same default this screen opened with, not a hardcoded
     // "rating" that would silently drop a customer's own neighbourhood.
-    setSort(homeQuartier ? "nearMe" : "rating");
+    setSort(homeQuartier ? "nearMe" : "recommended");
   }
 
   return (
@@ -141,6 +154,7 @@ export function RestaurantDirectory({
           options: [
             // Only offered when we can actually honour it.
             ...(homeQuartier ? [{ value: "nearMe", label: t("restaurants.sortNearMe") }] : []),
+            { value: "recommended", label: t("restaurants.sortRecommended") },
             { value: "rating", label: t("restaurants.sortRating") },
             { value: "delivery", label: t("restaurants.sortDelivery") },
             { value: "name", label: t("restaurants.sortName") },

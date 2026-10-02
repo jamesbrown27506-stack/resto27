@@ -124,6 +124,9 @@ export const commonDict = defineDict({
     /* The notification bell — shared by every shell. */
     "notif.title": "Notifications",
     "notif.unreadCount": "{count} non lue(s)",
+    "notif.needsAction": "Une action vous attend",
+    "notif.actionBanner": "Une commande ou un acompte attend votre paiement.",
+    "notif.actionOpen": "Voir",
     "notif.markAllRead": "Tout lire",
     "notif.empty": "Aucune notification",
     "notif.emptyBody": "Les événements vous concernant apparaîtront ici.",
@@ -281,6 +284,9 @@ export const commonDict = defineDict({
     /* The notification bell — shared by every shell. */
     "notif.title": "Notifications",
     "notif.unreadCount": "{count} unread",
+    "notif.needsAction": "Something is waiting for you",
+    "notif.actionBanner": "An order or a deposit is waiting for your payment.",
+    "notif.actionOpen": "View",
     "notif.markAllRead": "Mark all as read",
     "notif.empty": "No notifications",
     "notif.emptyBody": "Events concerning you will appear here.",

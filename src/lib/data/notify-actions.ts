@@ -61,25 +61,52 @@ export interface NotificationState {
   unread: number;
   /** File name (no extension) of the platform-wide notification sound. */
   sound: string;
+  /**
+   * What is waiting on this customer's own hand: an accepted order to pay
+   * online before it is cancelled, a booking deposit to pay. Lights the bell
+   * on every page until it is done (2026-10). Always 0 for staff and admins.
+   */
+  needsAction: number;
 }
 
 export async function getNotificationState(): Promise<NotificationState> {
   const supabase = createAdminClient();
   const profile = await requireUser();
 
-  const [unread, sound] = await Promise.all([
+  const isCustomer = profile.role === "customer";
+  const [unread, sound, ordersToPay, depositsToPay] = await Promise.all([
     supabase
       .from("notifications")
       .select("*", { count: "exact", head: true })
       .eq("profile_id", profile.id)
       .is("read_at", null),
     supabase.from("settings").select("value").eq("key", "notification_sound").maybeSingle(),
+    // Same rule as the order page's pay button: online money is asked online.
+    isCustomer
+      ? supabase
+          .from("orders")
+          .select("id", { count: "exact", head: true })
+          .eq("customer_id", profile.id)
+          .eq("status", "awaiting_customer")
+          .eq("is_paid", false)
+          .in("payment_method", ["mobile_money", "wallet"])
+      : null,
+    isCustomer
+      ? supabase
+          .from("reservations")
+          .select("id", { count: "exact", head: true })
+          .eq("customer_id", profile.id)
+          .eq("status", "awaiting_payment")
+          .eq("deposit_paid", false)
+          .gt("deposit_amount", 0)
+      : null,
   ]);
 
   return {
     profileId: profile.id,
     unread: unread.count ?? 0,
     sound: (sound.data as { value: string | null } | null)?.value ?? "chime",
+    needsAction: (ordersToPay?.count ?? 0) + (depositsToPay?.count ?? 0),
   };
 }
 
