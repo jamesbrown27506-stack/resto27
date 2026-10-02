@@ -452,9 +452,10 @@ export async function fetchMenuSections(restaurantId: string): Promise<MenuSecti
 }
 
 /**
- * A lowercase, space-joined index of every active restaurant's dish names,
- * keyed by restaurant id — the data behind dish-level search in the
- * directory. Built as one read; a menu is small enough that joining in JS is
+ * A lowercase index of every active restaurant's dish names, joined with
+ * " | " and keyed by restaurant id — the data behind dish-level search in the
+ * directory, which splits it back into names to forgive typos per dish
+ * (lib/search/fuzzy). Built as one read; a menu is small enough that joining in JS is
  * cheaper than a GROUP BY, which PostgREST cannot return anyway.
  */
 export async function fetchDishSearchIndex(): Promise<Record<string, string>> {
@@ -473,7 +474,7 @@ export async function fetchDishSearchIndex(): Promise<Record<string, string>> {
   const index: Record<string, string> = {};
   for (const row of (data ?? []) as { restaurant_id: string; name: string }[]) {
     const current = index[row.restaurant_id] ?? "";
-    index[row.restaurant_id] = current ? `${current} ${row.name}` : row.name;
+    index[row.restaurant_id] = current ? `${current} | ${row.name}` : row.name;
   }
   for (const key of Object.keys(index)) index[key] = index[key].toLowerCase();
   return index;

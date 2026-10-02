@@ -1,7 +1,6 @@
 "use client";
 import { todayInDisplayTz } from "@/lib/reservations/slots";
 import { lastBookableDate } from "@/lib/reservations/rules";
-import { LocationButton } from "@/components/capacitor/location-button";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -42,7 +41,7 @@ import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { SessionUser } from "@/lib/session";
 import { cn } from "@/lib/utils";
-import { canFulfilAt, canTakeAsapOrder, nextServiceSlot, serviceDateAndTime, type ServiceHours } from "@/lib/restaurant/service-hours";
+import { canFulfilAt, canTakeAsapOrder, nextServiceSlot, quickServiceTimes, serviceDateAndTime, type ServiceHours } from "@/lib/restaurant/service-hours";
 
 /**
  * "En commandant, vous acceptez nos conditions" — shown under BOTH submit
@@ -160,6 +159,12 @@ export function CheckoutClient({
   const selectedServiceTime = schedule === "later" && scheduleDate && scheduleTime
     ? new Date(`${scheduleDate}T${scheduleTime}:00+01:00`) : null;
   const outsideServiceHours = Boolean(caps && selectedServiceTime && !canFulfilAt(caps.hours, selectedServiceTime));
+  // The half-hour times to tap for the chosen day — most people pick one
+  // rather than typing a time (see quickServiceTimes).
+  const quickTimes = useMemo(
+    () => (caps && scheduleDate ? quickServiceTimes(caps.hours, scheduleDate, clock) : []),
+    [caps, scheduleDate, clock],
+  );
   const serviceBlocked = Boolean(caps && (!caps.isAcceptingOrders || (schedule === "asap" && closedForAsap) || outsideServiceHours));
 
   // Adjusted during render rather than in an effect (same pattern as the
@@ -591,7 +596,6 @@ export function CheckoutClient({
                       onChange={(e) => setDeliveryLandmark(e.target.value)}
                       placeholder={t("cct.co.landmarkPh")}
                     />
-                    <LocationButton value={deliveryLandmark} onChange={setDeliveryLandmark} />
                   </Field>
                   {user && (
                     <div className="sm:col-span-2">
@@ -700,7 +704,11 @@ export function CheckoutClient({
               <Radio
                 name="schedule"
                 checked={schedule === "later"}
-                onChange={() => setSchedule("later")}
+                onChange={() => {
+                  setSchedule("later");
+                  // Today by default, so the times to tap appear at once.
+                  if (!scheduleDate) setScheduleDate(todayInDisplayTz());
+                }}
                 label={t("cct.co.schedule")}
                 description={t("cct.co.scheduleHint")}
               />
@@ -716,25 +724,58 @@ export function CheckoutClient({
               }}>{t("cct.co.chooseNext", { time: new Intl.DateTimeFormat(t("cct.co.dateLocale"), { timeZone: "Africa/Douala", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(nextSlot) })}</Button>}
             </div>}
             {schedule === "later" && (
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                <Field label={t("cct.co.date")} htmlFor="ck-date" error={errors["ck-date"]}>
-                  <Input
-                    id="ck-date"
-                    type="date"
-                    value={scheduleDate}
-                    min={todayInDisplayTz()}
-                    max={lastBookableDate(scheduleMaxDays)}
-                    onChange={(e) => setScheduleDate(e.target.value)}
-                  />
-                </Field>
-                <Field label={t("cct.co.time")} htmlFor="ck-time" error={errors["ck-time"]}>
-                  <Input
-                    id="ck-time"
-                    type="time"
-                    value={scheduleTime}
-                    onChange={(e) => setScheduleTime(e.target.value)}
-                  />
-                </Field>
+              <div className="mt-4 flex flex-col gap-4">
+                {/* The time can be typed (the field on top) or tapped (the
+                    half-hour times below): typing for the precise, tapping
+                    for everyone else. */}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label={t("cct.co.date")} htmlFor="ck-date" error={errors["ck-date"]}>
+                    <Input
+                      id="ck-date"
+                      type="date"
+                      value={scheduleDate}
+                      min={todayInDisplayTz()}
+                      max={lastBookableDate(scheduleMaxDays)}
+                      onChange={(e) => setScheduleDate(e.target.value)}
+                    />
+                  </Field>
+                  <Field label={t("cct.co.timeManual")} htmlFor="ck-time" error={errors["ck-time"]}>
+                    <Input
+                      id="ck-time"
+                      type="time"
+                      step={300}
+                      value={scheduleTime}
+                      onChange={(e) => setScheduleTime(e.target.value)}
+                    />
+                  </Field>
+                </div>
+                {caps && scheduleDate && (
+                  <div>
+                    <p className="text-sm font-medium text-text-secondary">{t("cct.co.timeQuick")}</p>
+                    {quickTimes.length > 0 ? (
+                      <div className="mt-2 grid grid-cols-4 gap-2 sm:grid-cols-6">
+                        {quickTimes.map((time) => (
+                          <button
+                            key={time}
+                            type="button"
+                            aria-pressed={scheduleTime === time}
+                            onClick={() => setScheduleTime(time)}
+                            className={cn(
+                              "tnum h-11 rounded-md border text-sm font-semibold transition-colors",
+                              scheduleTime === time
+                                ? "border-primary bg-primary text-primary-fg"
+                                : "border-border bg-surface hover:border-primary/50",
+                            )}
+                          >
+                            {time}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-sm text-text-light">{t("cct.co.noSlots")}</p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             {schedule === "later" && outsideServiceHours && <p className="mt-3 rounded-md bg-warning-light p-3 text-sm text-warning">{t("cct.err.outsideServiceHours")}</p>}

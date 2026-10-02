@@ -1,5 +1,4 @@
 "use client";
-import { LocationButton } from "@/components/capacitor/location-button";
 
 import { useState } from "react";
 import { Info, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
@@ -296,7 +295,6 @@ export function AddressesClient({
               onChange={(e) => setDraft({ ...draft, landmark: e.target.value })}
               placeholder={t("cad.landmarkPh")}
             />
-            <LocationButton value={draft.landmark} onChange={(landmark) => setDraft((previous) => ({ ...previous, landmark }))} />
           </Field>
 
           <Switch

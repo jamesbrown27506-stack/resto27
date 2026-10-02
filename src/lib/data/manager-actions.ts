@@ -1,6 +1,7 @@
 "use server";
 
 import { normalisePriceMax } from "@/lib/menu/custom-price";
+import { isDishCourse, type DishCourse } from "@/lib/menu/course";
 import { notifyWaitlist } from "./waitlist";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
@@ -410,6 +411,8 @@ export interface MenuItemInput {
   priceToConfirm?: boolean;
   /** The ceiling of that range; null = the minimum is also the maximum. */
   priceMax?: number | null;
+  /** The kind of dish (0071); null = let the platform infer it from the name. */
+  course?: DishCourse | null;
 }
 
 /**
@@ -427,6 +430,21 @@ async function savePricing(itemId: string, restaurantId: string, input: MenuItem
     .eq("id", itemId)
     .eq("restaurant_id", restaurantId);
   if (error) console.error("[manager:savePricing]", error.code ?? "", error.message);
+}
+
+/**
+ * The 0071 course column, written on its own after the dish — like the
+ * pricing above — so a database without the migration still saves the dish
+ * (browsed under the inferred course until then).
+ */
+async function saveCourse(itemId: string, restaurantId: string, input: MenuItemInput): Promise<void> {
+  if (input.course === undefined) return;
+  const { error } = await createAdminClient()
+    .from("menu_items")
+    .update({ course: isDishCourse(input.course) ? input.course : null })
+    .eq("id", itemId)
+    .eq("restaurant_id", restaurantId);
+  if (error) console.error("[manager:saveCourse]", error.code ?? "", error.message);
 }
 
 /**
@@ -495,6 +513,7 @@ export async function createMenuItem(input: MenuItemInput): Promise<ActionResult
     return { ok: false, error: t("est.dishAddFailed") };
   }
   await savePricing(created.id as string, active.restaurantId, input);
+  await saveCourse(created.id as string, active.restaurantId, input);
 
   revalidatePath("/m/menu");
   return { ok: true };
@@ -516,6 +535,7 @@ export async function updateMenuItem(id: string, input: MenuItemInput): Promise<
 
   if (error) return { ok: false, error: t("est.dishSaveFailed") };
   await savePricing(id, active.restaurantId, input);
+  await saveCourse(id, active.restaurantId, input);
 
   revalidatePath("/m/menu");
   return { ok: true };

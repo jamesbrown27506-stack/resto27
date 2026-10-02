@@ -69,9 +69,10 @@ export function SiteFooter({
 
   /*
     No footer inside the installed app (2026-10). A phone app does not end in
-    a website's footer: the tab bar is the whole navigation there, and the
-    developer credit moved into its "Plus" menu (nav-menu-sheet). The web,
-    phone browsers included, keeps the full footer.
+    a website's footer: the tab bar is the whole navigation there. The
+    developer credit is a website thing and stays here only — the owner did
+    not want it in the app at all. The web, phone browsers included, keeps
+    the full footer.
   */
   if (native) return null;
 

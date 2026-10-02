@@ -33,7 +33,6 @@ import { intlLocale, useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { CustomerOrder as Order } from "@/lib/data/customer";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
-import { PICKUP_RECEIPT_CONFIRMATION_NOTE } from "@/lib/orders/pickup-receipt";
 
 /**
  * /orders/[id] — "the busiest page in the app" (§14.3).
@@ -73,13 +72,9 @@ export function OrderDetail({ order }: { order: Order }) {
    * confirmOwnDelivery for why the person holding the bag is the right one
    * to press this.
    */
-  const pickupReceiptRequested =
-    order.type === "pickup" &&
-    order.history.some(
-      (event) => event.status === "shipped" && event.note === PICKUP_RECEIPT_CONFIRMATION_NOTE,
-    );
-  const confirmable =
-    order.status === "shipped" && (order.type !== "pickup" || pickupReceiptRequested);
+  // Delivery or pickup alike: once it is on its way / ready, the customer
+  // may close it — no need to wait for the restaurant to ask (2026-10).
+  const confirmable = order.status === "shipped";
 
 
   /*

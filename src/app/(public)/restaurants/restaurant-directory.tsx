@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { PublicRestaurant } from "@/lib/data/public";
+import { fuzzySearch } from "@/lib/search/fuzzy";
 
 /**
  * Restaurant directory, shared by /restaurants (public) and /browse (signed in).
@@ -86,10 +87,15 @@ export function RestaurantDirectory({
     params.get("sort") ?? (homeQuartier ? "nearMe" : "recommended"),
   );
 
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-
-    const filtered = restaurants.filter((r) => {
+  /*
+    The search forgives spelling (lib/search/fuzzy): accents and case never
+    matter, and when nothing matches exactly the closest restaurants are
+    shown as "close results" instead of an empty page. Dish names count —
+    "Poulet DG" must find the restaurant that serves it, not just the one
+    named after it.
+  */
+  const { results, approximate } = useMemo(() => {
+    const filters = restaurants.filter((r) => {
       if (quartier !== "all" && r.quartier !== quartier) return false;
       if (cuisine !== "all" && r.cuisine !== cuisine) return false;
       if (rating !== "all" && r.rating < Number(rating)) return false;
@@ -97,19 +103,20 @@ export function RestaurantDirectory({
       // reach — bucketed so the filter reads as a budget, not a threshold.
       if (price !== "all" && r.minimumOrder > Number(price)) return false;
       if (delivery !== "all" && r.deliveryEstimateMin > Number(delivery)) return false;
-      if (!q) return true;
-      return (
-        r.name.toLowerCase().includes(q) ||
-        r.description.toLowerCase().includes(q) ||
-        r.cuisine.toLowerCase().includes(q) ||
-        r.quartier.toLowerCase().includes(q) ||
-        // "Poulet DG" must find the restaurant that serves it, not just the
-        // one named after it — the placeholder promises dish search.
-        (dishSearch?.[r.id] ?? "").includes(q)
-      );
+      return true;
     });
+    const found = fuzzySearch(filters, query, (r) => [
+      r.name,
+      r.cuisine,
+      r.quartier,
+      r.description,
+      ...(dishSearch?.[r.id] ?? "").split(" | "),
+    ]);
+    const filtered = found.exact.length > 0 || !query.trim() ? found.exact : found.similar;
+    // Close matches keep their closeness order; exact ones take the sort.
+    if (found.similar.length > 0 && found.exact.length === 0) return { results: filtered, approximate: true };
 
-    return [...filtered].sort((a, b) => {
+    const sorted = [...filtered].sort((a, b) => {
       if (sort === "nearMe" && homeQuartier) {
         // Same neighbourhood first, then the recommended order within each
         // group — so "near me" never degenerates into an arbitrary order
@@ -124,6 +131,7 @@ export function RestaurantDirectory({
       if (sort === "name") return a.name.localeCompare(b.name, "fr");
       return b.rating - a.rating;
     });
+    return { results: sorted, approximate: false };
   }, [query, quartier, cuisine, rating, price, delivery, sort, restaurants, dishSearch, homeQuartier]);
 
   function clear() {
@@ -229,6 +237,12 @@ export function RestaurantDirectory({
           </span>
         )}
       </p>
+
+      {approximate && (
+        <p className="mt-2 rounded-md bg-info-light px-3 py-2 text-sm text-info">
+          {t("restaurants.closeResults", { query: query.trim() })}
+        </p>
+      )}
 
       <div className="mt-6">
         {results.length === 0 ? (

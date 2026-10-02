@@ -1,4 +1,5 @@
 import "server-only";
+import { isDishCourse, type DishCourse } from "@/lib/menu/course";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { BranchRole } from "@/lib/capabilities";
 import type { CustomerReservationStatus } from "@/lib/format/reservation-status";
@@ -65,6 +66,12 @@ export interface MenuItem {
    */
   priceToConfirm?: boolean;
   priceMax?: number | null;
+  /**
+   * The kind of dish the restaurant chose (0071): light / main / dessert /
+   * drink. Null = not chosen, browsed under the inferred one
+   * (lib/menu/course). Absent before 0071.
+   */
+  course?: DishCourse | null;
 }
 
 export interface MenuCategory {
@@ -213,6 +220,15 @@ export async function fetchMenu(restaurantId: string): Promise<MenuItem[]> {
       .map((row) => [row.id, row]),
   );
 
+  // The 0071 course column, the same way: absent, every dish is "not chosen".
+  const { data: courses } = await supabase
+    .from("menu_items")
+    .select("id, course")
+    .eq("restaurant_id", restaurantId);
+  const courseById = new Map(
+    ((courses ?? []) as { id: string; course: string | null }[]).map((row) => [row.id, row.course]),
+  );
+
   return (items ?? []).map((i) => ({
     id: i.id,
     restaurantId: i.restaurant_id,
@@ -233,6 +249,7 @@ export async function fetchMenu(restaurantId: string): Promise<MenuItem[]> {
     optionGroups: groupsByItem.get(i.id) ?? [],
     priceToConfirm: Boolean(pricingById.get(i.id)?.price_to_confirm),
     priceMax: pricingById.get(i.id)?.price_max ?? null,
+    course: isDishCourse(courseById.get(i.id)) ? (courseById.get(i.id) as DishCourse) : null,
   }));
 }
 

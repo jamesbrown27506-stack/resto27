@@ -12,8 +12,14 @@ import { defineDict } from "../define";
 export const setupDict = defineDict({
   fr: {
     "stp.title": "Préparons votre restaurant",
-    "stp.subtitle": "Quelques minutes pour démarrer — vos tables d'abord, puis votre carte.",
+    "stp.subtitle": "Quelques minutes pour démarrer — votre type d'établissement, vos tables, puis votre carte.",
     "stp.step": "Étape {step} sur {total}",
+
+    "stp.kind.title": "Quel type d'établissement êtes-vous ?",
+    "stp.kind.body": "Les clients vous trouveront sous ce type dans Explorer. Vous pourrez le changer plus tard dans votre profil.",
+    "stp.kind.readOnly": "Seul le propriétaire ou le gérant peut choisir le type.",
+    "stp.kind.skip": "Plus tard",
+    "stp.kind.continue": "Continuer",
 
     "stp.tables.title": "Vos tables",
     "stp.tables.body":
@@ -135,8 +141,14 @@ export const setupDict = defineDict({
   },
   en: {
     "stp.title": "Let's set up your restaurant",
-    "stp.subtitle": "A few minutes to get started — your tables first, then your menu.",
+    "stp.subtitle": "A few minutes to get started — your kind of place, your tables, then your menu.",
     "stp.step": "Step {step} of {total}",
+
+    "stp.kind.title": "What kind of place are you?",
+    "stp.kind.body": "Customers will find you under this type in Explore. You can change it later in your profile.",
+    "stp.kind.readOnly": "Only the owner or a manager can choose the type.",
+    "stp.kind.skip": "Later",
+    "stp.kind.continue": "Continue",
 
     "stp.tables.title": "Your tables",
     "stp.tables.body":

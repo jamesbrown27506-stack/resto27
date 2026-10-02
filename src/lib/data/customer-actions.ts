@@ -9,7 +9,6 @@ import { canCustomerCancel, type OrderStatus } from "@/lib/format/order-status";
 import { notify } from "@/lib/notify";
 import { localizeUploadError, saveUpload, type UploadKind } from "@/lib/uploads";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
-import { PICKUP_RECEIPT_CONFIRMATION_NOTE } from "@/lib/orders/pickup-receipt";
 import { releaseOrderHoldings } from "@/lib/orders/cancellation-effects";
 import { orderDeadline } from "@/lib/orders/deadline";
 import { getTimeLimits } from "@/lib/orders/time-limit-settings";
@@ -474,24 +473,13 @@ export async function confirmOwnDelivery(orderId: string): Promise<ActionResult>
   }
 
 
-  if (order.type === "pickup") {
-    const { data: request } = await supabase
-      .from("order_status_history")
-      .select("id")
-      .eq("order_id", orderId)
-      .eq("status", "shipped")
-      .eq("note", PICKUP_RECEIPT_CONFIRMATION_NOTE)
-      .limit(1)
-      .maybeSingle();
-
-    if (!request) {
-      return {
-        ok: false,
-        error: t("ecu.pickupConfirmNotRequested"),
-      };
-    }
-  }
-
+  /*
+    A pickup used to need the restaurant to "request" the confirmation
+    first, so a customer holding their bag still waited on the counter's
+    admin to close their own order. Since 2026-10 the customer closes it
+    whenever it is ready (`shipped`), exactly like a delivery. The
+    restaurant's request button still works — it just is no longer a gate.
+  */
   const now = new Date().toISOString();
   const { error: updateError } = await supabase
     .from("orders")

@@ -6,23 +6,72 @@ import { relationOne } from "@/lib/public-utils";
 import { discoverySlug, dishPath } from "@/lib/seo-config";
 import { groupDishes, type DishGroup } from "@/lib/menu-summary";
 import { pickMenuDishes, placementDay } from "@/lib/discovery/placement";
+import { effectiveCourse } from "@/lib/menu/course";
+import { isMissingColumn } from "./missing-column";
+
+type CatalogRow = {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  description: string;
+  price: number;
+  image_url: string | null;
+  updated_at: string | null;
+  /** 0071 — absent on a database that has not run it. */
+  course?: string | null;
+  menu_categories: { is_active: boolean; name?: string | null } | { is_active: boolean; name?: string | null }[] | null;
+};
+
+/**
+ * Every available dish in an active category of an active restaurant, paged
+ * past PostgREST's 1 000-row cap. `course` (0071) is asked for and dropped
+ * if the database does not have it yet, remembered for the process — a
+ * missing column must cost the course chips their manager overrides, never
+ * the catalogue behind the homepage, Explore and the sitemap.
+ */
+let courseColumnExists: boolean | null = null;
+
+async function readCatalogRows(): Promise<CatalogRow[]> {
+  const db = createAdminClient();
+  const read = async (withCourse: boolean) => {
+    const rows: CatalogRow[] = [];
+    for (let start = 0; ; start += 1000) {
+      const { data, error } = await db.from("menu_items")
+        .select(`id, restaurant_id, name, description, price, image_url, updated_at${withCourse ? ", course" : ""}, menu_categories(is_active, name), restaurants!inner(status)`)
+        .eq("is_available", true).eq("restaurants.status", "active").order("id").range(start, start + 999);
+      if (error) return { rows, error };
+      rows.push(...(data ?? []) as unknown as CatalogRow[]);
+      if (!data || data.length < 1000) break;
+    }
+    return { rows, error: null };
+  };
+
+  if (courseColumnExists !== false) {
+    const first = await read(true);
+    if (!first.error) {
+      courseColumnExists = true;
+      return first.rows;
+    }
+    if (!isMissingColumn(first.error, "course")) throw new Error("Public menu catalog is unavailable");
+    console.warn("[discovery] menu_items.course is missing — run migration 0071. Dish courses are inferred until then.");
+    courseColumnExists = false;
+  }
+  const fallback = await read(false);
+  if (fallback.error) throw new Error("Public menu catalog is unavailable");
+  return fallback.rows;
+}
 
 export const fetchDiscoveryCatalog = cache(async () => {
   const restaurants = await fetchActiveRestaurants();
   const byId = new Map(restaurants.map(r => [r.id, r]));
-  const db = createAdminClient();
-  type Row = { id: string; restaurant_id: string; name: string; description: string; price: number; image_url: string | null; updated_at: string | null; menu_categories: { is_active: boolean } | { is_active: boolean }[] | null };
-  const rows: Row[] = [];
-  for (let start = 0; ; start += 1000) {
-    const { data, error } = await db.from("menu_items")
-      .select("id, restaurant_id, name, description, price, image_url, updated_at, menu_categories(is_active), restaurants!inner(status)")
-      .eq("is_available", true).eq("restaurants.status", "active").order("id").range(start, start + 999);
-    if (error) throw new Error("Public menu catalog is unavailable");
-    rows.push(...(data ?? []) as unknown as Row[]);
-    if (!data || data.length < 1000) break;
-  }
+  const rows = await readCatalogRows();
   const dishes = rows.filter(row => byId.has(row.restaurant_id) && relationOne(row.menu_categories)?.is_active !== false)
-    .map(row => ({ ...row, restaurant: byId.get(row.restaurant_id)! }));
+    .map(row => ({
+      ...row,
+      restaurant: byId.get(row.restaurant_id)!,
+      /** Where the dish is browsed: the restaurant's choice, else inferred (lib/menu/course). */
+      dishCourse: effectiveCourse({ course: row.course, name: row.name, categoryName: relationOne(row.menu_categories)?.name }),
+    }));
   const groups = [
     ...Array.from(new Set(restaurants.map(r => r.quartier).filter(Boolean))).map(name => ({ kind: "neighbourhood", name, slug: discoverySlug(name) })),
     ...Array.from(new Set(restaurants.map(r => r.cuisine).filter(Boolean))).map(name => ({ kind: "cuisine", name, slug: discoverySlug(name) })),

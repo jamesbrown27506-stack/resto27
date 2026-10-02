@@ -3,6 +3,7 @@ import PublicLink from "@/components/layout/public-link";
 import { Bike, CalendarCheck, CalendarPlus, ChevronRight, Gift, Heart, Plus, RotateCcw, Search, Star, Ticket, Utensils } from "lucide-react";
 import { ReorderButton } from "@/components/order/reorder-button";
 import { PayCountdown } from "./pay-countdown";
+import { ConfirmReceivedButton } from "./confirm-received-button";
 import { buttonClasses } from "@/components/ui/button";
 import { getLocale, getTranslator } from "@/lib/i18n/locale-server";
 import { formatMoney } from "@/lib/format/currency";
@@ -314,9 +315,20 @@ function TrackCard({ order, t }: { order: CustomerOrder; t: T }) {
           {order.type === "delivery" && <DeliveryNote order={order} t={t} />}
         </div>
       )}
-      <Link href={`/orders/${order.id}`} className={buttonClasses({ size: "lg", fullWidth: true, className: "mt-4" })}>
-        {t("chm.track.cta")}
-      </Link>
+      {/* On its way / ready to collect: the customer closes it themselves,
+          right here, without waiting for the restaurant to ask. */}
+      {status === "shipped" && order.type !== "dine_in" ? (
+        <div className="mt-4 flex flex-col gap-2">
+          <ConfirmReceivedButton orderId={order.id} pickup={order.type === "pickup"} />
+          <Link href={`/orders/${order.id}`} className={buttonClasses({ variant: "outline", fullWidth: true })}>
+            {t("chm.track.cta")}
+          </Link>
+        </div>
+      ) : (
+        <Link href={`/orders/${order.id}`} className={buttonClasses({ size: "lg", fullWidth: true, className: "mt-4" })}>
+          {t("chm.track.cta")}
+        </Link>
+      )}
     </article>
   );
 }
@@ -396,8 +408,11 @@ function FeaturedCard({ item, t }: { item: FeaturedRestaurant; t: T }) {
       href={`/restaurants/${r.slug}`}
       className="group flex w-68 shrink-0 snap-start flex-col overflow-hidden rounded-lg border border-border bg-surface transition-shadow hover:shadow-md lg:w-auto"
     >
-      <Photo src={r.coverUrl} className="h-28 w-full" zoom />
-      <span className="flex flex-col gap-0.5 px-3.5 pb-3.5">
+      {/* The logo sits IN the banner, bottom-left. Hung below it with a
+          negative margin it slid under the cover: the banner is positioned,
+          the logo was not, so the banner painted over it. */}
+      <span className="relative block">
+        <Photo src={r.coverUrl} className="h-28 w-full" zoom />
         {r.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -405,17 +420,19 @@ function FeaturedCard({ item, t }: { item: FeaturedRestaurant; t: T }) {
             alt=""
             loading="lazy"
             decoding="async"
-            className="-mt-6 size-12 rounded-full border-3 border-surface bg-surface object-cover"
+            className="absolute bottom-2 left-2 z-10 size-12 rounded-full border-2 border-surface bg-surface object-cover shadow-md"
           />
         ) : (
           <span
             aria-hidden
-            className="-mt-6 grid size-12 place-items-center rounded-full border-3 border-surface bg-primary-light font-display text-lg font-bold text-primary"
+            className="absolute bottom-2 left-2 z-10 grid size-12 place-items-center rounded-full border-2 border-surface bg-primary-light font-display text-lg font-bold text-primary shadow-md"
           >
             {r.name.charAt(0).toUpperCase()}
           </span>
         )}
-        <span className="mt-1 truncate font-bold">{r.name}</span>
+      </span>
+      <span className="flex flex-col gap-0.5 px-3.5 pt-2.5 pb-3.5">
+        <span className="truncate font-bold">{r.name}</span>
         {place && <span className="truncate text-sm text-text-secondary">{place}</span>}
         <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[13px]">
           {r.reviewCount > 0 ? (

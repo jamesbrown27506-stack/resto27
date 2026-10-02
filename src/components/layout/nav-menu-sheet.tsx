@@ -10,9 +10,6 @@ import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Sheet } from "@/components/ui/sheet";
 import { buttonClasses } from "@/components/ui/button";
 import { useLocale } from "@/lib/i18n/use-locale";
-import { useNativeApp } from "@/lib/capacitor/platform";
-import { DEVELOPER, developerWhatsAppHref } from "@/lib/developer";
-import { SocialIcon } from "@/components/icons/social-icon";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 
@@ -77,7 +74,6 @@ export function NavMenuSheet({
 }) {
   const pathname = usePathname();
   const { t } = useLocale();
-  const native = useNativeApp();
 
   function isActive(item: NavMenuItem): boolean {
     if (item.matchPrefix) return pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -172,25 +168,6 @@ export function NavMenuSheet({
           </div>
         )}
 
-        {/*
-          Inside the app there is no footer (site-footer), so the developer
-          credit — and its WhatsApp contact — lives here instead.
-        */}
-        {native && actions && (
-          <a
-            href={developerWhatsAppHref(t("nav.credit.message"))}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-5 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 rounded-full bg-accent/10 px-4 py-2.5 text-sm ring-1 ring-accent/30"
-          >
-            <SocialIcon platform="whatsapp" className="size-4 text-accent" />
-            <span>
-              {t("footer.developedBy")} <strong className="font-semibold">{DEVELOPER.name}</strong>
-            </span>
-            <span aria-hidden className="text-text-light">·</span>
-            <span className="font-medium text-accent">{t("footer.contactWhatsapp")}</span>
-          </a>
-        )}
       </div>
     </Sheet>
   );

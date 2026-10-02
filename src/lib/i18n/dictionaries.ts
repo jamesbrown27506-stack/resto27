@@ -149,7 +149,6 @@ const baseFr = {
   "footer.madeIn": "Fait à Douala",
   "footer.developedBy": "Développé par",
   "footer.contactWhatsapp": "Contacter sur WhatsApp",
-  "nav.credit.message": "Bonjour Mrcode27, j'ai vu l'application que vous avez développée et j'aimerais échanger avec vous.",
   "footer.whatsappMessage":
     "Bonjour Mrcode27, j'ai vu le site que vous avez développé pour {name} et j'aimerais échanger avec vous.",
 
@@ -347,6 +346,7 @@ const baseFr = {
   "restaurants.searchPlaceholder": "Restaurant, plat ou cuisine…",
   "restaurants.sort": "Trier",
   "restaurants.sortRecommended": "Recommandés",
+  "restaurants.closeResults": "Rien d'exact pour « {query} ». Voici les résultats les plus proches :",
   "restaurants.sortRating": "Mieux notés",
   "restaurants.sortDelivery": "Plus rapides",
   "restaurants.sortName": "Nom (A–Z)",
@@ -984,7 +984,6 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "footer.madeIn": "Made in Douala",
   "footer.developedBy": "Developed by",
   "footer.contactWhatsapp": "Chat on WhatsApp",
-  "nav.credit.message": "Hello Mrcode27, I saw the app you built and I would like to talk with you.",
   "footer.whatsappMessage":
     "Hello Mrcode27, I saw the website you built for {name} and would like to talk with you.",
 
@@ -1181,6 +1180,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "restaurants.searchPlaceholder": "Restaurant, dish or cuisine…",
   "restaurants.sort": "Sort",
   "restaurants.sortRecommended": "Recommended",
+  "restaurants.closeResults": "Nothing exact for “{query}”. Here are the closest results:",
   "restaurants.sortRating": "Top rated",
   "restaurants.sortDelivery": "Fastest",
   "restaurants.sortName": "Name (A–Z)",

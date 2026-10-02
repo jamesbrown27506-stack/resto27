@@ -2,7 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Bike, Check, ChefHat, Clock, Plus, Table2, Users } from "lucide-react";
+import { BadgePercent, Bike, Check, ChefHat, Clock, Plus, Store, Table2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
@@ -14,8 +14,10 @@ import {
   setDeliveryFeeRange,
   setDeliveryOffering,
   setDefaultOpeningHours,
+  updateRestaurantProfile,
   upsertTable,
 } from "@/lib/data/manager-actions";
+import { cuisineIcon } from "@/components/restaurant/kind-icons";
 import { POPULAR_DISHES } from "@/lib/data/dish-templates";
 import { formatMoney } from "@/lib/format/currency";
 import { useLocale } from "@/lib/i18n/use-locale";
@@ -41,7 +43,12 @@ type FeeType = "none" | "fixed" | "per_seat";
 /**
  * The first-login setup wizard.
  *
- * Five steps, deliberately few choices:
+ * Six steps, deliberately few choices:
+ *
+ *   0. KIND OF PLACE — big tiles of the pre-made restaurant types
+ *      (traditional Cameroonian, fast food, ice cream & desserts, drinks &
+ *      bar…). It is how customers find the restaurant in Explore, so it
+ *      comes first and saves at once (2026-10).
  *
  *   1. TABLES — the bulk creator ("12 tables of 4") is the primary control,
  *      because a dining room is not entered one table at a time. The
@@ -79,6 +86,9 @@ export function SetupWizard({
   categories,
   canCreateTables,
   canSetFee,
+  cuisines,
+  currentCuisineId,
+  canEditProfile,
 }: {
   restaurantName: string;
   userName: string;
@@ -94,11 +104,17 @@ export function SetupWizard({
    * were. Roles that cannot set it are told so and finish without it.
    */
   canSetFee: boolean;
+  /** The pre-made restaurant types (`cuisines`, active rows) for step 0. */
+  cuisines: { id: string; name: string }[];
+  currentCuisineId: string | null;
+  /** `profile.edit` — who may set the type. Others see it and move on. */
+  canEditProfile: boolean;
 }) {
   const { t } = useLocale();
   const { toast } = useToast();
   const router = useRouter();
   const [step, setStep] = useState(0);
+  const [cuisineId, setCuisineId] = useState<string | null>(currentCuisineId);
   const [tables, setTables] = useState(initialTables);
   const [busy, setBusy] = useState(false);
   const [, startTransition] = useTransition();
@@ -130,7 +146,7 @@ export function SetupWizard({
   const [formError, setFormError] = useState<string | null>(null);
   const submittingRef = useRef(false);
 
-  const stepCount = 5;
+  const stepCount = 6;
 
   const allSelected = selectedDishes.size === POPULAR_DISHES.length;
 
@@ -250,6 +266,28 @@ export function SetupWizard({
     });
   }
 
+  /**
+   * Step 0 saves on its own, at once: the type is what places the
+   * restaurant in Explore ("Par type de restaurant") and on its cuisine
+   * page, so it should not wait for — or be lost with — the last step.
+   */
+  function saveKind() {
+    if (!canEditProfile || !cuisineId || cuisineId === currentCuisineId) {
+      setStep(1);
+      return;
+    }
+    setBusy(true);
+    startTransition(async () => {
+      const result = await updateRestaurantProfile({ cuisineId });
+      setBusy(false);
+      if (!result.ok) {
+        toast(result.error, "error");
+        return;
+      }
+      setStep(1);
+    });
+  }
+
   function finish() {
     // Guard: one submission at a time. The button is disabled while busy, but
     // a transition can still be re-entered before the re-render lands, so the
@@ -361,8 +399,61 @@ export function SetupWizard({
         ))}
       </div>
 
-      {/* ── Step 0: Tables ──────────────────────────────────────────────── */}
+      {/* ── Step 0: What kind of place ──────────────────────────────────── */}
       {step === 0 && (
+        <section className="rounded-xl border border-border bg-surface p-4 sm:p-6">
+          <div className="mb-4 flex items-center gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary-light text-primary">
+              <Store className="size-5" aria-hidden />
+            </span>
+            <div className="min-w-0">
+              <h2 className="font-semibold">{t("stp.kind.title")}</h2>
+              <p className="truncate text-sm text-text-secondary">{restaurantName}</p>
+            </div>
+          </div>
+          <p className="text-sm text-text-secondary">{t("stp.kind.body")}</p>
+
+          {/* Big tiles, one tap: the pre-made types, not a free text field —
+              a customer browsing "Glaces & desserts" must find every
+              ice-cream place under the one same name. */}
+          <div role="radiogroup" aria-label={t("stp.kind.title")} className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+            {cuisines.map((c) => {
+              const Icon = cuisineIcon(c.name);
+              const selected = cuisineId === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  disabled={!canEditProfile || busy}
+                  onClick={() => setCuisineId(c.id)}
+                  className={cn(
+                    "flex min-h-20 flex-col items-center justify-center gap-1.5 rounded-lg border p-3 text-center text-sm font-semibold transition-colors disabled:opacity-60",
+                    selected ? "border-primary bg-primary-light text-primary" : "border-border bg-surface hover:border-primary/50",
+                  )}
+                >
+                  <Icon className="size-6" aria-hidden />
+                  {c.name}
+                </button>
+              );
+            })}
+          </div>
+          {!canEditProfile && <p className="mt-3 text-xs text-text-light">{t("stp.kind.readOnly")}</p>}
+
+          <div className="mt-6 flex justify-end gap-2">
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(1)}>
+              {t("stp.kind.skip")}
+            </Button>
+            <Button type="button" loading={busy} disabled={busy || (canEditProfile && !cuisineId)} onClick={saveKind}>
+              {t("stp.kind.continue")}
+            </Button>
+          </div>
+        </section>
+      )}
+
+      {/* ── Step 1: Tables ──────────────────────────────────────────────── */}
+      {step === 1 && (
         <section className="rounded-xl border border-border bg-surface p-4 sm:p-6">
           <div className="mb-4 flex items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary-light text-primary">
@@ -498,18 +589,18 @@ export function SetupWizard({
           )}
 
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(1)}>
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(2)}>
               {t("stp.skip")}
             </Button>
-            <Button type="button" disabled={busy} onClick={() => setStep(1)}>
+            <Button type="button" disabled={busy} onClick={() => setStep(2)}>
               {t("stp.tables.continue")}
             </Button>
           </div>
         </section>
       )}
 
-      {/* ── Step 1: Delivery ────────────────────────────────────────────── */}
-      {step === 1 && (
+      {/* ── Step 2: Delivery ────────────────────────────────────────────── */}
+      {step === 2 && (
         <section className="rounded-xl border border-border bg-surface p-4 sm:p-6">
           <div className="mb-4 flex items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary-light text-primary">
@@ -649,13 +740,13 @@ export function SetupWizard({
           )}
 
           <div className="mt-6 flex items-center justify-between gap-3">
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(0)}>
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(1)}>
               {"←"}
             </Button>
             <Button
               type="button"
               disabled={busy || Boolean(rangeError)}
-              onClick={() => setStep(2)}
+              onClick={() => setStep(3)}
             >
               {t("stp.delivery.continue")}
             </Button>
@@ -663,8 +754,8 @@ export function SetupWizard({
         </section>
       )}
 
-      {/* ── Step 2: Opening hours ───────────────────────────────────────── */}
-      {step === 2 && (
+      {/* ── Step 3: Opening hours ───────────────────────────────────────── */}
+      {step === 3 && (
         <section className="rounded-xl border border-border bg-surface p-4 sm:p-6">
           <div className="mb-4 flex items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary-light text-primary">
@@ -688,18 +779,18 @@ export function SetupWizard({
           </div>
 
           <div className="mt-6 flex items-center justify-between gap-3">
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(1)}>
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(2)}>
               {"←"}
             </Button>
-            <Button type="button" disabled={busy} onClick={() => setStep(3)}>
+            <Button type="button" disabled={busy} onClick={() => setStep(4)}>
               {t("stp.hours.continue")}
             </Button>
           </div>
         </section>
       )}
 
-      {/* ── Step 3: Menu (categories + popular dishes on one screen) ───── */}
-      {step === 3 && (
+      {/* ── Step 4: Menu (categories + popular dishes on one screen) ───── */}
+      {step === 4 && (
         <section className="rounded-xl border border-border bg-surface p-4 sm:p-6">
           <div className="mb-4 flex items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary-light text-primary">
@@ -841,18 +932,18 @@ export function SetupWizard({
           <p className="mt-3 text-xs text-text-light">{t("stp.dishes.imageNote")}</p>
 
           <div className="mt-6 flex items-center justify-between gap-3">
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(2)}>
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(3)}>
               {"←"}
             </Button>
-            <Button type="button" disabled={busy} onClick={() => setStep(4)}>
+            <Button type="button" disabled={busy} onClick={() => setStep(5)}>
               {t("stp.categories.continue")}
             </Button>
           </div>
         </section>
       )}
 
-      {/* ── Step 4: Reservation fee ─────────────────────────────────────── */}
-      {step === 4 && (
+      {/* ── Step 5: Reservation fee ─────────────────────────────────────── */}
+      {step === 5 && (
         <section className="rounded-xl border border-border bg-surface p-4 sm:p-6">
           <div className="mb-4 flex items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary-light text-primary">
@@ -972,7 +1063,7 @@ export function SetupWizard({
           )}
 
           <div className="mt-6 flex items-center justify-between gap-3">
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(3)}>
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => setStep(4)}>
               {"←"}
             </Button>
             <Button

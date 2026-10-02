@@ -4,6 +4,7 @@ import { SetupWizard } from "./setup-wizard";
 import { requireBranch } from "@/lib/auth/branch";
 import { can } from "@/lib/capabilities";
 import { fetchCategories, fetchTables } from "@/lib/data/manager";
+import { fetchCuisines, fetchRestaurantProfile } from "@/lib/data/profile";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -32,9 +33,11 @@ export default async function SetupPage() {
   // Already through? The wizard is done, not a museum.
   if (active.setupDoneAt) redirect("/m");
 
-  const [tables, categories] = await Promise.all([
+  const [tables, categories, cuisines, restaurant] = await Promise.all([
     fetchTables(active.restaurantId),
     fetchCategories(active.restaurantId),
+    fetchCuisines(),
+    fetchRestaurantProfile(active.restaurantId),
   ]);
 
   return (
@@ -48,6 +51,9 @@ export default async function SetupPage() {
       // finance.manage — a role without it used to be redirected to
       // /not-found mid-wizard instead of being told it was not their step.
       canSetFee={can(active.role, "finance.manage")}
+      cuisines={cuisines}
+      currentCuisineId={restaurant?.cuisineId ?? null}
+      canEditProfile={can(active.role, "profile.edit")}
     />
   );
 }

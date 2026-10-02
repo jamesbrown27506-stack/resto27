@@ -71,3 +71,28 @@ export function serviceDateAndTime(instant: Date): { date: string; time: string 
   const minute = String(local.minute % 60).padStart(2, "0");
   return { date: local.date, time: `${hour}:${minute}` };
 }
+
+/**
+ * The tap-to-pick times for one day (2026-10): every half hour the kitchen
+ * can actually serve, from the first one a full preparation window away.
+ * The checkout shows them under a free time field, so most people tap once
+ * instead of fighting a phone's time picker. `date` is "YYYY-MM-DD" in Douala.
+ */
+export function quickServiceTimes(
+  hours: ServiceHours[],
+  date: string,
+  now: Date = new Date(),
+  stepMinutes = 30,
+  limit = 16,
+): string[] {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
+  const earliest = now.getTime() + ORDER_PREP_LEAD_MIN * 60_000;
+  const times: string[] = [];
+  for (let minute = 0; minute < 24 * 60 && times.length < limit; minute += stepMinutes) {
+    const time = `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+    const candidate = new Date(`${date}T${time}:00+01:00`);
+    if (candidate.getTime() < earliest) continue;
+    if (canFulfilAt(hours, candidate)) times.push(time);
+  }
+  return times;
+}

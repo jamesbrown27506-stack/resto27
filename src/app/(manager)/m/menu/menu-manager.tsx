@@ -40,6 +40,7 @@ import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { MenuCategory, MenuItem } from "@/lib/data/manager";
 import { cn } from "@/lib/utils";
 import { localizeActionError } from "@/lib/i18n/staff-errors";
+import { DISH_COURSES, inferCourse, isDishCourse } from "@/lib/menu/course";
 
 /**
  * Menu management.
@@ -102,6 +103,7 @@ const EMPTY: MenuItemInput = {
   allergens: "",
   priceToConfirm: false,
   priceMax: null,
+  course: null,
 };
 
 export function MenuManager({
@@ -195,6 +197,7 @@ export function MenuManager({
         allergens: item.allergens,
         priceToConfirm: item.priceToConfirm ?? false,
         priceMax: item.priceMax ?? null,
+        course: item.course ?? null,
       },
       photo: null,
     });
@@ -709,6 +712,32 @@ export function MenuManager({
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            {/* The platform's kind of dish (0071): where customers find it
+                when they browse Explore by type. "Automatic" shows what the
+                name and section already suggest, so most dishes need no
+                choice at all. */}
+            <Field label={t("course.field")} htmlFor="item-course" hint={t("course.fieldHint")}>
+              <Select
+                id="item-course"
+                value={editing.draft.course ?? ""}
+                onChange={(e) => patch({ course: isDishCourse(e.target.value) ? e.target.value : null })}
+              >
+                <option value="">
+                  {t("course.auto", {
+                    course: t(`course.${inferCourse(
+                      editing.draft.name,
+                      categories.find((c) => c.id === editing.draft.categoryId)?.name,
+                    )}` as TranslationKey),
+                  })}
+                </option>
+                {DISH_COURSES.map((course) => (
+                  <option key={course} value={course}>
+                    {t(`course.${course}` as TranslationKey)}
                   </option>
                 ))}
               </Select>
