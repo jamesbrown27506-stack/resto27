@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
-import { Inter, Playfair_Display } from "next/font/google";
+import localFont from "next/font/local";
 import { cookies } from "next/headers";
 import { THEME_COOKIE, THEME_EXPLICIT_COOKIE, themeScript } from "@/components/theme/theme-provider";
 import { LocaleProvider } from "@/lib/i18n/locale-provider";
@@ -23,24 +23,42 @@ import { NativeRuntime } from "@/components/capacitor/native-runtime";
 import "./globals.css";
 
 /**
- * Fonts are self-hosted at build time by next/font.
+ * Fonts are self-hosted, FROM THE REPOSITORY (src/app/fonts).
  *
  * The PHP version loaded these from fonts.googleapis.com with two preconnects
  * — a render-blocking third-party request on every page, plus a visible swap
  * when the webfont finally arrived. Self-hosting removes both, and matters
  * disproportionately on the mobile connections most diners are using.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  WHY NOT next/font/google ANY MORE (Oct 2026).
+ *
+ *  next/font/google downloads the files from Google AT BUILD TIME. A Vercel
+ *  build broke on it with 32 "next/font/google queries have exactly one
+ *  entry" errors: Google answered the build machine with font URLs Turbopack
+ *  could not parse, while the same request from elsewhere returned ordinary
+ *  ones. Nothing in the app had changed — a deploy depended on what a third
+ *  party happened to send that minute. The same files (Inter, Playfair
+ *  Display; both SIL Open Font Licence) are now committed here, so a build
+ *  needs nothing from the network and visitors get exactly what they got.
+ *
+ *  Latin subset only, as before (`subsets: ["latin"]`): it covers French and
+ *  English, accents, œ, « » and the typographic dashes. Both are variable
+ *  fonts, so one file serves every weight.
+ * ─────────────────────────────────────────────────────────────────────────
  */
-const inter = Inter({
+const inter = localFont({
   variable: "--font-inter",
-  subsets: ["latin"],
+  src: [{ path: "./fonts/inter-latin.woff2", weight: "100 900", style: "normal" }],
   display: "swap",
 });
 
-const playfair = Playfair_Display({
+const playfair = localFont({
   variable: "--font-playfair",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  style: ["normal", "italic"],
+  src: [
+    { path: "./fonts/playfair-display-latin.woff2", weight: "400 900", style: "normal" },
+    { path: "./fonts/playfair-display-italic-latin.woff2", weight: "400 900", style: "italic" },
+  ],
   display: "swap",
 });
 
