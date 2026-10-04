@@ -12,6 +12,7 @@ import { writeAudit } from "@/lib/audit";
 import { paymentMode } from "./billing";
 import { mainRestaurantId } from "@/lib/branches/account";
 import { scheduleEntitled } from "@/lib/wallet/scheduled-payouts";
+import { isMissingColumn } from "./missing-column";
 import {
   checkWithdrawalPin,
   getPayoutAccount,
@@ -367,6 +368,8 @@ export async function removePayoutAccount(id: string): Promise<Result> {
 export async function saveScheduledPayout(input: {
   frequency: "daily" | "weekly" | "monthly";
   weekday: number | null;
+  /** 0–23, Douala time (0075). */
+  hour: number;
   payoutAccountId: string;
   keepAmount: number;
   minAmount: number;
@@ -387,6 +390,10 @@ export async function saveScheduledPayout(input: {
   if (input.frequency === "weekly" && (input.weekday === null || input.weekday < 0 || input.weekday > 6)) {
     return { ok: false, reason: "weekday", error: t("mwd.sch.err.weekday") };
   }
+  const hour = Math.round(input.hour);
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+    return { ok: false, reason: "hour", error: t("mwd.sch.err.hour") };
+  }
   const keep = Math.round(input.keepAmount);
   const min = Math.round(input.minAmount);
   if (!Number.isInteger(keep) || keep < 0 || !Number.isInteger(min) || min < 500) {
@@ -396,20 +403,23 @@ export async function saveScheduledPayout(input: {
     return { ok: false, reason: "accountMissing", error: t("est.withdrawAccountMissing") };
   }
 
-  const { error } = await createAdminClient().from("scheduled_payouts").upsert(
-    {
-      restaurant_id: restaurantId,
-      enabled: true,
-      frequency: input.frequency,
-      weekday: input.frequency === "weekly" ? input.weekday : null,
-      payout_account_id: input.payoutAccountId,
-      keep_amount: keep,
-      min_amount: min,
-      set_by: context.profile.id,
-      last_result: null,
-    },
-    { onConflict: "restaurant_id" },
-  );
+  const row = {
+    restaurant_id: restaurantId,
+    enabled: true,
+    frequency: input.frequency,
+    weekday: input.frequency === "weekly" ? input.weekday : null,
+    payout_account_id: input.payoutAccountId,
+    keep_amount: keep,
+    min_amount: min,
+    set_by: context.profile.id,
+    last_result: null,
+  };
+  const supabase = createAdminClient();
+  let { error } = await supabase.from("scheduled_payouts").upsert({ ...row, hour }, { onConflict: "restaurant_id" });
+  // Before 0075 there is no hour: the schedule runs with the nightly job.
+  if (error && isMissingColumn(error, "hour")) {
+    ({ error } = await supabase.from("scheduled_payouts").upsert(row, { onConflict: "restaurant_id" }));
+  }
   if (error) {
     console.error("[wallet:saveSchedule]", error.message);
     return { ok: false, reason: "saveFailed", error: t("mwd.err.saveFailed") };

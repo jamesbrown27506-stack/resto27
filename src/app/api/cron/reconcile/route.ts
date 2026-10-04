@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { runReconciliation } from "@/lib/payments/reconcile";
 import { requireCronAuth, stampHeartbeat } from "@/lib/cron";
+import { runScheduledPayouts } from "@/lib/wallet/scheduled-payouts";
 
 /**
  * The payment reconciler's trigger — the route half a dozen comments and
@@ -27,7 +28,11 @@ export async function GET(request: Request) {
   if (unauthorized) return unauthorized;
 
   const summary = await runReconciliation();
-  await stampHeartbeat("reconciler", summary);
+  // Scheduled payouts at the owner's hour (0075): the database only calls
+  // this route when one is due (cron_due_payments), so this adds nothing on
+  // a quiet day. Claimed per schedule per day — never sent twice.
+  const payouts = await runScheduledPayouts();
+  await stampHeartbeat("reconciler", { ...summary, payouts });
 
-  return NextResponse.json(summary);
+  return NextResponse.json({ ...summary, payouts });
 }

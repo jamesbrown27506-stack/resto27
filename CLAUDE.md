@@ -126,3 +126,4 @@ The CSP in `next.config.ts` allow-lists the Supabase host for `img-src`, `media-
 
 - Comments in this codebase explain *why* at length (often with a boxed `─────` block describing a past incident). Preserve them when editing nearby code, and match that style for non-obvious decisions.
 - Commit messages recently use `feat:` / `fix:` prefixes with a short imperative summary.
+- Dialogs and sheets are native modal `<dialog>`s in the browser's top layer: a refusal from a form inside one goes in its `error` prop (`Dialog`, `ConfirmDialog`, `Sheet` → `FormError`), not a toast — and don't disable a submit button silently; validate on click and say what is missing. Toasts are a top-layer popover so they still show above an open dialog.

@@ -81,6 +81,7 @@ export default async function WalletPage() {
       <WalletClient
         state={state}
         fee={fee}
+        now={new Date().toISOString()}
         controls={{
           ready,
           sandbox: mode === "sandbox",
@@ -110,6 +111,7 @@ export default async function WalletPage() {
                       enabled: schedule.schedule.enabled,
                       frequency: schedule.schedule.frequency,
                       weekday: schedule.schedule.weekday,
+                      hour: schedule.schedule.hour,
                       payoutAccountId: schedule.schedule.payoutAccountId,
                       keepAmount: schedule.schedule.keepAmount,
                       minAmount: schedule.schedule.minAmount,

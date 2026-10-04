@@ -94,6 +94,8 @@ export function BranchesView({
   const [form, setForm] = useState({ label: "", quartier: "", address: "", phone: "", copyMenu: true });
   const [closing, setClosing] = useState<BranchItem | null>(null);
   const [syncing, setSyncing] = useState<BranchItem | null>(null);
+  // The refusal of the open sheet or dialog, shown in it (ui/form-error).
+  const [formError, setFormError] = useState<string | null>(null);
 
   const allowsBranches = plan !== null && (plan.includedBranches > 1 || plan.extraBranchPrice !== null);
   const includedBranches = Math.max(0, (plan?.includedBranches ?? 1) - 1);
@@ -122,9 +124,10 @@ export function BranchesView({
   }
 
   function submit() {
+    setFormError(null);
     startTransition(async () => {
       const result = await createBranch({ ...form, copyMenu: form.copyMenu && main.dishes > 0 });
-      if (!result.ok) return toast(result.error, "error");
+      if (!result.ok) return setFormError(result.error);
 
       setAdding(false);
       setForm({ label: "", quartier: "", address: "", phone: "", copyMenu: true });
@@ -148,8 +151,8 @@ export function BranchesView({
     const target = syncing;
     startTransition(async () => {
       const result = await syncBranchMenu(target.id);
+      if (!result.ok) return setFormError(result.error);
       setSyncing(null);
-      if (!result.ok) return toast(result.error, "error");
       if (result.note) toast(result.note, "success");
       router.refresh();
     });
@@ -160,8 +163,8 @@ export function BranchesView({
     const target = closing;
     startTransition(async () => {
       const result = await closeBranch(target.id);
+      if (!result.ok) return setFormError(result.error);
       setClosing(null);
-      if (!result.ok) return toast(result.error, "error");
       if (result.note) toast(result.note, "success");
       router.refresh();
     });
@@ -267,7 +270,7 @@ export function BranchesView({
           </div>
 
           <span title={canAdd ? undefined : nextCost.kind === "unavailable" ? t("mbr.add.unavailable") : t("mbr.lapsed")}>
-            <Button fullWidth className="sm:w-auto" disabled={!canAdd || pending} onClick={() => setAdding(true)}>
+            <Button fullWidth className="sm:w-auto" disabled={!canAdd || pending} onClick={() => (setFormError(null), setAdding(true))}>
               <Plus className="size-4" aria-hidden />
               <span>{t("mbr.add.title")}</span>
             </Button>
@@ -363,7 +366,7 @@ export function BranchesView({
                     </Button>
                   )}
                   {branch.dishes > 0 && main.dishes > 0 && (
-                    <Button variant="ghost" size="sm" disabled={pending} onClick={() => setSyncing(branch)}>
+                    <Button variant="ghost" size="sm" disabled={pending} onClick={() => (setFormError(null), setSyncing(branch))}>
                       <RotateCcw className="size-3.5" aria-hidden />
                       <span>{t("mbr.action.syncMenu")}</span>
                     </Button>
@@ -389,7 +392,7 @@ export function BranchesView({
                         size="sm"
                         className="text-error hover:bg-error-light"
                         disabled={pending}
-                        onClick={() => setClosing(branch)}
+                        onClick={() => (setFormError(null), setClosing(branch))}
                       >
                         <span>{t("mbr.action.close")}</span>
                       </Button>
@@ -463,6 +466,7 @@ export function BranchesView({
 
       {/* ── Open a branch ──────────────────────────────────────────────── */}
       <Sheet
+        error={formError}
         open={adding}
         onClose={() => setAdding(false)}
         title={t("mbr.add.title")}
@@ -543,6 +547,7 @@ export function BranchesView({
       </Sheet>
 
       <ConfirmDialog
+        error={formError}
         open={syncing !== null}
         onClose={() => setSyncing(null)}
         onConfirm={confirmSync}
@@ -553,6 +558,7 @@ export function BranchesView({
       />
 
       <ConfirmDialog
+        error={formError}
         open={closing !== null}
         onClose={() => setClosing(null)}
         onConfirm={confirmClose}

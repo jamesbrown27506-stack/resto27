@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -36,6 +36,31 @@ let nextId = 0;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const regionRef = useRef<HTMLDivElement>(null);
+
+  /*
+    ABOVE ANY OPEN DIALOG.
+
+    Dialogs and sheets are native modal <dialog>s: they live in the browser's
+    TOP LAYER, above every z-index, behind a blurred backdrop. A toast raised
+    while one was open — "wrong password" while setting a withdrawal PIN —
+    rendered UNDER that blur, unreadable. No z-index can fix that; only the
+    top layer can. So the toast region is a manual popover, and every new
+    toast re-opens it, which moves it to the top of the top layer — above
+    whatever dialog opened since. (Forms also show their own refusal inline;
+    this is for everything else.) Browsers without popovers keep the fixed,
+    high-z-index region they always had.
+  */
+  useEffect(() => {
+    const region = regionRef.current as (HTMLDivElement & { showPopover?: () => void; hidePopover?: () => void }) | null;
+    if (!region || typeof region.showPopover !== "function") return;
+    try {
+      if (region.matches(":popover-open")) region.hidePopover?.();
+      region.showPopover();
+    } catch {
+      // Not connected yet, or already in the state asked for — harmless.
+    }
+  }, [toasts]);
 
   const dismiss = useCallback((id: number) => {
     setToasts((current) => current.filter((t) => t.id !== id));
@@ -61,12 +86,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         readers frequently miss the announcement entirely.
       */}
       <div
+        ref={regionRef}
+        popover="manual"
         aria-live="polite"
         aria-atomic="false"
         // At the TOP, not the bottom: toasts announce themselves where the
         // eye already is — above the content — and never collide with the
-        // mobile bottom tab bar or a sticky save bar.
-        className="pointer-events-none fixed inset-x-4 top-4 z-[9000] flex flex-col items-end gap-2 sm:inset-x-auto sm:right-6 sm:top-6"
+        // mobile bottom tab bar or a sticky save bar. The m-0/p-0/border-0/
+        // bg-transparent/overflow-visible undo the browser's popover styles.
+        className="pointer-events-none fixed inset-x-4 top-4 bottom-auto z-[9000] m-0 flex h-auto w-auto flex-col items-end gap-2 overflow-visible border-0 bg-transparent p-0 sm:inset-x-auto sm:right-6 sm:left-auto sm:top-6"
       >
         {toasts.map(({ id, tone, message }) => {
           const Icon = ICONS[tone];

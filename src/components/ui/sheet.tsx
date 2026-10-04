@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { FormError } from "./form-error";
 import { cn } from "@/lib/utils";
 
 /**
@@ -34,6 +35,8 @@ export interface SheetProps {
   side?: SheetSide;
   footer?: React.ReactNode;
   className?: string;
+  /** Why the last attempt was refused — shown at the top of the panel. */
+  error?: string | null;
   children: React.ReactNode;
 }
 
@@ -45,6 +48,7 @@ export function Sheet({
   side = "right",
   footer,
   className,
+  error,
   children,
 }: SheetProps) {
   const { t } = useLocale();
@@ -101,7 +105,10 @@ export function Sheet({
 
         {/* overscroll-contain stops a flick at the end of the panel from
             scrolling the page behind it. */}
-        <div className="flex-1 overflow-y-auto overscroll-contain p-5">{children}</div>
+        <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-5">
+          <FormError message={error} className="mb-4" />
+          {children}
+        </div>
 
         {footer && (
           <div

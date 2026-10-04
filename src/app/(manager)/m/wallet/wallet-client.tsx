@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
-import { Field, Input } from "@/components/ui/input";
+import { Field, Input, Select } from "@/components/ui/input";
+import { FormError } from "@/components/ui/form-error";
+import { PinField } from "@/components/ui/pin-field";
 import { PaymentPendingView } from "@/components/payment/payment-pending";
 import { useToast } from "@/components/ui/toast";
 import { formatDateTime } from "@/lib/format/datetime";
@@ -29,6 +31,7 @@ import {
 } from "@/lib/data/withdraw-control-actions";
 import type { WalletState } from "@/lib/data/wallet";
 import type { WithdrawDelegate } from "@/lib/wallet/withdraw-rules";
+import { DEFAULT_PAYOUT_HOUR, nextScheduledRun } from "@/lib/wallet/schedule-rules";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
@@ -76,6 +79,8 @@ export interface WalletControls {
       enabled: boolean;
       frequency: "daily" | "weekly" | "monthly";
       weekday: number | null;
+      /** 0–23 Douala; null before 0075. */
+      hour: number | null;
       payoutAccountId: string;
       keepAmount: number;
       minAmount: number;
@@ -85,31 +90,29 @@ export interface WalletControls {
   } | null;
 }
 
-/** A PIN field: digits only, never echoed, never autofilled as a password. */
+/** A PIN field: six boxes over a number-pad input — digits never shown (ui/pin-field). */
 function PinInput({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
-  return (
-    <Input
-      id={id}
-      type="password"
-      inputMode="numeric"
-      autoComplete="off"
-      maxLength={6}
-      value={value}
-      onChange={(event) => onChange(event.target.value.replace(/\D/g, "").slice(0, 6))}
-      placeholder="••••"
-    />
-  );
+  return <PinField id={id} value={value} onChange={onChange} />;
 }
+
+/** Which form a refusal belongs to — shown in THAT form, never behind its backdrop. */
+type FormScope = "confirm" | "pin" | "number" | "grant" | "remove" | "revoke" | "schedule";
+
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
 export function WalletClient({
   state,
   fee,
   controls,
+  now: nowIso,
 }: {
   state: WalletState;
   fee: { enabled: boolean; percent: number };
   controls: WalletControls;
+  /** Server-stamped instant — never read the clock during a render. */
+  now: string;
 }) {
+  const now = new Date(nowIso);
   const { t, locale } = useLocale();
   const { toast } = useToast();
   const router = useRouter();
@@ -159,11 +162,18 @@ export function WalletClient({
   const [scheduleForm, setScheduleForm] = useState({
     frequency: currentSchedule?.frequency ?? ("weekly" as "daily" | "weekly" | "monthly"),
     weekday: currentSchedule?.weekday ?? 1,
-    accountId: currentSchedule?.payoutAccountId ?? controls.accounts[0]?.id ?? "",
+    hour: currentSchedule?.hour ?? 20,
+    accountId: currentSchedule?.payoutAccountId ?? "",
     keep: String(currentSchedule?.keepAmount ?? 0),
     min: String(currentSchedule?.minAmount ?? 5000),
     pin: "",
   });
+
+  // The refusal of the form in front of the person — shown inside it.
+  const [formError, setFormError] = useState<{ scope: FormScope; message: string } | null>(null);
+  const errorIn = (scope: FormScope) => (formError?.scope === scope ? formError.message : null);
+  const refuse = (scope: FormScope, error: string) =>
+    setFormError({ scope, message: localizeActionError(error, locale, t("common.error")) });
 
   // Paid orders not yet delivered and online deposits on upcoming bookings
   // stay in the wallet until they can no longer be refunded (wallet.ts).
@@ -181,7 +191,32 @@ export function WalletClient({
 
   const mayWithdraw = controls.ready && controls.right.kind !== "none";
   const pinReady = controls.pin.hasPin && !controls.pin.lockedUntil;
-  const account = controls.accounts.find((entry) => entry.id === accountId) ?? null;
+
+  /*
+    A REAL SAVED NUMBER, ALWAYS. The choice was captured once, when the page
+    loaded — so a number added after that (the usual first visit: add a
+    number, then schedule) left the form holding "no number" while the list
+    showed one, and the button stayed dead with no reason given. Whatever is
+    stored, the form now falls back to the first saved number.
+  */
+  const firstAccountId = controls.accounts[0]?.id ?? "";
+  const withdrawAccountId = controls.accounts.some((entry) => entry.id === accountId) ? accountId : firstAccountId;
+  const account = controls.accounts.find((entry) => entry.id === withdrawAccountId) ?? null;
+  const scheduleAccountId = controls.accounts.some((entry) => entry.id === scheduleForm.accountId)
+    ? scheduleForm.accountId
+    : firstAccountId;
+
+  // When the schedule as typed would send next — before the owner saves it.
+  const scheduleNext = nextScheduledRun(
+    {
+      frequency: scheduleForm.frequency,
+      weekday: scheduleForm.frequency === "weekly" ? scheduleForm.weekday : null,
+      hour: scheduleForm.hour,
+      // A changed schedule is judged as if new; an unchanged one keeps its history.
+      lastRunAt: currentSchedule?.lastRunAt ?? null,
+    },
+    now,
+  );
 
   const fail = (error: string) => toast(localizeActionError(error, locale, t("common.error")), "error");
 
@@ -203,6 +238,7 @@ export function WalletClient({
   /** A new withdrawal: to one of the owner's numbers, holder already confirmed when it was saved. */
   function reviewNew() {
     if (!account) return;
+    setFormError(null);
     setConfirmPin("");
     setConfirmTarget({
       requestId: null,
@@ -219,6 +255,7 @@ export function WalletClient({
    * operator is asked again and the sender confirms the name they are shown.
    */
   function reviewQueued(request: WalletState["requests"][number]) {
+    setFormError(null);
     setConfirmPin("");
     if (request.recipientName || controls.sandbox) {
       setConfirmTarget({
@@ -247,25 +284,36 @@ export function WalletClient({
     const target = confirmTarget;
     if (!target) return;
     const pin = confirmPin;
+    if (pin.length < 4) return refuse("confirm", t("mwd.pin.required"));
+    setFormError(null);
     startTransition(async () => {
       const result = target.requestId
         ? await processOwnWithdrawal(target.requestId, pin, target.recipientName)
         : await requestWithdrawal({ amount: target.amount, payoutAccountId: target.accountId ?? "", pin });
-      // A wrong PIN keeps the dialog open for another try; anything else closes it.
-      if (!result.ok && (result.reason === "pinWrong" || result.reason === "noPin")) {
+      // Refused: the dialog stays open with the reason in it, for another try.
+      if (!result.ok) {
         setConfirmPin("");
-        return fail(result.error);
+        return refuse("confirm", result.error);
       }
       setConfirmTarget(null);
       finishStart(result, target.amount, target.display, target.requestId === null);
     });
   }
 
+  function openPinForm() {
+    setFormError(null);
+    setPinForm({ password: "", pin: "", again: "" });
+    setPinOpen(true);
+  }
+
   function savePin() {
-    if (pinForm.pin !== pinForm.again) return toast(t("mwd.pin.mismatch"), "error");
+    if (!pinForm.password) return refuse("pin", t("mwd.err.password"));
+    if (pinForm.pin.length < 4) return refuse("pin", t("mwd.pin.required"));
+    if (pinForm.pin !== pinForm.again) return refuse("pin", t("mwd.pin.mismatch"));
+    setFormError(null);
     startTransition(async () => {
       const result = await setWithdrawalPin({ password: pinForm.password, pin: pinForm.pin });
-      if (!result.ok) return fail(result.error);
+      if (!result.ok) return refuse("pin", result.error);
       setPinOpen(false);
       setPinForm({ password: "", pin: "", again: "" });
       toast(result.note ?? t("mwd.note.pinSaved"), "success");
@@ -273,17 +321,28 @@ export function WalletClient({
     });
   }
 
+  function openNumberForm() {
+    setFormError(null);
+    setCheckedHolder(null);
+    setNumberForm({ phone: "", label: "", pin: "" });
+    setNumberOpen(true);
+  }
+
   function checkNumber() {
     const phone = numberForm.phone.trim();
+    if (phone.replace(/\D/g, "").length < 9) return refuse("number", t("mwd.num.phoneRequired"));
+    setFormError(null);
     startTransition(async () => {
       const check = await verifyWithdrawalRecipient(phone);
-      if (!check.ok) return fail(check.error);
+      if (!check.ok) return refuse("number", check.error);
       setCheckedHolder({ phone, name: check.name ?? null });
     });
   }
 
   function saveNumber() {
     if (!checkedHolder) return;
+    if (numberForm.pin.length < 4) return refuse("number", t("mwd.pin.required"));
+    setFormError(null);
     startTransition(async () => {
       const result = await addPayoutAccount({
         phone: checkedHolder.phone,
@@ -293,7 +352,7 @@ export function WalletClient({
       });
       if (!result.ok) {
         setNumberForm((prev) => ({ ...prev, pin: "" }));
-        return fail(result.error);
+        return refuse("number", result.error);
       }
       setNumberOpen(false);
       setNumberForm({ phone: "", label: "", pin: "" });
@@ -303,27 +362,40 @@ export function WalletClient({
     });
   }
 
+  function askRemoveNumber(id: string) {
+    setFormError(null);
+    setRemovingNumber(id);
+  }
+
   function confirmRemoveNumber() {
     const id = removingNumber;
     if (!id) return;
     startTransition(async () => {
       const result = await removePayoutAccount(id);
+      if (!result.ok) return refuse("remove", result.error);
       setRemovingNumber(null);
-      if (!result.ok) return fail(result.error);
       toast(result.note ?? t("mwd.note.numberRemoved"), "success");
       router.refresh();
     });
   }
 
+  function openGrant(delegate: WithdrawDelegate) {
+    setFormError(null);
+    setGrantForm({ limit: delegate.dailyLimit ? String(delegate.dailyLimit) : "", pin: "" });
+    setGranting(delegate);
+  }
+
   function saveGrant() {
     const target = granting;
     if (!target) return;
+    if (grantForm.pin.length < 4) return refuse("grant", t("mwd.pin.required"));
+    setFormError(null);
     const limit = grantForm.limit.trim() === "" ? null : Number(grantForm.limit);
     startTransition(async () => {
       const result = await grantWithdrawalRight({ profileId: target.profileId, dailyLimit: limit, pin: grantForm.pin });
       if (!result.ok) {
         setGrantForm((prev) => ({ ...prev, pin: "" }));
-        return fail(result.error);
+        return refuse("grant", result.error);
       }
       setGranting(null);
       setGrantForm({ limit: "", pin: "" });
@@ -333,17 +405,22 @@ export function WalletClient({
   }
 
   function saveSchedule() {
+    // Said in the form, not by a dead button: what is missing, and where.
+    if (!scheduleAccountId) return refuse("schedule", t("mwd.sch.err.noAccount"));
+    if (scheduleForm.pin.length < 4) return refuse("schedule", t("mwd.pin.required"));
+    setFormError(null);
     startTransition(async () => {
       const result = await saveScheduledPayout({
         frequency: scheduleForm.frequency,
         weekday: scheduleForm.frequency === "weekly" ? scheduleForm.weekday : null,
-        payoutAccountId: scheduleForm.accountId,
+        hour: scheduleForm.hour,
+        payoutAccountId: scheduleAccountId,
         keepAmount: Number(scheduleForm.keep) || 0,
         minAmount: Number(scheduleForm.min) || 0,
         pin: scheduleForm.pin,
       });
       setScheduleForm((prev) => ({ ...prev, pin: "" }));
-      if (!result.ok) return fail(result.error);
+      if (!result.ok) return refuse("schedule", result.error);
       toast(result.note ?? t("mwd.sch.note.saved"), "success");
       router.refresh();
     });
@@ -352,10 +429,15 @@ export function WalletClient({
   function stopSchedule() {
     startTransition(async () => {
       const result = await stopScheduledPayout();
-      if (!result.ok) return fail(result.error);
+      if (!result.ok) return refuse("schedule", result.error);
       toast(result.note ?? t("mwd.sch.note.stopped"), "success");
       router.refresh();
     });
+  }
+
+  function askRevoke(delegate: WithdrawDelegate) {
+    setFormError(null);
+    setRevoking(delegate);
   }
 
   function confirmRevoke() {
@@ -363,8 +445,8 @@ export function WalletClient({
     if (!target) return;
     startTransition(async () => {
       const result = await revokeWithdrawalRight(target.profileId);
+      if (!result.ok) return refuse("revoke", result.error);
       setRevoking(null);
-      if (!result.ok) return fail(result.error);
       toast(result.note ?? t("mwd.note.revoked"), "success");
       router.refresh();
     });
@@ -553,7 +635,10 @@ export function WalletClient({
                     </Field>
 
                     {/* Only the owner's saved numbers — never a typed one (0073). */}
-                    <fieldset className="flex flex-col gap-1.5">
+                    {/* min-w-0: a fieldset is otherwise as wide as its widest
+                        line, and a long number + holder name pushed the whole
+                        page sideways on a phone. */}
+                    <fieldset className="flex min-w-0 flex-col gap-1.5">
                       <legend className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
                         {t("mwd.form.to")}
                       </legend>
@@ -562,18 +647,18 @@ export function WalletClient({
                           key={entry.id}
                           className={cn(
                             "flex cursor-pointer items-start gap-2 rounded-md border p-2.5 text-sm",
-                            entry.id === accountId ? "border-primary bg-primary-light" : "border-border",
+                            entry.id === withdrawAccountId ? "border-primary bg-primary-light" : "border-border",
                           )}
                         >
                           <input
                             type="radio"
                             name="payout-account"
                             className="mt-1"
-                            checked={entry.id === accountId}
+                            checked={entry.id === withdrawAccountId}
                             onChange={() => setAccountId(entry.id)}
                           />
                           <span className="min-w-0">
-                            <span className="tnum block font-semibold">{entry.display}</span>
+                            <span className="tnum block font-semibold break-all">{entry.display}</span>
                             <span className="block truncate text-xs text-text-secondary">
                               {[entry.label, entry.holderName].filter(Boolean).join(" · ") || "—"}
                             </span>
@@ -619,7 +704,7 @@ export function WalletClient({
           title={t("mwd.pin.title")}
           description={controls.pin.hasPin ? t("mwd.pin.bodySet") : t("mwd.pin.bodyNew")}
           action={
-            <Button size="sm" variant={controls.pin.hasPin ? "outline" : "primary"} onClick={() => setPinOpen(true)}>
+            <Button size="sm" variant={controls.pin.hasPin ? "outline" : "primary"} onClick={openPinForm}>
               <KeyRound className="size-3.5" aria-hidden />
               <span>{controls.pin.hasPin ? t("mwd.pin.change") : t("mwd.pin.save")}</span>
             </Button>
@@ -645,11 +730,7 @@ export function WalletClient({
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => {
-                  setCheckedHolder(null);
-                  setNumberForm({ phone: "", label: "", pin: "" });
-                  setNumberOpen(true);
-                }}
+                onClick={openNumberForm}
               >
                 <Plus className="size-3.5" aria-hidden />
                 <span>{t("mwd.num.add")}</span>
@@ -665,7 +746,7 @@ export function WalletClient({
                 <li key={entry.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3">
                   <Phone className="size-4 shrink-0 text-text-light" aria-hidden />
                   <div className="min-w-0 flex-1">
-                    <p className="tnum text-sm font-semibold">{entry.display}</p>
+                    <p className="tnum text-sm font-semibold break-all">{entry.display}</p>
                     <p className="truncate text-xs text-text-secondary">
                       {[entry.label, entry.holderName].filter(Boolean).join(" · ") ||
                         (controls.sandbox ? "—" : t("mwd.num.unverified"))}
@@ -677,7 +758,7 @@ export function WalletClient({
                       variant="ghost"
                       className="text-error hover:bg-error-light"
                       disabled={pending}
-                      onClick={() => setRemovingNumber(entry.id)}
+                      onClick={() => askRemoveNumber(entry.id)}
                     >
                       {t("mwd.num.remove")}
                     </Button>
@@ -713,10 +794,7 @@ export function WalletClient({
                     size="sm"
                     variant="outline"
                     disabled={pending}
-                    onClick={() => {
-                      setGrantForm({ limit: delegate.dailyLimit ? String(delegate.dailyLimit) : "", pin: "" });
-                      setGranting(delegate);
-                    }}
+                    onClick={() => openGrant(delegate)}
                   >
                     {delegate.granted ? t("mwd.del.edit") : t("mwd.del.grant")}
                   </Button>
@@ -726,7 +804,7 @@ export function WalletClient({
                       variant="ghost"
                       className="text-error hover:bg-error-light"
                       disabled={pending}
-                      onClick={() => setRevoking(delegate)}
+                      onClick={() => askRevoke(delegate)}
                     >
                       {t("mwd.del.revoke")}
                     </Button>
@@ -765,6 +843,7 @@ export function WalletClient({
                             : currentSchedule.frequency === "weekly"
                               ? `${t("mwd.sch.weekly")} (${t(`mwd.sch.day.${currentSchedule.weekday ?? 1}` as TranslationKey)})`
                               : t("mwd.sch.monthly"),
+                        hour: `${String(currentSchedule.hour ?? DEFAULT_PAYOUT_HOUR).padStart(2, "0")}:00`,
                         number:
                           controls.accounts.find((entry) => entry.id === currentSchedule.payoutAccountId)?.display ?? "—",
                       })}
@@ -785,11 +864,15 @@ export function WalletClient({
                   </p>
                 )}
 
-                <div className="grid gap-4 sm:grid-cols-2">
+                {/* Every control fills its cell (w-full) and every cell may
+                    shrink (min-w-0): a <select> is otherwise as wide as its
+                    longest option, and "number — holder's full name" made
+                    the page scroll sideways on a phone. */}
+                <div className="grid gap-4 *:min-w-0 sm:grid-cols-2">
                   <Field label={t("mwd.sch.frequency")} htmlFor="wl-sch-frequency">
-                    <select
+                    <Select
                       id="wl-sch-frequency"
-                      className="h-11 rounded-md border border-border bg-surface px-3 text-sm"
+                      className="w-full"
                       value={scheduleForm.frequency}
                       onChange={(event) =>
                         setScheduleForm((prev) => ({ ...prev, frequency: event.target.value as "daily" | "weekly" | "monthly" }))
@@ -798,13 +881,13 @@ export function WalletClient({
                       <option value="daily">{t("mwd.sch.daily")}</option>
                       <option value="weekly">{t("mwd.sch.weekly")}</option>
                       <option value="monthly">{t("mwd.sch.monthly")}</option>
-                    </select>
+                    </Select>
                   </Field>
                   {scheduleForm.frequency === "weekly" && (
                     <Field label={t("mwd.sch.weekday")} htmlFor="wl-sch-weekday">
-                      <select
+                      <Select
                         id="wl-sch-weekday"
-                        className="h-11 rounded-md border border-border bg-surface px-3 text-sm"
+                        className="w-full"
                         value={scheduleForm.weekday}
                         onChange={(event) => setScheduleForm((prev) => ({ ...prev, weekday: Number(event.target.value) }))}
                       >
@@ -813,14 +896,28 @@ export function WalletClient({
                             {t(`mwd.sch.day.${day}` as TranslationKey)}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </Field>
                   )}
+                  <Field label={t("mwd.sch.hour")} htmlFor="wl-sch-hour" hint={t("mwd.sch.hourHint")}>
+                    <Select
+                      id="wl-sch-hour"
+                      className="w-full"
+                      value={scheduleForm.hour}
+                      onChange={(event) => setScheduleForm((prev) => ({ ...prev, hour: Number(event.target.value) }))}
+                    >
+                      {HOURS.map((hour) => (
+                        <option key={hour} value={hour}>
+                          {`${String(hour).padStart(2, "0")}:00`}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
                   <Field label={t("mwd.form.to")} htmlFor="wl-sch-account">
-                    <select
+                    <Select
                       id="wl-sch-account"
-                      className="h-11 rounded-md border border-border bg-surface px-3 text-sm"
-                      value={scheduleForm.accountId}
+                      className="w-full truncate"
+                      value={scheduleAccountId}
                       onChange={(event) => setScheduleForm((prev) => ({ ...prev, accountId: event.target.value }))}
                     >
                       {controls.accounts.map((entry) => (
@@ -829,12 +926,13 @@ export function WalletClient({
                           {entry.holderName ? ` — ${entry.holderName}` : ""}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </Field>
                   <Field label={t("mwd.sch.keep")} htmlFor="wl-sch-keep" hint={t("mwd.sch.keepHint")}>
                     <Input
                       id="wl-sch-keep"
                       type="number"
+                      inputMode="numeric"
                       min={0}
                       step={500}
                       suffix="FCFA"
@@ -846,6 +944,7 @@ export function WalletClient({
                     <Input
                       id="wl-sch-min"
                       type="number"
+                      inputMode="numeric"
                       min={500}
                       step={500}
                       suffix="FCFA"
@@ -861,12 +960,20 @@ export function WalletClient({
                     />
                   </Field>
                 </div>
-                <Button
-                  className="self-start"
-                  loading={pending}
-                  disabled={pending || scheduleForm.pin.length < 4 || !scheduleForm.accountId}
-                  onClick={saveSchedule}
-                >
+
+                {/* When the first (next) payout will go, before saving — the
+                    answer to "if I set this today, when does money arrive?" */}
+                <p className="rounded-md border border-info/25 bg-info-light p-3 text-sm text-info">
+                  {scheduleNext.due
+                    ? t("mwd.sch.nextNow")
+                    : t("mwd.sch.nextAt", { when: formatDateTime(scheduleNext.at.toISOString()) })}
+                </p>
+
+                <FormError message={errorIn("schedule")} />
+
+                {/* Never a silently dead button: a click on an incomplete form
+                    says, just above, what is missing. */}
+                <Button className="self-start" loading={pending} disabled={pending} onClick={saveSchedule}>
                   {t("mwd.sch.save")}
                 </Button>
               </>
@@ -890,7 +997,7 @@ export function WalletClient({
                   <div className="min-w-0 flex-1">
                     <p className="tnum text-sm font-semibold">
                       {money(request.amount)}
-                      <span className="ml-2 font-normal text-text-light">→ {request.phone}</span>
+                      <span className="ml-2 font-normal break-all text-text-light">→ {request.phone}</span>
                     </p>
                     <p className="tnum mt-0.5 text-xs text-text-light">
                       {formatDateTime(request.requestedAt)}
@@ -963,6 +1070,7 @@ export function WalletClient({
         onClose={() => setConfirmTarget(null)}
         title={t("mops.wal.confirmTitle")}
         size="sm"
+        error={errorIn("confirm")}
         footer={
           <>
             <Button variant="outline" disabled={pending} onClick={() => setConfirmTarget(null)}>
@@ -970,7 +1078,7 @@ export function WalletClient({
             </Button>
             <Button
               loading={pending}
-              disabled={pending || confirmTarget === null || confirmPin.length < 4}
+              disabled={pending || confirmTarget === null}
               onClick={confirmWithdrawal}
             >
               {t("mops.wal.confirmSend")}
@@ -1041,6 +1149,7 @@ export function WalletClient({
         onClose={() => setPinOpen(false)}
         title={t("mwd.pin.title")}
         size="sm"
+        error={errorIn("pin")}
         footer={
           <>
             <Button variant="outline" disabled={pending} onClick={() => setPinOpen(false)}>
@@ -1048,7 +1157,7 @@ export function WalletClient({
             </Button>
             <Button
               loading={pending}
-              disabled={pending || pinForm.password.length === 0 || pinForm.pin.length < 4 || pinForm.again.length < 4}
+              disabled={pending}
               onClick={savePin}
             >
               {t("mwd.pin.save")}
@@ -1087,17 +1196,18 @@ export function WalletClient({
         onClose={() => setNumberOpen(false)}
         title={t("mwd.num.add")}
         size="sm"
+        error={errorIn("number")}
         footer={
           <>
             <Button variant="outline" disabled={pending} onClick={() => setNumberOpen(false)}>
               {t("common.cancel")}
             </Button>
             {checkedHolder ? (
-              <Button loading={pending} disabled={pending || numberForm.pin.length < 4} onClick={saveNumber}>
+              <Button loading={pending} disabled={pending} onClick={saveNumber}>
                 {t("mwd.num.save")}
               </Button>
             ) : (
-              <Button loading={pending} disabled={pending || numberForm.phone.trim().length < 9} onClick={checkNumber}>
+              <Button loading={pending} disabled={pending} onClick={checkNumber}>
                 {t("mwd.num.check")}
               </Button>
             )}
@@ -1156,6 +1266,7 @@ export function WalletClient({
         onConfirm={confirmRemoveNumber}
         title={t("mwd.num.removeTitle")}
         message={t("mwd.num.removeBody")}
+        error={errorIn("remove")}
         confirmLabel={t("mwd.num.remove")}
         destructive
         loading={pending}
@@ -1167,12 +1278,13 @@ export function WalletClient({
         onClose={() => setGranting(null)}
         title={t("mwd.del.grantTitle", { name: granting?.name ?? "" })}
         size="sm"
+        error={errorIn("grant")}
         footer={
           <>
             <Button variant="outline" disabled={pending} onClick={() => setGranting(null)}>
               {t("common.cancel")}
             </Button>
-            <Button loading={pending} disabled={pending || grantForm.pin.length < 4} onClick={saveGrant}>
+            <Button loading={pending} disabled={pending} onClick={saveGrant}>
               {t("mwd.del.grant")}
             </Button>
           </>
@@ -1202,6 +1314,7 @@ export function WalletClient({
         onConfirm={confirmRevoke}
         title={t("mwd.del.revokeTitle", { name: revoking?.name ?? "" })}
         message={t("mwd.del.revokeBody", { name: revoking?.name ?? "" })}
+        error={errorIn("revoke")}
         confirmLabel={t("mwd.del.revoke")}
         destructive
         loading={pending}

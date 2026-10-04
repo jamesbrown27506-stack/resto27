@@ -92,6 +92,9 @@ export function StaffManager({
   // at the first keystroke marks every email invalid on the way in.
   const [emailTouched, setEmailTouched] = useState(false);
   const [confirming, setConfirming] = useState<Confirmation | null>(null);
+  // A refusal from an open sheet or dialog is shown INSIDE it — a toast would
+  // land behind the modal's backdrop (see ui/form-error).
+  const [formError, setFormError] = useState<string | null>(null);
   // Adding a colleague to another location of the same restaurant.
   const [moving, setMoving] = useState<StaffMember | null>(null);
   const [moveTarget, setMoveTarget] = useState(otherBranches[0]?.id ?? "");
@@ -123,10 +126,16 @@ export function StaffManager({
     // Runs only when the server said yes, so a sheet or a dialog stays open —
     // with its data — on the one path where the user still needs it.
     onSuccess?: () => void,
+    // From a sheet or dialog: the refusal goes into it, not behind it.
+    inForm = false,
   ) {
+    if (inForm) setFormError(null);
     startTransition(async () => {
       const result = await fn();
-      if (!result.ok) return toast(result.error ?? t("common.error"), "error");
+      if (!result.ok) {
+        if (inForm) return setFormError(result.error ?? t("common.error"));
+        return toast(result.error ?? t("common.error"), "error");
+      }
       onSuccess?.();
       // Added, but the email did not go — warn rather than claim success.
       if (result.note) return toast(result.note, "warning");
@@ -150,6 +159,7 @@ export function StaffManager({
         inviteStaff({ email: typedEmail, role: inviteRole, name: inviteName.trim() || undefined }),
       t("mst.toast.invited"),
       closeInvite,
+      true,
     );
   }
 
@@ -158,12 +168,13 @@ export function StaffManager({
     if (!target) return;
 
     if (target.kind === "cancelInvite") {
-      run(() => cancelInvite(target.id), t("mst.toast.inviteCancelled"), () => setConfirming(null));
+      run(() => cancelInvite(target.id), t("mst.toast.inviteCancelled"), () => setConfirming(null), true);
     } else {
       run(
         () => suspendStaff(target.id),
         t("mst.toast.suspended", { name: target.name }),
         () => setConfirming(null),
+        true,
       );
     }
   }
@@ -297,6 +308,7 @@ export function StaffManager({
                 size="sm"
                 disabled={pending}
                 onClick={() => {
+                  setFormError(null);
                   setMoveTarget(otherBranches[0]?.id ?? "");
                   setMoveRole(member.role === "owner" ? "manager" : member.role);
                   setMoving(member);
@@ -312,7 +324,7 @@ export function StaffManager({
                 disabled={pending}
                 aria-label={t("mst.cancelInviteFor", { name: nameOf(member) })}
                 onClick={() =>
-                  setConfirming({ id: member.id, name: nameOf(member), kind: "cancelInvite" })
+                  (setFormError(null), setConfirming({ id: member.id, name: nameOf(member), kind: "cancelInvite" }))
                 }
               >
                 <X className="size-3.5" aria-hidden />
@@ -343,7 +355,7 @@ export function StaffManager({
                   disabled={pending || blocked !== null}
                   aria-label={t("mst.suspendFor", { name: nameOf(member) })}
                   onClick={() =>
-                    setConfirming({ id: member.id, name: nameOf(member), kind: "suspend" })
+                    (setFormError(null), setConfirming({ id: member.id, name: nameOf(member), kind: "suspend" }))
                   }
                 >
                   <span>{t("mst.suspend")}</span>
@@ -375,7 +387,7 @@ export function StaffManager({
             )}
           </div>
 
-          <Button fullWidth className="sm:w-auto" onClick={() => setInviteOpen(true)}>
+          <Button fullWidth className="sm:w-auto" onClick={() => (setFormError(null), setInviteOpen(true))}>
             <UserPlus className="size-4" aria-hidden />
             <span>{t("mst.invite")}</span>
           </Button>
@@ -394,7 +406,7 @@ export function StaffManager({
             title={t("mst.empty.title")}
             description={t("mst.empty.body")}
             action={
-              <Button onClick={() => setInviteOpen(true)}>
+              <Button onClick={() => (setFormError(null), setInviteOpen(true))}>
                 <UserPlus className="size-4" aria-hidden />
                 <span>{t("mst.invite")}</span>
               </Button>
@@ -412,6 +424,7 @@ export function StaffManager({
 
       {/* ── Invite ─────────────────────────────────────────────────────── */}
       <Sheet
+        error={formError}
         open={inviteOpen}
         onClose={closeInvite}
         title={t("mst.invite.title")}
@@ -504,6 +517,7 @@ export function StaffManager({
       {/* ── Add to another location ────────────────────────────────────── */}
       <Dialog
         open={moving !== null}
+        error={formError}
         onClose={() => setMoving(null)}
         title={t("mst.toBranch.title", { name: moving ? nameOf(moving) : "" })}
         size="sm"
@@ -522,6 +536,7 @@ export function StaffManager({
                   () => addStaffToBranch({ staffId: member.id, targetRestaurantId: moveTarget, role: moveRole }),
                   t("mst.toBranch.submit"),
                   () => setMoving(null),
+                  true,
                 );
               }}
             >
@@ -556,6 +571,7 @@ export function StaffManager({
       </Dialog>
 
       <ConfirmDialog
+        error={formError}
         open={confirming !== null}
         onClose={() => setConfirming(null)}
         title={

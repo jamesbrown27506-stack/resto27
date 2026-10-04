@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { Button } from "./button";
 import { Input } from "./input";
+import { FormError } from "./form-error";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,8 @@ export interface DialogProps {
   footer?: React.ReactNode;
   /** Additional sizing or overflow constraints for a particular flow. */
   className?: string;
+  /** Why the last attempt was refused — shown at the top of the body, in the form. */
+  error?: string | null;
   children: React.ReactNode;
 }
 
@@ -53,6 +56,7 @@ export function Dialog({
   mandatory = false,
   footer,
   className,
+  error,
   children,
 }: DialogProps) {
   const { t } = useLocale();
@@ -146,7 +150,10 @@ export function Dialog({
         )}
       </div>
 
-      <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-5">{children}</div>
+      <div className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-5">
+        <FormError message={error} className="mb-4" />
+        {children}
+      </div>
 
       {footer && (
         /*
@@ -199,6 +206,8 @@ export interface ConfirmDialogProps {
   cancelLabel?: string;
   destructive?: boolean;
   loading?: boolean;
+  /** Why the action was refused — shown in the dialog, not behind it. */
+  error?: string | null;
 }
 
 export function ConfirmDialog({
@@ -211,6 +220,7 @@ export function ConfirmDialog({
   cancelLabel,
   destructive = false,
   loading = false,
+  error,
 }: ConfirmDialogProps) {
   const { t } = useLocale();
   return (
@@ -219,6 +229,7 @@ export function ConfirmDialog({
       onClose={onClose}
       title={title}
       size="sm"
+      error={error}
       footer={
         <>
           {/*

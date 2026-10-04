@@ -15,8 +15,10 @@ import { scheduleDue, scheduledAmount, type PayoutFrequency } from "./schedule-r
  * built (0074).
  *
  * ─────────────────────────────────────────────────────────────────────────
- *  DELIBERATELY NOT A SERVER ACTION: it sends money. Run by the daily
- *  /api/cron/expire (bearer-protected), and by nothing else.
+ *  DELIBERATELY NOT A SERVER ACTION: it sends money. Run by the five-minute
+ *  /api/cron/reconcile — called only when cron_due_payments() finds a
+ *  schedule whose hour has come (0075) — and by the daily /api/cron/expire as
+ *  a net. Both are bearer-protected; nothing else calls it.
  *
  *  A schedule is an OWNER's standing instruction, set with their PIN. Each
  *  night it re-checks everything a person would be checked for, and stops
@@ -48,6 +50,8 @@ export interface ScheduleRow {
   enabled: boolean;
   frequency: PayoutFrequency;
   weekday: number | null;
+  /** 0–23 Douala; null before 0075 (the nightly hour applies). */
+  hour: number | null;
   payoutAccountId: string;
   keepAmount: number;
   minAmount: number;
@@ -62,6 +66,7 @@ function toSchedule(row: Record<string, unknown>): ScheduleRow {
     enabled: Boolean(row.enabled),
     frequency: row.frequency as PayoutFrequency,
     weekday: row.weekday === null || row.weekday === undefined ? null : Number(row.weekday),
+    hour: row.hour === null || row.hour === undefined ? null : Number(row.hour),
     payoutAccountId: String(row.payout_account_id),
     keepAmount: Number(row.keep_amount ?? 0),
     minAmount: Number(row.min_amount ?? 5000),
