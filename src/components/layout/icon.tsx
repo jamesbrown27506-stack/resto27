@@ -6,6 +6,7 @@ import {
   Beef,
   Beer,
   Bell,
+  Building2,
   Cake,
   CakeSlice,
   CalendarCheck,
@@ -121,6 +122,7 @@ const REGISTRY = {
   // ── Chrome / navigation ──
   Armchair,
   Bell,
+  Building2,
   Ellipsis,
   Menu,
   MessageSquare,

@@ -1,6 +1,7 @@
 import "server-only";
 import { getSettingsRows } from "@/lib/settings-map";
 import { createAdminClient } from "@/lib/supabase/server";
+import { isMissingColumn } from "./missing-column";
 
 /**
  * Billing reads for the admin area.
@@ -34,6 +35,8 @@ export interface Plan {
   tableLimit: number | null;
   promotionLimit: number | null;
   includedBranches: number;
+  /** Monthly price per branch beyond the included ones; null = not sold (0072). */
+  extraBranchPrice: number | null;
   staffLimit: number;
   scheduledPayouts: boolean;
   prioritySupport: boolean;
@@ -72,6 +75,8 @@ export async function listPlans(): Promise<Plan[]> {
     tableLimit: p.table_limit,
     promotionLimit: p.promotion_limit,
     includedBranches: Number(p.included_branches ?? 1),
+    extraBranchPrice:
+      p.extra_branch_price === null || p.extra_branch_price === undefined ? null : Number(p.extra_branch_price),
     staffLimit: Number(p.staff_limit ?? 0),
     scheduledPayouts: Boolean(p.scheduled_payouts),
     prioritySupport: Boolean(p.priority_support),
@@ -105,35 +110,55 @@ export interface SubscriptionRow {
 export async function listSubscriptions(): Promise<SubscriptionRow[]> {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase
-    .from("subscription_state")
-    .select(
-      `id, restaurant_id, state, start_date, end_date, days_remaining, grace_days,
-       restaurants ( name, branch_label ),
-       subscription_plans ( name, tier )`,
-    );
+  /*
+    ONE ROW PER SUBSCRIPTION. Since 0072 the view carries a row for every
+    branch too, on its main's subscription; listing those would show one
+    tenant's plan three times and invite extending it three times. Before
+    0072 there is no `is_branch` (and no branch), so the filter is dropped.
+
+    Names come in separate reads: the view is a join, and PostgREST cannot
+    follow a foreign key through it.
+  */
+  const read = (branchFilter: boolean) => {
+    const query = supabase
+      .from("subscription_state")
+      .select("id, restaurant_id, plan_id, state, start_date, end_date, days_remaining, grace_days");
+    return branchFilter ? query.eq("is_branch", false) : query;
+  };
+
+  let { data, error } = await read(true);
+  if (error && isMissingColumn(error, "is_branch")) ({ data, error } = await read(false));
 
   if (error) return softFail("subscription_state", error);
 
   interface Row {
     id: string;
     restaurant_id: string;
+    plan_id: string;
     state: string;
     start_date: string;
     end_date: string | null;
     days_remaining: number | null;
     grace_days: number;
-    restaurants: { name: string; branch_label: string } | null;
-    subscription_plans: { name: string; tier: string } | null;
   }
 
-  const rows: SubscriptionRow[] = (data as unknown as Row[]).map((row) => ({
+  const stateRows = (data ?? []) as unknown as Row[];
+  const [restaurantsResult, plansResult] = await Promise.all([
+    supabase.from("restaurants").select("id, name, branch_label").in("id", stateRows.map((r) => r.restaurant_id)),
+    supabase.from("subscription_plans").select("id, name, tier"),
+  ]);
+  const restaurants = new Map(
+    ((restaurantsResult.data ?? []) as { id: string; name: string; branch_label: string }[]).map((r) => [r.id, r]),
+  );
+  const plans = new Map(((plansResult.data ?? []) as { id: string; name: string; tier: string }[]).map((p) => [p.id, p]));
+
+  const rows: SubscriptionRow[] = stateRows.map((row) => ({
     id: row.id,
     restaurantId: row.restaurant_id,
-    restaurantName: row.restaurants?.name ?? "—",
-    branchLabel: row.restaurants?.branch_label ?? "",
-    planName: row.subscription_plans?.name ?? "—",
-    planTier: row.subscription_plans?.tier ?? "starter",
+    restaurantName: restaurants.get(row.restaurant_id)?.name ?? "—",
+    branchLabel: restaurants.get(row.restaurant_id)?.branch_label ?? "",
+    planName: plans.get(row.plan_id)?.name ?? "—",
+    planTier: plans.get(row.plan_id)?.tier ?? "starter",
     state: row.state as SubscriptionRow["state"],
     startDate: row.start_date,
     endDate: row.end_date,
@@ -156,13 +181,13 @@ export async function listSubscriptions(): Promise<SubscriptionRow[]> {
    */
   const covered = new Set(rows.map((r) => r.restaurantId));
 
-  const { data: orphans } = await supabase
-    .from("restaurants")
-    .select("id, name, branch_label, status")
-    .neq("status", "pending");
+  // `*`: before 0072 there is no parent_id, and every restaurant is a main.
+  const { data: orphans } = await supabase.from("restaurants").select("*").neq("status", "pending");
 
-  for (const r of (orphans ?? []) as { id: string; name: string; branch_label: string }[]) {
+  for (const r of (orphans ?? []) as { id: string; name: string; branch_label: string; parent_id?: string | null }[]) {
     if (covered.has(r.id)) continue;
+    // A branch has no subscription by design — it runs on its main's.
+    if (r.parent_id) continue;
 
     rows.push({
       id: null,

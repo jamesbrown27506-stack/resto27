@@ -5,6 +5,8 @@ import { requireCapability } from "@/lib/auth/branch";
 import { fetchBranchOverview, fetchPromotions, fetchTables } from "@/lib/data/manager";
 import { fetchInvoices, fetchPlans, fetchTrialState } from "@/lib/data/invoices";
 import { freeModeEndsAt, isFreeMode } from "@/lib/data/billing";
+import { accountOpenBranchCount, loadBranchAccount } from "@/lib/branches/account";
+import { BranchBillingNotice } from "./branch-billing-notice";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -33,9 +35,28 @@ export async function generateMetadata(): Promise<Metadata> {
 }
 
 export default async function BillingPage() {
-  const { active } = await requireCapability("billing.manage");
+  const { active, branches } = await requireCapability("billing.manage");
 
-  const [plans, invoices, trial, overview, tables, promotions, freeMode, freeEnds] = await Promise.all([
+  /*
+    A BRANCH HAS NO BILLING OF ITS OWN (0072): it runs on its main's plan,
+    and its invoices are the main's. Plans, invoices and the pay button here
+    would be for a subscription that does not exist — so the page says where
+    billing lives instead, and offers to go there.
+  */
+  if (active.parentId) {
+    return (
+      <ManagerPage titleKey="mbl.title" descriptionKey="mbl.subtitle">
+        <BranchBillingNotice
+          label={active.branchLabel}
+          planName={active.planName}
+          mainId={active.parentId}
+          canSwitch={branches.some((branch) => branch.restaurantId === active.parentId)}
+        />
+      </ManagerPage>
+    );
+  }
+
+  const [plans, invoices, trial, overview, tables, promotions, freeMode, freeEnds, account] = await Promise.all([
     fetchPlans(),
     fetchInvoices(active.restaurantId),
     fetchTrialState(active.restaurantId),
@@ -44,6 +65,7 @@ export default async function BillingPage() {
     fetchPromotions(active.restaurantId),
     isFreeMode(),
     freeModeEndsAt(),
+    loadBranchAccount(active.restaurantId),
   ]);
 
   return (
@@ -76,6 +98,7 @@ export default async function BillingPage() {
         // it outright — and one instant for the whole page means the overdue
         // marks cannot disagree row to row.
         now={new Date().toISOString()}
+        branchCount={account?.migrated ? accountOpenBranchCount(account) : null}
       />
     </ManagerPage>
   );

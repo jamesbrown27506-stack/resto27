@@ -13,6 +13,17 @@ import { defineDict } from "../define";
 export const errStaffDict = defineDict({
   fr: {
     "est.notAtBranch": "Vous ne travaillez pas dans cette succursale.",
+    "est.withdrawControlsMissing": "Les retraits sont suspendus le temps d'une mise à jour de sécurité (migration 0073).",
+    "est.withdrawImpersonating": "Les retraits et leurs réglages sont désactivés pendant l'usurpation d'un restaurant.",
+    "est.withdrawNotAllowed": "Vous n'avez pas le droit de retirer. Seul le propriétaire, ou un gérant qu'il a autorisé, le peut.",
+    "est.withdrawNoPin": "Créez d'abord votre code de retrait sur la page Portefeuille.",
+    "est.withdrawPinLocked": "Votre code de retrait est bloqué jusqu'à {time} après trop d'essais.",
+    "est.withdrawPinWrong": "Code de retrait incorrect. Il vous reste {left} essai(s) avant le blocage.",
+    "est.withdrawAccountMissing": "Choisissez l'un des numéros de retrait enregistrés par le propriétaire.",
+    "est.withdrawDailyLimit": "Ce retrait dépasse votre plafond de {limit} FCFA par 24 h. Il vous reste {left} FCFA.",
+    "est.withdrawAccountUnverified": "Ce numéro a été ajouté en mode test : le propriétaire doit l'enregistrer de nouveau pour vérifier son titulaire.",
+    "est.branchBilledByMain":
+      "Cette succursale fonctionne avec la formule de l'établissement principal : la facturation se fait depuis l'établissement principal.",
     "est.serviceStateFailed": "Impossible de changer l'état du service.",
     "est.categoryNameShort": "Le nom de la catégorie est trop court.",
     "est.categoryExists": "Vous avez déjà une catégorie avec ce nom.",
@@ -236,6 +247,17 @@ export const errStaffDict = defineDict({
   },
   en: {
     "est.notAtBranch": "You do not work at that branch.",
+    "est.withdrawControlsMissing": "Withdrawals are paused for a security update (migration 0073).",
+    "est.withdrawImpersonating": "Withdrawals and their settings are disabled while impersonating a restaurant.",
+    "est.withdrawNotAllowed": "You are not allowed to withdraw. Only the owner, or a manager they authorised, can.",
+    "est.withdrawNoPin": "Create your withdrawal PIN on the Wallet page first.",
+    "est.withdrawPinLocked": "Your withdrawal PIN is locked until {time} after too many tries.",
+    "est.withdrawPinWrong": "Wrong withdrawal PIN. {left} try(ies) left before it locks.",
+    "est.withdrawAccountMissing": "Choose one of the payout numbers the owner saved.",
+    "est.withdrawDailyLimit": "This withdrawal exceeds your ceiling of {limit} FCFA per 24 h. You have {left} FCFA left.",
+    "est.withdrawAccountUnverified": "This number was added in test mode: the owner must save it again so its holder is checked.",
+    "est.branchBilledByMain":
+      "This branch runs on the main restaurant's plan: billing is handled from the main restaurant.",
     "est.serviceStateFailed": "Could not change the service state.",
     "est.categoryNameShort": "Category name is too short.",
     "est.categoryExists": "You already have a category with that name.",

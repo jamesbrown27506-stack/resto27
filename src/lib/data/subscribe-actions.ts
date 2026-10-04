@@ -8,7 +8,8 @@ import { requireCapability } from "@/lib/auth/branch";
 import { writeAudit } from "./platform-actions";
 import { notify } from "@/lib/notify";
 import { getFreeModeWindow } from "./billing";
-import { ensureUnpaidInvoice } from "./subscription-lifecycle";
+import { ensureUnpaidInvoice } from "./invoice-issue";
+import { quotePlanMonth, refreshBranchInvoices, syncBranchCoverage } from "@/lib/branches/account";
 import type { ActionResult } from "./admin-actions";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import {
@@ -60,9 +61,14 @@ export async function choosePlan(
   const { active, profile } = await requireCapability("billing.manage");
   const supabase = createAdminClient();
 
+  // A branch runs on its main restaurant's plan (0072) and has none to change.
+  if (active.parentId) {
+    return { ok: false, reason: "branchBilling", error: t("est.branchBilledByMain") };
+  }
+
   const { data: plan } = await supabase
     .from("subscription_plans")
-    .select("id, tier, name, monthly_price, is_active")
+    .select("*")
     .eq("id", planId)
     .maybeSingle();
 
@@ -75,6 +81,20 @@ export async function choosePlan(
     .select("id, plan_id, end_date")
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
+
+  /*
+    The month this plan would bill, branches included: every open branch
+    beyond what the plan includes, at the plan's own price per branch. On a
+    plan that sells no branches (Starter) the quote is the plan alone — the
+    branches are paused, not charged.
+  */
+  const terms = {
+    monthlyPrice: Number(plan.monthly_price ?? 0),
+    includedBranches: Number(plan.included_branches ?? 1),
+    extraBranchPrice:
+      plan.extra_branch_price === null || plan.extra_branch_price === undefined ? null : Number(plan.extra_branch_price),
+  };
+  const quote = await quotePlanMonth(active.restaurantId, terms);
 
   if (!subscription) {
     return {
@@ -114,10 +134,17 @@ export async function choosePlan(
     const endDate =
       plan.monthly_price === 0 ? null : laterDate(subscription.end_date, freeMode.endsAt);
 
-    const { error } = await supabase
-      .from("subscriptions")
-      .update({ plan_id: plan.id, end_date: endDate, cancelled_at: null })
-      .eq("id", subscription.id);
+    /*
+      While the platform is free its extra branches are free too: the plan
+      covers every open one from now on. The renewal that follows free mode
+      bills them like any other month. Outside free mode (a 0-FCFA plan) the
+      paid extras are left as they are — they mean nothing on a plan that
+      sells none, and are reset by the next paid month anyway.
+    */
+    const patch: Record<string, unknown> = { plan_id: plan.id, end_date: endDate, cancelled_at: null };
+    if (freeMode.effective && quote.extraBranches > 0) patch.extra_branches = quote.extraBranches;
+
+    const { error } = await supabase.from("subscriptions").update(patch).eq("id", subscription.id);
 
     if (error) {
       console.error("[subscribe:choosePlan] plan change", error.message);
@@ -158,6 +185,10 @@ export async function choosePlan(
       params: { restaurantName: active.restaurantName, planName: plan.name },
     });
 
+    // Downgrading to Starter pauses every branch; upgrading resumes them.
+    await syncBranchCoverage(active.restaurantId);
+    await refreshBranchInvoices(active.restaurantId);
+
     revalidatePath("/m", "layout");
     return { ok: true, note: t("est.nowOnPlan", { plan: plan.name }) };
   }
@@ -172,12 +203,13 @@ export async function choosePlan(
   const invoice = await ensureUnpaidInvoice({
     restaurantId: active.restaurantId,
     planId: plan.id,
-    amount: plan.monthly_price,
+    amount: quote.amount,
     // A renewal is billed from where the current month ends; a new plan from now.
     from:
       subscription.end_date && Date.parse(subscription.end_date) > Date.now()
         ? new Date(subscription.end_date)
         : undefined,
+    branches: { extraBranches: quote.extraBranches, branchAmount: quote.branchAmount },
   });
 
   if (!invoice) {
@@ -219,6 +251,10 @@ export async function startTrial(planId: string): Promise<SubscribeResult> {
   const t = await getTranslator();
   const { active, profile } = await requireCapability("billing.manage");
   const supabase = createAdminClient();
+
+  if (active.parentId) {
+    return { ok: false, reason: "branchBilling", error: t("est.branchBilledByMain") };
+  }
 
   const { data: plan } = await supabase
     .from("subscription_plans")
@@ -301,6 +337,9 @@ export async function startTrial(planId: string): Promise<SubscribeResult> {
     href: "/a/subscriptions",
     params: { restaurantName: active.restaurantName, planName: plan.name },
   });
+
+  // An Enterprise trial includes its branches like a paid month does.
+  await syncBranchCoverage(active.restaurantId);
 
   revalidatePath("/m", "layout");
   revalidatePath("/a/subscriptions");

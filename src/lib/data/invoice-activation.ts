@@ -1,6 +1,8 @@
 import "server-only";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
+import { isMissingColumn } from "./missing-column";
+import { refreshBranchInvoices, syncBranchCoverage } from "@/lib/branches/account";
 
 /**
  * Mark an invoice paid and extend the subscription. THE ONLY PATH (§6).
@@ -48,13 +50,23 @@ export async function activateFromInvoice(invoiceId: string): Promise<Activation
    * from the current end date, whichever is later), so the entitlement is
    * computed below and the invoice period stays what it is: billing history.
    */
-  const { data: invoice } = await supabase
-    .from("invoices")
-    .select("id, restaurant_id, plan_id, amount, status")
-    .eq("id", invoiceId)
-    .maybeSingle();
+  // `*` so the branch columns (0072) come back when they exist and their
+  // absence reads as an ordinary plan invoice when they do not.
+  const { data: invoiceRow } = await supabase.from("invoices").select("*").eq("id", invoiceId).maybeSingle();
 
-  if (!invoice) return { ok: false, reason: "invoiceNotFound", error: "Facture introuvable." };
+  if (!invoiceRow) return { ok: false, reason: "invoiceNotFound", error: "Facture introuvable." };
+
+  const invoice = invoiceRow as {
+    id: string;
+    restaurant_id: string;
+    plan_id: string | null;
+    amount: number;
+    status: string;
+    kind?: string;
+    extra_branches?: number;
+  };
+  const isBranchTopUp = invoice.kind === "branches";
+  const extraBranches = Math.max(0, Number(invoice.extra_branches ?? 0));
 
   // The cheap replay guard. The claim below is the one that actually holds.
   if (invoice.status === "paid") return { ok: true, note: "Cette facture était déjà réglée." };
@@ -64,7 +76,7 @@ export async function activateFromInvoice(invoiceId: string): Promise<Activation
 
   const { data: subscription } = await supabase
     .from("subscriptions")
-    .select("id, end_date")
+    .select("*")
     .eq("restaurant_id", invoice.restaurant_id)
     .maybeSingle();
 
@@ -91,6 +103,42 @@ export async function activateFromInvoice(invoiceId: string): Promise<Activation
   if (!claimed) return { ok: true, note: "Cette facture était déjà réglée." };
 
   /**
+   * A BRANCH TOP-UP BUYS BRANCHES, NOT TIME (0072).
+   *
+   * It paid for extra branches until the CURRENT end date, so the end date
+   * does not move. `extra_branches` on the invoice is the total it was
+   * raised for, and the subscription takes the larger of that and what it
+   * already had — a renewal paid in between may have counted them already,
+   * and paying twice for one branch must not count it twice.
+   */
+  if (isBranchTopUp) {
+    const current = Math.max(0, Number((subscription as { extra_branches?: number }).extra_branches ?? 0));
+    const { error: topUpError } = await supabase
+      .from("subscriptions")
+      .update({ extra_branches: Math.max(current, extraBranches) })
+      .eq("id", subscription.id);
+
+    if (topUpError) {
+      console.error("[subscribe:activate] branch top-up", topUpError.message);
+      await supabase
+        .from("invoices")
+        .update({ status: "unpaid", paid_at: null })
+        .eq("id", invoiceId)
+        .eq("status", "paid");
+      return {
+        ok: false,
+        reason: "subscriptionExtendFailed",
+        error: "Le paiement a abouti mais les succursales n'ont pas été activées.",
+      };
+    }
+
+    await syncBranchCoverage(invoice.restaurant_id);
+    revalidatePath("/m", "layout");
+    revalidatePath("/a/subscriptions");
+    return { ok: true };
+  }
+
+  /**
    * Extend from the LATER of now and the current end date.
    *
    * Paying early must add a month to what is left, not reset it — otherwise a
@@ -101,10 +149,21 @@ export async function activateFromInvoice(invoiceId: string): Promise<Activation
   const from = Math.max(Date.now(), subscription.end_date ? new Date(subscription.end_date).getTime() : 0);
   const endDate = new Date(from + PERIOD_DAYS * 86_400_000).toISOString();
 
-  const { error: subError } = await supabase
+  /*
+    The month bought also sets how many extra branches are paid for: the
+    count this invoice billed (0072). Before 0072 there is no column, and the
+    update is retried without it — a plan month must never fail over the
+    branches nobody can have yet.
+  */
+  const patch = { plan_id: invoice.plan_id, end_date: endDate, cancelled_at: null };
+  let { error: subError } = await supabase
     .from("subscriptions")
-    .update({ plan_id: invoice.plan_id, end_date: endDate, cancelled_at: null })
+    .update({ ...patch, extra_branches: extraBranches })
     .eq("id", subscription.id);
+
+  if (subError && isMissingColumn(subError, "extra_branches")) {
+    ({ error: subError } = await supabase.from("subscriptions").update(patch).eq("id", subscription.id));
+  }
 
   if (subError) {
     console.error("[subscribe:activate] subscription", subError.message);
@@ -122,6 +181,11 @@ export async function activateFromInvoice(invoiceId: string): Promise<Activation
       error: "Le paiement a abouti mais l'abonnement n'a pas été prolongé.",
     };
   }
+
+  // The month may have changed the plan or the paid extras: branches start
+  // or stop accordingly, and a top-up this month now covers is retired.
+  await syncBranchCoverage(invoice.restaurant_id);
+  await refreshBranchInvoices(invoice.restaurant_id);
 
   revalidatePath("/m", "layout");
   revalidatePath("/a/subscriptions");

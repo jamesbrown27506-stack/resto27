@@ -41,6 +41,12 @@ export interface Invoice {
   planName: string | null;
   planTier: string | null;
   commissionRate: number | null;
+  /** 'plan' = a month of the plan; 'branches' = a mid-period branch top-up (0072). */
+  kind: "plan" | "branches";
+  /** 'plan': extra branches billed; 'branches': extra branches covered once paid. */
+  extraBranches: number;
+  /** The part of `amount` paying for branches; the rest is the plan. */
+  branchAmount: number;
 }
 
 /** One invoice, with what a printable document needs on top of the list row. */
@@ -54,8 +60,12 @@ export interface OpenInvoicePayment {
   phone: string | null;
 }
 
-const INVOICE_COLUMNS =
-  "id, number, amount, currency, status, period_start, period_end, issued_at, paid_at, plan_id";
+/*
+  `*`, not a column list: the branch columns (0072) come back once they exist,
+  and a database that has not run 0072 yet still answers — its invoices read
+  as plain plan months.
+*/
+const INVOICE_COLUMNS = "*";
 
 interface DbInvoice {
   id: string;
@@ -68,6 +78,9 @@ interface DbInvoice {
   issued_at: string;
   paid_at: string | null;
   plan_id: string | null;
+  kind?: string;
+  extra_branches?: number;
+  branch_amount?: number;
   subscription_plans: { name: string; tier: string; commission_rate: number } | null;
 }
 
@@ -89,6 +102,9 @@ function shape(row: DbInvoice): Invoice {
       row.subscription_plans?.commission_rate === undefined
         ? null
         : Number(row.subscription_plans.commission_rate),
+    kind: row.kind === "branches" ? "branches" : "plan",
+    extraBranches: Number(row.extra_branches ?? 0),
+    branchAmount: Number(row.branch_amount ?? 0),
   };
 }
 
@@ -208,6 +224,10 @@ export interface BillingPlan {
   /** null = this plan has no free trial (migration 0010). Starter is free anyway. */
   trialDays: number | null;
   isFeatured: boolean;
+  /** Locations the plan includes, the main restaurant counted (0053). */
+  includedBranches: number;
+  /** Monthly price per extra branch; null = the plan sells none (0072). */
+  extraBranchPrice: number | null;
 }
 
 /**
@@ -222,12 +242,10 @@ export interface BillingPlan {
 export async function fetchPlans(): Promise<BillingPlan[]> {
   const supabase = createAdminClient();
 
+  // `*` so the branch price (0072) is read when it exists and skipped when not.
   const { data, error } = await supabase
     .from("subscription_plans")
-    .select(
-      `id, tier, name, monthly_price, commission_rate, menu_item_limit, table_limit,
-       promotion_limit, staff_management, analytics, trial_days, is_featured`,
-    )
+    .select("*")
     .eq("is_active", true)
     .order("sort_order");
 
@@ -249,6 +267,9 @@ export async function fetchPlans(): Promise<BillingPlan[]> {
     analytics: p.analytics as boolean,
     trialDays: (p.trial_days as number | null) ?? null,
     isFeatured: Boolean(p.is_featured),
+    includedBranches: Number(p.included_branches ?? 1),
+    extraBranchPrice:
+      p.extra_branch_price === null || p.extra_branch_price === undefined ? null : Number(p.extra_branch_price),
   }));
 }
 

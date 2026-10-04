@@ -117,6 +117,17 @@ export const MANAGER_NAV: NavGroup[] = [
         allowLocked: true,
         matchPrefix: true,
       },
+      {
+        href: "/m/branches",
+        labelKey: "nav.m.branches",
+        icon: "Building2",
+        // Opening a branch is a commitment on the main's invoice — owners.
+        // The page re-checks the role AT THE MAIN (0072).
+        capability: "billing.manage",
+        // A paused branch reads as locked: its owner must still reach the
+        // screen that explains the pause and resumes it.
+        allowLocked: true,
+      },
       { href: "/m/profile", labelKey: "nav.m.profile", icon: "Store", capability: "profile.edit" },
       { href: "/m/settings", labelKey: "nav.m.settings", icon: "Settings", capability: "settings.manage" },
     ],

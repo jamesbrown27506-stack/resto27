@@ -22,6 +22,17 @@ function toLimit(value: string): number | null {
   return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
 }
 
+/**
+ * Empty = the plan sells no extra branch (Starter). 0 is a real price —
+ * extras given away — so it is kept, unlike a limit.
+ */
+function toPrice(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+  const n = Number(trimmed);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+
 export function PlansEditor({ plans }: { plans: Plan[] }) {
   const { toast } = useToast();
   const [pending, startTransition] = useTransition();
@@ -43,6 +54,7 @@ export function PlansEditor({ plans }: { plans: Plan[] }) {
         tableLimit: plan.tableLimit,
         promotionLimit: plan.promotionLimit,
         includedBranches: plan.includedBranches,
+        extraBranchPrice: plan.extraBranchPrice,
         staffLimit: plan.staffLimit,
         scheduledPayouts: plan.scheduledPayouts,
         prioritySupport: plan.prioritySupport,
@@ -175,6 +187,29 @@ export function PlansEditor({ plans }: { plans: Plan[] }) {
                     <Input id={`staff-limit-${plan.id}`} inputMode="numeric" min={0} value={String(plan.staffLimit)} onChange={(e) => patch(plan.id, { staffLimit: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
                   </Field>
                 </div>
+
+                {/* Locations count the main restaurant: 3 included = main + 2
+                    branches. Each one beyond is billed this much a month on
+                    the main's invoice; empty means the plan cannot run more
+                    branches than it includes (0072). */}
+                <Field
+                  label="Price per extra branch"
+                  htmlFor={`extra-branch-${plan.id}`}
+                  hint={
+                    plan.extraBranchPrice === null
+                      ? `No branches beyond the ${plan.includedBranches} included location(s).`
+                      : `Each location beyond ${plan.includedBranches}, per month.`
+                  }
+                >
+                  <Input
+                    id={`extra-branch-${plan.id}`}
+                    inputMode="numeric"
+                    suffix="FCFA"
+                    placeholder="Not sold"
+                    value={plan.extraBranchPrice ?? ""}
+                    onChange={(e) => patch(plan.id, { extraBranchPrice: toPrice(e.target.value) })}
+                  />
+                </Field>
 
                 <div className="flex flex-col gap-3 border-t border-border pt-4">
                   <Switch

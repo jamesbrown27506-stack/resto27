@@ -19,6 +19,9 @@ const STATUS_LABEL: Record<AdminRestaurant["status"], string> = {
   active: "Active",
   pending: "Pending",
   suspended: "Suspended",
+  // A branch its main's plan does not cover (0072). Set and lifted by the
+  // branch sync, not here: it resumes when the owner pays or upgrades.
+  paused: "Paused (plan)",
 };
 
 /** Derived by the subscription_state view, never stored (§5). */
@@ -33,6 +36,7 @@ const STATUS_TONE: Record<AdminRestaurant["status"], BadgeTone> = {
   active: "success",
   pending: "warning",
   suspended: "error",
+  paused: "neutral",
 };
 
 type Action = "approve" | "reject" | "suspend" | "reinstate";
@@ -284,7 +288,7 @@ export function RestaurantsTable({
               </Button>
             </>
           )}
-          {r.status === "active" && (
+          {(r.status === "active" || r.status === "paused") && (
             <Button
               variant="ghost"
               size="sm"
@@ -332,6 +336,7 @@ export function RestaurantsTable({
               { value: "active", label: "Active" },
               { value: "pending", label: "Pending" },
               { value: "suspended", label: "Suspended" },
+              { value: "paused", label: "Paused (plan)" },
             ],
           },
           {

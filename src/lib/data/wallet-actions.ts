@@ -22,6 +22,17 @@ import { checkPaymentAttempt, initiatePaymentAttempt, settlePayment } from "@/li
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
 import { identifyRecipient, requireConfirmedRecipient, type RecipientGate } from "@/lib/payments/recipient";
+import type { BranchContext } from "@/lib/auth/branch";
+import { BRANCH_ROLE_LABEL, type BranchRole } from "@/lib/capabilities";
+import {
+  checkWithdrawalPin,
+  getPayoutAccount,
+  notifyOwners,
+  resolveWithdrawRight,
+  withdrawControlsReady,
+  withdrawnInLast24h,
+} from "@/lib/wallet/controls";
+import { dailyAllowance, maskPhone, type WithdrawRight } from "@/lib/wallet/withdraw-rules";
 
 /**
  * Wallet mutations (migration 0024).
@@ -272,31 +283,137 @@ export async function verifyWithdrawalRecipient(
 /* ── Withdrawal requests ───────────────────────────────────────────────── */
 
 /**
- * A restaurant asks to take its money OUT. The GROSS is what they ask for;
- * the fee (if enabled) is withheld at approval time by the admin's payout.
+ * The three questions every withdrawal answers before a franc moves (0073):
+ * may this person withdraw here, is it really them (their PIN), and is the
+ * platform able to tell (the control tables exist). In that order — someone
+ * without the right never spends a PIN attempt, and a PIN is never checked
+ * against a table that is not there.
+ *
+ * FAIL CLOSED: without 0073 there is no PIN to ask for, and a withdrawal is
+ * refused rather than sent unchecked.
+ */
+async function withdrawGate(
+  context: BranchContext,
+  pin: string,
+  t: Translate,
+): Promise<{ ok: true; right: Extract<WithdrawRight, { allowed: true }> } | (WalletResult & { ok: false })> {
+  if (!(await withdrawControlsReady())) {
+    return { ok: false, reason: "controlsMissing", error: t("est.withdrawControlsMissing") };
+  }
+
+  const right = await resolveWithdrawRight(context);
+  if (!right.allowed) {
+    return {
+      ok: false,
+      reason: right.reason,
+      error: t(right.reason === "impersonating" ? "est.withdrawImpersonating" : "est.withdrawNotAllowed"),
+    };
+  }
+
+  const pinCheck = await checkWithdrawalPin(context.profile.id, pin.trim(), {
+    restaurantId: context.active.restaurantId,
+    personName: context.profile.name,
+  });
+  if (!pinCheck.ok) {
+    switch (pinCheck.reason) {
+      case "noPin":
+        return { ok: false, reason: "noPin", error: t("est.withdrawNoPin") };
+      case "locked":
+        return {
+          ok: false,
+          reason: "pinLocked",
+          error: t("est.withdrawPinLocked", {
+            time: new Date(pinCheck.lockedUntil).toLocaleTimeString("fr-CM", {
+              hour: "2-digit",
+              minute: "2-digit",
+              timeZone: "Africa/Douala",
+            }),
+          }),
+        };
+      default:
+        return { ok: false, reason: "pinWrong", error: t("est.withdrawPinWrong", { left: pinCheck.attemptsLeft }) };
+    }
+  }
+
+  return { ok: true, right };
+}
+
+/**
+ * Tell every owner that money left — whoever sent it, the owner included
+ * (a receipt for them, an alarm if it was not them). Never throws.
+ */
+async function announceWithdrawal(
+  context: BranchContext,
+  input: { amount: number; phone: string; recipientName: string | null },
+): Promise<void> {
+  const role = BRANCH_ROLE_LABEL[context.active.role as BranchRole] ?? context.active.role;
+  const where =
+    context.active.isPrimary || !context.active.branchLabel
+      ? context.active.restaurantName
+      : `${context.active.restaurantName} — ${context.active.branchLabel}`;
+  const to = `${maskPhone(input.phone)}${input.recipientName ? ` (${input.recipientName})` : ""}`;
+
+  await notifyOwners(context.active.restaurantId, {
+    tone: "info",
+    withdrawalKind: "sent",
+    amount: input.amount,
+    detail: `${context.profile.name} (${role.toLowerCase()}) a retiré ${input.amount.toLocaleString("fr-CM")} FCFA de ${where} vers ${to}.`,
+  });
+}
+
+/**
+ * A restaurant takes its money OUT. The GROSS is what they ask for; the fee
+ * (if enabled) is withheld from the payout.
+ *
+ * Since 0073 the destination is not typed: it is one of the numbers the
+ * owner saved (payout_accounts), named by id — so a delegate can choose
+ * WHICH of the owner's numbers, never a number of their own.
  */
 export async function requestWithdrawal(input: {
   amount: number;
-  phone: string;
+  /** One of the owner's saved numbers (payout_accounts.id). */
+  payoutAccountId: string;
+  /** The withdrawer's own PIN. */
+  pin: string;
   note?: string;
-  /** The account holder's name the sender was shown and confirmed (verifyWithdrawalRecipient). */
-  confirmedName?: string | null;
 }): Promise<WalletResult> {
   const t = await getTranslator();
-  const { active, profile } = await requireCapability("finance.manage");
+  const context = await requireCapability("finance.manage");
+  const { active, profile } = context;
 
   const amount = Math.round(input.amount);
   if (!Number.isInteger(amount) || amount < MIN_AMOUNT_XAF) {
     return { ok: false, reason: "belowMinimum", error: t("est.withdrawMin", { amount: MIN_AMOUNT_XAF }) };
   }
 
-  const phone = normalisePhone(input.phone);
+  const gate = await withdrawGate(context, input.pin, t);
+  if (!gate.ok) return gate;
+
+  const account = await getPayoutAccount(active.restaurantId, input.payoutAccountId);
+  if (!account) return { ok: false, reason: "accountMissing", error: t("est.withdrawAccountMissing") };
+
+  const phone = normalisePhone(account.phone);
   if (!phone) {
     return {
       ok: false,
       reason: "badPhone",
       error: t("est.withdrawPhoneInvalid"),
     };
+  }
+
+  // A delegate's ceiling over the last 24 hours, at this branch.
+  if (gate.right.kind === "delegate" && gate.right.dailyLimit !== null) {
+    const left = dailyAllowance(gate.right.dailyLimit, await withdrawnInLast24h(active.restaurantId, profile.id)) ?? 0;
+    if (amount > left) {
+      return {
+        ok: false,
+        reason: "dailyLimit",
+        error: t("est.withdrawDailyLimit", {
+          limit: gate.right.dailyLimit.toLocaleString("fr-CM"),
+          left: left.toLocaleString("fr-CM"),
+        }),
+      };
+    }
   }
 
   const limited = await rateLimit({
@@ -366,12 +483,17 @@ export async function requestWithdrawal(input: {
   }
 
   // The holder is checked BEFORE the request exists: a number that fails the
-  // check must not leave a "pending" request behind asking to be sent.
-  let recipientName: string | null = null;
+  // check must not leave a "pending" request behind asking to be sent. The
+  // name to match is the one the OWNER confirmed when saving the number, so
+  // a number since handed to someone else by the operator is caught here.
+  let recipientName: string | null = account.holderName;
   if ((await paymentMode()) === "live") {
-    const gate = await requireConfirmedRecipient(phone, input.confirmedName);
-    if (!gate.ok) return recipientRefusal(gate, t);
-    recipientName = gate.name;
+    if (!account.holderName) {
+      return { ok: false, reason: "accountUnverified", error: t("est.withdrawAccountUnverified") };
+    }
+    const recipient = await requireConfirmedRecipient(phone, account.holderName);
+    if (!recipient.ok) return recipientRefusal(recipient, t);
+    recipientName = recipient.name;
   }
 
   const { data: created, error } = await supabase
@@ -382,6 +504,9 @@ export async function requestWithdrawal(input: {
       amount,
       phone,
       note: input.note?.trim() || null,
+      recipient_name: recipientName,
+      requester_role: active.role,
+      payout_account_id: account.id,
     })
     .select("id")
     .single();
@@ -391,7 +516,11 @@ export async function requestWithdrawal(input: {
     return { ok: false, reason: "insertFailed", error: t("est.withdrawStartFailed") };
   }
 
-  return executeWithdrawal(String(created.id), profile, t, active.restaurantId, { verifiedName: recipientName });
+  const result = await executeWithdrawal(String(created.id), profile, t, active.restaurantId, {
+    verifiedName: recipientName,
+  });
+  if (result.ok) await announceWithdrawal(context, { amount, phone, recipientName });
+  return result;
 }
 
 /**
@@ -436,12 +565,20 @@ export async function approveWithdrawal(requestId: string, confirmedName?: strin
 
 /**
  * Start or retry a withdrawal belonging to the manager's active branch.
- * `confirmedName` is the account holder the sender was shown for the request's
- * number — a retry is a payout like any other, and goes through the same check.
+ *
+ * A retry is a payout like any other: the same right, the same PIN, the same
+ * holder check. The name matched is the one stored on the request (0073);
+ * `confirmedName` is only for requests made before that, which never stored
+ * one — the sender is shown the holder again and confirms it.
  */
-export async function processOwnWithdrawal(requestId: string, confirmedName?: string | null): Promise<WalletResult> {
+export async function processOwnWithdrawal(
+  requestId: string,
+  pin: string,
+  confirmedName?: string | null,
+): Promise<WalletResult> {
   const t = await getTranslator();
-  const { active, profile } = await requireCapability("finance.manage");
+  const context = await requireCapability("finance.manage");
+  const { active, profile } = context;
   const limited = await rateLimit({
     key: "wallet:withdraw-retry",
     limit: 5,
@@ -451,7 +588,28 @@ export async function processOwnWithdrawal(requestId: string, confirmedName?: st
   if (!limited.ok) {
     return { ok: false, reason: "rateLimited", error: t("est.payoutRateLimited") };
   }
-  return executeWithdrawal(requestId, profile, t, active.restaurantId, { confirmedName });
+
+  const gate = await withdrawGate(context, pin, t);
+  if (!gate.ok) return gate;
+
+  const { data: row } = await createAdminClient()
+    .from("withdrawal_requests")
+    .select("*")
+    .eq("id", requestId)
+    .eq("restaurant_id", active.restaurantId)
+    .maybeSingle();
+  const stored = row as { amount?: number; phone?: string; recipient_name?: string | null } | null;
+  const name = stored?.recipient_name ?? confirmedName ?? null;
+
+  const result = await executeWithdrawal(requestId, profile, t, active.restaurantId, { confirmedName: name });
+  if (result.ok && stored) {
+    await announceWithdrawal(context, {
+      amount: Number(stored.amount ?? 0),
+      phone: String(stored.phone ?? ""),
+      recipientName: name,
+    });
+  }
+  return result;
 }
 
 async function executeWithdrawal(

@@ -30,6 +30,17 @@ export interface WalletRequestRow {
   requestedAt: string;
   decidedAt: string | null;
   replyTo: string | null;
+  /** Who asked for it, as what (0073) — the owner's monitoring. */
+  requestedByName: string | null;
+  requesterRole: string | null;
+  /** The Mobile Money account holder it went to, as the operator named it. */
+  recipientName: string | null;
+}
+
+/** A Supabase many-to-one embed comes back as an object; tolerate an array. */
+function one<T>(value: T | T[] | null | undefined): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
 }
 
 export interface WalletState {
@@ -120,9 +131,10 @@ export async function getWalletState(restaurantId: string): Promise<WalletState>
       .eq("restaurant_id", restaurantId)
       .order("created_at", { ascending: false })
       .limit(25),
+    // `*` so who-and-to-whom (0073) is read when it exists and skipped when not.
     supabase
       .from("withdrawal_requests")
-      .select("id, amount, phone, status, note, fee, net, reply_to, requested_at, decided_at")
+      .select("*, profiles!requested_by ( name )")
       .eq("restaurant_id", restaurantId)
       .order("requested_at", { ascending: false })
       .limit(20),
@@ -174,6 +186,9 @@ export async function getWalletState(restaurantId: string): Promise<WalletState>
       requestedAt: String(r.requested_at),
       decidedAt: (r.decided_at as string | null) ?? null,
       replyTo: (r.reply_to as string | null) ?? null,
+      requestedByName: one(r.profiles as { name: string } | { name: string }[] | null)?.name ?? null,
+      requesterRole: (r.requester_role as string | null) ?? null,
+      recipientName: (r.recipient_name as string | null) ?? null,
     })),
   };
 }
@@ -183,6 +198,9 @@ export interface AdminWithdrawalRequest {
   restaurantId: string;
   restaurantName: string;
   requestedByName: string | null;
+  /** The requester's role at the branch at the time (0073). */
+  requesterRole: string | null;
+  recipientName: string | null;
   amount: number;
   phone: string;
   status: "pending" | "paid" | "rejected";
@@ -200,12 +218,9 @@ export async function listWithdrawalRequests(limit = 50): Promise<AdminWithdrawa
 
   const { data, error } = await supabase
     .from("withdrawal_requests")
-    .select(
-      `id, restaurant_id, amount, phone, status, note, fee, net, requested_at, decided_at,
-       reply_to,
-       restaurants ( name ),
-       profiles!requested_by ( name )`,
-    )
+    // `*` so the requester's role and the recipient (0073) come back once
+    // they exist.
+    .select(`*, restaurants ( name, branch_label, is_primary ), profiles!requested_by ( name )`)
     // `!requested_by`: a request points at two profiles — who asked and who
     // decided — so the unnamed embed is ambiguous and the whole list came back
     // empty (PGRST201). The name shown is the requester's.
@@ -217,6 +232,7 @@ export async function listWithdrawalRequests(limit = 50): Promise<AdminWithdrawa
     return [];
   }
 
+  type Restaurant = { name: string; branch_label: string; is_primary: boolean };
   return ((data ?? []) as unknown as {
     id: string;
     restaurant_id: string;
@@ -229,21 +245,34 @@ export async function listWithdrawalRequests(limit = 50): Promise<AdminWithdrawa
     requested_at: string;
     decided_at: string | null;
     reply_to: string | null;
-    restaurants: { name: string }[] | null;
-    profiles: { name: string }[] | null;
-  }[]).map((r) => ({
-    id: r.id,
-    restaurantId: r.restaurant_id,
-    restaurantName: r.restaurants?.[0]?.name ?? "—",
-    requestedByName: r.profiles?.[0]?.name ?? null,
-    amount: Number(r.amount),
-    phone: r.phone,
-    status: r.status as AdminWithdrawalRequest["status"],
-    note: r.note,
-    fee: r.fee === null ? null : Number(r.fee),
-    net: r.net === null ? null : Number(r.net),
-    requestedAt: r.requested_at,
-    decidedAt: r.decided_at,
-    replyTo: r.reply_to,
-  }));
+    requester_role?: string | null;
+    recipient_name?: string | null;
+    restaurants: Restaurant | Restaurant[] | null;
+    profiles: { name: string } | { name: string }[] | null;
+  }[]).map((r) => {
+    // Many-to-one embeds are OBJECTS. Reading them as arrays (`[0]`) showed
+    // every restaurant as "—" and every requester as nobody.
+    const restaurant = one(r.restaurants);
+    return {
+      id: r.id,
+      restaurantId: r.restaurant_id,
+      restaurantName: restaurant
+        ? restaurant.is_primary
+          ? restaurant.name
+          : `${restaurant.name} — ${restaurant.branch_label}`
+        : "—",
+      requestedByName: one(r.profiles)?.name ?? null,
+      requesterRole: r.requester_role ?? null,
+      recipientName: r.recipient_name ?? null,
+      amount: Number(r.amount),
+      phone: r.phone,
+      status: r.status as AdminWithdrawalRequest["status"],
+      note: r.note,
+      fee: r.fee === null ? null : Number(r.fee),
+      net: r.net === null ? null : Number(r.net),
+      requestedAt: r.requested_at,
+      decidedAt: r.decided_at,
+      replyTo: r.reply_to,
+    };
+  });
 }

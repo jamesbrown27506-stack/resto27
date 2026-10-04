@@ -459,6 +459,11 @@ const EXPECTED_TABLES: { table: string; migration: string }[] = [
   { table: "wallet_ledger", migration: "0024" },
   { table: "withdrawal_requests", migration: "0024" },
   { table: "review_photos", migration: "0026" },
+  // Withdrawals fail CLOSED without these (0073) — a missing table pauses
+  // every restaurant's withdrawals, so it must show up here first.
+  { table: "withdrawal_pins", migration: "0073" },
+  { table: "withdrawal_permissions", migration: "0073" },
+  { table: "payout_accounts", migration: "0073" },
 ];
 
 /**

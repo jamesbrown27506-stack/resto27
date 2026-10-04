@@ -175,34 +175,82 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
               </tr>
             </thead>
             <tbody>
-              <tr className="border-b border-border">
-                <td className="py-4">
-                  <p className="font-medium">
-                    <span>
-                      {t("mbl.doc.line", { plan: invoice.planName ?? invoice.number })}
-                    </span>
-                  </p>
-                  <p className="tnum mt-0.5 text-xs text-text-light">
-                    {/* The commission rate is the one snapshotted on the plan
-                        this invoice was raised for, not today's plan. */}
-                    <span>
-                      {invoice.commissionRate === null
-                        ? t("mbl.doc.lineMetaNoRate", {
-                            from: day(invoice.periodStart),
-                            to: day(invoice.periodEnd),
-                          })
-                        : t("mbl.doc.lineMeta", {
-                            from: day(invoice.periodStart),
-                            to: day(invoice.periodEnd),
-                            rate: formatPercent(invoice.commissionRate),
-                          })}
-                    </span>
-                  </p>
-                </td>
-                <td className="tnum py-4 text-right font-medium">
-                  {formatMoney(invoice.amount, { currency: invoice.currency })}
-                </td>
-              </tr>
+              {/* A branch top-up (0072) buys extra branches until the period
+                  end — one line, no plan month in it. */}
+              {invoice.kind === "branches" ? (
+                <tr className="border-b border-border">
+                  <td className="py-4">
+                    <p className="font-medium">
+                      <span>{t("mbr.invoice.topUpLine")}</span>
+                    </p>
+                    <p className="tnum mt-0.5 text-xs text-text-light">
+                      <span>
+                        {t("mbr.invoice.topUpMeta", {
+                          from: day(invoice.periodStart),
+                          to: day(invoice.periodEnd),
+                          count: invoice.extraBranches,
+                        })}
+                      </span>
+                    </p>
+                  </td>
+                  <td className="tnum py-4 text-right font-medium">
+                    {formatMoney(invoice.amount, { currency: invoice.currency })}
+                  </td>
+                </tr>
+              ) : (
+                <>
+                  <tr className="border-b border-border">
+                    <td className="py-4">
+                      <p className="font-medium">
+                        <span>
+                          {t("mbl.doc.line", { plan: invoice.planName ?? invoice.number })}
+                        </span>
+                      </p>
+                      <p className="tnum mt-0.5 text-xs text-text-light">
+                        {/* The commission rate is the one snapshotted on the plan
+                            this invoice was raised for, not today's plan. */}
+                        <span>
+                          {invoice.commissionRate === null
+                            ? t("mbl.doc.lineMetaNoRate", {
+                                from: day(invoice.periodStart),
+                                to: day(invoice.periodEnd),
+                              })
+                            : t("mbl.doc.lineMeta", {
+                                from: day(invoice.periodStart),
+                                to: day(invoice.periodEnd),
+                                rate: formatPercent(invoice.commissionRate),
+                              })}
+                        </span>
+                      </p>
+                    </td>
+                    <td className="tnum py-4 text-right font-medium">
+                      {formatMoney(invoice.amount - invoice.branchAmount, { currency: invoice.currency })}
+                    </td>
+                  </tr>
+                  {/* Each location beyond what the plan includes (0072). */}
+                  {invoice.branchAmount > 0 && invoice.extraBranches > 0 && (
+                    <tr className="border-b border-border">
+                      <td className="py-4">
+                        <p className="font-medium">
+                          <span>{t("mbr.invoice.extraLine", { count: invoice.extraBranches })}</span>
+                        </p>
+                        <p className="tnum mt-0.5 text-xs text-text-light">
+                          <span>
+                            {t("mbr.invoice.extraMeta", {
+                              price: formatMoney(Math.round(invoice.branchAmount / invoice.extraBranches), {
+                                currency: invoice.currency,
+                              }),
+                            })}
+                          </span>
+                        </p>
+                      </td>
+                      <td className="tnum py-4 text-right font-medium">
+                        {formatMoney(invoice.branchAmount, { currency: invoice.currency })}
+                      </td>
+                    </tr>
+                  )}
+                </>
+              )}
             </tbody>
             <tfoot>
               <tr>

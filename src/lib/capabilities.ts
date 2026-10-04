@@ -115,9 +115,11 @@ export const BRANCH_ROLE_DESCRIPTION: Record<BranchRole, string> = {
 const MATRIX: Record<BranchRole, Capability[]> = {
   owner: [...CAPABILITIES],
 
-  // Everything except billing. The wallet is the restaurant's OWN money —
-  // a manager may see it and request a withdrawal; plan changes stay with
-  // the owner because they are a financial commitment.
+  // Everything except billing. The wallet is the restaurant's OWN money — a
+  // manager may SEE it (`finance.manage`), but taking money out is decided
+  // per person (lib/wallet/withdraw-rules.ts, 0073): only if an owner granted
+  // this manager the right, with their own PIN, to the owner's saved numbers.
+  // Plan changes stay with the owner because they are a financial commitment.
   manager: CAPABILITIES.filter((c) => c !== "billing.manage"),
 
   // No orders.cancel: a cancellation now refunds the customer, and the pass
@@ -187,7 +189,8 @@ export const CAPABILITY_LABEL: Record<Capability, string> = {
   "reports.view": "Voir les rapports",
   "staff.manage": "Gérer le personnel",
   "billing.manage": "Gérer la facturation",
-  "finance.manage": "Voir le portefeuille et retirer",
+  // Seeing it. Withdrawing also needs the owner's grant (0073).
+  "finance.manage": "Voir le portefeuille",
   "payments.collect": "Encaisser à table",
   "service.pause": "Mettre le service en pause",
   "profile.edit": "Modifier le profil",

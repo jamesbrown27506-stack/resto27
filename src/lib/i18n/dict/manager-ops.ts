@@ -81,7 +81,7 @@ export const managerOpsDict = defineDict({
     "mst.cap.reservations.seat": "Installer les clients",
     "mst.cap.payments.collect": "Encaisser à table",
     "mst.cap.service.pause": "Mettre le service en pause",
-    "mst.cap.finance.manage": "Portefeuille et retraits",
+    "mst.cap.finance.manage": "Portefeuille (retraits sur autorisation du propriétaire)",
 
     /* ── Wallet ───────────────────────────────────────────────────────── */
     "mops.wal.kind.payment": "Paiement reçu",
@@ -208,7 +208,7 @@ export const managerOpsDict = defineDict({
     "mst.cap.reservations.seat": "Seat guests",
     "mst.cap.payments.collect": "Take payment at the table",
     "mst.cap.service.pause": "Pause the service",
-    "mst.cap.finance.manage": "Wallet and withdrawals",
+    "mst.cap.finance.manage": "Wallet (withdrawals with the owner's authorisation)",
 
     "mops.wal.kind.payment": "Payment received",
     "mops.wal.kind.deposit": "Reservation deposit",

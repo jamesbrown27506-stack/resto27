@@ -1,8 +1,10 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/server";
 import { notify } from "@/lib/notify";
 import { endFreeMode, getFreeModeWindow } from "./billing";
+import { ensureUnpaidInvoice } from "./invoice-issue";
+import { isMissingColumn } from "./missing-column";
+import { quotePlanMonth, syncAllBranchCoverage } from "@/lib/branches/account";
 
 /**
  * The daily subscription clock: renewals, reminders, expiry, free-mode lift.
@@ -25,7 +27,11 @@ import { endFreeMode, getFreeModeWindow } from "./billing";
  *    · `settings.platform_free_mode` — false, once the countdown has passed.
  *    · `subscriptions.end_date` — only for the free-mode grants repaired at
  *      the lift (a paid plan that was handed out with no billing date).
- *    · `invoices` — one unpaid renewal invoice per tenant per plan, never two.
+ *    · `invoices` — one unpaid renewal invoice per tenant per plan, never two,
+ *      billing the plan plus each extra branch (0072).
+ *    · `restaurants.status` of BRANCHES only — 'active' ⇄ 'paused', through
+ *      the branch sync (lib/branches/account.ts), when a main's plan stops or
+ *      starts covering them.
  *  Nothing else. Expiry itself is not a write: a subscription is locked
  *  because its end date passed, not because a job said so.
  *
@@ -47,9 +53,6 @@ const RENEWAL_LEAD_DAYS = 7;
 /** Days remaining on which a reminder goes out. Every day would be nagging. */
 const REMINDER_ON_DAYS = new Set([7, 3, 1]);
 
-/** One plan month — the same period activateFromInvoice() grants. */
-const PERIOD_DAYS = 30;
-
 const DAY_MS = 86_400_000;
 
 /** A second run inside this window is a repeat: it notifies nobody. */
@@ -69,93 +72,9 @@ export interface ExpiryRunResult {
   remindersSent: number;
   renewalInvoices: number;
   freeModeLifted: boolean;
-}
-
-/* ── Invoices ──────────────────────────────────────────────────────────── */
-
-/** Invoice numbers people can read down a phone line. */
-function invoiceNumber(): string {
-  const now = new Date();
-  const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-  return `INV-${stamp}-${randomUUID().slice(0, 6).toUpperCase()}`;
-}
-
-export interface UnpaidInvoice {
-  id: string;
-  number: string;
-  amount: number;
-  /** False when an existing unpaid invoice was reused. */
-  created: boolean;
-}
-
-/**
- * THE tenant's payable invoice for a plan — raised if it does not exist yet.
- *
- * ONE UNPAID INVOICE PER TENANT PER PLAN, EVER. A hesitant tenant clicking
- * "choose plan" six times, plus a nightly renewal sweep, plus an admin
- * prompting them, otherwise stack six invoices for one month of service and
- * whichever one they pay decides how much they were charged.
- *
- * Called by `choosePlan` (the tenant picking a plan) and by the renewal sweep
- * below, so both surfaces agree about what "you owe one month" looks like.
- * The period recorded is billing history only — `activateFromInvoice` grants a
- * month from the moment it is PAID, never from the period on the invoice.
- */
-export async function ensureUnpaidInvoice(input: {
-  restaurantId: string;
-  planId: string;
-  amount: number;
-  /** Where the billed period starts. Defaults to now. */
-  from?: Date;
-}): Promise<UnpaidInvoice | null> {
-  const supabase = createAdminClient();
-
-  const { data: existing } = await supabase
-    .from("invoices")
-    .select("id, number, amount")
-    .eq("restaurant_id", input.restaurantId)
-    .eq("plan_id", input.planId)
-    .eq("status", "unpaid")
-    .order("issued_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (existing) {
-    return {
-      id: existing.id as string,
-      number: existing.number as string,
-      amount: existing.amount as number,
-      created: false,
-    };
-  }
-
-  const periodStart = input.from ?? new Date();
-  const periodEnd = new Date(periodStart.getTime() + PERIOD_DAYS * DAY_MS);
-
-  const { data: invoice, error } = await supabase
-    .from("invoices")
-    .insert({
-      number: invoiceNumber(),
-      restaurant_id: input.restaurantId,
-      plan_id: input.planId,
-      amount: Math.round(input.amount),
-      period_start: periodStart.toISOString(),
-      period_end: periodEnd.toISOString(),
-    })
-    .select("id, number, amount")
-    .single();
-
-  if (error || !invoice) {
-    console.error("[lifecycle:ensureUnpaidInvoice]", input.restaurantId, error?.message);
-    return null;
-  }
-
-  return {
-    id: invoice.id as string,
-    number: invoice.number as string,
-    amount: invoice.amount as number,
-    created: true,
-  };
+  /** Branches started or stopped by the coverage sync (0072). */
+  branchesPaused: number;
+  branchesResumed: number;
 }
 
 /* ── The run cursor ────────────────────────────────────────────────────── */
@@ -288,8 +207,14 @@ interface StateRow {
   grace_days: number;
   state: string;
   days_remaining: number | null;
-  restaurants: { name: string; status: string } | null;
-  subscription_plans: { name: string; monthly_price: number } | null;
+}
+
+interface PlanRow {
+  id: string;
+  name: string;
+  monthly_price: number;
+  included_branches?: number;
+  extra_branch_price?: number | null;
 }
 
 export async function runSubscriptionExpiry(): Promise<ExpiryRunResult> {
@@ -301,6 +226,8 @@ export async function runSubscriptionExpiry(): Promise<ExpiryRunResult> {
     remindersSent: 0,
     renewalInvoices: 0,
     freeModeLifted: false,
+    branchesPaused: 0,
+    branchesResumed: 0,
   };
 
   /* ── 1. Has the free-mode countdown run out? ─────────────────────────── */
@@ -311,6 +238,17 @@ export async function runSubscriptionExpiry(): Promise<ExpiryRunResult> {
     result.freeModeLifted = await endFreeMode(freeMode.endsAt);
     if (result.freeModeLifted) await repairFreeModeGrants(freeMode.endsAt);
   }
+
+  /*
+    Branches follow their main's plan (0072). Every event that changes a
+    plan re-syncs its own account; this is the net under them, and the only
+    thing that notices a main subscription running out of grace overnight.
+    Before the free-mode return: a lapse is a lapse whether or not today is
+    billable.
+  */
+  const branches = await syncAllBranchCoverage();
+  result.branchesPaused = branches.paused;
+  result.branchesResumed = branches.resumed;
 
   /**
    * While the platform is free NOTHING is billable — no invoice, no reminder,
@@ -327,45 +265,78 @@ export async function runSubscriptionExpiry(): Promise<ExpiryRunResult> {
 
   const horizon = new Date(now.getTime() + RENEWAL_LEAD_DAYS * DAY_MS).toISOString();
 
-  const { data, error } = await supabase
-    .from("subscription_state")
-    .select(
-      `id, restaurant_id, plan_id, end_date, grace_days, state, days_remaining,
-       restaurants ( name, status ),
-       subscription_plans ( name, monthly_price )`,
-    )
-    .not("end_date", "is", null)
-    .is("cancelled_at", null)
-    .lt("end_date", horizon)
+  /*
+    ONE ROW PER SUBSCRIPTION. Since 0072 the view also carries a row for
+    every branch, on its main's subscription — billing those would invoice
+    the same month once per location. Before 0072 there is no `is_branch`
+    column and no branch rows, so the filter is simply dropped.
+
+    Names and prices come in separate reads: the view is a join now, and
+    PostgREST cannot follow a foreign key through it.
+  */
+  const sweep = (branchFilter: boolean) => {
+    let query = supabase
+      .from("subscription_state")
+      .select("id, restaurant_id, plan_id, end_date, grace_days, state, days_remaining")
+      .not("end_date", "is", null)
+      .is("cancelled_at", null)
+      .lt("end_date", horizon);
+    if (branchFilter) query = query.eq("is_branch", false);
     // Newest end dates first: the tenants whose renewal is imminent or whose
     // month has just lapsed are the ones a run must never miss. Long-locked
     // tenants already hold their invoice from the run that caught them, so
     // they are the safe end of the batch to cut.
-    .order("end_date", { ascending: false })
-    .limit(BATCH);
+    return query.order("end_date", { ascending: false }).limit(BATCH);
+  };
+
+  let { data, error } = await sweep(true);
+  if (error && isMissingColumn(error, "is_branch")) ({ data, error } = await sweep(false));
 
   if (error) {
     console.error("[lifecycle:runSubscriptionExpiry]", error.message);
     return result;
   }
 
-  for (const row of (data ?? []) as unknown as StateRow[]) {
-    const price = row.subscription_plans?.monthly_price ?? 0;
+  const stateRows = (data ?? []) as unknown as StateRow[];
+  const [restaurantsResult, plansResult] = await Promise.all([
+    supabase.from("restaurants").select("id, name, status").in("id", stateRows.map((row) => row.restaurant_id)),
+    supabase.from("subscription_plans").select("*").in("id", [...new Set(stateRows.map((row) => row.plan_id))]),
+  ]);
+  const restaurants = new Map(
+    ((restaurantsResult.data ?? []) as { id: string; name: string; status: string }[]).map((r) => [r.id, r]),
+  );
+  const plans = new Map(((plansResult.data ?? []) as PlanRow[]).map((p) => [p.id, p]));
+
+  for (const row of stateRows) {
+    const plan = plans.get(row.plan_id);
+    const restaurant = restaurants.get(row.restaurant_id);
+    const price = plan?.monthly_price ?? 0;
 
     // Nothing to renew on a free plan, and a suspended restaurant is the
     // platform's decision, not a billing event — suspension overrides all (§5).
     if (price <= 0) continue;
-    if (row.restaurants && row.restaurants.status !== "active") continue;
+    if (restaurant && restaurant.status !== "active") continue;
 
     const endDate = row.end_date ? new Date(row.end_date) : null;
     if (!endDate) continue;
 
+    // The month, plus every open branch beyond what the plan includes.
+    const quote = await quotePlanMonth(row.restaurant_id, {
+      monthlyPrice: price,
+      includedBranches: Number(plan?.included_branches ?? 1),
+      extraBranchPrice:
+        plan?.extra_branch_price === null || plan?.extra_branch_price === undefined
+          ? null
+          : Number(plan.extra_branch_price),
+    });
+
     const invoice = await ensureUnpaidInvoice({
       restaurantId: row.restaurant_id,
       planId: row.plan_id,
-      amount: price,
+      amount: quote.amount,
       // Billed from where the current month ends, unless that is already past.
       from: endDate.getTime() > now.getTime() ? endDate : now,
+      branches: { extraBranches: quote.extraBranches, branchAmount: quote.branchAmount },
     });
 
     if (invoice?.created) result.renewalInvoices += 1;
@@ -383,7 +354,7 @@ export async function runSubscriptionExpiry(): Promise<ExpiryRunResult> {
     if (newlyLocked) result.expired += 1;
     if (!run.announce || !invoice) continue;
 
-    const planName = row.subscription_plans?.name ?? "votre forfait";
+    const planName = plan?.name ?? "votre forfait";
     const amount = invoice.amount.toLocaleString("fr-CM");
     const due = endDate.toLocaleDateString("fr-CM");
 

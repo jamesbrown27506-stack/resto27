@@ -70,7 +70,8 @@ export interface AdminRestaurant {
   name: string;
   branchLabel: string;
   isPrimary: boolean;
-  status: "active" | "pending" | "suspended";
+  /** 'paused': a branch its main's plan does not cover (0072). */
+  status: "active" | "pending" | "suspended" | "paused";
   /** The public verified badge — set by an admin, never bought (§0023). */
   isVerified: boolean;
   cuisine: string | null;
@@ -132,18 +133,23 @@ interface RestaurantRow {
 
 interface SubscriptionStateRow {
   restaurant_id: string;
+  plan_id: string;
   state: string;
   end_date: string | null;
   days_remaining: number | null;
   grace_days: number;
-  subscription_plans: { tier: string; name: string } | null;
 }
 
 /**
  * Subscriptions are fetched separately and stitched in memory rather than
  * joined, because `subscription_state` is a VIEW and PostgREST cannot follow a
- * foreign key through one. Two round trips over a table of tenants is nothing;
- * the alternative is a stored state column that goes stale (§5).
+ * foreign key through one — since 0072 not even to the plan, the view being a
+ * join of restaurants and subscriptions. Two round trips over a table of
+ * tenants is nothing; the alternative is a stored state column that goes
+ * stale (§5).
+ *
+ * A branch (0072) has its own row here, on its main's plan — which is what
+ * the admin should read for it.
  *
  * Returns an empty map — not an error — when migration 0004 has not been run,
  * so the restaurants list still renders while billing is being set up.
@@ -151,20 +157,23 @@ interface SubscriptionStateRow {
 async function fetchSubscriptionMap(): Promise<Map<string, RestaurantSubscription>> {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase
-    .from("subscription_state")
-    .select("restaurant_id, state, end_date, days_remaining, grace_days, subscription_plans ( tier, name )");
+  const [{ data, error }, { data: planRows }] = await Promise.all([
+    supabase.from("subscription_state").select("restaurant_id, plan_id, state, end_date, days_remaining, grace_days"),
+    supabase.from("subscription_plans").select("id, tier, name"),
+  ]);
 
   if (error) {
     console.warn("[data:subscriptions] unavailable —", error.message);
     return new Map();
   }
 
+  const plans = new Map(((planRows ?? []) as { id: string; tier: string; name: string }[]).map((p) => [p.id, p]));
   const map = new Map<string, RestaurantSubscription>();
   for (const row of data as unknown as SubscriptionStateRow[]) {
+    const plan = plans.get(row.plan_id);
     map.set(row.restaurant_id, {
-      planTier: (row.subscription_plans?.tier ?? "starter") as RestaurantSubscription["planTier"],
-      planName: row.subscription_plans?.name ?? "—",
+      planTier: (plan?.tier ?? "starter") as RestaurantSubscription["planTier"],
+      planName: plan?.name ?? "—",
       state: row.state as SubscriptionState,
       endDate: row.end_date,
       daysRemaining: row.days_remaining,

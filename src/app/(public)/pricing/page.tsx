@@ -40,6 +40,13 @@ function planRows(t: (key: TranslationKey, vars?: Record<string, string | number
             ? "—"
             : false,
     },
+    // Locations count the main restaurant; each branch beyond is priced (0072).
+    { label: t("mk.pricing.row.locations"), get: (p: PublicPlan) => String(p.includedBranches) },
+    {
+      label: t("mk.pricing.row.extraBranch"),
+      get: (p: PublicPlan) =>
+        p.extraBranchPrice === null ? false : t("mk.pricing.row.perMonth", { price: formatMoney(p.extraBranchPrice) }),
+    },
     { label: t("mk.pricing.row.dishes"), get: (p: PublicPlan) => formatLimit(p.menuItemLimit) },
     { label: t("mk.pricing.row.tables"), get: (p: PublicPlan) => formatLimit(p.tableLimit) },
     {

@@ -221,7 +221,9 @@ export async function getManagerNavCounts(
     .eq("restaurant_id", restaurantId)
     .eq("profile_id", profile.id)
     .eq("status", "active")
-    .eq("restaurants.status", "active")
+    // A paused branch (0072) still has orders in flight and customers who
+    // ordered there — its team keeps the badges and the conversations.
+    .in("restaurants.status", ["active", "paused"])
     .maybeSingle();
   const empty = { orders: 0, kitchen: 0, tableOrder: 0, reservations: 0, messages: 0 };
   if (staffError) { console.error("[nav:staff]", staffError.message); return empty; }

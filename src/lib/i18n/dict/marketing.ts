@@ -13,7 +13,7 @@ export const marketingDict = defineDict({
   fr: {
     /* ── /pricing ────────────────────────────────────────────────────── */
     "mk.pricing.tag": "Tarifs",
-    "mk.pricing.title": "Un tarif clair, par établissement",
+    "mk.pricing.title": "Un tarif clair pour tout votre restaurant",
     "mk.pricing.subtitle":
       "Sans engagement, payable par Mobile Money. Changez ou arrêtez à tout moment.",
     "mk.pricing.compare": "Comparer les formules",
@@ -28,6 +28,9 @@ export const marketingDict = defineDict({
     "mk.pricing.row.free": "Gratuit",
     "mk.pricing.row.trial": "Essai gratuit",
     "mk.pricing.row.trialDays": "{days} jours",
+    "mk.pricing.row.locations": "Établissements inclus",
+    "mk.pricing.row.extraBranch": "Succursale supplémentaire",
+    "mk.pricing.row.perMonth": "{price} / mois",
     "mk.pricing.row.dishes": "Plats au menu",
     "mk.pricing.row.tables": "Tables",
     "mk.pricing.row.promotions": "Promotions actives",
@@ -51,7 +54,7 @@ export const marketingDict = defineDict({
       "Oui, à tout moment et dans les deux sens. Le changement prend effet dès la confirmation du paiement, et la période déjà réglée est prise en compte.",
     "mk.pricing.faq.q4": "Chaque succursale a-t-elle besoin de son propre abonnement ?",
     "mk.pricing.faq.a4":
-      "Oui : le tarif s'entend par établissement, car chaque succursale a son menu, son équipe et ses commandes. La formule Enterprise est conçue pour les groupes à plusieurs adresses.",
+      "Non. Une seule formule couvre votre restaurant et ses succursales. Enterprise inclut plusieurs établissements pour un seul prix, et chaque succursale en plus s'ajoute à la même facture ; avec Professional, chaque succursale est facturée à part ; Starter couvre un seul établissement. Chaque succursale garde son menu, son équipe et ses commandes.",
     "mk.pricing.faq.q5": "Comment se passe le paiement ?",
     "mk.pricing.faq.a5":
       "Vous saisissez votre numéro MTN MoMo ou Orange Money, puis validez la demande sur votre téléphone. Votre formule est activée dès la confirmation de l'opérateur.",
@@ -129,7 +132,7 @@ export const marketingDict = defineDict({
   en: {
     /* ── /pricing ────────────────────────────────────────────────────── */
     "mk.pricing.tag": "Pricing",
-    "mk.pricing.title": "One clear price, per restaurant",
+    "mk.pricing.title": "One clear price for your whole restaurant",
     "mk.pricing.subtitle":
       "No commitment, payable by Mobile Money. Change or stop at any time.",
     "mk.pricing.compare": "Compare the plans",
@@ -144,6 +147,9 @@ export const marketingDict = defineDict({
     "mk.pricing.row.free": "Free",
     "mk.pricing.row.trial": "Free trial",
     "mk.pricing.row.trialDays": "{days} days",
+    "mk.pricing.row.locations": "Locations included",
+    "mk.pricing.row.extraBranch": "Extra branch",
+    "mk.pricing.row.perMonth": "{price} / month",
     "mk.pricing.row.dishes": "Menu dishes",
     "mk.pricing.row.tables": "Tables",
     "mk.pricing.row.promotions": "Active promotions",
@@ -167,7 +173,7 @@ export const marketingDict = defineDict({
       "Yes, at any time and in either direction. The change takes effect as soon as payment is confirmed, and the period already paid for is taken into account.",
     "mk.pricing.faq.q4": "Does every branch need its own subscription?",
     "mk.pricing.faq.a4":
-      "Yes: the price is per establishment, because each branch has its own menu, team and orders. The Enterprise plan is designed for groups with several locations.",
+      "No. One plan covers your restaurant and its branches. Enterprise includes several locations for one price, and each extra branch is added to the same invoice; on Professional each branch is billed on its own; Starter covers a single location. Every branch keeps its own menu, team and orders.",
     "mk.pricing.faq.q5": "How does payment work?",
     "mk.pricing.faq.a5":
       "You enter your MTN MoMo or Orange Money number, then approve the request on your phone. Your plan is activated as soon as the operator confirms.",

@@ -19,6 +19,7 @@ import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { BillingPlan, Invoice, TrialState } from "@/lib/data/invoices";
 import type { SubscriptionState } from "@/lib/format/subscription";
+import { includedBranchSlots, planInvoiceQuote } from "@/lib/branches/coverage";
 import { cn } from "@/lib/utils";
 
 /**
@@ -69,6 +70,40 @@ function isOverdue(invoice: Invoice, now: string): boolean {
   return invoice.status === "unpaid" && new Date(invoice.periodEnd).getTime() < new Date(now).getTime();
 }
 
+/**
+ * What moving to `plan` does to this restaurant's open branches (0072).
+ *
+ *   fits   — the plan includes them all, nothing changes
+ *   billed — some are extras, each billed at the plan's own price
+ *   paused — the plan cannot run some (or any): the newest ones pause
+ *
+ * The same arithmetic as the invoice (lib/branches/coverage), so the warning
+ * cannot promise a total the bill then contradicts.
+ */
+type BranchImpact =
+  | { kind: "fits"; count: number }
+  | { kind: "billed"; count: number; included: number; extra: number; price: number; total: number }
+  | { kind: "paused"; count: number; paused: number; kept: number };
+
+function branchImpact(plan: BillingPlan, count: number): BranchImpact | null {
+  if (count <= 0) return null;
+  const included = includedBranchSlots(plan);
+  if (plan.extraBranchPrice === null) {
+    const paused = Math.max(0, count - included);
+    return paused > 0 ? { kind: "paused", count, paused, kept: count - paused } : { kind: "fits", count };
+  }
+  const quote = planInvoiceQuote(plan, count);
+  if (quote.extraBranches === 0) return { kind: "fits", count };
+  return {
+    kind: "billed",
+    count,
+    included: Math.min(count, included),
+    extra: quote.extraBranches,
+    price: plan.extraBranchPrice,
+    total: quote.amount,
+  };
+}
+
 export function BillingView({
   branch,
   plans,
@@ -78,6 +113,7 @@ export function BillingView({
   freeMode,
   freeModeEndsAt,
   now,
+  branchCount = null,
 }: {
   branch: {
     planTier: string;
@@ -97,6 +133,8 @@ export function BillingView({
   freeModeEndsAt?: string | null;
   /** Server-stamped ISO instant. Never read the clock during a render. */
   now: string;
+  /** Open branches of this restaurant (0072); null when branches are unavailable. */
+  branchCount?: number | null;
 }) {
   const { t } = useLocale();
   const dates = useDates();
@@ -107,6 +145,18 @@ export function BillingView({
     amount: number;
     planName: string;
   } | null>(null);
+  // A plan change that pauses or bills branches is confirmed first (0072).
+  const [confirming, setConfirming] = useState<{ plan: BillingPlan; trial: boolean } | null>(null);
+  const openBranches = branchCount ?? 0;
+
+  /** Needs the owner's yes before it runs: it pauses branches or adds to the bill. */
+  function needsBranchConfirm(plan: BillingPlan, trialStart: boolean): boolean {
+    if (plan.tier === branch.planTier && !trialStart) return false;
+    const impact = branchImpact(plan, openBranches);
+    if (!impact || impact.kind === "fits") return false;
+    // A trial bills nothing, so its extras wait on a top-up — still worth saying.
+    return impact.kind === "paused" || impact.kind === "billed";
+  }
 
   const current = plans.find((p) => p.tier === branch.planTier) ?? null;
   // While free mode runs every restaurant has the richest paid plan's features
@@ -128,7 +178,7 @@ export function BillingView({
     return value === null ? t(unlimited) : t(counted, { count: value.toLocaleString(dates.locale) });
   }
 
-  function pick(plan: BillingPlan) {
+  function pick(plan: BillingPlan, confirmed = false) {
     /**
      * Choosing the plan you are already on means something ONLY during a
      * trial: that is how a trial becomes a paid month, and it is what the
@@ -137,6 +187,7 @@ export function BillingView({
      * disabled button on the plan card.
      */
     if (plan.tier === branch.planTier && !trial.active) return;
+    if (!confirmed && needsBranchConfirm(plan, false)) return setConfirming({ plan, trial: false });
 
     startTransition(async () => {
       const result = await choosePlan(plan.id);
@@ -158,7 +209,8 @@ export function BillingView({
     });
   }
 
-  function tryFree(plan: BillingPlan) {
+  function tryFree(plan: BillingPlan, confirmed = false) {
+    if (!confirmed && needsBranchConfirm(plan, true)) return setConfirming({ plan, trial: true });
     startTransition(async () => {
       const result = await startTrial(plan.id);
       if (!result.ok) return toast(result.error, "error");
@@ -181,12 +233,18 @@ export function BillingView({
       key: "period",
       header: t("mbl.inv.col.period"),
       cell: (invoice) => (
-        <span className="tnum text-text-secondary">
-          {t("mbl.inv.period", {
-            from: dates.dateShort(invoice.periodStart),
-            to: dates.dateShort(invoice.periodEnd),
-          })}
-        </span>
+        <CellStack
+          primary={
+            <span className="tnum text-text-secondary">
+              {t("mbl.inv.period", {
+                from: dates.dateShort(invoice.periodStart),
+                to: dates.dateShort(invoice.periodEnd),
+              })}
+            </span>
+          }
+          // A branch top-up is not a month of the plan — say what it bought.
+          secondary={invoice.kind === "branches" ? <span>{t("mbr.invoice.topUpName")}</span> : undefined}
+        />
       ),
     },
     {
@@ -418,6 +476,30 @@ export function BillingView({
         </Panel>
       )}
 
+      {/* ── Branches (0072) ────────────────────────────────────────────── */}
+      {current && branchCount !== null && branchCount !== undefined &&
+        (branchCount > 0 || current.includedBranches > 1 || current.extraBranchPrice !== null) && (
+          <Panel
+            title={t("mbr.billingCard.title")}
+            description={t("mbr.billingCard.body", {
+              open: branchCount,
+              included: Math.max(0, current.includedBranches - 1),
+              plan: current.name,
+            })}
+            action={
+              <Link href="/m/branches" className={buttonClasses({ variant: "outline", size: "sm" })}>
+                <span>{t("mbr.billingCard.cta")}</span>
+              </Link>
+            }
+          >
+            {current.extraBranchPrice !== null && (
+              <CardBody className="text-sm text-text-secondary">
+                <span>{t("mbr.billingCard.extra", { price: formatMoney(current.extraBranchPrice) })}</span>
+              </CardBody>
+            )}
+          </Panel>
+        )}
+
       {/* ── Plans ──────────────────────────────────────────────────────── */}
       <div>
         <h2 className="font-display text-xl font-bold">
@@ -471,6 +553,11 @@ export function BillingView({
                   key: "commission",
                   label: t("mbl.feat.commission", { rate: formatPercent(plan.commissionRate) }),
                 },
+                // Locations count the main restaurant; extras are their own line (0072).
+                { key: "locations", label: `${plan.includedBranches} ${t("plan.branches")}` },
+                ...(plan.extraBranchPrice !== null
+                  ? [{ key: "extraBranch", label: t("plan.extraBranch", { price: formatMoney(plan.extraBranchPrice) }) }]
+                  : []),
                 { key: "reservations", label: t("mk.pricing.row.reservations") },
                 ...(plan.tier !== "starter" ? [{ key: "onsiteOrders", label: t("mk.pricing.row.dineIn") }] : []),
                 ...(plan.staffManagement ? [{ key: "staff", label: t("mbl.feat.staff") }] : []),
@@ -520,6 +607,29 @@ export function BillingView({
                       <span>{t("plan.perMonth")}</span>
                     </p>
                   )}
+
+                  {/* What this plan would cost — or pause — for the branches
+                      this restaurant already has (0072). */}
+                  {(() => {
+                    const impact = branchImpact(plan, openBranches);
+                    if (!impact) return null;
+                    return (
+                      <p
+                        className={cn(
+                          "mt-2 text-xs font-semibold",
+                          impact.kind === "paused" ? "text-error" : impact.kind === "billed" ? "text-warning" : "text-success",
+                        )}
+                      >
+                        <span>
+                          {impact.kind === "paused"
+                            ? t("mbr.impact.card.paused", { paused: impact.paused })
+                            : impact.kind === "billed"
+                              ? t("mbr.impact.card.billed", { count: impact.count, total: formatMoney(impact.total) })
+                              : t("mbr.impact.card.fits", { count: impact.count })}
+                        </span>
+                      </p>
+                    );
+                  })()}
 
                   {offersTrial && (
                     <p className="mt-2 inline-flex w-fit items-center gap-1.5 rounded-full bg-success-light px-2.5 py-1 text-xs font-bold text-success">
@@ -618,6 +728,67 @@ export function BillingView({
           }
         />
       </Panel>
+
+      {/* ── Before a plan change that touches branches (0072) ──────────── */}
+      <Dialog
+        open={confirming !== null}
+        onClose={() => setConfirming(null)}
+        title={t("mbr.impact.title")}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setConfirming(null)} disabled={pending}>
+              <span>{t("common.cancel")}</span>
+            </Button>
+            <Button
+              loading={pending}
+              onClick={() => {
+                const target = confirming;
+                setConfirming(null);
+                if (!target) return;
+                if (target.trial) tryFree(target.plan, true);
+                else pick(target.plan, true);
+              }}
+            >
+              <span>{t("mbr.impact.confirm", { plan: confirming?.plan.name ?? "" })}</span>
+            </Button>
+          </>
+        }
+      >
+        {confirming &&
+          (() => {
+            const impact = branchImpact(confirming.plan, openBranches);
+            if (!impact || impact.kind === "fits") return null;
+            const plan = confirming.plan.name;
+            return (
+              <div className="flex flex-col gap-3 text-sm text-text-secondary">
+                <p>
+                  <span>
+                    {impact.kind === "paused"
+                      ? impact.kept === 0
+                        ? t("mbr.impact.pausedAll", { plan, count: impact.count })
+                        : t("mbr.impact.paused", { plan, count: impact.count, paused: impact.paused })
+                      : confirming.trial
+                        ? t("mbr.impact.trialPaused", { plan, extra: impact.extra })
+                        : t("mbr.impact.billed", {
+                            plan,
+                            count: impact.count,
+                            included: impact.included,
+                            extra: impact.extra,
+                            price: formatMoney(impact.price),
+                            total: formatMoney(impact.total),
+                          })}
+                  </span>
+                </p>
+                {freeMode && impact.kind === "billed" && !confirming.trial && (
+                  <p className="text-xs">
+                    <span>{t("mbr.impact.freeNote")}</span>
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+      </Dialog>
 
       {/* ── After choosing a paid plan ─────────────────────────────────── */}
       <Dialog

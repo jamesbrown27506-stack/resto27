@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createAdminClient } from "@/lib/supabase/server";
+import { isMissingColumn } from "@/lib/data/missing-column";
 import { getImpersonation } from "./impersonation";
 import { requireRole, type AuthProfile } from "./session";
 import { can, type BranchRole, type Capability } from "@/lib/capabilities";
@@ -49,42 +50,58 @@ export interface BranchContext {
  * the permission check is circular in spirit even where Postgres permits it.
  * The filter below is explicit and auditable in one place.
  */
+/** The restaurant columns a Branch is built from. */
+const BRANCH_COLUMNS = "id, name, branch_label, slug, is_primary, status, is_accepting_orders, setup_done_at";
+/** …plus the branch link and the owner's close, once 0072 has run. */
+const BRANCH_COLUMNS_0072 = `${BRANCH_COLUMNS}, parent_id, branch_closed_at`;
+
+interface RestaurantRow {
+  id: string;
+  name: string;
+  branch_label: string;
+  slug: string;
+  is_primary: boolean;
+  status: string;
+  is_accepting_orders: boolean;
+  setup_done_at: string | null;
+  parent_id?: string | null;
+  branch_closed_at?: string | null;
+}
+
+/**
+ * Statuses a staff member may still open the back office of.
+ *
+ * 'paused' is a branch its main's plan no longer covers (0072). It is gone
+ * from every customer-facing read, but its own team still has orders to
+ * finish, a wallet to withdraw and a reason to read — a pause is not a
+ * suspension. Suspended and pending stay out, as before.
+ */
+const OPERABLE_STATUSES = ["active", "paused"];
+
 const loadBranches = cache(async (profileId: string): Promise<Branch[]> => {
   const supabase = createAdminClient();
 
-  const { data, error } = await supabase
-    .from("restaurant_staff")
-    .select(
-      `role,
-       restaurants!inner (
-         id, name, branch_label, slug, is_primary, status, is_accepting_orders, setup_done_at
-       )`,
-    )
-    .eq("profile_id", profileId)
-    .eq("status", "active")
-    // A roster membership is not a grant when the tenant itself is suspended.
-    // This also keeps a saved branch cookie from selecting a suspended branch
-    // when the same person still has access to another active one.
-    .eq("restaurants.status", "active");
+  const read = (columns: string) =>
+    supabase
+      .from("restaurant_staff")
+      .select(`role, restaurants!inner ( ${columns} )`)
+      .eq("profile_id", profileId)
+      .eq("status", "active")
+      // A roster membership is not a grant when the tenant itself is suspended.
+      // This also keeps a saved branch cookie from selecting a suspended branch
+      // when the same person still has access to another active one.
+      .in("restaurants.status", OPERABLE_STATUSES);
+
+  let { data, error } = await read(BRANCH_COLUMNS_0072);
+  // Before 0072: no branch link, no branches — the old columns are the whole answer.
+  if (error && isMissingColumn(error)) ({ data, error } = await read(BRANCH_COLUMNS));
 
   if (error) {
     console.error("[branch:loadBranches]", error.message);
     return [];
   }
 
-  type Row = {
-    role: string;
-    restaurants: {
-      id: string;
-      name: string;
-      branch_label: string;
-      slug: string;
-      is_primary: boolean;
-      status: string;
-      is_accepting_orders: boolean;
-      setup_done_at: string | null;
-    };
-  };
+  type Row = { role: string; restaurants: RestaurantRow };
 
   const rows = (data ?? []) as unknown as Row[];
   if (rows.length === 0) return [];
@@ -92,30 +109,31 @@ const loadBranches = cache(async (profileId: string): Promise<Branch[]> => {
   const states = await fetchSubscriptionStates(rows.map((r) => r.restaurants.id));
 
   return rows
-    .map((row) => {
-      const r = row.restaurants;
-      const sub = states.get(r.id) ?? NO_SUBSCRIPTION;
-
-      return {
-        restaurantId: r.id,
-        restaurantName: r.name,
-        branchLabel: r.branch_label,
-        slug: r.slug,
-        isPrimary: r.is_primary,
-        status: r.status as Branch["status"],
-        isAcceptingOrders: r.is_accepting_orders,
-        role: row.role as BranchRole,
-        setupDoneAt: r.setup_done_at,
-        subscriptionState: sub.state,
-        planTier: sub.tier,
-        planName: sub.name,
-        expiresAt: sub.endDate,
-        graceEndsAt: sub.graceEndsAt,
-        hasSubscription: sub.exists,
-      } satisfies Branch;
-    })
+    .map((row) => toBranch(row.restaurants, row.role as BranchRole, states.get(row.restaurants.id) ?? NO_SUBSCRIPTION))
     .sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary) || a.branchLabel.localeCompare(b.branchLabel));
 });
+
+function toBranch(r: RestaurantRow, role: BranchRole, sub: SubscriptionSummary): Branch {
+  return {
+    restaurantId: r.id,
+    restaurantName: r.name,
+    branchLabel: r.branch_label,
+    slug: r.slug,
+    isPrimary: r.is_primary,
+    parentId: r.parent_id ?? null,
+    status: r.status as Branch["status"],
+    closedAt: r.branch_closed_at ?? null,
+    isAcceptingOrders: r.is_accepting_orders,
+    role,
+    setupDoneAt: r.setup_done_at,
+    subscriptionState: sub.state,
+    planTier: sub.tier,
+    planName: sub.name,
+    expiresAt: sub.endDate,
+    graceEndsAt: sub.graceEndsAt,
+    hasSubscription: sub.exists,
+  };
+}
 
 interface SubscriptionSummary {
   state: SubscriptionState;
@@ -236,35 +254,18 @@ export const getBranchContext = cache(async (): Promise<BranchContext | null> =>
 
   if (impersonation) {
     const supabase = createAdminClient();
-    const { data } = await supabase
-      .from("restaurants")
-      .select("id, name, branch_label, slug, is_primary, status, is_accepting_orders, setup_done_at")
-      .eq("id", impersonation.restaurantId)
-      .maybeSingle();
+    const read = (columns: string) =>
+      supabase.from("restaurants").select(columns).eq("id", impersonation.restaurantId).maybeSingle();
 
-    if (!data) return null;
+    let { data, error } = await read(BRANCH_COLUMNS_0072);
+    if (error && isMissingColumn(error)) ({ data, error } = await read(BRANCH_COLUMNS));
 
-    const states = await fetchSubscriptionStates([data.id]);
-    const sub = states.get(data.id) ?? NO_SUBSCRIPTION;
+    const row = data as unknown as RestaurantRow | null;
+    if (!row) return null;
+
+    const states = await fetchSubscriptionStates([row.id]);
     const admin = await requireRole("admin", "manager");
-
-    const branch: Branch = {
-      restaurantId: data.id,
-      restaurantName: data.name,
-      branchLabel: data.branch_label,
-      slug: data.slug,
-      isPrimary: data.is_primary,
-      status: data.status,
-      isAcceptingOrders: data.is_accepting_orders,
-      role: "owner",
-      setupDoneAt: data.setup_done_at,
-      subscriptionState: sub.state,
-      planTier: sub.tier,
-      planName: sub.name,
-      expiresAt: sub.endDate,
-      graceEndsAt: sub.graceEndsAt,
-      hasSubscription: sub.exists,
-    };
+    const branch = toBranch(row, "owner", states.get(row.id) ?? NO_SUBSCRIPTION);
 
     return { profile: admin, branches: [branch], active: branch, impersonating: true };
   }

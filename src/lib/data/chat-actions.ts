@@ -239,7 +239,9 @@ async function isActiveStaff(profileId: string, restaurantId: string): Promise<b
     .eq("restaurant_id", restaurantId)
     .eq("profile_id", profileId)
     .eq("status", "active")
-    .eq("restaurants.status", "active")
+    // A paused branch (0072) still has orders in flight and customers who
+    // ordered there — its team keeps the badges and the conversations.
+    .in("restaurants.status", ["active", "paused"])
     .maybeSingle();
   return Boolean(data);
 }

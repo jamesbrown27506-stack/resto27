@@ -230,7 +230,11 @@ export function WalletInbox({
                       {r.amount.toLocaleString("fr-CM")} FCFA → {r.phone}
                     </span>
                   </p>
-                  <p className="tnum mt-0.5 text-xs text-text-light">{formatDateTime(r.requestedAt)}</p>
+                  <p className="tnum mt-0.5 text-xs text-text-light">
+                    {formatDateTime(r.requestedAt)}
+                    {/* Who sent it and whose account it reached (0073). */}
+                    {who(r) && ` · ${who(r)}`}
+                  </p>
                 </div>
                 {r.fee !== null && (
                   <span className="tnum text-xs text-text-light">
@@ -298,6 +302,15 @@ export function WalletInbox({
   );
 }
 
+/** "by Paul (manager) → Jean Mbarga": who withdrew, as what, to whom. */
+function who(request: AdminWithdrawalRequest): string {
+  const by = request.requestedByName
+    ? `by ${request.requestedByName}${request.requesterRole ? ` (${request.requesterRole})` : ""}`
+    : "";
+  const to = request.recipientName ? `to ${request.recipientName}` : "";
+  return [by, to].filter(Boolean).join(" ");
+}
+
 function PendingRow({ request }: { request: AdminWithdrawalRequest }) {
   return (
     <li className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-4">
@@ -308,7 +321,7 @@ function PendingRow({ request }: { request: AdminWithdrawalRequest }) {
           <span className="ml-2 font-mono text-xs text-text-light">→ {request.phone}</span>
         </p>
         <p className="mt-0.5 text-xs text-text-light">
-          {request.requestedByName ? `${request.requestedByName} · ` : ""}
+          {who(request) ? `${who(request)} · ` : ""}
           {formatDateTime(request.requestedAt)}
           {request.note ? ` · ${request.note}` : ""}
         </p>

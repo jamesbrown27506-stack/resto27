@@ -121,14 +121,20 @@ export function BranchSwitcher({
                       <Badge tone="neutral">
                         {t(`common.role.${branch.role}` as TranslationKey)}
                       </Badge>
-                      <span
-                        className={cn(
-                          "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold",
-                          state.badge,
-                        )}
-                      >
-                        {t(`common.subState.${branch.subscriptionState}` as TranslationKey)}
-                      </span>
+                      {/* A paused branch (0072) reads `locked` underneath;
+                          "paused" is what it is to the people who work there. */}
+                      {branch.status === "paused" ? (
+                        <Badge tone="warning">{t(branch.closedAt ? "mbr.status.closed" : "mbr.status.paused")}</Badge>
+                      ) : (
+                        <span
+                          className={cn(
+                            "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold",
+                            state.badge,
+                          )}
+                        >
+                          {t(`common.subState.${branch.subscriptionState}` as TranslationKey)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {isActive && <Check className="mt-1 size-4 shrink-0 text-primary" aria-hidden />}

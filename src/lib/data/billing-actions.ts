@@ -10,6 +10,13 @@ import { activateFromInvoice } from "./invoice-activation";
 import { cancelPaidOrder } from "@/lib/payments/order-refunds";
 import { startRefundPayout } from "@/lib/payments/refund-payouts";
 import { releaseOrderHoldings } from "@/lib/orders/cancellation-effects";
+import { isMissingColumn } from "./missing-column";
+import {
+  mainRestaurantId,
+  refreshBranchInvoices,
+  syncAllBranchCoverage,
+  syncBranchCoverage,
+} from "@/lib/branches/account";
 import type { ActionResult } from "./admin-actions";
 
 /**
@@ -34,6 +41,8 @@ export interface PlanInput {
   tableLimit: number | null;
   promotionLimit: number | null;
   includedBranches: number;
+  /** Monthly price of each branch beyond the included ones; null = not sold. */
+  extraBranchPrice: number | null;
   staffLimit: number;
   scheduledPayouts: boolean;
   prioritySupport: boolean;
@@ -53,6 +62,12 @@ export async function updatePlan(planId: string, input: PlanInput): Promise<Acti
   if (!Number.isInteger(input.includedBranches) || input.includedBranches < 1) {
     return { ok: false, error: "A plan must include at least one branch." };
   }
+  if (
+    input.extraBranchPrice !== null &&
+    (!Number.isInteger(input.extraBranchPrice) || input.extraBranchPrice < 0)
+  ) {
+    return { ok: false, error: "The extra branch price must be a whole number of FCFA, or empty." };
+  }
   if (!Number.isInteger(input.staffLimit) || input.staffLimit < 0) {
     return { ok: false, error: "Staff limit cannot be negative." };
   }
@@ -61,24 +76,31 @@ export async function updatePlan(planId: string, input: PlanInput): Promise<Acti
   }
 
   const supabase = createAdminClient();
-  const { error } = await supabase
+  const fields = {
+    monthly_price: Math.round(input.monthlyPrice),
+    commission_rate: input.commissionRate,
+    menu_item_limit: input.menuItemLimit,
+    table_limit: input.tableLimit,
+    promotion_limit: input.promotionLimit,
+    included_branches: input.includedBranches,
+    staff_limit: input.staffLimit,
+    scheduled_payouts: input.scheduledPayouts,
+    priority_support: input.prioritySupport,
+    staff_management: input.staffManagement,
+    analytics: input.analytics,
+    is_active: input.isActive,
+    is_featured: input.isFeatured,
+  };
+
+  let { error } = await supabase
     .from("subscription_plans")
-    .update({
-      monthly_price: Math.round(input.monthlyPrice),
-      commission_rate: input.commissionRate,
-      menu_item_limit: input.menuItemLimit,
-      table_limit: input.tableLimit,
-      promotion_limit: input.promotionLimit,
-      included_branches: input.includedBranches,
-      staff_limit: input.staffLimit,
-      scheduled_payouts: input.scheduledPayouts,
-      priority_support: input.prioritySupport,
-      staff_management: input.staffManagement,
-      analytics: input.analytics,
-      is_active: input.isActive,
-      is_featured: input.isFeatured,
-    })
+    .update({ ...fields, extra_branch_price: input.extraBranchPrice })
     .eq("id", planId);
+
+  // Before 0072 there is no per-branch price to save; everything else still is.
+  if (error && isMissingColumn(error, "extra_branch_price")) {
+    ({ error } = await supabase.from("subscription_plans").update(fields).eq("id", planId));
+  }
 
   if (error) {
     console.error("[billing:updatePlan]", planId, error.message);
@@ -101,6 +123,10 @@ export async function updatePlan(planId: string, input: PlanInput): Promise<Acti
    * plan here and leaving the marketing page cached would recreate exactly the
    * bug that split them apart in the PHP build.
    */
+  // How many branches a plan includes decides which ones run (0072): a
+  // tenant on this plan may have just gained or lost one.
+  await syncAllBranchCoverage();
+
   revalidatePath("/a/plans");
   revalidatePath("/pricing");
   revalidatePath("/");
@@ -126,6 +152,10 @@ async function ensureSubscription(
   restaurantId: string,
 ): Promise<{ id: string; end_date: string | null; plan_id: string } | null> {
   const supabase = createAdminClient();
+
+  // A branch never gets a subscription row of its own — it runs on its
+  // main's (0072). Creating one here would bill the same location twice.
+  if ((await mainRestaurantId(restaurantId)) !== restaurantId) return null;
 
   const { data: existing } = await supabase
     .from("subscriptions")
@@ -175,6 +205,10 @@ export async function extendSubscription(
 
   const supabase = createAdminClient();
 
+  if ((await mainRestaurantId(restaurantId)) !== restaurantId) {
+    return { ok: false, error: "This is a branch — it runs on its main restaurant's subscription. Extend that one." };
+  }
+
   const current = await ensureSubscription(restaurantId);
   if (!current) return { ok: false, error: "Subscription not found." };
 
@@ -222,14 +256,21 @@ export async function extendSubscription(
     the new end date are voided; an invoice for a different plan (an upgrade
     the restaurant asked for) is left alone.
   */
-  const { data: voided, error: voidError } = await supabase
-    .from("invoices")
-    .update({ status: "void" })
-    .eq("restaurant_id", restaurantId)
-    .eq("status", "unpaid")
-    .eq("plan_id", current.plan_id)
-    .lt("period_start", endDate)
-    .select("number");
+  // Plan months only: a branch top-up (0072) buys branches, not time, and an
+  // extension does not give branches away.
+  const voidRenewals = (kindFilter: boolean) => {
+    let query = supabase
+      .from("invoices")
+      .update({ status: "void" })
+      .eq("restaurant_id", restaurantId)
+      .eq("status", "unpaid")
+      .eq("plan_id", current.plan_id)
+      .lt("period_start", endDate);
+    if (kindFilter) query = query.eq("kind", "plan");
+    return query.select("number");
+  };
+  let { data: voided, error: voidError } = await voidRenewals(true);
+  if (voidError && isMissingColumn(voidError, "kind")) ({ data: voided, error: voidError } = await voidRenewals(false));
   if (voidError) console.error("[billing:extendSubscription] void invoices", voidError.message);
 
   await writeAudit(admin, {
@@ -249,6 +290,9 @@ export async function extendSubscription(
     params: { detail: `Abonnement prolongé de ${days} jours.` },
   });
 
+  // A locked main that was extended runs again — and so do its branches.
+  await syncBranchCoverage(restaurantId);
+
   revalidatePath("/a/subscriptions");
   revalidatePath("/a/restaurants");
   revalidatePath("/m/billing");
@@ -267,6 +311,10 @@ export async function changeSubscriptionPlan(
   const admin = gate.admin;
 
   const supabase = createAdminClient();
+
+  if ((await mainRestaurantId(restaurantId)) !== restaurantId) {
+    return { ok: false, error: "This is a branch — it runs on its main restaurant's plan. Change that one." };
+  }
 
   const current = await ensureSubscription(restaurantId);
   if (!current) return { ok: false, error: "Subscription not found." };
@@ -332,6 +380,11 @@ export async function changeSubscriptionPlan(
     href: "/m/billing",
     params: { detail: `Plan ${target.name} — échéance fixée à 30 jours.` },
   });
+
+  // The new plan may include more branches, or none (0072). Paid extras are
+  // left as they are: the next paid month sets them from what it billed.
+  await syncBranchCoverage(restaurantId);
+  await refreshBranchInvoices(restaurantId);
 
   revalidatePath("/a/subscriptions");
   revalidatePath("/a/restaurants");
@@ -562,16 +615,23 @@ export async function generateCommissions(
     totals.set(order.restaurant_id, acc);
   }
 
-  const { data: subs } = await supabase
-    .from("subscriptions")
-    .select("restaurant_id, subscription_plans ( commission_rate )");
+  /*
+    The rate each restaurant's plan charges — read through subscription_state,
+    which gives a BRANCH its main's plan (0072). Reading `subscriptions`
+    directly found no row for a branch and charged it the 5 % default, even
+    on Enterprise at 0 %.
+  */
+  const [{ data: subs }, { data: planRows }] = await Promise.all([
+    supabase.from("subscription_state").select("restaurant_id, plan_id"),
+    supabase.from("subscription_plans").select("id, commission_rate"),
+  ]);
 
+  const planRates = new Map(
+    ((planRows ?? []) as { id: string; commission_rate: number }[]).map((p) => [p.id, Number(p.commission_rate)]),
+  );
   const rates = new Map<string, number>();
-  for (const row of (subs ?? []) as unknown as {
-    restaurant_id: string;
-    subscription_plans: { commission_rate: number } | null;
-  }[]) {
-    rates.set(row.restaurant_id, Number(row.subscription_plans?.commission_rate ?? 5));
+  for (const row of (subs ?? []) as { restaurant_id: string; plan_id: string }[]) {
+    rates.set(row.restaurant_id, planRates.get(row.plan_id) ?? 5);
   }
 
   let written = 0;

@@ -36,7 +36,12 @@ export function PricingGrid({
         const featured = plan.isFeatured;
 
         const features: { label: string; included: boolean }[] = [
+          // Locations count the main restaurant (0072); a plan that sells
+          // extra branches says what each one costs, Starter shows none.
           { label: `${plan.includedBranches} ${t("plan.branches")}`, included: true },
+          plan.extraBranchPrice !== null
+            ? { label: t("plan.extraBranch", { price: formatMoney(plan.extraBranchPrice) }), included: true }
+            : { label: t("plan.noBranches"), included: plan.includedBranches > 1 },
           { label: `${formatLimit(plan.menuItemLimit)} ${t("plan.menuItems")}`, included: true },
           { label: `${formatLimit(plan.tableLimit)} ${t("plan.tables")}`, included: true },
           { label: `${formatLimit(plan.promotionLimit)} ${t("plan.promotions")}`, included: true },

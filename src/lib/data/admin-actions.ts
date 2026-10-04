@@ -10,6 +10,7 @@ import { trySendMail } from "@/lib/mail";
 import { notify } from "@/lib/notify";
 import { absoluteUrl } from "@/lib/site-url";
 import { getBranding } from "@/lib/branding";
+import { mainRestaurantId, refreshBranchInvoices, syncBranchCoverage } from "@/lib/branches/account";
 
 /**
  * Admin mutations.
@@ -100,6 +101,11 @@ export async function setRestaurantStatus(
 
   const supabase = createAdminClient();
 
+  // A branch (0072) bills through its main: it never gets a subscription of
+  // its own, and its status change can move its siblings' coverage.
+  const mainId = await mainRestaurantId(restaurantId);
+  const isBranch = mainId !== restaurantId;
+
   // Read the owner first: after the update we still need somewhere to send the
   // approval email, and the join is cheaper than a second round trip later.
   const { data: restaurant } = await supabase
@@ -155,7 +161,7 @@ export async function setRestaurantStatus(
    *  rather than a special "first subscription" path that only runs once.
    * ─────────────────────────────────────────────────────────────────────
    */
-  if (action === "approve") {
+  if (action === "approve" && !isBranch) {
     const { data: existing } = await supabase
       .from("subscriptions")
       .select("id")
@@ -267,6 +273,17 @@ export async function setRestaurantStatus(
     params: { restaurantName: restaurant?.name ?? undefined, status },
     email: action !== "approve", // approval's custom email carries the login link
   });
+
+  /*
+    BRANCHES FOLLOW THE ADMIN'S VERDICT ON THEIR MAIN, AND THE PLAN DECIDES
+    THE REST (0072). Suspending a main pauses its branches; reinstating it
+    resumes the ones its plan covers. Reinstating a BRANCH sets it active,
+    and the sync immediately pauses it again if the plan does not cover it —
+    an admin click is not a way around the bill. A suspended branch also
+    stops being billed, so the open invoices are re-priced.
+  */
+  await syncBranchCoverage(mainId);
+  await refreshBranchInvoices(mainId);
 
   revalidatePath("/a/restaurants");
   revalidatePath("/a");

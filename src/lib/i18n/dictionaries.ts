@@ -11,6 +11,8 @@
  */
 
 import { billingDict } from "./dict/billing";
+import { branchesDict } from "./dict/branches";
+import { withdrawalsDict } from "./dict/withdrawals";
 import { categoriesDict } from "./dict/categories";
 import { chatDict } from "./dict/chat";
 import { commonDict } from "./dict/common";
@@ -116,6 +118,7 @@ const baseFr = {
   "nav.m.tables": "Tables",
   "nav.m.messages": "Messages",
   "nav.m.wallet": "Portefeuille",
+  "nav.m.branches": "Succursales",
   "nav.m.menu": "Menu",
   "nav.m.categories": "Catégories",
   "nav.m.promotions": "Promotions",
@@ -890,12 +893,16 @@ const baseFr = {
   "plan.desc.starter": "Pour démarrer et mettre votre carte en ligne, sans rien payer.",
   "plan.desc.professional": "Pour un restaurant qui tourne : plus de plats, plus de tables, moins de commission.",
   "plan.desc.enterprise": "Sans limites, et la commission la plus basse. Pour plusieurs établissements.",
-  "plan.perMonth": "par mois et par établissement",
+  // One price for the restaurant: Enterprise covers several locations, and
+  // extra branches are a line of their own (0072) — not "per location".
+  "plan.perMonth": "par mois",
   "plan.start": "Commencer",
   "plan.menuItems": "plats au menu",
   "plan.tables": "tables",
   "plan.promotions": "promotion(s) active(s)",
-  "plan.branches": "succursale(s) incluse(s)",
+  "plan.branches": "établissement(s) inclus",
+  "plan.extraBranch": "Succursale en plus : {price} / mois",
+  "plan.noBranches": "Succursales",
   "plan.staff": "Gestion du personnel",
   "plan.scheduledPayouts": "Retraits programmés",
   "plan.prioritySupport": "Support prioritaire",
@@ -951,6 +958,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "nav.m.tables": "Tables",
   "nav.m.messages": "Messages",
   "nav.m.wallet": "Wallet",
+  "nav.m.branches": "Branches",
   "nav.m.menu": "Menu",
   "nav.m.categories": "Categories",
   "nav.m.promotions": "Promotions",
@@ -1720,12 +1728,14 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "plan.desc.starter": "To get started and put your menu online, at no cost.",
   "plan.desc.professional": "For a restaurant in full service: more dishes, more tables, lower commission.",
   "plan.desc.enterprise": "No limits, and the lowest commission. For several locations.",
-  "plan.perMonth": "per month, per location",
+  "plan.perMonth": "per month",
   "plan.start": "Get started",
   "plan.menuItems": "menu items",
   "plan.tables": "tables",
   "plan.promotions": "active promotion(s)",
-  "plan.branches": "included branch(es)",
+  "plan.branches": "location(s) included",
+  "plan.extraBranch": "Extra branch: {price} / month",
+  "plan.noBranches": "Branches",
   "plan.staff": "Staff management",
   "plan.scheduledPayouts": "Scheduled payouts",
   "plan.prioritySupport": "Priority support",
@@ -1765,6 +1775,8 @@ const fr = {
   ...settingsDict.fr,
   ...setupDict.fr,
   ...billingDict.fr,
+  ...branchesDict.fr,
+  ...withdrawalsDict.fr,
 
   /* ── Customer area ── */
   ...custAccountDict.fr,
@@ -1812,6 +1824,8 @@ const en: Record<TranslationKey, string> = {
   ...settingsDict.en,
   ...setupDict.en,
   ...billingDict.en,
+  ...branchesDict.en,
+  ...withdrawalsDict.en,
 
   ...custAccountDict.en,
   ...custHomeDict.en,

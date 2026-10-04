@@ -51,7 +51,7 @@ export function DashboardView({
   branch: {
     restaurantName: string;
     branchLabel: string;
-    status: "active" | "pending" | "suspended";
+    status: "active" | "pending" | "suspended" | "paused";
     role: BranchRole;
     isAcceptingOrders: boolean;
   };

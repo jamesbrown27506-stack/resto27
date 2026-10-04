@@ -20,6 +20,8 @@ export interface PublicPlan {
   tableLimit: number | null;
   promotionLimit: number | null;
   includedBranches: number;
+  /** Monthly price per branch beyond the included ones; null = not sold (0072). */
+  extraBranchPrice: number | null;
   staffLimit: number;
   scheduledPayouts: boolean;
   prioritySupport: boolean;
@@ -54,6 +56,8 @@ export async function listPublicPlans(): Promise<PublicPlan[]> {
     tableLimit: p.table_limit,
     promotionLimit: p.promotion_limit,
     includedBranches: Number(p.included_branches ?? 1),
+    extraBranchPrice:
+      p.extra_branch_price === null || p.extra_branch_price === undefined ? null : Number(p.extra_branch_price),
     staffLimit: Number(p.staff_limit ?? 0),
     scheduledPayouts: Boolean(p.scheduled_payouts),
     prioritySupport: Boolean(p.priority_support),

@@ -344,7 +344,10 @@ export function PaymentFlow({
               <dt className="text-text-light">
                 <span>{t("mbl.payPage.planLabel")}</span>
               </dt>
-              <dd className="font-semibold">{invoice.planName}</dd>
+              {/* A branch top-up (0072) pays for branches, not for the plan. */}
+              <dd className="font-semibold">
+                {invoice.kind === "branches" ? t("mbr.invoice.topUpName") : invoice.planName}
+              </dd>
             </div>
           )}
 

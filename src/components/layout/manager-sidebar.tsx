@@ -59,7 +59,11 @@ export function ManagerSidebar({
 }) {
   const { t } = useLocale();
   const pathname = usePathname();
-  const locked = activeBranch.subscriptionState === "locked";
+  // A PAUSED branch (0072) also reads `locked`, so its gates shut — but its
+  // team still has orders in flight to finish and a wallet to withdraw. The
+  // banner explains the pause; the links stay open. Nothing here grants
+  // anything: the pages and actions check on the server.
+  const locked = activeBranch.subscriptionState === "locked" && activeBranch.status !== "paused";
   const planIsPaid = activeBranch.planTier !== "starter";
 
   return (

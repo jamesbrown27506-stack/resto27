@@ -99,7 +99,7 @@ export async function getManagerRestaurantRejection(
     }).restaurants;
     const restaurant = Array.isArray(joined) ? joined[0] : joined;
     const status = restaurant?.status;
-    return status === "active" || status === "pending" || status === "suspended"
+    return status === "active" || status === "pending" || status === "suspended" || status === "paused"
       ? [status as RestaurantAccessStatus]
       : [];
   });

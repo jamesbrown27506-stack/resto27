@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { PauseCircle } from "lucide-react";
 import { PageBackLink } from "./page-back-link";
@@ -142,7 +143,26 @@ export function ManagerShell({
         )}
 
         <div className="no-print">
-          <SubscriptionBanner state={active.subscriptionState} endDate={active.expiresAt} graceEndsAt={active.graceEndsAt} freeModeEndsAt={freeModeEndsAt} />
+          {/* A paused branch reads as `locked` to every gate (0072), but "pay
+              your invoice" would send its team to a billing page that is not
+              theirs. It gets its own words: why it stopped, and — for whoever
+              can act — the screen that resumes it. */}
+          {active.status === "paused" ? (
+            <div
+              role="status"
+              className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-warning/30 bg-warning-light px-4 py-2 text-sm font-semibold text-warning"
+            >
+              <PauseCircle className="size-4 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1">{t(active.closedAt ? "mbr.banner.closed" : "mbr.banner.paused")}</span>
+              {can(active.role, "billing.manage") && (
+                <Link href="/m/branches" className="underline">
+                  {t("mbr.banner.manage")}
+                </Link>
+              )}
+            </div>
+          ) : (
+            <SubscriptionBanner state={active.subscriptionState} endDate={active.expiresAt} graceEndsAt={active.graceEndsAt} freeModeEndsAt={freeModeEndsAt} />
+          )}
         </div>
 
         {/* The restaurant's own pause, not the platform's. Shown here rather

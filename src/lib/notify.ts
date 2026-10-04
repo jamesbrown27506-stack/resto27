@@ -57,6 +57,7 @@ export type NotifyEvent =
   | "billing" //             → manager : plan change, extension, statement
   | "billing_paid" //        → manager : an invoice was paid
   | "billing_refund" //      → manager : a refund was issued
+  | "withdrawal" //          → owners  : money left the wallet; PIN locked; a right granted (0073)
   | "approval" //            → owner   : restaurant approved / suspended / reinstated
   | "account" //             → user    : account suspended / reinstated
   | "low_stock" //           → manager : a tracked dish crossed its threshold
@@ -152,6 +153,8 @@ export interface NotifyParams {
   stage?: "day" | "soon";
   /** A pre-formatted, recipient-facing time ("sam. 30 août, 20:00"). */
   whenLabel?: string;
+  /** withdrawal: money sent, a security event (PIN), or a right changed (0073). */
+  withdrawalKind?: "sent" | "security" | "rights";
   /** 0068 booking events that are not a status change. */
   reservationUpdate?: "waitlist_open" | "change_requested" | "change_accepted" | "change_declined";
 }
@@ -872,6 +875,23 @@ function copy(event: NotifyEvent, p: NotifyParams, locale: Locale): { title: str
             body: `Invoice ${p.invoiceNumber ?? ""} — ${money(p.amount)} settled.`,
           };
 
+    case "withdrawal":
+      // Money leaving the wallet is told to every owner, whoever sent it —
+      // the one notice that turns a delegated right into a monitored one.
+      if (p.withdrawalKind === "security") {
+        return fr
+          ? { title: "Sécurité des retraits", body: p.detail ?? "" }
+          : { title: "Withdrawal security", body: p.detail ?? "" };
+      }
+      if (p.withdrawalKind === "rights") {
+        return fr
+          ? { title: "Droit de retrait", body: p.detail ?? "" }
+          : { title: "Withdrawal right", body: p.detail ?? "" };
+      }
+      return fr
+        ? { title: `Retrait de ${money(p.amount)}`, body: p.detail ?? "" }
+        : { title: `Withdrawal of ${money(p.amount)}`, body: p.detail ?? "" };
+
     case "billing_refund":
       return fr
         ? {
@@ -1203,6 +1223,8 @@ const MANAGER_PREF_KEY: Partial<Record<NotifyEvent, NotificationEventKey>> = {
   billing: "billing",
   billing_paid: "billing",
   billing_refund: "billing",
+  // The billing row is locked on: an owner cannot silence money leaving.
+  withdrawal: "billing",
   chat: "messages",
 };
 

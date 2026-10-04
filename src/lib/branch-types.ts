@@ -16,7 +16,19 @@ export interface Branch {
   branchLabel: string;
   slug: string;
   isPrimary: boolean;
-  status: "active" | "pending" | "suspended";
+  /**
+   * The main restaurant this branch runs under, or null for a main (0072).
+   * A branch has no subscription of its own: its plan, limits and billing
+   * are the main's.
+   */
+  parentId: string | null;
+  /**
+   * 'paused' is a branch the main's plan does not cover (or its owner
+   * closed): hidden from customers, back office still open — see 0072.
+   */
+  status: "active" | "pending" | "suspended" | "paused";
+  /** The owner closed this branch on purpose — paused until reopened. */
+  closedAt: string | null;
   isAcceptingOrders: boolean;
   /** THIS user's role at THIS branch. Not their account role. */
   role: BranchRole;
