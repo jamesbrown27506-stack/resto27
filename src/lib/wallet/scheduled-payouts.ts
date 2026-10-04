@@ -174,14 +174,32 @@ async function runOne(schedule: ScheduleRow, mode: "sandbox" | "live"): Promise<
 
   // Still an owner there? The payout is theirs; a former owner's standing
   // instruction must not keep sending money.
-  const { data: owner } = await supabase
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     THE EMBED NAMES ITS FOREIGN KEY, AND A FAILED READ IS NOT A "NO".
+
+     restaurant_staff points at profiles twice (`profile_id`, `invited_by`).
+     This read used a bare `profiles ( … )`, which PostgREST refuses as
+     ambiguous (PGRST201). The error was ignored, the missing row read as
+     "no longer an owner", and every due run switched the owner's own
+     schedule off and told them so (found 2026-10-05). Only an answer with
+     no row means the person left; an error is recorded and the schedule
+     stays on.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const { data: owner, error: ownerError } = await supabase
     .from("restaurant_staff")
-    .select("profile_id, profiles ( name, email, role )")
+    .select("profile_id, profiles!restaurant_staff_profile_id_fkey ( name, email, role )")
     .eq("restaurant_id", restaurantId)
     .eq("profile_id", schedule.setBy)
     .eq("role", "owner")
     .eq("status", "active")
     .maybeSingle();
+  if (ownerError) {
+    console.error("[payouts:run] owner", restaurantId, ownerError.message);
+    await record(restaurantId, "Vérification du propriétaire impossible : aucun retrait cette fois.");
+    return "failed";
+  }
   const ownerProfile = (owner as unknown as { profiles: { name: string; email: string; role: string } | null } | null)?.profiles;
   if (!ownerProfile) {
     await record(restaurantId, "La personne qui a programmé ces retraits n'est plus propriétaire : programmation arrêtée.", true);

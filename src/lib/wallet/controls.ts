@@ -84,15 +84,18 @@ export async function withdrawnInLast24h(restaurantId: string, profileId: string
 /** The branch's managers, and which of them may withdraw. */
 export async function listWithdrawDelegates(restaurantId: string): Promise<WithdrawDelegate[]> {
   const supabase = db();
-  const [{ data: staff }, { data: grants }] = await Promise.all([
+  const [{ data: staff, error: staffError }, { data: grants }] = await Promise.all([
     supabase
       .from("restaurant_staff")
-      .select("profile_id, display_name, profiles ( name )")
+      // Named FK: restaurant_staff → profiles is also `invited_by`, and a
+      // bare `profiles ( … )` is refused as ambiguous (see lib/data/manager.ts).
+      .select("profile_id, display_name, profiles!restaurant_staff_profile_id_fkey ( name )")
       .eq("restaurant_id", restaurantId)
       .eq("status", "active")
       .eq("role", "manager"),
     supabase.from("withdrawal_permissions").select("profile_id, daily_limit, granted_at").eq("restaurant_id", restaurantId),
   ]);
+  if (staffError) console.error("[wallet:delegates]", staffError.message);
 
   const byProfile = new Map(
     ((grants ?? []) as { profile_id: string; daily_limit: number | null; granted_at: string }[]).map((g) => [g.profile_id, g]),

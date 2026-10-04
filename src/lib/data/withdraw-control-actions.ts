@@ -158,12 +158,19 @@ export async function grantWithdrawalRight(input: {
   }
 
   const supabase = createAdminClient();
-  const { data: member } = await supabase
+  const { data: member, error: memberError } = await supabase
     .from("restaurant_staff")
-    .select("role, status, profiles ( name )")
+    // Named FK: restaurant_staff → profiles is also `invited_by`, and a bare
+    // `profiles ( … )` is refused as ambiguous (see lib/data/manager.ts) —
+    // which turned every grant into "not a manager".
+    .select("role, status, profiles!restaurant_staff_profile_id_fkey ( name )")
     .eq("restaurant_id", context.active.restaurantId)
     .eq("profile_id", input.profileId)
     .maybeSingle();
+  if (memberError) {
+    console.error("[wallet:grantRight] member", memberError.message);
+    return { ok: false, reason: "saveFailed", error: t("mwd.err.saveFailed") };
+  }
 
   const row = member as unknown as { role: string; status: string; profiles: { name: string } | null } | null;
   if (!row || row.status !== "active" || !canReceiveWithdrawRight(row.role as BranchRoleName)) {
