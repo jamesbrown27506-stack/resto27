@@ -12,6 +12,8 @@ import {
   loadBranchAccount,
 } from "@/lib/branches/account";
 import { nextBranchCost, openBranches } from "@/lib/branches/coverage";
+import { summarizeLedger, type LedgerEntry } from "@/lib/wallet/breakdown";
+import { doualaDay } from "@/lib/wallet/schedule-rules";
 import { createAdminClient } from "@/lib/supabase/server";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
@@ -53,10 +55,40 @@ export default async function BranchesPage() {
     fetchUnpaidBranchTopUp(mainId),
   ]);
   if (!account) redirect("/not-found");
+  const now = new Date();
 
   // How many dishes each location has: an empty branch menu is offered the
   // main's (0073). Head counts — a handful of branches, never the rows.
   const supabase = createAdminClient();
+  const locationIds = [account.main.id, ...account.branches.map((branch) => branch.id)];
+
+  /*
+    THE GROUP AT A GLANCE (owners of several locations): balance, today's and
+    the week's orders, and the week's income — read off each wallet's ledger
+    like the wallet page, so the two never disagree.
+  */
+  const weekAgo = new Date(now.getTime() - 7 * 86_400_000).toISOString();
+  const today = doualaDay(now).ymd;
+  const startOfToday = new Date(`${today}T00:00:00+01:00`).toISOString();
+  const overview = await Promise.all(
+    locationIds.map(async (id) => {
+      const [wallet, ordersToday, orders7d, ledger] = await Promise.all([
+        supabase.from("restaurant_wallets").select("balance").eq("restaurant_id", id).maybeSingle(),
+        supabase.from("orders").select("id", { count: "exact", head: true }).eq("restaurant_id", id).gte("created_at", startOfToday).neq("status", "cancelled"),
+        supabase.from("orders").select("id", { count: "exact", head: true }).eq("restaurant_id", id).gte("created_at", weekAgo).neq("status", "cancelled"),
+        supabase.from("wallet_ledger").select("amount, kind, note, reference").eq("restaurant_id", id).gte("created_at", weekAgo).limit(5000),
+      ]);
+      const week = summarizeLedger((ledger.data ?? []) as LedgerEntry[]);
+      return {
+        id,
+        balance: Number((wallet.data as { balance?: number } | null)?.balance ?? 0),
+        ordersToday: ordersToday.count ?? 0,
+        orders7d: orders7d.count ?? 0,
+        // Money earned, before refunds and withdrawals.
+        income7d: week.orders + week.tables + week.reservations,
+      };
+    }),
+  );
   const dishCounts = new Map(
     await Promise.all(
       [account.main.id, ...account.branches.map((branch) => branch.id)].map(async (id) => {
@@ -69,7 +101,6 @@ export default async function BranchesPage() {
     ),
   );
 
-  const now = new Date();
   const plan = account.plan;
   const sub = account.subscription;
   const open = accountOpenBranchCount(account);
@@ -108,6 +139,7 @@ export default async function BranchesPage() {
         waiting={waiting}
         topUp={topUp}
         freeMode={freeMode}
+        overview={overview}
         nextCost={
           plan && sub
             ? nextBranchCost({

@@ -2,7 +2,7 @@
 
 import { requireRole } from "@/lib/auth/session";
 import { notify, type NotifyEvent, type NotifyParams, type NotifyTone } from "@/lib/notify";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 
 /**
  * The notification tester behind Diagnostics → Notifications.

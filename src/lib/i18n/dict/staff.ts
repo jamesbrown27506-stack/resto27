@@ -21,6 +21,12 @@ import { defineDict } from "../define";
  */
 export const staffDict = defineDict({
   fr: {
+    "mst.toBranch": "Autre succursale",
+    "mst.toBranch.title": "Ajouter {name} à une autre succursale",
+    "mst.toBranch.body": "Cette personne fait déjà partie de votre équipe : elle est ajoutée directement, avec le rôle choisi, sans nouvelle invitation.",
+    "mst.toBranch.branch": "Succursale",
+    "mst.toBranch.role": "Rôle là-bas",
+    "mst.toBranch.submit": "Ajouter",
     "mst.title": "Personnel",
     "mst.subtitle": "Qui travaille ici, et ce que chacun peut faire.",
 
@@ -126,6 +132,12 @@ export const staffDict = defineDict({
     "mst.cap.settings.manage": "Gérer les paramètres",
   },
   en: {
+    "mst.toBranch": "Another branch",
+    "mst.toBranch.title": "Add {name} to another branch",
+    "mst.toBranch.body": "This person is already on your team: they are added directly, with the chosen role, without a new invitation.",
+    "mst.toBranch.branch": "Branch",
+    "mst.toBranch.role": "Role there",
+    "mst.toBranch.submit": "Add",
     "mst.title": "Staff",
     "mst.subtitle": "Who works here, and what each of them can do.",
 

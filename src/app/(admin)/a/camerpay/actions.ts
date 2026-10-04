@@ -35,6 +35,7 @@ import {
   type CamerPayNotificationEntry,
   type PaymentInstruction,
 } from "@/lib/payments/camerpay/notification";
+import { rateLimit } from "@/lib/rate-limit";
 
 /**
  * CamerPay console actions.
@@ -364,7 +365,10 @@ export async function checkTransaction(
  * a super admin's.
  */
 export async function identifyPayoutRecipient(phone: string): Promise<ProbeResult & { recipientName?: string }> {
-  await requireRole("admin");
+  const admin = await requireRole("admin");
+  // A name for any number: useful, and exactly why it must not be unlimited.
+  const limited = await rateLimit({ key: "admin:identify", identifier: admin.id, limit: 60, windowMs: 60 * 60_000 });
+  if (!limited.ok) return { ok: false, label: "Recipient", detail: "Too many look-ups — try again later." };
   const lookup = await identifyRecipient(phone);
   if (!lookup.ok) return { ok: false, label: "Recipient", detail: recipientRefusalInEnglish(lookup) };
   return {

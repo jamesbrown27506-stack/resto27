@@ -2,7 +2,7 @@
 
 import { SuperAdminOnlyHint, useIsSuperAdmin } from "@/components/layout/admin-shell";
 import { useEffect, useState, useTransition } from "react";
-import { ArrowUpFromLine, Wallet } from "lucide-react";
+import { AlertTriangle, ArrowUpFromLine, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, Panel } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
@@ -12,7 +12,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { formatDateTime } from "@/lib/format/datetime";
-import { checkWalletFunding, checkWithdrawalPayout, fundWallet } from "@/lib/data/wallet-actions";
+import {
+  checkWalletFunding,
+  checkWithdrawalPayout,
+  fundWallet,
+  resolveUnresolvedWithdrawal,
+} from "@/lib/data/wallet-actions";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import type { AdminWithdrawalRequest } from "@/lib/data/wallet";
 
@@ -46,7 +51,31 @@ export function WalletInbox({
   const [payoutOpen, setPayoutOpen] = useState(Boolean(initialPayout));
 
   const pendingRequests = requests.filter((r) => r.status === "pending");
-  const decidedRequests = requests.filter((r) => r.status !== "pending");
+  const unresolvedRequests = requests.filter((r) => r.unresolved);
+  const decidedRequests = requests.filter((r) => r.status !== "pending" && !r.unresolved);
+
+  // Settling an unknown payout: "sent" needs the operator's reference.
+  const [resolving, setResolving] = useState<{ request: AdminWithdrawalRequest; outcome: "sent" | "not_sent" } | null>(null);
+  const [resolveReference, setResolveReference] = useState("");
+
+  function submitResolve() {
+    const target = resolving;
+    if (!target) return;
+    startTransition(async () => {
+      const result = await resolveUnresolvedWithdrawal({
+        requestId: target.request.id,
+        outcome: target.outcome,
+        reference: resolveReference,
+      });
+      if (!result.ok) return toast(result.error, "error");
+      setResolving(null);
+      setResolveReference("");
+      toast(
+        target.outcome === "sent" ? "Recorded as sent." : "Recorded as not sent — the wallet was credited back.",
+        "success",
+      );
+    });
+  }
 
   function submitCredit() {
     const amount = Number(creditAmount);
@@ -197,6 +226,56 @@ export function WalletInbox({
         </Card>
       )}
 
+      {/*
+        Debited, outcome unknown: the payout call broke after the wallet was
+        debited. Check the provider's own report, then record what happened.
+        Until then the restaurant's money is in limbo — this panel is first.
+      */}
+      {unresolvedRequests.length > 0 && (
+        <Panel
+          title="Payouts to verify"
+          description="The wallet was debited but the provider never answered. Look each one up in the CamerPay/SasPay report, then record the outcome."
+        >
+          <ul className="divide-y divide-border">
+            {unresolvedRequests.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
+                <AlertTriangle className="size-4 shrink-0 text-error" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">
+                    {r.restaurantName}
+                    <span className="ml-2 tnum font-normal text-text-light">
+                      {r.amount.toLocaleString("fr-CM")} FCFA → {r.phone}
+                    </span>
+                  </p>
+                  <p className="tnum mt-0.5 text-xs text-text-light">
+                    {formatDateTime(r.requestedAt)}
+                    {who(r) && ` · ${who(r)}`}
+                  </p>
+                </div>
+                {isSuper ? (
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="outline" disabled={pending} onClick={() => setResolving({ request: r, outcome: "sent" })}>
+                      It was sent
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-error hover:bg-error-light"
+                      disabled={pending}
+                      onClick={() => setResolving({ request: r, outcome: "not_sent" })}
+                    >
+                      Not sent — refund
+                    </Button>
+                  </div>
+                ) : (
+                  <SuperAdminOnlyHint />
+                )}
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+
       <Panel
         title="Pending withdrawals"
         description={`${pendingRequests.length} request${pendingRequests.length === 1 ? "" : "s"} waiting.`}
@@ -250,6 +329,51 @@ export function WalletInbox({
           </ul>
         </Panel>
       )}
+      <Dialog
+        open={resolving !== null}
+        onClose={() => setResolving(null)}
+        title={resolving?.outcome === "sent" ? "Confirm the payout was sent" : "Record the payout as not sent"}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" disabled={pending} onClick={() => setResolving(null)}>
+              Cancel
+            </Button>
+            <Button
+              loading={pending}
+              disabled={pending || (resolving?.outcome === "sent" && resolveReference.trim().length < 4)}
+              onClick={submitResolve}
+            >
+              {resolving?.outcome === "sent" ? "Record as sent" : "Credit the wallet back"}
+            </Button>
+          </>
+        }
+      >
+        {resolving && (
+          <div className="flex flex-col gap-3 text-sm text-text-secondary">
+            <p>
+              {resolving.request.restaurantName} · {resolving.request.amount.toLocaleString("fr-CM")} FCFA →{" "}
+              {resolving.request.phone}
+            </p>
+            {resolving.outcome === "sent" ? (
+              <Field label="Operator reference (from the provider report)" htmlFor="wl-resolve-ref" required>
+                <Input
+                  id="wl-resolve-ref"
+                  value={resolveReference}
+                  onChange={(e) => setResolveReference(e.target.value)}
+                  className="font-mono text-xs"
+                />
+              </Field>
+            ) : (
+              <p className="rounded-md border border-warning/30 bg-warning-light p-3 text-xs text-warning">
+                Only do this if the provider report shows NO transfer to this number. The full amount goes back to the
+                restaurant&apos;s wallet; if the money had in fact left, it would be paid twice.
+              </p>
+            )}
+          </div>
+        )}
+      </Dialog>
+
       <Dialog
         open={payoutOpen}
         onClose={() => setPayoutOpen(false)}

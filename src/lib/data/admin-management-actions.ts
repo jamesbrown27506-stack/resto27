@@ -19,7 +19,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { siteUrl } from "@/lib/site-url";
 import { getBranding } from "@/lib/branding";
 import { loadAdminSubjects, loadSubject } from "./admins";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import type { ActionResult } from "./admin-actions";
 
 /**

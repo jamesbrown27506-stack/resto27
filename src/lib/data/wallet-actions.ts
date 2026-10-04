@@ -1,27 +1,32 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { getTranslator } from "@/lib/i18n/locale-server";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { ordersInProgressHold } from "./wallet";
-import { requireRole, superAdminOrError, type AuthProfile } from "@/lib/auth/session";
+import { requireRole, superAdminOrError } from "@/lib/auth/session";
 import { requireCapability } from "@/lib/auth/branch";
 import { DICTIONARIES, interpolate } from "@/lib/i18n/dictionaries";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { rateLimit } from "@/lib/rate-limit";
-import { getWithdrawalFeeConfig } from "./settings";
 import { paymentMode } from "./billing";
-import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 // MIN_AMOUNT_XAF stays the platform floor for a withdrawal REQUEST (500 FCFA),
 // whichever gateway later sends it.
 import { MIN_AMOUNT_XAF, normalisePhone, recordWithdrawalFee } from "@/lib/payments/camerpay/client";
-import { gatewayRange, payoutGateway, sendGatewayPayout } from "@/lib/payments/gateway";
+import { getWithdrawalFeeConfig } from "./settings";
+import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 import type { ActionResult } from "./admin-actions";
 import { checkPaymentAttempt, initiatePaymentAttempt, settlePayment } from "@/lib/payments/collect";
 import type { PaymentInstruction } from "@/lib/payments/camerpay/notification";
 import { settleWithdrawalPayout } from "@/lib/payments/withdrawals";
-import { identifyRecipient, requireConfirmedRecipient, type RecipientGate } from "@/lib/payments/recipient";
+import { identifyRecipient, requireConfirmedRecipient } from "@/lib/payments/recipient";
+import {
+  bookWithdrawalFeeRevenue,
+  executeWithdrawal,
+  recipientRefusal,
+  type Translate,
+  type WalletResult,
+} from "@/lib/payments/withdraw-execute";
 import type { BranchContext } from "@/lib/auth/branch";
 import { BRANCH_ROLE_LABEL, type BranchRole } from "@/lib/capabilities";
 import {
@@ -51,13 +56,8 @@ import { dailyAllowance, maskPhone, type WithdrawRight } from "@/lib/wallet/with
  * prose follows the viewer's language on the restaurant side; the admin-only
  * functions stay English, per the admin-area convention.
  */
-type WalletResult = ActionResult & {
-  reason?: string;
-  status?: "pending" | "succeeded" | "failed";
-  requestId?: string;
-};
-
-type Translate = Awaited<ReturnType<typeof getTranslator>>;
+// The result shape and the executor live in lib/payments/withdraw-execute.ts
+// (server-only), so the nightly scheduled payouts can run the very same path.
 
 /**
  * The admin paths share executeWithdrawal / checkWithdrawalForScope with the
@@ -230,22 +230,6 @@ export async function checkWalletFunding(
   return { ok: true, status: result.status, instruction: result.instruction };
 }
 /* ── Who receives a withdrawal ─────────────────────────────────────────── */
-
-/** A recipient check that failed, in the viewer's words. */
-function recipientRefusal(gate: Extract<RecipientGate, { ok: false }>, t: Translate): WalletResult {
-  switch (gate.reason) {
-    case "badPhone":
-      return { ok: false, reason: "badPhone", error: t("est.withdrawPhoneInvalid") };
-    case "notIdentified":
-      return { ok: false, reason: "recipientUnidentified", error: t("est.recipientUnidentified") };
-    case "notConfirmed":
-      return { ok: false, reason: "recipientNotConfirmed", error: t("est.recipientNotConfirmed") };
-    case "changed":
-      return { ok: false, reason: "recipientChanged", error: t("est.recipientChanged", { name: gate.name ?? "?" }) };
-    default:
-      return { ok: false, reason: "recipientUnavailable", error: t("est.recipientUnavailable") };
-  }
-}
 
 /**
  * Step 1 of a withdrawal: whose account is this number?
@@ -598,8 +582,23 @@ export async function processOwnWithdrawal(
     .eq("id", requestId)
     .eq("restaurant_id", active.restaurantId)
     .maybeSingle();
-  const stored = row as { amount?: number; phone?: string; recipient_name?: string | null } | null;
+  const stored = row as {
+    amount?: number;
+    phone?: string;
+    recipient_name?: string | null;
+    requested_by?: string | null;
+    payout_account_id?: string | null;
+  } | null;
   const name = stored?.recipient_name ?? confirmedName ?? null;
+
+  // A delegate re-sends only their OWN requests (an owner's large request is
+  // the owner's to send), and never to a number the owner has since removed.
+  if (stored && gate.right.kind === "delegate" && stored.requested_by !== profile.id) {
+    return { ok: false, reason: "notOwnRequest", error: t("est.withdrawNotAllowed") };
+  }
+  if (stored?.payout_account_id && !(await getPayoutAccount(active.restaurantId, stored.payout_account_id))) {
+    return { ok: false, reason: "accountMissing", error: t("est.withdrawAccountMissing") };
+  }
 
   const result = await executeWithdrawal(requestId, profile, t, active.restaurantId, { confirmedName: name });
   if (result.ok && stored) {
@@ -610,309 +609,6 @@ export async function processOwnWithdrawal(
     });
   }
   return result;
-}
-
-async function executeWithdrawal(
-  requestId: string,
-  actor: AuthProfile,
-  t: Translate,
-  scopedRestaurantId?: string,
-  /**
-   * The recipient check. `verifiedName` means the caller has just run it for
-   * this number (requestWithdrawal does, before creating the request);
-   * otherwise `confirmedName` is what the sender was shown and the check runs
-   * here. Neither is a way round it: in live mode a payout with no confirmed
-   * holder is refused below.
-   */
-  recipient: { verifiedName?: string | null; confirmedName?: string | null } = {},
-): Promise<WalletResult> {
-  const supabase = createAdminClient();
-
-  const { data: row } = await supabase
-    .from("withdrawal_requests")
-    .select("id, restaurant_id, amount, phone, status, note")
-    .eq("id", requestId)
-    .maybeSingle();
-
-  const request = row as {
-    id: string;
-    restaurant_id: string;
-    amount: number;
-    phone: string;
-    status: string;
-    note: string | null;
-  } | null;
-
-  if (!request || (scopedRestaurantId && request.restaurant_id !== scopedRestaurantId)) {
-    return { ok: false, reason: "notFound", error: t("est.requestNotFound") };
-  }
-  if (request.status !== "pending") {
-    return { ok: false, reason: "alreadyDecided", error: t("est.requestDecided") };
-  }
-
-  const restaurantId = request.restaurant_id;
-  const existingNote = request.note;
-  const gross = Number(request.amount);
-
-  // Re-normalised here rather than trusted from the row: sendPayout throws on
-  // a number it cannot dial, and a throw after the claim is an unknown
-  // outcome — a certain failure must be caught while it is still cheap.
-  const phone = normalisePhone(request.phone);
-  if (!phone) {
-    return {
-      ok: false,
-      reason: "badPhone",
-      error: t("est.recipientInvalid", { phone: request.phone }),
-    };
-  }
-
-  // The fee is read fresh, at payout time — a setting changed since the page
-  // loaded must still hold here.
-  const feeConfig = await getWithdrawalFeeConfig();
-  const { fee, net } =
-    feeConfig.enabled && feeConfig.percent > 0
-      ? computeWithdrawalFee(gross, feeConfig.percent)
-      : { fee: 0, net: gross };
-
-  // The payout gateway's own range (CamerPay 500–500 000, SasPay 200–9 999 999).
-  const payoutRange = gatewayRange(await payoutGateway());
-  if (net < payoutRange.min) {
-    return {
-      ok: false,
-      reason: "belowProviderMinimum",
-      error: t("est.netBelowMin", { percent: feeConfig.percent, net, min: payoutRange.min }),
-    };
-  }
-
-  const mode = await paymentMode();
-
-  /*
-    WHO GETS THIS MONEY — asked of the operator before anything is claimed.
-    Still nothing has moved at this point, so a refusal costs nothing. In
-    sandbox no transfer is made, so there is no recipient to protect.
-  */
-  let recipientName: string | null = recipient.verifiedName ?? null;
-  if (mode === "live" && !recipientName) {
-    const gate = await requireConfirmedRecipient(phone, recipient.confirmedName);
-    if (!gate.ok) return recipientRefusal(gate, t);
-    recipientName = gate.name;
-  }
-
-  if (mode === "live" && net > payoutRange.max) {
-    return {
-      ok: false,
-      reason: "outOfProviderRange",
-      error: t("est.netOutOfRange", {
-        net: net.toLocaleString("fr-CM"),
-        min: payoutRange.min,
-        max: payoutRange.max.toLocaleString("fr-CM"),
-      }),
-    };
-  }
-
-  /* ── Claim ─────────────────────────────────────────────────────────────
-   * Nothing above touched money. Everything below is guarded by winning
-   * this one update. */
-  const { data: claimed, error: claimError } = await supabase
-    .from("withdrawal_requests")
-    .update({ status: "paid", decided_at: null, decided_by: actor.id })
-    .eq("id", requestId)
-    .eq("status", "pending")
-    .select("id")
-    .maybeSingle();
-
-  if (claimError) {
-    console.error("[wallet:approveWithdrawal] claim failed", claimError.message);
-    return { ok: false, reason: "claimFailed", error: t("est.claimFailed") };
-  }
-  if (!claimed) {
-    return { ok: false, reason: "alreadyDecided", error: t("est.requestDecided") };
-  }
-
-  /** Hand the request back to the queue — guarded, so only our own claim. */
-  async function releaseClaim(): Promise<void> {
-    const { error } = await supabase
-      .from("withdrawal_requests")
-      .update({ status: "pending", decided_at: null, decided_by: null })
-      .eq("id", requestId)
-      .eq("status", "paid");
-    if (error) console.error("[wallet:approveWithdrawal] release failed", error.message);
-  }
-
-  /** Put the gross back: the transfer did NOT go out. */
-  async function reverseDebit(why: string): Promise<boolean> {
-    const { error } = await supabase.rpc("wallet_credit", {
-      p_restaurant_id: restaurantId,
-      p_amount: gross,
-      p_kind: "adjustment",
-      p_note: `Withdrawal ${requestId} reversed — ${why}`,
-      p_reference: requestId,
-    });
-    if (error) console.error("[wallet:approveWithdrawal] reversal failed", error.message);
-    return !error;
-  }
-
-  /**
-   * The outcome cannot be known. The claim is kept — a second transfer is
-   * the one thing that must not happen — and the row carries what a human
-   * needs to resolve it against CamerPay's own report.
-   */
-  async function markUnresolved(why: string): Promise<void> {
-    const marker = `UNRESOLVED PAYOUT (${why}) — the wallet is debited ${gross.toLocaleString("fr-CM")} FCFA; verify with CamerPay before resending or crediting back.`;
-    await supabase
-      .from("withdrawal_requests")
-      .update({ note: existingNote ? `${existingNote} · ${marker}` : marker })
-      .eq("id", requestId)
-      .eq("status", "paid");
-
-    await writeAudit(actor, {
-      action: "wallet.withdrawal_unresolved",
-      entityType: "withdrawal_request",
-      entityId: requestId,
-      summary: `Payout outcome UNKNOWN for ${net.toLocaleString("fr-CM")} FCFA to ${phone} — ${why}`,
-      metadata: { gross, fee, net, mode },
-    });
-  }
-
-  /* ── Debit, against the claim ──────────────────────────────────────────
-   * The FULL gross leaves the wallet: the fee comes out of what the
-   * restaurant is owed and stays with the platform. */
-  const { error: debitError } = await supabase.rpc("wallet_debit", {
-    p_restaurant_id: restaurantId,
-    p_amount: gross,
-    p_kind: "withdrawal",
-    p_note: `Withdrawal ${requestId}`,
-    p_reference: requestId,
-  });
-
-  if (debitError) {
-    await releaseClaim();
-    console.error("[wallet:approveWithdrawal] debit refused", debitError.message);
-    return debitError.message.includes("insufficient")
-      ? {
-          ok: false,
-          reason: "insufficientBalance",
-          error: t("est.walletNoLongerCovers"),
-        }
-      : {
-          ok: false,
-          reason: "debitFailed",
-          error: t("est.walletDebitFailed"),
-        };
-  }
-
-  let replyTo: string;
-
-  if (mode === "sandbox") {
-    // No provider call, and no camerpay_requests row either: that ledger
-    // exists so a confirmation can be matched to a REAL report row, and a
-    // simulated entry would send the reconciler hunting a transfer nobody
-    // ever asked for. The reference is deliberately unmistakable.
-    replyTo = `SANDBOX-${randomUUID().slice(0, 10).toUpperCase()}`;
-  } else {
-    // CamerPay or SasPay, per the super admin's payout switch (gateway.ts).
-    // The withdrawal id is the idempotency key: a retried request can never
-    // send the money twice on SasPay.
-    const sent = await sendGatewayPayout({
-      phone,
-      amount: net,
-      idempotencyKey: `withdrawal-${requestId}`,
-      description: `Retrait restaurant ${requestId.slice(0, 8)}`,
-    });
-
-    if (sent.kind === "unknown") {
-      // The request may well have reached the gateway before this broke.
-      console.error("[wallet:approveWithdrawal] payout outcome unknown", sent.gateway, sent.message);
-      await markUnresolved(`the ${sent.gateway} payout call failed: ${sent.message}`);
-      revalidatePath("/a/wallet");
-      revalidatePath("/m/wallet");
-      return {
-        ok: false,
-        reason: "payoutUnknown",
-        error: t("est.payoutUnknown", { amount: gross.toLocaleString("fr-CM"), phone }),
-      };
-    }
-
-    if (sent.kind === "refused") {
-      // A refusal is definite: nothing left, so undo and requeue.
-      const refusal = sent.message;
-
-      if (!(await reverseDebit(`refused: ${refusal}`))) {
-        // The claim stays: the wallet really is short by the gross, and the
-        // row saying 'paid' is the closest thing to the truth until someone
-        // credits it back.
-        revalidatePath("/a/wallet");
-        revalidatePath("/m/wallet");
-        return {
-          ok: false,
-          reason: "reversalFailed",
-          error: t("est.payoutRefusedNoReversal", { refusal, amount: gross.toLocaleString("fr-CM") }),
-        };
-      }
-
-      await releaseClaim();
-      await writeAudit(actor, {
-        action: "wallet.withdrawal_payout_refused",
-        entityType: "withdrawal_request",
-        entityId: requestId,
-        summary: `${sent.gateway} refused ${net.toLocaleString("fr-CM")} FCFA to ${phone} — ${refusal}`,
-        metadata: { gross, fee, net, gateway: sent.gateway },
-      });
-
-      revalidatePath("/a/wallet");
-      revalidatePath("/m/wallet");
-      return {
-        ok: false,
-        reason: "payoutRefused",
-        error: t("est.payoutRefused", { refusal }),
-      };
-    }
-
-    replyTo = sent.replyTo;
-  }
-
-  if (fee > 0) {
-    await recordWithdrawalFee({ replyTo, phone, gross, fee, net });
-  }
-
-  const { error: stampError } = await supabase
-    .from("withdrawal_requests")
-    .update({
-      reply_to: replyTo,
-      fee: fee > 0 ? fee : null,
-      net,
-      decided_at: mode === "sandbox" ? new Date().toISOString() : null,
-    })
-    .eq("id", requestId)
-    .eq("status", "paid");
-
-  if (stampError) {
-    console.error("[wallet:approveWithdrawal] stamp failed", stampError.message);
-  }
-
-  await writeAudit(actor, {
-    action: "wallet.withdrawal_approved",
-    entityType: "withdrawal_request",
-    entityId: requestId,
-    summary: `${mode === "sandbox" ? "Simulated a payout of" : "Paid"} ${net.toLocaleString("fr-CM")} FCFA to ${phone}${recipientName ? ` (${recipientName})` : ""}${fee > 0 ? ` (${fee.toLocaleString("fr-CM")} FCFA fee withheld)` : ""}`,
-    // The holder's name as the operator gave it when the sender confirmed.
-    metadata: { gross, fee, net, replyTo, mode, recipientName },
-  });
-
-  revalidatePath("/a/wallet");
-  revalidatePath("/m/wallet");
-
-  const feeNote = fee > 0 ? t("est.withdrawFeeNote", { fee: fee.toLocaleString("fr-CM") }) : "";
-  const modeNote = mode === "sandbox" ? t("est.withdrawSandboxNote") : "";
-  const note = [modeNote, feeNote].filter(Boolean).join(" ");
-  return mode === "sandbox"
-    ? { ok: true, status: "succeeded", requestId, note: note || undefined }
-    : {
-        ok: true,
-        status: "pending",
-        requestId,
-        note: t("est.withdrawAcceptedPending"),
-      };
 }
 
 /** Poll an accepted payout until CamerPay reports its final outcome. */
@@ -993,6 +689,163 @@ export async function rejectWithdrawal(requestId: string, reason?: string): Prom
     entityType: "withdrawal_request",
     entityId: requestId,
     summary: reason?.trim() ? `Rejected a withdrawal: ${reason.trim()}` : "Rejected a withdrawal",
+  });
+
+  revalidatePath("/a/wallet");
+  revalidatePath("/m/wallet");
+  return { ok: true };
+}
+
+/**
+ * Settle a payout whose outcome was UNKNOWN (executeWithdrawal → markUnresolved).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  Such a row is `paid` with no operator reference and no decision date:
+ *  the wallet is debited, and nobody can tell from here whether the money
+ *  reached the phone. Nothing automatic can answer that — CamerPay's
+ *  callbacks are unsigned and the call that would have told us is the one
+ *  that failed. A SUPER ADMIN looks it up in the provider's own report and
+ *  records the answer:
+ *
+ *    sent      — with the operator reference they found. The row is stamped
+ *                paid for good and the fee is booked, as a normal payout.
+ *    not_sent  — the row is claimed as rejected FIRST (so two admins cannot
+ *                both refund it), then the gross is credited back. A failed
+ *                credit hands the claim back rather than leave a rejected
+ *                row with no money behind it.
+ *
+ *  Either way the owners are told, and the audit log names who decided.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+export async function resolveUnresolvedWithdrawal(input: {
+  requestId: string;
+  outcome: "sent" | "not_sent";
+  /** The operator's transaction reference — required for "sent". */
+  reference?: string;
+}): Promise<WalletResult> {
+  const gate = await superAdminOrError();
+  if (!gate.ok) return { ...gate, reason: "superAdminOnly" };
+  const admin = gate.admin;
+  const supabase = createAdminClient();
+
+  const { data: row } = await supabase.from("withdrawal_requests").select("*").eq("id", input.requestId).maybeSingle();
+  const request = row as {
+    id: string;
+    restaurant_id: string;
+    amount: number;
+    phone: string;
+    status: string;
+    note: string | null;
+    reply_to: string | null;
+    decided_at: string | null;
+  } | null;
+
+  if (!request) return { ok: false, reason: "notFound", error: "Withdrawal not found." };
+  if (request.status !== "paid" || request.reply_to || request.decided_at) {
+    return { ok: false, reason: "notUnresolved", error: "This withdrawal is not waiting for a manual decision." };
+  }
+
+  const gross = Number(request.amount);
+  const stamp = new Date().toISOString();
+  const marker = (text: string) => (request.note ? `${request.note} · ${text}` : text);
+
+  if (input.outcome === "sent") {
+    const reference = input.reference?.trim() ?? "";
+    if (reference.length < 4) {
+      return { ok: false, reason: "reference", error: "Enter the operator's transaction reference from the provider report." };
+    }
+
+    const feeConfig = await getWithdrawalFeeConfig();
+    const { fee, net } =
+      feeConfig.enabled && feeConfig.percent > 0 ? computeWithdrawalFee(gross, feeConfig.percent) : { fee: 0, net: gross };
+
+    const { data: settled, error } = await supabase
+      .from("withdrawal_requests")
+      .update({
+        reply_to: `manual:${reference}`,
+        fee: fee > 0 ? fee : null,
+        net,
+        decided_at: stamp,
+        note: marker(`RESOLVED: sent (ref ${reference}) by ${admin.email}`),
+      })
+      .eq("id", request.id)
+      .eq("status", "paid")
+      .is("reply_to", null)
+      .is("decided_at", null)
+      .select("id")
+      .maybeSingle();
+
+    if (error) return { ok: false, reason: "saveFailed", error: "Could not record the outcome." };
+    if (!settled) return { ok: false, reason: "alreadyDecided", error: "Someone else resolved it a moment ago." };
+
+    if (fee > 0) {
+      await recordWithdrawalFee({ replyTo: `manual:${reference}`, phone: request.phone, gross, fee, net });
+      await bookWithdrawalFeeRevenue({
+        requestId: request.id,
+        restaurantId: request.restaurant_id,
+        gross,
+        fee,
+        reference: `manual:${reference}`,
+      });
+    }
+  } else {
+    const { data: claimed, error } = await supabase
+      .from("withdrawal_requests")
+      .update({
+        status: "rejected",
+        decided_at: stamp,
+        decided_by: admin.id,
+        note: marker(`RESOLVED: not sent — credited back by ${admin.email}`),
+      })
+      .eq("id", request.id)
+      .eq("status", "paid")
+      .is("reply_to", null)
+      .is("decided_at", null)
+      .select("id")
+      .maybeSingle();
+
+    if (error) return { ok: false, reason: "saveFailed", error: "Could not record the outcome." };
+    if (!claimed) return { ok: false, reason: "alreadyDecided", error: "Someone else resolved it a moment ago." };
+
+    const { error: creditError } = await supabase.rpc("wallet_credit", {
+      p_restaurant_id: request.restaurant_id,
+      p_amount: gross,
+      p_kind: "adjustment",
+      p_note: `Withdrawal ${request.id} not sent — credited back`,
+      p_reference: request.id,
+    });
+
+    if (creditError) {
+      // Hand the claim back: a rejected row with no money returned is worse
+      // than an unresolved one, which still asks for a decision.
+      await supabase
+        .from("withdrawal_requests")
+        .update({ status: "paid", decided_at: null, decided_by: null, note: request.note })
+        .eq("id", request.id)
+        .eq("status", "rejected");
+      console.error("[wallet:resolveUnresolved] credit back failed", creditError.message);
+      return { ok: false, reason: "creditFailed", error: "The wallet could not be credited back. Nothing was changed." };
+    }
+  }
+
+  await writeAudit(admin, {
+    action: input.outcome === "sent" ? "wallet.withdrawal_resolved_sent" : "wallet.withdrawal_resolved_refunded",
+    entityType: "withdrawal_request",
+    entityId: request.id,
+    summary:
+      input.outcome === "sent"
+        ? `Confirmed the unresolved payout of ${gross.toLocaleString("fr-CM")} FCFA as SENT (ref ${input.reference?.trim()})`
+        : `Recorded the unresolved payout of ${gross.toLocaleString("fr-CM")} FCFA as NOT SENT and credited it back`,
+  });
+
+  await notifyOwners(request.restaurant_id, {
+    tone: input.outcome === "sent" ? "success" : "warning",
+    withdrawalKind: "sent",
+    amount: gross,
+    detail:
+      input.outcome === "sent"
+        ? `Le retrait de ${gross.toLocaleString("fr-CM")} FCFA vers ${maskPhone(request.phone)} est confirmé par l'équipe de la plateforme.`
+        : `Le retrait de ${gross.toLocaleString("fr-CM")} FCFA vers ${maskPhone(request.phone)} n'a pas abouti : le montant a été recrédité sur votre portefeuille.`,
   });
 
   revalidatePath("/a/wallet");

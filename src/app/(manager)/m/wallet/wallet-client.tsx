@@ -23,7 +23,9 @@ import {
   grantWithdrawalRight,
   removePayoutAccount,
   revokeWithdrawalRight,
+  saveScheduledPayout,
   setWithdrawalPin,
+  stopScheduledPayout,
 } from "@/lib/data/withdraw-control-actions";
 import type { WalletState } from "@/lib/data/wallet";
 import type { WithdrawDelegate } from "@/lib/wallet/withdraw-rules";
@@ -67,6 +69,20 @@ export interface WalletControls {
   isOwnerHere: boolean;
   accounts: { id: string; display: string; holderName: string | null; label: string | null }[];
   delegates: WithdrawDelegate[];
+  /** Scheduled payouts (0074) — for the owner; null when unavailable. */
+  schedule: {
+    entitled: boolean;
+    current: {
+      enabled: boolean;
+      frequency: "daily" | "weekly" | "monthly";
+      weekday: number | null;
+      payoutAccountId: string;
+      keepAmount: number;
+      minAmount: number;
+      lastRunAt: string | null;
+      lastResult: string | null;
+    } | null;
+  } | null;
 }
 
 /** A PIN field: digits only, never echoed, never autofilled as a password. */
@@ -137,6 +153,17 @@ export function WalletClient({
   const [granting, setGranting] = useState<WithdrawDelegate | null>(null);
   const [grantForm, setGrantForm] = useState({ limit: "", pin: "" });
   const [revoking, setRevoking] = useState<WithdrawDelegate | null>(null);
+
+  // Scheduled payouts.
+  const currentSchedule = controls.schedule?.current ?? null;
+  const [scheduleForm, setScheduleForm] = useState({
+    frequency: currentSchedule?.frequency ?? ("weekly" as "daily" | "weekly" | "monthly"),
+    weekday: currentSchedule?.weekday ?? 1,
+    accountId: currentSchedule?.payoutAccountId ?? controls.accounts[0]?.id ?? "",
+    keep: String(currentSchedule?.keepAmount ?? 0),
+    min: String(currentSchedule?.minAmount ?? 5000),
+    pin: "",
+  });
 
   // Paid orders not yet delivered and online deposits on upcoming bookings
   // stay in the wallet until they can no longer be refunded (wallet.ts).
@@ -305,6 +332,32 @@ export function WalletClient({
     });
   }
 
+  function saveSchedule() {
+    startTransition(async () => {
+      const result = await saveScheduledPayout({
+        frequency: scheduleForm.frequency,
+        weekday: scheduleForm.frequency === "weekly" ? scheduleForm.weekday : null,
+        payoutAccountId: scheduleForm.accountId,
+        keepAmount: Number(scheduleForm.keep) || 0,
+        minAmount: Number(scheduleForm.min) || 0,
+        pin: scheduleForm.pin,
+      });
+      setScheduleForm((prev) => ({ ...prev, pin: "" }));
+      if (!result.ok) return fail(result.error);
+      toast(result.note ?? t("mwd.sch.note.saved"), "success");
+      router.refresh();
+    });
+  }
+
+  function stopSchedule() {
+    startTransition(async () => {
+      const result = await stopScheduledPayout();
+      if (!result.ok) return fail(result.error);
+      toast(result.note ?? t("mwd.sch.note.stopped"), "success");
+      router.refresh();
+    });
+  }
+
   function confirmRevoke() {
     const target = revoking;
     if (!target) return;
@@ -377,18 +430,53 @@ export function WalletClient({
             <Wallet className="size-10 text-primary" aria-hidden />
           </CardBody>
         </Card>
-        <Card>
-          <CardBody>
-            <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">{t("mops.wal.gross")}</p>
-            <p className="tnum mt-1 text-xl font-bold">{money(state.grossIncome)}</p>
-            <p className="mt-1 text-xs text-text-light">{t("mops.wal.grossHint")}</p>
-          </CardBody>
-        </Card>
-        <Card>
-          <CardBody>
-            <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">{t("mops.wal.fees")}</p>
-            <p className="tnum mt-1 text-xl font-bold text-text-secondary">− {money(state.paymentFees)}</p>
-            <p className="mt-1 text-xs text-text-light">{t("mops.wal.feesHint")}</p>
+        {/*
+          WHERE THE BALANCE CAME FROM — every franc in the ledger, sorted, so
+          the tiles add up to the balance above (lib/wallet/breakdown.ts). The
+          platform's payment fee is not here: it never reaches this wallet.
+        */}
+        <Card className="sm:col-span-2">
+          <CardBody className="flex flex-col gap-3">
+            <p className="text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">{t("mops.wal.sources")}</p>
+            <dl className="divide-y divide-border">
+              {(
+                [
+                  ["orders", "mops.wal.src.orders", "mops.wal.src.ordersHint"],
+                  ["tables", "mops.wal.src.tables", "mops.wal.src.tablesHint"],
+                  ["reservations", "mops.wal.src.reservations", "mops.wal.src.reservationsHint"],
+                  ["orderRefunds", "mops.wal.src.orderRefunds", "mops.wal.src.orderRefundsHint"],
+                  ["reservationRefunds", "mops.wal.src.reservationRefunds", "mops.wal.src.reservationRefundsHint"],
+                  ["withdrawals", "mops.wal.src.withdrawals", "mops.wal.src.withdrawalsHint"],
+                  ["credits", "mops.wal.src.credits", "mops.wal.src.creditsHint"],
+                ] as const
+              )
+                // Income lines always show; the rest only when they happened.
+                .filter(([bucket]) => bucket === "orders" || bucket === "reservations" || state.breakdown[bucket] !== 0)
+                .map(([bucket, label, hint]) => {
+                  const amount = state.breakdown[bucket];
+                  return (
+                    <div key={bucket} className="flex items-start justify-between gap-4 py-2.5">
+                      <div className="min-w-0">
+                        <dt className="text-sm font-semibold">{t(label)}</dt>
+                        <dd className="text-xs text-text-light">{t(hint)}</dd>
+                      </div>
+                      <span
+                        className={cn(
+                          "tnum shrink-0 text-sm font-bold",
+                          amount > 0 ? "text-success" : amount < 0 ? "text-error" : "text-text-secondary",
+                        )}
+                      >
+                        {amount > 0 ? "+ " : amount < 0 ? "− " : ""}
+                        {money(Math.abs(amount))}
+                      </span>
+                    </div>
+                  );
+                })}
+              <div className="flex items-center justify-between gap-4 pt-3">
+                <dt className="text-sm font-bold">{t("mops.wal.src.total")}</dt>
+                <span className="tnum text-base font-bold">{money(state.breakdown.total)}</span>
+              </div>
+            </dl>
           </CardBody>
         </Card>
         <Card>
@@ -647,6 +735,143 @@ export function WalletClient({
               ))}
             </ul>
           )}
+        </Panel>
+      )}
+
+      {/* ── Scheduled payouts (owner, Enterprise) ─────────────────────────── */}
+      {controls.ready && controls.isOwnerHere && controls.schedule && (
+        <Panel title={t("mwd.sch.title")} description={t("mwd.sch.body")}>
+          <CardBody className="flex flex-col gap-4">
+            {!controls.schedule.entitled ? (
+              <p className="flex flex-wrap items-center gap-2 text-sm text-text-secondary">
+                <span>{t("mwd.sch.upsell")}</span>
+                <a href="/m/billing" className="font-semibold text-primary underline">
+                  {t("mwd.sch.upsellCta")}
+                </a>
+              </p>
+            ) : controls.accounts.length === 0 || !pinReady ? (
+              <p className="text-sm text-text-secondary">
+                {!pinReady ? t("mwd.form.needPin") : t("mwd.form.noNumberOwner")}
+              </p>
+            ) : (
+              <>
+                {currentSchedule?.enabled ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-success/25 bg-success-light p-3 text-sm text-success">
+                    <span>
+                      {t("mwd.sch.active", {
+                        frequency:
+                          currentSchedule.frequency === "daily"
+                            ? t("mwd.sch.daily")
+                            : currentSchedule.frequency === "weekly"
+                              ? `${t("mwd.sch.weekly")} (${t(`mwd.sch.day.${currentSchedule.weekday ?? 1}` as TranslationKey)})`
+                              : t("mwd.sch.monthly"),
+                        number:
+                          controls.accounts.find((entry) => entry.id === currentSchedule.payoutAccountId)?.display ?? "—",
+                      })}
+                    </span>
+                    <Button size="sm" variant="outline" disabled={pending} onClick={stopSchedule}>
+                      {t("mwd.sch.stop")}
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="text-sm text-text-secondary">{t("mwd.sch.inactive")}</p>
+                )}
+                {currentSchedule?.lastRunAt && (
+                  <p className="text-xs text-text-light">
+                    {t("mwd.sch.last", {
+                      when: formatDateTime(currentSchedule.lastRunAt),
+                      result: currentSchedule.lastResult ?? "—",
+                    })}
+                  </p>
+                )}
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Field label={t("mwd.sch.frequency")} htmlFor="wl-sch-frequency">
+                    <select
+                      id="wl-sch-frequency"
+                      className="h-11 rounded-md border border-border bg-surface px-3 text-sm"
+                      value={scheduleForm.frequency}
+                      onChange={(event) =>
+                        setScheduleForm((prev) => ({ ...prev, frequency: event.target.value as "daily" | "weekly" | "monthly" }))
+                      }
+                    >
+                      <option value="daily">{t("mwd.sch.daily")}</option>
+                      <option value="weekly">{t("mwd.sch.weekly")}</option>
+                      <option value="monthly">{t("mwd.sch.monthly")}</option>
+                    </select>
+                  </Field>
+                  {scheduleForm.frequency === "weekly" && (
+                    <Field label={t("mwd.sch.weekday")} htmlFor="wl-sch-weekday">
+                      <select
+                        id="wl-sch-weekday"
+                        className="h-11 rounded-md border border-border bg-surface px-3 text-sm"
+                        value={scheduleForm.weekday}
+                        onChange={(event) => setScheduleForm((prev) => ({ ...prev, weekday: Number(event.target.value) }))}
+                      >
+                        {[1, 2, 3, 4, 5, 6, 0].map((day) => (
+                          <option key={day} value={day}>
+                            {t(`mwd.sch.day.${day}` as TranslationKey)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  )}
+                  <Field label={t("mwd.form.to")} htmlFor="wl-sch-account">
+                    <select
+                      id="wl-sch-account"
+                      className="h-11 rounded-md border border-border bg-surface px-3 text-sm"
+                      value={scheduleForm.accountId}
+                      onChange={(event) => setScheduleForm((prev) => ({ ...prev, accountId: event.target.value }))}
+                    >
+                      {controls.accounts.map((entry) => (
+                        <option key={entry.id} value={entry.id}>
+                          {entry.display}
+                          {entry.holderName ? ` — ${entry.holderName}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label={t("mwd.sch.keep")} htmlFor="wl-sch-keep" hint={t("mwd.sch.keepHint")}>
+                    <Input
+                      id="wl-sch-keep"
+                      type="number"
+                      min={0}
+                      step={500}
+                      suffix="FCFA"
+                      value={scheduleForm.keep}
+                      onChange={(event) => setScheduleForm((prev) => ({ ...prev, keep: event.target.value }))}
+                    />
+                  </Field>
+                  <Field label={t("mwd.sch.min")} htmlFor="wl-sch-min" hint={t("mwd.sch.minHint")}>
+                    <Input
+                      id="wl-sch-min"
+                      type="number"
+                      min={500}
+                      step={500}
+                      suffix="FCFA"
+                      value={scheduleForm.min}
+                      onChange={(event) => setScheduleForm((prev) => ({ ...prev, min: event.target.value }))}
+                    />
+                  </Field>
+                  <Field label={t("mwd.pin.enter")} htmlFor="wl-sch-pin" required>
+                    <PinInput
+                      id="wl-sch-pin"
+                      value={scheduleForm.pin}
+                      onChange={(pin) => setScheduleForm((prev) => ({ ...prev, pin }))}
+                    />
+                  </Field>
+                </div>
+                <Button
+                  className="self-start"
+                  loading={pending}
+                  disabled={pending || scheduleForm.pin.length < 4 || !scheduleForm.accountId}
+                  onClick={saveSchedule}
+                >
+                  {t("mwd.sch.save")}
+                </Button>
+              </>
+            )}
+          </CardBody>
         </Panel>
       )}
 

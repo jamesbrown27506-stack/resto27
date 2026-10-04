@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireRole, superAdminOrError } from "@/lib/auth/session";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { gatewayRange, type GatewayId } from "@/lib/payments/gateway";
 import {
   saspayCameroonBalance,

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getTranslator } from "@/lib/i18n/locale-server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { notify } from "@/lib/notify";
 import type { ActionResult } from "./admin-actions";
 import { isReviewReaction } from "@/lib/reviews/attention";

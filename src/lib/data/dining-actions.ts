@@ -148,15 +148,28 @@ export async function getTableLanding(tableToken: string) {
     .eq("public_token", tableToken).maybeSingle();
   const restaurant = one(data?.restaurants);
   if (!data || restaurant?.status !== "active" || !(await enterpriseRestaurant(data.restaurant_id))) return null;
-  const [{ data: categories }, { data: items }, { data: groups }, { data: options }, { data: feeSetting }, tips] = await Promise.all([
+  const [{ data: categories }, { data: items }, { data: feeSetting }, tips] = await Promise.all([
     db.from("menu_categories").select("id,name,sort_order").eq("restaurant_id", data.restaurant_id).eq("is_active", true).order("sort_order"),
     db.from("menu_items").select("id,category_id,name,description,price,image_url,is_available,track_stock,stock_quantity,sort_order").eq("restaurant_id", data.restaurant_id).order("sort_order"),
-    db.from("menu_option_groups").select("id,menu_item_id,name,min_select,max_select,is_required,sort_order").order("sort_order"),
-    db.from("menu_options").select("id,group_id,name,price_delta,is_available,sort_order").order("sort_order"),
     db.from("settings").select("value").eq("key", "service_charge_percent").maybeSingle(),
     // Tolerated when 0068 has not run: tips simply stay off.
     db.from("restaurants").select("tips_enabled").eq("id", data.restaurant_id).maybeSingle(),
   ]);
+  /*
+    THIS RESTAURANT'S OPTIONS ONLY, read by its dish ids. These two reads
+    used to have no filter at all: every option group and option on the
+    platform came back and was filtered here — and once the platform passed
+    PostgREST's row cap, this restaurant's sizes and sides were simply cut
+    off the guest's menu. Every branch's copied menu made that sooner.
+  */
+  const dishIds = (items ?? []).map((x) => x.id);
+  const { data: groups } = dishIds.length
+    ? await db.from("menu_option_groups").select("id,menu_item_id,name,min_select,max_select,is_required,sort_order").in("menu_item_id", dishIds).order("sort_order")
+    : { data: [] as { id: string; menu_item_id: string; name: string; min_select: number; max_select: number; is_required: boolean; sort_order: number }[] };
+  const ownGroupIds = (groups ?? []).map((x) => x.id);
+  const { data: options } = ownGroupIds.length
+    ? await db.from("menu_options").select("id,group_id,name,price_delta,is_available,sort_order").in("group_id", ownGroupIds).order("sort_order")
+    : { data: [] as { id: string; group_id: string; name: string; price_delta: number; is_available: boolean; sort_order: number }[] };
   // Customizable dishes (0069): the range, read on its own.
   const { data: pricing } = await db.from("menu_items").select("id,price_to_confirm,price_max").eq("restaurant_id", data.restaurant_id);
   const pricingById = new Map(((pricing ?? []) as { id: string; price_to_confirm: boolean | null; price_max: number | null }[]).map((p) => [p.id, p]));
@@ -695,8 +708,19 @@ export async function setMyDiningNotifications(enabled: boolean): Promise<Dining
   return { ok: true };
 }
 
-/** Every active bill of the branch, with what the floor needs to run it. */
-export async function fetchDiningFloor(restaurantId: string) {
+/**
+ * Every active bill of the branch, with what the floor needs to run it.
+ *
+ * GUARDED, AND THE BRANCH COMES FROM THE SESSION. This was an exported
+ * function of a "use server" file with no check — a public endpoint that
+ * returned any restaurant's open bills, guests, messages, table tokens and
+ * join codes to anyone who knew (public) restaurant ids. The argument is
+ * kept for the caller's sake but must name the caller's own active branch.
+ */
+export async function fetchDiningFloor(requestedRestaurantId: string) {
+  const { active } = await requireCapability("orders.view");
+  if (requestedRestaurantId !== active.restaurantId) return [];
+  const restaurantId = active.restaurantId;
   const query = (extra: string) => createAdminClient().from("dining_sessions")
     .select(`id,status,kind,join_code,label,presence_confirmed_at,deposit_credit,reservation_id,opened_by_staff,order_id,created_at,payment_requested_at,restaurant_tables(id,number,public_token),dining_guests(id,display_name,status,created_at),dining_rounds(id,guest_id,status,subtotal,notes,created_at,added_by_staff,dining_round_items(id,name,quantity,unit_price,options_label,status,rejection_reason${extra})),dining_messages(id,guest_id,sender_kind,kind,body,created_at),dining_payments(id,guest_id,method,split_mode,amount,tip,service_fee,status,created_at),orders!dining_sessions_order_id_fkey(id,reference,status,subtotal,total,service_charge,is_paid,payment_method,order_items(id,name,quantity,unit_price,options_label))`)
     .eq("restaurant_id", restaurantId)

@@ -8,7 +8,7 @@ import { can } from "@/lib/capabilities";
 import { phoneSchema } from "@/lib/auth/schemas";
 import { rateLimit } from "@/lib/rate-limit";
 import { notify } from "@/lib/notify";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { resolveOrCreateQuartier } from "./quartiers";
 import {
   accountCoveredCount,
@@ -20,6 +20,7 @@ import {
   type BranchAccount,
 } from "@/lib/branches/account";
 import { includedBranchSlots, planAllowsBranches } from "@/lib/branches/coverage";
+import { entitlementsFor } from "@/lib/billing/entitlements";
 
 /**
  * Opening, closing and paying for branches — the owner's side of 0072.
@@ -461,4 +462,70 @@ export async function payForBranches(): Promise<BranchActionResult> {
     default:
       return { ok: false, reason: "unavailable", error: t("mbr.err.planNoBranches") };
   }
+}
+
+/* ── Push the main's menu to a branch (0074) ───────────────────────────── */
+
+/**
+ * Bring a branch's menu up to the main's — a MERGE (sync_branch_menu):
+ * dishes both have take the main's price, description and photo; dishes
+ * only the main has are added with their options; the branch's own dishes,
+ * its availability and its stock are left alone. New dishes never take the
+ * menu past the plan's dish ceiling.
+ */
+export async function syncBranchMenu(branchId: string): Promise<BranchActionResult & { updated?: number; added?: number }> {
+  const t = await getTranslator();
+  const owner = await ownerScope();
+  if (!owner.ok) return owner;
+  const { mainId, account } = owner.scope;
+
+  const branch = account.branches.find((b) => b.id === branchId);
+  if (!branch) return { ok: false, reason: "notFound", error: t("mbr.err.notFound") };
+
+  const supabase = createAdminClient();
+
+  // The plan the branch runs on is the main's (0072).
+  let maxNew: number | null = null;
+  if (account.plan && account.subscription) {
+    const plan = await entitlementsFor({
+      planTier: account.plan.tier,
+      subscriptionState: account.subscription.state === "cancelled" ? "locked" : (account.subscription.state as "active" | "grace" | "locked"),
+    });
+    if (plan && plan.menuItemLimit !== null) {
+      const { count } = await supabase
+        .from("menu_items")
+        .select("id", { count: "exact", head: true })
+        .eq("restaurant_id", branchId);
+      maxNew = Math.max(0, plan.menuItemLimit - (count ?? 0));
+    }
+  }
+
+  const { data, error } = await supabase.rpc("sync_branch_menu", {
+    p_source: mainId,
+    p_target: branchId,
+    p_max_new: maxNew,
+  });
+  if (error) {
+    if (error.code === "PGRST202" || error.code === "42883") {
+      return { ok: false, reason: "migration", error: t("mbr.err.syncMigration") };
+    }
+    console.error("[branches:syncMenu]", branchId, error.code ?? "", error.message);
+    return { ok: false, reason: "failed", error: t("mbr.err.syncFailed") };
+  }
+
+  const counts = (data ?? {}) as { updated?: number; added?: number };
+  const updated = Number(counts.updated ?? 0);
+  const added = Number(counts.added ?? 0);
+
+  await writeAudit(owner.scope.profile, {
+    action: "restaurant.branch_menu_synced",
+    entityType: "restaurant",
+    entityId: branchId,
+    summary: `Updated ${branch.label}'s menu from the main: ${updated} dish(es) updated, ${added} added`,
+  });
+
+  revalidatePath("/m/branches");
+  revalidatePath("/m/menu");
+  revalidatePath(`/restaurants/${branch.slug}`);
+  return { ok: true, updated, added, note: t("mbr.note.synced", { updated, added }) };
 }

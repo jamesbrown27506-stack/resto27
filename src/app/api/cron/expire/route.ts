@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runSubscriptionExpiry } from "@/lib/data/subscription-lifecycle";
+import { runScheduledPayouts, sweepRateLimits } from "@/lib/wallet/scheduled-payouts";
 import { requireCronAuth, stampHeartbeat } from "@/lib/cron";
 
 /**
@@ -20,7 +21,12 @@ export async function GET(request: Request) {
   if (unauthorized) return unauthorized;
 
   const summary = await runSubscriptionExpiry();
-  await stampHeartbeat("subscription-expiry", summary);
+  // The nightly money jobs ride on the one daily cron (no new schedule to
+  // gate in SQL, no extra Vercel call): Enterprise scheduled payouts, and
+  // the sweep of spent rate-limit windows (0074).
+  const payouts = await runScheduledPayouts();
+  await sweepRateLimits();
+  await stampHeartbeat("subscription-expiry", { ...summary, payouts });
 
-  return NextResponse.json(summary);
+  return NextResponse.json({ ...summary, payouts });
 }

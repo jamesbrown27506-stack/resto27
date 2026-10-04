@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { requireRole, superAdminOrError } from "@/lib/auth/session";
-import { writeAudit } from "@/lib/data/platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { normalisePhone } from "@/lib/payments/camerpay/client";
 import { identifyRecipient, recipientRefusalInEnglish, requireConfirmedRecipient } from "@/lib/payments/recipient";
 import { cameroonNetwork, SASPAY_MAX_XAF, SASPAY_MIN_XAF } from "@/lib/payments/saspay/cameroon";
@@ -17,6 +17,7 @@ import {
   verifySaspayPayment,
   verifySaspayPayout,
 } from "@/lib/payments/saspay/client";
+import { rateLimit } from "@/lib/rate-limit";
 
 /**
  * SasPay console (/a/saspay) — the counterpart of the CamerPay console.
@@ -125,7 +126,9 @@ export async function testCollection(phone: string, amount: number): Promise<Con
  * money: it is a question about the phone number, not about the transfer.
  */
 export async function identifyTestPayoutRecipient(phone: string): Promise<ConsoleResult & { recipientName?: string }> {
-  await requireRole("admin");
+  const admin = await requireRole("admin");
+  const limited = await rateLimit({ key: "admin:identify", identifier: admin.id, limit: 60, windowMs: 60 * 60_000 });
+  if (!limited.ok) return { ok: false, label: "Recipient not confirmed", detail: "Too many look-ups — try again later." };
   const lookup = await identifyRecipient(phone);
   if (!lookup.ok) return { ok: false, label: "Recipient not confirmed", detail: recipientRefusalInEnglish(lookup) };
   return { ok: true, label: "Account holder", detail: `${lookup.phone} belongs to ${lookup.name}.`, recipientName: lookup.name };

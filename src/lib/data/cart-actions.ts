@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth/session";
 import { getCartConfig } from "@/lib/orders/cart-config";
 import { discountFor, type PromoErrorReason } from "@/lib/orders/promotions";
+import { rateLimit } from "@/lib/rate-limit";
 
 /**
  * What the basket needs from the server before checkout.
@@ -34,6 +35,11 @@ export async function validatePromoCode(input: {
 }): Promise<PromoResult> {
   const code = input.code.trim().toUpperCase();
   if (!code) return { ok: false, reason: "unknown" };
+
+  // Anonymous and answers with the discount: without a ceiling it is a way
+  // to enumerate every restaurant's codes. A shopper tries a handful.
+  const limited = await rateLimit({ key: "promo:validate", limit: 20, windowMs: 10 * 60_000 });
+  if (!limited.ok) return { ok: false, reason: "unknown" };
 
   const supabase = createAdminClient();
 

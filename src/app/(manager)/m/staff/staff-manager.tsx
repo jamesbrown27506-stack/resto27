@@ -6,7 +6,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/components/ui/data-table";
-import { ConfirmDialog } from "@/components/ui/dialog";
+import { ConfirmDialog, Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Field, Input, Radio, Select } from "@/components/ui/input";
 import { Sheet, SheetActions } from "@/components/ui/sheet";
@@ -14,6 +14,7 @@ import { useToast } from "@/components/ui/toast";
 import { useDates } from "@/lib/format/use-dates";
 import { BRANCH_ROLES, capabilitiesFor, type BranchRole } from "@/lib/capabilities";
 import {
+  addStaffToBranch,
   cancelInvite,
   changeStaffRole,
   inviteStaff,
@@ -66,8 +67,11 @@ export function StaffManager({
   isOwner,
   restaurantName,
   branchLabel,
+  otherBranches = [],
 }: {
   staff: StaffMember[];
+  /** Other locations of this restaurant where the viewer manages staff. */
+  otherBranches?: { id: string; label: string; isOwner: boolean }[];
   myProfileId: string;
   /** Only an owner may create or demote another owner. */
   isOwner: boolean;
@@ -88,6 +92,10 @@ export function StaffManager({
   // at the first keystroke marks every email invalid on the way in.
   const [emailTouched, setEmailTouched] = useState(false);
   const [confirming, setConfirming] = useState<Confirmation | null>(null);
+  // Adding a colleague to another location of the same restaurant.
+  const [moving, setMoving] = useState<StaffMember | null>(null);
+  const [moveTarget, setMoveTarget] = useState(otherBranches[0]?.id ?? "");
+  const [moveRole, setMoveRole] = useState<BranchRole>("waiter");
 
   // An owner may appoint another owner; a manager may not. Filtering the list
   // is a courtesy — inviteStaff and changeStaffRole refuse it either way.
@@ -283,6 +291,20 @@ export function StaffManager({
 
         return (
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {member.status === "active" && member.profileId && otherBranches.length > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={pending}
+                onClick={() => {
+                  setMoveTarget(otherBranches[0]?.id ?? "");
+                  setMoveRole(member.role === "owner" ? "manager" : member.role);
+                  setMoving(member);
+                }}
+              >
+                <span>{t("mst.toBranch")}</span>
+              </Button>
+            )}
             {member.status === "invited" ? (
               <Button
                 variant="ghost"
@@ -479,6 +501,60 @@ export function StaffManager({
       {/* One dialog for both destructive gestures — suspension, which keeps the
           row, and cancelling an invitation, which is the one staff row that CAN
           be deleted because nobody has worked under it yet. */}
+      {/* ── Add to another location ────────────────────────────────────── */}
+      <Dialog
+        open={moving !== null}
+        onClose={() => setMoving(null)}
+        title={t("mst.toBranch.title", { name: moving ? nameOf(moving) : "" })}
+        size="sm"
+        footer={
+          <>
+            <Button variant="outline" disabled={pending} onClick={() => setMoving(null)}>
+              <span>{t("common.cancel")}</span>
+            </Button>
+            <Button
+              loading={pending}
+              disabled={pending || !moveTarget}
+              onClick={() => {
+                const member = moving;
+                if (!member) return;
+                run(
+                  () => addStaffToBranch({ staffId: member.id, targetRestaurantId: moveTarget, role: moveRole }),
+                  t("mst.toBranch.submit"),
+                  () => setMoving(null),
+                );
+              }}
+            >
+              <span>{t("mst.toBranch.submit")}</span>
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-text-secondary">{t("mst.toBranch.body")}</p>
+          <Field label={t("mst.toBranch.branch")} htmlFor="move-branch">
+            <Select id="move-branch" value={moveTarget} onChange={(e) => setMoveTarget(e.target.value)}>
+              {otherBranches.map((branch) => (
+                <option key={branch.id} value={branch.id}>
+                  {branch.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={t("mst.toBranch.role")} htmlFor="move-role">
+            <Select id="move-role" value={moveRole} onChange={(e) => setMoveRole(e.target.value as BranchRole)}>
+              {BRANCH_ROLES.filter(
+                (role) => role !== "owner" || otherBranches.find((branch) => branch.id === moveTarget)?.isOwner,
+              ).map((role) => (
+                <option key={role} value={role}>
+                  {roleLabel(role)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+      </Dialog>
+
       <ConfirmDialog
         open={confirming !== null}
         onClose={() => setConfirming(null)}

@@ -3,6 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
+import { releaseTableIfFree } from "@/lib/orders/table-release";
 import { requireCapability } from "@/lib/auth/branch";
 import { awardDeliveryPoints } from "@/lib/orders/award-points";
 import { nextStatus, isTerminal, type OrderStatus } from "@/lib/format/order-status";
@@ -83,42 +84,6 @@ function refreshOrderScreens() {
   revalidatePath("/m/kitchen");
   revalidatePath("/m");
   revalidatePath("/m/tables");
-}
-
-/**
- * Free a dine-in table — but ONLY if nobody else is sitting at it.
- *
- * The party's order reaching `delivered` means they ate; the reservation
- * reaching `completed` or `no_show` means they never will. Either way the
- * table should go back to the floor — unless ANOTHER open dine-in order is
- * still running on it (a second round, a split bill), in which case the
- * table is genuinely still taken and releasing it would seat strangers on
- * top of a party. The guard is the check; the `status = 'occupied'` filter
- * on the update is the safety: a table already released stays released.
- */
-export async function releaseTableIfFree(
-  supabase: ReturnType<typeof createAdminClient>,
-  restaurantId: string,
-  tableNumber: string | null,
-): Promise<void> {
-  if (!tableNumber) return;
-
-  const { count } = await supabase
-    .from("orders")
-    .select("id", { count: "exact", head: true })
-    .eq("restaurant_id", restaurantId)
-    .eq("type", "dine_in")
-    .eq("table_number", tableNumber)
-    .not("status", "in", '("cancelled","delivered")');
-
-  if ((count ?? 0) > 0) return;
-
-  await supabase
-    .from("restaurant_tables")
-    .update({ status: "available" })
-    .eq("restaurant_id", restaurantId)
-    .eq("number", tableNumber)
-    .eq("status", "occupied");
 }
 
 /**
@@ -645,12 +610,28 @@ export async function createTableOrder(input: {
       .map((row) => [row.id, row]),
   );
 
+  /*
+    Options are read WITH the dish they belong to, and a line may only use
+    its own dish's options. Read by id alone, any option on the platform —
+    another restaurant's "-5 000 F" — priced this restaurant's ticket.
+  */
   const optionIds = [...new Set(input.lines.flatMap((l) => l.optionIds))];
   const { data: optionRows } = optionIds.length
-    ? await supabase.from("menu_options").select("id, name, price_delta").in("id", optionIds)
+    ? await supabase
+        .from("menu_options")
+        .select("id, name, price_delta, menu_option_groups!inner ( menu_item_id )")
+        .in("id", optionIds)
     : { data: [] };
   const options = new Map(
-    ((optionRows ?? []) as { id: string; name: string; price_delta: number }[]).map((o) => [o.id, o]),
+    ((optionRows ?? []) as unknown as {
+      id: string;
+      name: string;
+      price_delta: number;
+      menu_option_groups: { menu_item_id: string } | { menu_item_id: string }[] | null;
+    }[]).map((o) => {
+      const group = Array.isArray(o.menu_option_groups) ? o.menu_option_groups[0] : o.menu_option_groups;
+      return [o.id, { name: o.name, price_delta: o.price_delta, menuItemId: group?.menu_item_id ?? null }];
+    }),
   );
 
   let subtotal = 0;
@@ -667,11 +648,11 @@ export async function createTableOrder(input: {
       return { ok: false, error: t("est.lowStock", { count: String(item.stock_quantity), name: item.name }) };
     }
 
-    const chosen = line.optionIds.map((id) => options.get(id)).filter(Boolean) as {
-      name: string;
-      price_delta: number;
-    }[];
-    const basePrice = item.price + chosen.reduce((sum, o) => sum + o.price_delta, 0);
+    const chosen = line.optionIds.map((id) => options.get(id));
+    if (chosen.some((o) => !o || o.menuItemId !== line.menuItemId)) {
+      return { ok: false, error: t("est.optionNotOnDish", { name: item.name }) };
+    }
+    const basePrice = item.price + chosen.reduce((sum, o) => sum + (o?.price_delta ?? 0), 0);
     if (basePrice < 0) return { ok: false, error: t("est.invalidPrice") };
 
     const custom = pricing.get(line.menuItemId);
@@ -688,7 +669,7 @@ export async function createTableOrder(input: {
       name: item.name,
       unit_price: unitPrice,
       quantity: line.quantity,
-      options_label: chosen.map((o) => o.name).join(" · ") || null,
+      options_label: chosen.map((o) => o?.name ?? "").filter(Boolean).join(" · ") || null,
     });
   }
 

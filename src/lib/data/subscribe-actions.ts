@@ -5,7 +5,7 @@ import { getLocale, getTranslator } from "@/lib/i18n/locale-server";
 import { paymentErrorMessage } from "@/lib/payments/payment-error";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { notify } from "@/lib/notify";
 import { getFreeModeWindow } from "./billing";
 import { ensureUnpaidInvoice } from "./invoice-issue";

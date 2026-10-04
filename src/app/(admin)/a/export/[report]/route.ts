@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth/session";
-import { writeAudit } from "@/lib/data/platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { csvResponse, toCsv, type CsvColumn } from "@/lib/csv";
 
 export const dynamic = "force-dynamic";

@@ -2,7 +2,7 @@
 
 import { requireRole } from "@/lib/auth/session";
 import { sendMail, verifyMailConnection } from "@/lib/mail";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 
 /**
  * The two email checks behind /a/tests.

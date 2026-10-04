@@ -423,6 +423,10 @@ export interface PlanEntitlements {
   /** Reports and analytics (§14.4). */
   analytics: boolean;
   staffManagement: boolean;
+  /** Team seats besides the owners (0053). Enforced by inviteStaff. */
+  staffLimit: number;
+  /** Automatic withdrawals on a schedule (0053, built in 0074). */
+  scheduledPayouts: boolean;
 }
 
 /* ── Free mode ─────────────────────────────────────────────────────────── */
@@ -746,7 +750,7 @@ export async function fetchPlanLimits(): Promise<Map<string, PlanEntitlements>> 
   const [result, freeMode] = await Promise.all([
     supabase
       .from("subscription_plans")
-      .select("tier, menu_item_limit, table_limit, promotion_limit, analytics, staff_management"),
+      .select("tier, menu_item_limit, table_limit, promotion_limit, analytics, staff_management, staff_limit, scheduled_payouts"),
     isFreeMode(),
   ]);
   const { data, error } = result;
@@ -768,6 +772,8 @@ export async function fetchPlanLimits(): Promise<Map<string, PlanEntitlements>> 
     promotion_limit: number | null;
     analytics: boolean | null;
     staff_management: boolean | null;
+    staff_limit: number | null;
+    scheduled_payouts: boolean | null;
   }[]) {
     map.set(p.tier, {
       menuItemLimit: p.menu_item_limit,
@@ -775,6 +781,8 @@ export async function fetchPlanLimits(): Promise<Map<string, PlanEntitlements>> 
       promotionLimit: p.promotion_limit,
       analytics: p.analytics ?? false,
       staffManagement: p.staff_management ?? false,
+      staffLimit: Number(p.staff_limit ?? 0),
+      scheduledPayouts: Boolean(p.scheduled_payouts),
     });
   }
 
@@ -791,6 +799,11 @@ export async function fetchPlanLimits(): Promise<Map<string, PlanEntitlements>> 
             promotionLimit: mostPermissive(granted.promotionLimit, entitlements.promotionLimit),
             analytics: granted.analytics || entitlements.analytics,
             staffManagement: granted.staffManagement || entitlements.staffManagement,
+            staffLimit: Math.max(granted.staffLimit, entitlements.staffLimit),
+            // Merged like the rest, but nothing reads it from here: a
+            // schedule sends real money, so scheduled-payouts.ts checks the
+            // subscriber's REAL plan, never this free-mode map.
+            scheduledPayouts: granted.scheduledPayouts || entitlements.scheduledPayouts,
           }
         : { ...entitlements };
     }

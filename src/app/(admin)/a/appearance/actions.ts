@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth/session";
-import { writeAudit } from "@/lib/data/platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { saveUpload, deleteUpload } from "@/lib/uploads";
 import { APPEARANCE_IMAGES, type AppearanceKey } from "@/lib/appearance";
 import { COLOR_PALETTES } from "@/lib/branding";

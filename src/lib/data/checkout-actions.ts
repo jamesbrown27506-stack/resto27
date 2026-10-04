@@ -181,6 +181,9 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   // kitchen. 10 orders in 10 minutes per person/IP is beyond any human cadence.
   const profile = await getCurrentProfile();
   if (!profile) return { ok: false, reason: "loginRequired" };
+  // getCurrentProfile does not refuse a suspended account; an order is a
+  // real commitment, so this does.
+  if (profile.status !== "active" || profile.deletedAt) return { ok: false, reason: "loginRequired" };
   const limited = await rateLimit({
     key: "checkout:place",
     limit: 10,
@@ -200,6 +203,9 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       .from("orders")
       .select("id, reference")
       .eq("idempotency_key", idempotencyKey)
+      // Only the caller's own orders: a key someone else used must not hand
+      // back their order id and reference.
+      .eq("customer_id", profile.id)
       .maybeSingle();
 
     if (isMissingColumn(lookupError, "idempotency_key")) {

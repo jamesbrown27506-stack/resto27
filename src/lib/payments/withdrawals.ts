@@ -89,6 +89,12 @@ export async function settleWithdrawalPayout(
         error: "Payout failed, but the wallet refund could not be recorded.",
       };
     }
+    // The money came back, so the fee was never earned.
+    await supabase
+      .from("platform_revenue_ledger")
+      .delete()
+      .eq("source_type", "withdrawal_fee")
+      .eq("source_id", requestId);
   }
 
   return { status: "failed", ...base };

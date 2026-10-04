@@ -30,8 +30,9 @@ export async function generateMetadata(): Promise<Metadata> {
 export default async function SetupPage() {
   const { active, profile } = await requireBranch();
 
-  // Already through? The wizard is done, not a museum.
-  if (active.setupDoneAt) redirect("/m");
+  // Already through? The wizard is done, not a museum. And only whoever
+  // builds the menu runs it — every save in it needs `menu.edit`.
+  if (active.setupDoneAt || !can(active.role, "menu.edit")) redirect("/m");
 
   const [tables, categories, cuisines, restaurant] = await Promise.all([
     fetchTables(active.restaurantId),

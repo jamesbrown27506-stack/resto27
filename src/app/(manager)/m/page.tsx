@@ -7,6 +7,7 @@ import { fetchBranchOverview, fetchReservations, fetchSetupChecklist } from "@/l
 import { fetchPlanLimits, freeModePlanName } from "@/lib/data/billing";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
+import { can } from "@/lib/capabilities";
 
 /** The browser tab is a user-visible string too, so it follows the locale. */
 export async function generateMetadata(): Promise<Metadata> {
@@ -28,7 +29,10 @@ export default async function ManagerDashboard() {
   // thing they do, before the dashboard pretends their empty floor is a
   // going concern. The migration backfilled `setup_done_at` for every
   // established tenant, so this only ever catches genuinely new ones.
-  if (!active.setupDoneAt) redirect("/m/setup");
+  // Only for whoever can build the menu: a waiter's first sign-in must not
+  // land on a wizard they cannot finish (and the dashboard would send them
+  // straight back to it).
+  if (!active.setupDoneAt && can(active.role, "menu.edit")) redirect("/m/setup");
 
   const [overview, upcoming, limits, checklist, freePlan] = await Promise.all([
     fetchBranchOverview(active.restaurantId),

@@ -9,7 +9,7 @@ import { requireRole, requireUser } from "@/lib/auth/session";
 import { deleteUpload, localizeUploadError, saveAudioUpload, saveUpload, type UploadKind } from "@/lib/uploads";
 import { firstIssueMessage } from "@/lib/i18n/issue-message";
 import { isCustomSound } from "@/lib/notification-sound";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import type { ActionResult } from "./admin-actions";
 
 /* ── Uploads ───────────────────────────────────────────────────────────── */
@@ -22,6 +22,10 @@ export interface UploadActionResult {
 
 /** The settings keys that hold an uploaded branding image. */
 export type BrandingAssetKey = "brand_logo_url" | "brand_favicon_url" | "brand_icon_url";
+
+function isBrandingAssetKey(key: unknown): key is BrandingAssetKey {
+  return key === "brand_logo_url" || key === "brand_favicon_url" || key === "brand_icon_url";
+}
 
 /** A one-word name for each key, for audit summaries. */
 const BRANDING_ASSET_LABEL: Record<BrandingAssetKey, string> = {
@@ -42,6 +46,10 @@ export async function uploadBrandingAsset(
   formData: FormData,
 ): Promise<UploadActionResult> {
   const admin = await requireRole("admin");
+  // The type is not a check: a POST can name ANY settings key — the payment
+  // gateway, the fees — and this would overwrite it, past every super-admin
+  // rule updateSettings enforces. Only the three branding keys, at runtime.
+  if (!isBrandingAssetKey(settingKey)) return { ok: false, error: "Unknown branding asset." };
 
   const file = formData.get("file");
   if (!(file instanceof File)) return { ok: false, error: "No file received." };
@@ -141,6 +149,7 @@ export async function uploadNotificationSound(formData: FormData): Promise<Uploa
 /** Clear a branding asset without uploading a replacement. */
 export async function clearBrandingAsset(settingKey: BrandingAssetKey): Promise<ActionResult> {
   const admin = await requireRole("admin");
+  if (!isBrandingAssetKey(settingKey)) return { ok: false, error: "Unknown branding asset." };
 
   const supabase = createAdminClient();
   const { error } = await supabase.from("settings").update({ value: "" }).eq("key", settingKey);

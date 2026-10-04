@@ -7,7 +7,7 @@ import { firebaseDeliveryConfigured } from "@/lib/firebase/server";
 import { notificationProvider, type NotificationProvider } from "@/lib/notification-provider";
 import { sendPushWithReport, pushConfigured } from "@/lib/push";
 import { rateLimit } from "@/lib/rate-limit";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 
 export async function getNotificationProviderStatus() {
   await requireRole("admin");

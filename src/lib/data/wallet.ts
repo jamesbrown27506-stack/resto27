@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
+import { summarizeLedger, type LedgerEntry, type WalletBreakdown } from "@/lib/wallet/breakdown";
 
 /**
  * Wallet reads (migration 0024).
@@ -52,8 +53,14 @@ export interface WalletState {
    * paid order is refunded from it (see ordersInProgressHold).
    */
   heldForOrders: number;
-  grossIncome: number;
-  paymentFees: number;
+  /**
+   * Where the balance came from, read off the whole ledger — orders, table
+   * bills, reservation deposits, refunds, withdrawals, credits. The buckets
+   * sum to the balance (lib/wallet/breakdown.ts). The platform's own payment
+   * fee is not among them: it never reaches the restaurant's wallet, and it
+   * is not the restaurant's line to read.
+   */
+  breakdown: WalletBreakdown;
   commissionDue: number;
   estimatedNetIncome: number;
   ledger: WalletLedgerRow[];
@@ -119,11 +126,37 @@ export async function ordersInProgressHold(restaurantId: string): Promise<number
   return orders + deposits;
 }
 
+/**
+ * Every ledger entry of one wallet, for the breakdown — paged, because the
+ * API returns at most 1 000 rows a call and a busy restaurant has more.
+ */
+async function allLedgerEntries(restaurantId: string): Promise<LedgerEntry[]> {
+  const supabase = createAdminClient();
+  const PAGE = 1000;
+  const entries: LedgerEntry[] = [];
+  for (let from = 0; from < 200_000; from += PAGE) {
+    const { data, error } = await supabase
+      .from("wallet_ledger")
+      .select("amount, kind, note, reference")
+      .eq("restaurant_id", restaurantId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) {
+      console.error("[wallet:ledgerEntries]", error.message);
+      break;
+    }
+    entries.push(...((data ?? []) as LedgerEntry[]));
+    if ((data ?? []).length < PAGE) break;
+  }
+  return entries;
+}
+
 /** One branch's wallet: the balance and everything that explains it. */
 export async function getWalletState(restaurantId: string): Promise<WalletState> {
   const supabase = createAdminClient();
 
-  const [balanceResult, ledgerResult, requestsResult, ordersResult, commissionsResult] = await Promise.all([
+  const [balanceResult, ledgerResult, requestsResult, entries, commissionsResult] = await Promise.all([
     supabase.from("restaurant_wallets").select("balance").eq("restaurant_id", restaurantId).maybeSingle(),
     supabase
       .from("wallet_ledger")
@@ -138,8 +171,7 @@ export async function getWalletState(restaurantId: string): Promise<WalletState>
       .eq("restaurant_id", restaurantId)
       .order("requested_at", { ascending: false })
       .limit(20),
-    // Cancelled paid orders were refunded; they are not income.
-    supabase.from("orders").select("subtotal, discount_amount, service_charge").eq("restaurant_id", restaurantId).eq("is_paid", true).neq("status", "cancelled"),
+    allLedgerEntries(restaurantId),
     supabase.from("commission_statements").select("commission_amount, status").eq("restaurant_id", restaurantId).in("status", ["draft", "issued"]),
   ]);
   const heldForOrders = await ordersInProgressHold(restaurantId);
@@ -149,22 +181,24 @@ export async function getWalletState(restaurantId: string): Promise<WalletState>
       "[wallet:getWalletState]",
       balanceResult.error?.message ?? ledgerResult.error?.message ?? requestsResult.error?.message ?? "",
     );
-    return { balance: 0, heldForOrders: 0, grossIncome: 0, paymentFees: 0, commissionDue: 0, estimatedNetIncome: 0, ledger: [], requests: [] };
+    return {
+      balance: 0,
+      heldForOrders: 0,
+      breakdown: summarizeLedger([]),
+      commissionDue: 0,
+      estimatedNetIncome: 0,
+      ledger: [],
+      requests: [],
+    };
   }
 
   const balance = Number((balanceResult.data as { balance: number } | null)?.balance ?? 0);
-  const paidOrders = (ordersResult.data ?? []) as { subtotal: number; discount_amount: number; service_charge: number }[];
-  // Food only: the delivery fee is paid in cash to the rider and never passes
-  // through the wallet (0059).
-  const grossIncome = paidOrders.reduce((sum, order) => sum + Math.max(0, Number(order.subtotal) - Number(order.discount_amount)), 0);
-  const paymentFees = paidOrders.reduce((sum, order) => sum + Number(order.service_charge), 0);
   const commissionDue = ((commissionsResult.data ?? []) as { commission_amount: number }[]).reduce((sum, statement) => sum + Number(statement.commission_amount), 0);
 
   return {
     balance,
     heldForOrders,
-    grossIncome,
-    paymentFees,
+    breakdown: summarizeLedger(entries),
     commissionDue,
     estimatedNetIncome: Math.max(0, balance - commissionDue),
     ledger: ((ledgerResult.data ?? []) as Record<string, unknown>[]).map((r) => ({
@@ -210,6 +244,11 @@ export interface AdminWithdrawalRequest {
   requestedAt: string;
   decidedAt: string | null;
   replyTo: string | null;
+  /**
+   * Debited, but whether the money reached the phone is unknown (the payout
+   * call failed mid-way). Waits for a super admin's decision.
+   */
+  unresolved: boolean;
 }
 
 /** Every withdrawal request, newest first — for the /a/wallet inbox. */
@@ -273,6 +312,7 @@ export async function listWithdrawalRequests(limit = 50): Promise<AdminWithdrawa
       requestedAt: r.requested_at,
       decidedAt: r.decided_at,
       replyTo: r.reply_to,
+      unresolved: r.status === "paid" && !r.reply_to && !r.decided_at,
     };
   });
 }

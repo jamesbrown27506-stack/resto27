@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/server";
+import { writeAudit } from "@/lib/audit";
 import { requireRole, superAdminOrError } from "@/lib/auth/session";
 import {
   criticalKeysIn,
@@ -34,56 +35,8 @@ import type { ActionResult } from "./admin-actions";
 
 /* ── The audit writer (§9) ─────────────────────────────────────────────── */
 
-interface AuditInput {
-  action: string;
-  entityType: string;
-  entityId?: string | null;
-  summary?: string;
-  metadata?: Record<string, unknown>;
-  impersonatorEmail?: string | null;
-}
-
-/**
- * Write one audit row.
- *
- * TWO RULES, BOTH FROM §9:
- *
- *  1. The actor's email and role are SNAPSHOTTED onto the row, never joined.
- *     Actors get anonymised; the trail has to survive them. A join to profiles
- *     would render "Compte supprimé" against every historical action.
- *
- *  2. THIS NEVER THROWS. A failure to write history must not break the
- *     operation being recorded. Suspending a fraudulent account must succeed
- *     even if the audit table is full, locked or missing.
- */
-export async function writeAudit(
-  actor: { id: string; email: string; role: string },
-  input: AuditInput,
-): Promise<void> {
-  try {
-    const supabase = createAdminClient();
-    const headerList = await headers();
-
-    await supabase.from("audit_log").insert({
-      action: input.action,
-      entity_type: input.entityType,
-      entity_id: input.entityId ?? null,
-      actor_profile_id: actor.id,
-      actor_email: actor.email,
-      actor_role: actor.role,
-      impersonator_email: input.impersonatorEmail ?? null,
-      summary: input.summary ?? "",
-      metadata: input.metadata ?? null,
-      ip_address:
-        headerList.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-        headerList.get("x-real-ip") ??
-        null,
-      user_agent: headerList.get("user-agent"),
-    });
-  } catch (error) {
-    console.error("[audit] write failed — operation continues regardless", error);
-  }
-}
+// Lives in lib/audit.ts (server-only): exported from this "use server" file
+// it was a public endpoint that wrote audit rows in any actor's name.
 
 /* ── Notifications ─────────────────────────────────────────────────────── */
 

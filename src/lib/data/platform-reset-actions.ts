@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { superAdminOrError } from "@/lib/auth/session";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 
 /**
  * "Reset the platform to new" (0067) — super admins only.

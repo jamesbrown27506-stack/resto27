@@ -15,7 +15,14 @@ import { formatMoney } from "@/lib/format/currency";
 import { useLocale } from "@/lib/i18n/use-locale";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
 import type { NextBranchCost } from "@/lib/branches/coverage";
-import { closeBranch, copyMenuToBranch, createBranch, payForBranches, reopenBranch } from "@/lib/data/branch-actions";
+import {
+  closeBranch,
+  copyMenuToBranch,
+  createBranch,
+  payForBranches,
+  reopenBranch,
+  syncBranchMenu,
+} from "@/lib/data/branch-actions";
 import { switchBranch } from "@/lib/data/manager-actions";
 import { cn } from "@/lib/utils";
 
@@ -59,7 +66,10 @@ export function BranchesView({
   freeMode,
   nextCost,
   branches,
+  overview,
 }: {
+  /** Each location's money and orders, for the group view. */
+  overview: { id: string; balance: number; ordersToday: number; orders7d: number; income7d: number }[];
   migrated: boolean;
   activeId: string;
   main: { id: string; name: string; label: string; dishes: number };
@@ -83,6 +93,7 @@ export function BranchesView({
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ label: "", quartier: "", address: "", phone: "", copyMenu: true });
   const [closing, setClosing] = useState<BranchItem | null>(null);
+  const [syncing, setSyncing] = useState<BranchItem | null>(null);
 
   const allowsBranches = plan !== null && (plan.includedBranches > 1 || plan.extraBranchPrice !== null);
   const includedBranches = Math.max(0, (plan?.includedBranches ?? 1) - 1);
@@ -126,6 +137,18 @@ export function BranchesView({
   function copyMenu(branch: BranchItem) {
     startTransition(async () => {
       const result = await copyMenuToBranch(branch.id);
+      if (!result.ok) return toast(result.error, "error");
+      if (result.note) toast(result.note, "success");
+      router.refresh();
+    });
+  }
+
+  function confirmSync() {
+    if (!syncing) return;
+    const target = syncing;
+    startTransition(async () => {
+      const result = await syncBranchMenu(target.id);
+      setSyncing(null);
       if (!result.ok) return toast(result.error, "error");
       if (result.note) toast(result.note, "success");
       router.refresh();
@@ -339,6 +362,12 @@ export function BranchesView({
                       <span>{t("mbr.action.copyMenu")}</span>
                     </Button>
                   )}
+                  {branch.dishes > 0 && main.dishes > 0 && (
+                    <Button variant="ghost" size="sm" disabled={pending} onClick={() => setSyncing(branch)}>
+                      <RotateCcw className="size-3.5" aria-hidden />
+                      <span>{t("mbr.action.syncMenu")}</span>
+                    </Button>
+                  )}
                   {activeId === branch.id ? (
                     <Badge tone="primary">{t("mbr.action.current")}</Badge>
                   ) : (
@@ -377,6 +406,55 @@ export function BranchesView({
           </p>
         )}
       </div>
+
+      {/* ── The group at a glance ─────────────────────────────────────── */}
+      {branches.length > 0 && overview.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <div>
+            <h2 className="font-display text-base font-bold">{t("mbr.ov.title")}</h2>
+            <p className="text-sm text-text-secondary">{t("mbr.ov.subtitle")}</p>
+          </div>
+          <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+            <table className="w-full min-w-[34rem] text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-[11px] font-bold tracking-[0.08em] text-text-light uppercase">
+                  <th className="px-4 py-3">{t("mbr.ov.location")}</th>
+                  <th className="px-4 py-3 text-right">{t("mbr.ov.ordersToday")}</th>
+                  <th className="px-4 py-3 text-right">{t("mbr.ov.orders7d")}</th>
+                  <th className="px-4 py-3 text-right">{t("mbr.ov.income7d")}</th>
+                  <th className="px-4 py-3 text-right">{t("mbr.ov.balance")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {overview.map((row) => {
+                  const label =
+                    row.id === main.id
+                      ? main.label && main.label !== "Principal"
+                        ? main.label
+                        : main.name
+                      : (branches.find((branch) => branch.id === row.id)?.label ?? "—");
+                  return (
+                    <tr key={row.id} className="border-b border-border last:border-b-0">
+                      <td className="px-4 py-3 font-semibold">{label}</td>
+                      <td className="tnum px-4 py-3 text-right">{row.ordersToday}</td>
+                      <td className="tnum px-4 py-3 text-right">{row.orders7d}</td>
+                      <td className="tnum px-4 py-3 text-right">{formatMoney(row.income7d)}</td>
+                      <td className="tnum px-4 py-3 text-right">{formatMoney(row.balance)}</td>
+                    </tr>
+                  );
+                })}
+                <tr className="bg-surface-2 font-bold">
+                  <td className="px-4 py-3">{t("mbr.ov.total")}</td>
+                  <td className="tnum px-4 py-3 text-right">{overview.reduce((sum, row) => sum + row.ordersToday, 0)}</td>
+                  <td className="tnum px-4 py-3 text-right">{overview.reduce((sum, row) => sum + row.orders7d, 0)}</td>
+                  <td className="tnum px-4 py-3 text-right">{formatMoney(overview.reduce((sum, row) => sum + row.income7d, 0))}</td>
+                  <td className="tnum px-4 py-3 text-right">{formatMoney(overview.reduce((sum, row) => sum + row.balance, 0))}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <p className="flex items-start gap-2.5 rounded-md border border-border bg-surface-2 p-4 text-sm text-text-secondary">
         <Info className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
@@ -463,6 +541,16 @@ export function BranchesView({
           </p>
         </div>
       </Sheet>
+
+      <ConfirmDialog
+        open={syncing !== null}
+        onClose={() => setSyncing(null)}
+        onConfirm={confirmSync}
+        title={t("mbr.sync.title", { label: syncing?.label ?? "" })}
+        message={t("mbr.sync.body", { label: syncing?.label ?? "" })}
+        confirmLabel={t("mbr.action.syncMenu")}
+        loading={pending}
+      />
 
       <ConfirmDialog
         open={closing !== null}

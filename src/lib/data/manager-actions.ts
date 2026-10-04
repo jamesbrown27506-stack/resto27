@@ -7,11 +7,15 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireCapability, setActiveBranch } from "@/lib/auth/branch";
-import { writeAudit } from "./platform-actions";
+import { entitlementsFor } from "@/lib/billing/entitlements";
+import { mainRestaurantId } from "@/lib/branches/account";
+import { can } from "@/lib/capabilities";
+import type { Branch } from "@/lib/branch-types";
+import { writeAudit } from "@/lib/audit";
 import { trySendMail } from "@/lib/mail";
 import { absoluteUrl } from "@/lib/site-url";
 import { notify } from "@/lib/notify";
-import { releaseTableIfFree } from "./order-actions";
+import { releaseTableIfFree } from "@/lib/orders/table-release";
 import { POPULAR_DISH_BY_ID, type DishTemplate } from "./dish-templates";
 import { normaliseDepositType, type DepositType } from "@/lib/reservations/deposit";
 import {
@@ -294,9 +298,69 @@ export interface SeededDish {
   price?: number;
 }
 
+/* ── Plan ceilings, enforced here ──────────────────────────────────────── */
+
+/*
+  The pages SHOW these ceilings; until now nothing ENFORCED them — a direct
+  call to the action (or a second tab, or a stale screen) went straight past
+  a disabled button. Each returns what is LEFT under the plan, or null for
+  "no ceiling" (unlimited, or billing unreadable — see entitlementsFor).
+*/
+
+type PlanScope = Pick<Branch, "restaurantId" | "planTier" | "subscriptionState">;
+
+/** Dishes the plan still allows on this menu. */
+async function dishRoom(active: PlanScope): Promise<number | null> {
+  const plan = await entitlementsFor(active);
+  if (!plan || plan.menuItemLimit === null) return null;
+  const { count } = await createAdminClient()
+    .from("menu_items")
+    .select("id", { count: "exact", head: true })
+    .eq("restaurant_id", active.restaurantId);
+  return Math.max(0, plan.menuItemLimit - (count ?? 0));
+}
+
+/** Active promotions the plan still allows (the one being switched on excluded). */
+async function promotionRoom(active: PlanScope, excludeId?: string): Promise<{ left: number | null; limit: number | null }> {
+  const plan = await entitlementsFor(active);
+  if (!plan || plan.promotionLimit === null) return { left: null, limit: null };
+  let query = createAdminClient()
+    .from("promotions")
+    .select("id", { count: "exact", head: true })
+    .eq("restaurant_id", active.restaurantId)
+    .eq("is_active", true);
+  if (excludeId) query = query.neq("id", excludeId);
+  const { count } = await query;
+  return { left: Math.max(0, plan.promotionLimit - (count ?? 0)), limit: plan.promotionLimit };
+}
+
+/**
+ * May the team grow by one more `role`? Staff accounts are a plan feature
+ * (Starter has none), and non-owner seats are capped by `staff_limit`.
+ * Owners never take a seat: they are the account, not its staff.
+ */
+async function staffSeat(
+  active: PlanScope,
+  role: BranchRole,
+): Promise<{ ok: true } | { ok: false; reason: "notInPlan" } | { ok: false; reason: "full"; limit: number }> {
+  const plan = await entitlementsFor(active);
+  if (!plan) return { ok: true };
+  if (!plan.staffManagement) return { ok: false, reason: "notInPlan" };
+  if (role === "owner") return { ok: true };
+  const { count } = await createAdminClient()
+    .from("restaurant_staff")
+    .select("id", { count: "exact", head: true })
+    .eq("restaurant_id", active.restaurantId)
+    .neq("role", "owner")
+    .in("status", ["active", "invited"]);
+  return (count ?? 0) >= plan.staffLimit ? { ok: false, reason: "full", limit: plan.staffLimit } : { ok: true };
+}
+
 export async function seedPopularDishes(selections: SeededDish[]): Promise<ActionResult> {
   const t = await getTranslator();
-  const { active } = await requireCapability("menu.view");
+  // Publishing dishes at a price is menu EDITING — `menu.view` let a waiter
+  // or the kitchen tablet do it at any time.
+  const { active } = await requireCapability("menu.edit");
 
   // De-duplicate by id, keeping the LAST price given for each — the picker
   // can legitimately send the same dish twice if its state ever doubles up,
@@ -379,6 +443,13 @@ export async function seedPopularDishes(selections: SeededDish[]): Promise<Actio
     }));
 
   if (inserts.length === 0) return { ok: true };
+
+  // Never past the plan's dish ceiling: as many as still fit, then stop.
+  const room = await dishRoom(active);
+  if (room !== null && room === 0) {
+    return { ok: false, error: t("est.menuLimitReached") };
+  }
+  if (room !== null) inserts.splice(room);
 
   const { error } = await supabase.from("menu_items").insert(inserts);
   if (error) {
@@ -491,6 +562,9 @@ export async function createMenuItem(input: MenuItemInput): Promise<ActionResult
 
   const invalid = validateItem(input);
   if (invalid) return { ok: false, error: t(invalid) };
+
+  const room = await dishRoom(active);
+  if (room !== null && room <= 0) return { ok: false, error: t("est.menuLimitReached") };
 
   const supabase = createAdminClient();
 
@@ -811,6 +885,15 @@ export async function inviteStaff(input: {
     return { ok: false, error: t("est.onlyOwnerAddsOwner") };
   }
 
+  // The plan decides whether there is a team at all, and how big.
+  const seat = await staffSeat(active, input.role);
+  if (!seat.ok) {
+    return {
+      ok: false,
+      error: seat.reason === "notInPlan" ? t("est.staffNotInPlan") : t("est.staffLimitReached", { limit: seat.limit }),
+    };
+  }
+
   const supabase = createAdminClient();
 
   const { data: existingProfile } = await supabase
@@ -832,7 +915,8 @@ export async function inviteStaff(input: {
     if (already) {
       if (already.status === "active") return { ok: false, error: t("est.alreadyWorksHere") };
 
-      // Reinstating a suspended colleague is the same gesture as inviting one.
+      // Reinstating a suspended colleague is the same gesture as inviting one
+      // — they accepted this team once already.
       const { error } = await supabase
         .from("restaurant_staff")
         .update({ status: "active", role: input.role })
@@ -842,24 +926,19 @@ export async function inviteStaff(input: {
       revalidatePath("/m/staff");
       return { ok: true, note: t("est.memberReinstated") };
     }
+  }
 
-    const { error } = await supabase.from("restaurant_staff").insert({
-      restaurant_id: active.restaurantId,
-      profile_id: existingProfile.id,
-      role: input.role,
-      status: "active",
-      invited_email: email,
-      invited_by: profile.id,
-      invited_at: new Date().toISOString(),
-      accepted_at: new Date().toISOString(),
-      display_name: existingProfile.name,
-    });
+  /*
+    EVERY NEW MEMBER IS INVITED — an existing account too.
 
-    if (error) {
-      console.error("[manager:inviteStaff] link existing", error.message);
-      return { ok: false, error: t("est.addToTeamFailed") };
-    }
-  } else {
+    An existing account used to be enrolled ACTIVE on the spot, from nothing
+    but its email: no consent, its role turned from customer to manager for
+    good, and its sign-ins then tied to a stranger's restaurant status (a
+    suspended restaurant signs its staff out). Anyone could do that to any
+    email. Now the same single-use, seven-day, email-bound invitation goes to
+    everyone, and nothing changes until they accept it.
+  */
+  {
     // Single-use, seven-day token. Acceptance also requires the verified
     // invited email, so forwarding this link does not grant staff access.
     const token = randomUUID();
@@ -901,12 +980,12 @@ export async function inviteStaff(input: {
       `${profile.name} vous invite à rejoindre l'équipe de ${active.restaurantName} sur Resto237.`,
       "",
       existingProfile
-        ? `Connectez-vous avec cette adresse (${email}) pour accéder à votre espace restaurant.`
+        ? `Ouvrez votre invitation ci-dessous, connectez-vous avec cette adresse (${email}) et acceptez-la : rien ne change pour votre compte tant que vous ne l'avez pas acceptée.`
         : `Ouvrez votre invitation ci-dessous. Connectez-vous ou créez un compte avec cette adresse (${email}), confirmez votre e-mail, puis acceptez l’invitation dans Mon compte.`,
       "",
       "— Resto237",
     ].join("\n"),
-    action: { label: existingProfile ? "Accéder à mon espace" : "Ouvrir mon invitation", url: await absoluteUrl(invitationPath) },
+    action: { label: "Ouvrir mon invitation", url: await absoluteUrl(invitationPath) },
     locale: "fr",
   });
 
@@ -936,6 +1015,11 @@ export async function changeStaffRole(staffId: string, role: BranchRole): Promis
 
   if (role === "owner" && active.role !== "owner") {
     return { ok: false, error: t("est.onlyOwnerAppointsOwner") };
+  }
+  // Nor may anyone below an owner demote one — a manager removing the owner
+  // above them is the same escalation as appointing themselves one.
+  if (member.role === "owner" && active.role !== "owner") {
+    return { ok: false, error: t("est.onlyOwnerActsOnOwner") };
   }
 
   /**
@@ -998,6 +1082,10 @@ export async function suspendStaff(staffId: string): Promise<ActionResult> {
     return { ok: false, error: t("est.cannotRemoveSelf") };
   }
 
+  if (member.role === "owner" && active.role !== "owner") {
+    return { ok: false, error: t("est.onlyOwnerActsOnOwner") };
+  }
+
   if (member.role === "owner") {
     const { count } = await supabase
       .from("restaurant_staff")
@@ -1032,6 +1120,26 @@ export async function reinstateStaff(staffId: string): Promise<ActionResult> {
   const { active } = await requireCapability("staff.manage");
   const supabase = createAdminClient();
 
+  // Coming back takes a seat like arriving does.
+  const { data: member } = await supabase
+    .from("restaurant_staff")
+    .select("role")
+    .eq("id", staffId)
+    .eq("restaurant_id", active.restaurantId)
+    .maybeSingle();
+  if (member?.role === "owner" && active.role !== "owner") {
+    return { ok: false, error: t("est.onlyOwnerActsOnOwner") };
+  }
+  if (member) {
+    const seat = await staffSeat(active, member.role as BranchRole);
+    if (!seat.ok) {
+      return {
+        ok: false,
+        error: seat.reason === "notInPlan" ? t("est.staffNotInPlan") : t("est.staffLimitReached", { limit: seat.limit }),
+      };
+    }
+  }
+
   const { error } = await supabase
     .from("restaurant_staff")
     .update({ status: "active" })
@@ -1042,6 +1150,89 @@ export async function reinstateStaff(staffId: string): Promise<ActionResult> {
 
   revalidatePath("/m/staff");
   return { ok: true };
+}
+
+/**
+ * Put someone already on this branch's team onto ANOTHER branch of the same
+ * restaurant, with a role there.
+ *
+ * No invitation: they already accepted this employer's team, and a second
+ * location of the same restaurant is not a stranger's. Everything a direct
+ * invitation checks still holds — the caller manages staff AT THE TARGET
+ * branch too, only an owner makes an owner, the target's plan has a seat —
+ * and the target must belong to the same main restaurant.
+ */
+export async function addStaffToBranch(input: {
+  staffId: string;
+  targetRestaurantId: string;
+  role: BranchRole;
+}): Promise<ActionResult> {
+  const t = await getTranslator();
+  const { active, branches, profile } = await requireCapability("staff.manage");
+
+  const target = branches.find(
+    (branch) => branch.restaurantId === input.targetRestaurantId && branch.restaurantId !== active.restaurantId,
+  );
+  if (!target || !can(target.role, "staff.manage")) return { ok: false, error: t("est.notAtBranch") };
+  if ((await mainRestaurantId(active.restaurantId)) !== (await mainRestaurantId(target.restaurantId))) {
+    return { ok: false, error: t("est.notAtBranch") };
+  }
+  if (input.role === "owner" && target.role !== "owner") return { ok: false, error: t("est.onlyOwnerAddsOwner") };
+
+  const supabase = createAdminClient();
+  const { data: member } = await supabase
+    .from("restaurant_staff")
+    .select("profile_id, status, display_name, invited_email")
+    .eq("id", input.staffId)
+    .eq("restaurant_id", active.restaurantId)
+    .maybeSingle();
+  if (!member || member.status !== "active" || !member.profile_id) return { ok: false, error: t("est.noSuchMember") };
+
+  const seat = await staffSeat(target, input.role);
+  if (!seat.ok) {
+    return {
+      ok: false,
+      error: seat.reason === "notInPlan" ? t("est.staffNotInPlan") : t("est.staffLimitReached", { limit: seat.limit }),
+    };
+  }
+
+  const { data: existing } = await supabase
+    .from("restaurant_staff")
+    .select("id, status")
+    .eq("restaurant_id", target.restaurantId)
+    .eq("profile_id", member.profile_id)
+    .maybeSingle();
+  if (existing?.status === "active") return { ok: false, error: t("est.alreadyWorksThere") };
+
+  const now = new Date().toISOString();
+  const { error } = existing
+    ? await supabase.from("restaurant_staff").update({ status: "active", role: input.role }).eq("id", existing.id)
+    : await supabase.from("restaurant_staff").insert({
+        restaurant_id: target.restaurantId,
+        profile_id: member.profile_id,
+        role: input.role,
+        status: "active",
+        invited_email: member.invited_email,
+        invited_by: profile.id,
+        invited_at: now,
+        accepted_at: now,
+        display_name: member.display_name,
+      });
+  if (error) {
+    console.error("[manager:addStaffToBranch]", error.message);
+    return { ok: false, error: t("est.addToTeamFailed") };
+  }
+
+  await writeAudit(profile, {
+    action: "staff.added_to_branch",
+    entityType: "restaurant_staff",
+    entityId: target.restaurantId,
+    summary: `Added a team member from ${active.branchLabel} to ${target.branchLabel} as ${input.role}`,
+    metadata: { profileId: member.profile_id, from: active.restaurantId },
+  });
+
+  revalidatePath("/m/staff");
+  return { ok: true, note: t("est.addedToBranch", { branch: target.branchLabel }) };
 }
 
 export async function cancelInvite(staffId: string): Promise<ActionResult> {
@@ -1595,6 +1786,12 @@ export async function createPromotion(input: {
       ? t("est.promoUncappedNote")
       : undefined;
 
+  // A new code starts active, so it takes one of the plan's active slots.
+  const promos = await promotionRoom(active);
+  if (promos.left !== null && promos.left <= 0) {
+    return { ok: false, error: t("est.promoLimitReached", { limit: promos.limit ?? 0 }) };
+  }
+
   const supabase = createAdminClient();
   const { error } = await supabase.from("promotions").insert({
     restaurant_id: active.restaurantId,
@@ -1622,6 +1819,14 @@ export async function setPromotionActive(id: string, isActive: boolean): Promise
   const t = await getTranslator();
   const { active } = await requireCapability("promotions.manage");
   const supabase = createAdminClient();
+
+  // Switching one ON is the other way past the active-promotion ceiling.
+  if (isActive) {
+    const promos = await promotionRoom(active, id);
+    if (promos.left !== null && promos.left <= 0) {
+      return { ok: false, error: t("est.promoLimitReached", { limit: promos.limit ?? 0 }) };
+    }
+  }
 
   const { error } = await supabase
     .from("promotions")
@@ -1854,7 +2059,8 @@ export async function setTableStatus(
  */
 export async function completeSetup(): Promise<ActionResult> {
   const t = await getTranslator();
-  const { active } = await requireCapability("menu.view");
+  // The wizard belongs to whoever builds the menu (owner, manager).
+  const { active } = await requireCapability("menu.edit");
   const supabase = createAdminClient();
 
   const { error } = await supabase
@@ -2029,7 +2235,8 @@ export async function setDeliveryFeeRange(input: {
  */
 export async function setDefaultOpeningHours(): Promise<ActionResult> {
   const t = await getTranslator();
-  const { active } = await requireCapability("menu.view");
+  // Overwrites the whole week's hours: a profile edit, not a menu glance.
+  const { active } = await requireCapability("profile.edit");
   const supabase = createAdminClient();
 
   // Mon(1)–Sat(6): 10:00–22:00, Sun(0): closed

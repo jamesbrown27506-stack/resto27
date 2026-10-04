@@ -15,6 +15,7 @@ import {
   withdrawnInLast24h,
 } from "@/lib/wallet/controls";
 import { dailyAllowance } from "@/lib/wallet/withdraw-rules";
+import { loadSchedule, scheduleEntitled } from "@/lib/wallet/scheduled-payouts";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -61,6 +62,12 @@ export default async function WalletPage() {
       ])
     : [null, { hasPin: false, lockedUntil: null }, [], []];
 
+  // Scheduled payouts (0074): the owner's panel, on the REAL plan.
+  const [schedule, entitled] =
+    ready && isOwnerHere
+      ? await Promise.all([loadSchedule(active.restaurantId), scheduleEntitled(active.restaurantId)])
+      : [{ ready: false, schedule: null }, false];
+
   const left =
     right?.allowed && right.kind === "delegate" && right.dailyLimit !== null
       ? dailyAllowance(right.dailyLimit, await withdrawnInLast24h(active.restaurantId, profile.id))
@@ -95,6 +102,23 @@ export default async function WalletPage() {
             label: account.label,
           })),
           delegates,
+          schedule: schedule.ready
+            ? {
+                entitled,
+                current: schedule.schedule
+                  ? {
+                      enabled: schedule.schedule.enabled,
+                      frequency: schedule.schedule.frequency,
+                      weekday: schedule.schedule.weekday,
+                      payoutAccountId: schedule.schedule.payoutAccountId,
+                      keepAmount: schedule.schedule.keepAmount,
+                      minAmount: schedule.schedule.minAmount,
+                      lastRunAt: schedule.schedule.lastRunAt,
+                      lastResult: schedule.schedule.lastResult,
+                    }
+                  : null,
+              }
+            : null,
         }}
       />
     </ManagerPage>

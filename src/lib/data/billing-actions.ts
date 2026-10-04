@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireRole, superAdminOrError } from "@/lib/auth/session";
 import { SUPER_ADMIN_ONLY_ERROR } from "@/lib/auth/super-admin-rules";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { notify } from "@/lib/notify";
 import { activateFromInvoice } from "./invoice-activation";
 import { cancelPaidOrder } from "@/lib/payments/order-refunds";
@@ -759,7 +759,11 @@ export async function createRefund(input: {
  * cancelled.
  */
 export async function adminCancelOrder(input: { reference: string; reason: string }): Promise<ActionResult> {
-  const admin = await requireRole("admin");
+  // Cancelling a PAID order debits the restaurant and sends a refund — money
+  // moving, so super admins only, like adminRetryRefund for the same money.
+  const gate = await superAdminOrError();
+  if (!gate.ok) return gate;
+  const admin = gate.admin;
   const reference = input.reference.trim().toUpperCase();
   const reason = input.reason.trim();
   if (!reference) return { ok: false, error: "Enter the order reference (CMD-…)." };

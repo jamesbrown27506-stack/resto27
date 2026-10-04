@@ -5,6 +5,8 @@ import { requireCapability } from "@/lib/auth/branch";
 import { fetchStaff } from "@/lib/data/manager";
 import { fetchPlanLimits } from "@/lib/data/billing";
 import { PlanGateUpsell } from "@/components/billing/plan-gate";
+import { mainRestaurantId } from "@/lib/branches/account";
+import { can } from "@/lib/capabilities";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
 
@@ -27,7 +29,7 @@ export async function generateMetadata(): Promise<Metadata> {
  * role is meant to scope.
  */
 export default async function StaffPage() {
-  const { active, profile } = await requireCapability("staff.manage");
+  const { active, profile, branches } = await requireCapability("staff.manage");
 
   /**
    * STAFF ACCOUNTS ARE A PAID-PLAN FEATURE (§14.4), AND THE FLAG COMES FROM
@@ -60,6 +62,19 @@ export default async function StaffPage() {
 
   const staff = await fetchStaff(active.restaurantId);
 
+  // The other locations of this restaurant where this person also manages
+  // staff — where a colleague can be added without a new invitation.
+  const mainId = await mainRestaurantId(active.restaurantId);
+  const otherBranches = (
+    await Promise.all(
+      branches
+        .filter((branch) => branch.restaurantId !== active.restaurantId && can(branch.role, "staff.manage"))
+        .map(async (branch) => ((await mainRestaurantId(branch.restaurantId)) === mainId ? branch : null)),
+    )
+  )
+    .filter((branch): branch is NonNullable<typeof branch> => branch !== null)
+    .map((branch) => ({ id: branch.restaurantId, label: branch.branchLabel, isOwner: branch.role === "owner" }));
+
   return (
     // A Server Component cannot call useLocale, so it hands ManagerPage KEYS.
     // The restaurant's own name is not a translatable phrase, so the line that
@@ -72,6 +87,7 @@ export default async function StaffPage() {
         // form can hide the option — the action refuses it regardless.
         isOwner={active.role === "owner"}
         restaurantName={active.restaurantName}
+        otherBranches={otherBranches}
         // A single-location restaurant is seeded with the label "Principal";
         // repeating it beside the restaurant's own name says nothing. Only a
         // real second address earns the chip.

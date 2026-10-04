@@ -142,6 +142,17 @@ export async function createPhoneReservation(input: z.input<typeof PhoneBookingS
   const config = await loadBookingConfig(active.restaurantId);
   if (closureOn(data.date, config.closures)) return { ok: false, error: t("ons.err.closedOnDate") };
 
+  // Only this branch's tables: ids come from the client, and another
+  // restaurant's table must never be booked from here.
+  if (data.tableIds.length) {
+    const { count } = await supabase
+      .from("restaurant_tables")
+      .select("id", { count: "exact", head: true })
+      .eq("restaurant_id", active.restaurantId)
+      .in("id", data.tableIds);
+    if ((count ?? 0) !== new Set(data.tableIds).size) return { ok: false, error: t("ecu.requestNotSent") };
+  }
+
   const durationMin = await getReservationDuration(active.restaurantId, supabase);
   const reference = `RES-${randomUUID().slice(0, 4).toUpperCase()}`;
   const row = {

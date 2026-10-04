@@ -8,11 +8,13 @@ import { rateLimit } from "@/lib/rate-limit";
 import { notify } from "@/lib/notify";
 import { normalisePhone } from "@/lib/payments/camerpay/client";
 import { requireConfirmedRecipient } from "@/lib/payments/recipient";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { paymentMode } from "./billing";
 import { mainRestaurantId } from "@/lib/branches/account";
+import { scheduleEntitled } from "@/lib/wallet/scheduled-payouts";
 import {
   checkWithdrawalPin,
+  getPayoutAccount,
   notifyOwners,
   savePin,
   verifyAccountPassword,
@@ -350,4 +352,105 @@ export async function removePayoutAccount(id: string): Promise<Result> {
 
   revalidatePath("/m/wallet");
   return { ok: true, note: t("mwd.note.numberRemoved") };
+}
+
+/* ── Scheduled payouts (0074) ──────────────────────────────────────────── */
+
+/**
+ * Set (or change) this branch's scheduled payout — Enterprise.
+ *
+ * An owner's standing instruction to send money while they sleep, so it takes
+ * the same proof as granting the right to withdraw: their own PIN. The plan
+ * is checked here AND every night (scheduled-payouts.ts), so a downgrade
+ * stops it without anyone remembering to.
+ */
+export async function saveScheduledPayout(input: {
+  frequency: "daily" | "weekly" | "monthly";
+  weekday: number | null;
+  payoutAccountId: string;
+  keepAmount: number;
+  minAmount: number;
+  pin: string;
+}): Promise<Result> {
+  const t = await getTranslator();
+  const owner = await ownerWithPin("branch", input.pin);
+  if (!owner.ok) return owner;
+  const { context } = owner;
+  const restaurantId = context.active.restaurantId;
+
+  if (!(await scheduleEntitled(restaurantId))) {
+    return { ok: false, reason: "notInPlan", error: t("mwd.sch.err.notInPlan") };
+  }
+  if (!["daily", "weekly", "monthly"].includes(input.frequency)) {
+    return { ok: false, reason: "frequency", error: t("mwd.err.saveFailed") };
+  }
+  if (input.frequency === "weekly" && (input.weekday === null || input.weekday < 0 || input.weekday > 6)) {
+    return { ok: false, reason: "weekday", error: t("mwd.sch.err.weekday") };
+  }
+  const keep = Math.round(input.keepAmount);
+  const min = Math.round(input.minAmount);
+  if (!Number.isInteger(keep) || keep < 0 || !Number.isInteger(min) || min < 500) {
+    return { ok: false, reason: "amounts", error: t("mwd.sch.err.amounts") };
+  }
+  if (!(await getPayoutAccount(restaurantId, input.payoutAccountId))) {
+    return { ok: false, reason: "accountMissing", error: t("est.withdrawAccountMissing") };
+  }
+
+  const { error } = await createAdminClient().from("scheduled_payouts").upsert(
+    {
+      restaurant_id: restaurantId,
+      enabled: true,
+      frequency: input.frequency,
+      weekday: input.frequency === "weekly" ? input.weekday : null,
+      payout_account_id: input.payoutAccountId,
+      keep_amount: keep,
+      min_amount: min,
+      set_by: context.profile.id,
+      last_result: null,
+    },
+    { onConflict: "restaurant_id" },
+  );
+  if (error) {
+    console.error("[wallet:saveSchedule]", error.message);
+    return { ok: false, reason: "saveFailed", error: t("mwd.err.saveFailed") };
+  }
+
+  await writeAudit(context.profile, {
+    action: "wallet.schedule_set",
+    entityType: "restaurant",
+    entityId: restaurantId,
+    summary: `${context.profile.name} scheduled ${input.frequency} payouts (keep ${keep} XAF, minimum ${min} XAF)`,
+  });
+  await notifyOwners(restaurantId, {
+    tone: "warning",
+    withdrawalKind: "security",
+    detail: `${context.profile.name} a programmé des retraits automatiques (${input.frequency === "daily" ? "chaque jour" : input.frequency === "weekly" ? "chaque semaine" : "chaque mois"}).`,
+  });
+
+  revalidatePath("/m/wallet");
+  return { ok: true, note: t("mwd.sch.note.saved") };
+}
+
+/** Stop the schedule. No PIN: stopping money from moving is always allowed. */
+export async function stopScheduledPayout(): Promise<Result> {
+  const t = await getTranslator();
+  const context = await requireBranch();
+  if (context.impersonating) return { ok: false, reason: "impersonating", error: t("est.withdrawImpersonating") };
+  if (context.active.role !== "owner") return { ok: false, reason: "notOwner", error: t("mwd.err.notOwner") };
+
+  const { error } = await createAdminClient()
+    .from("scheduled_payouts")
+    .update({ enabled: false })
+    .eq("restaurant_id", context.active.restaurantId);
+  if (error) return { ok: false, reason: "saveFailed", error: t("mwd.err.saveFailed") };
+
+  await writeAudit(context.profile, {
+    action: "wallet.schedule_stopped",
+    entityType: "restaurant",
+    entityId: context.active.restaurantId,
+    summary: `${context.profile.name} stopped scheduled payouts`,
+  });
+
+  revalidatePath("/m/wallet");
+  return { ok: true, note: t("mwd.sch.note.stopped") };
 }

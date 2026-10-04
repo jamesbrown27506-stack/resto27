@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { requireRole, superAdminOrError, type AuthProfile } from "@/lib/auth/session";
 import { canModerateAccount } from "@/lib/auth/super-admin-rules";
 import { loadAdminSubjects, loadSubject } from "./admins";
-import { writeAudit } from "./platform-actions";
+import { writeAudit } from "@/lib/audit";
 import { trySendMail } from "@/lib/mail";
 import { notify } from "@/lib/notify";
 import { absoluteUrl } from "@/lib/site-url";
