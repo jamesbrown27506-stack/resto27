@@ -74,37 +74,39 @@ export const legalDict = defineDict({
 
     "leg.privacy.donnees": "Données que nous collectons",
     "leg.privacy.donnees.p1":
-      "Lorsque vous créez un compte, nous collectons votre nom, votre adresse email et votre numéro de téléphone. Ces informations sont nécessaires pour vous identifier et pour permettre au restaurant de vous joindre au sujet de votre commande.",
+      "Lorsque vous créez un compte, nous collectons votre nom, votre adresse email et votre numéro de téléphone pour gérer votre compte et permettre aux restaurants de vous joindre au sujet de vos commandes ou réservations.",
     "leg.privacy.donnees.p2":
-      "Lorsque vous passez commande, nous enregistrons les articles commandés, le montant, votre adresse de livraison et vos éventuelles instructions. Ces éléments sont conservés avec la commande.",
+      "Nous enregistrons les détails de vos commandes et réservations, notamment les articles, montants, coordonnées de livraison ou de réservation et instructions fournies. Pour les paiements Mobile Money, nous enregistrons aussi le numéro utilisé et les informations de transaction.",
 
     "leg.privacy.utilisation": "Utilisation de vos données",
     "leg.privacy.utilisation.p1":
       "Vos données servent à traiter vos commandes et vos réservations, à vous tenir informé de leur avancement, à gérer votre programme de fidélité et à répondre à vos demandes d'assistance.",
     "leg.privacy.utilisation.p2":
-      "Nous ne vendons jamais vos données à des tiers. Les restaurants n'ont accès qu'aux informations nécessaires à l'exécution de vos commandes chez eux.",
+      "Nous ne vendons pas vos données. Les restaurants concernés reçoivent les informations nécessaires pour traiter vos commandes et réservations; les prestataires de paiement reçoivent les données nécessaires pour traiter vos paiements.",
+    "leg.privacy.utilisation.p3":
+      "Le site utilise Firebase Analytics pour mesurer son utilisation lorsque cette fonction est prise en charge. Si vous activez les notifications push, des identifiants d'appareil ou de navigateur sont utilisés pour les acheminer.",
 
     "leg.privacy.conservation": "Conservation et suppression",
     "leg.privacy.conservation.p1":
-      "Vous pouvez demander la suppression de votre compte à tout moment depuis vos paramètres. Vos données personnelles — nom, email, téléphone — sont alors définitivement anonymisées.",
+      "Vous pouvez supprimer votre compte depuis vos paramètres. Cette action anonymise les champs nom, email et téléphone de votre profil et met fin à l'accès au compte.",
     "leg.privacy.conservation.p2":
-      "L'historique des commandes est conservé sous forme anonymisée. Cette conservation est nécessaire : les commandes constituent l'historique comptable du restaurant et la base du calcul des commissions de la plateforme. Elles ne peuvent plus être reliées à votre identité.",
+      "Les commandes, réservations et paiements passés restent conservés pour le suivi des transactions, la comptabilité et le traitement des litiges. Ces dossiers peuvent encore contenir le nom, les coordonnées ou l'adresse saisis lors de la transaction; la suppression du compte ne les anonymise pas automatiquement. Contactez-nous pour toute demande concernant ces données.",
 
     "leg.privacy.securite": "Sécurité",
     "leg.privacy.securite.p1":
       "Les mots de passe sont stockés sous forme de condensats cryptographiques et ne sont jamais lisibles, y compris par nos équipes. Les échanges avec la plateforme sont chiffrés.",
     "leg.privacy.securite.p2":
-      "Si vous suspendez ou modifiez votre mot de passe, toutes vos sessions ouvertes sont immédiatement invalidées sur l'ensemble de vos appareils.",
+      "La suspension d'un compte bloque son accès à l'application. Après une modification de votre mot de passe, vous devez vous reconnecter.",
 
     "leg.privacy.paiement": "Paiements",
     "leg.privacy.paiement.p1":
-      "Les commandes sont réglées en espèces à la livraison ou directement au restaurant. Nous ne stockons aucune coordonnée bancaire de client.",
+      "Selon le service et les options proposées, les commandes peuvent être réglées en espèces, par Mobile Money ou avec le solde du portefeuille Resto237. Le Mobile Money sert également aux réservations, aux paiements à table, aux recharges du portefeuille et aux abonnements des restaurants.",
     "leg.privacy.paiement.p2":
-      "Les abonnements des restaurateurs sont réglés par Mobile Money via notre prestataire de paiement. Nous conservons la référence de la transaction et le montant, jamais les identifiants de votre compte mobile.",
+      "Pour un paiement Mobile Money, nous transmettons au prestataire les informations nécessaires, notamment le numéro de téléphone et le montant. Nous conservons le numéro, le prestataire, la référence, le montant et le statut de la transaction. Nous ne demandons pas votre code PIN Mobile Money.",
 
     "leg.privacy.droits": "Vos droits",
     "leg.privacy.droits.p1":
-      "Vous pouvez consulter, corriger ou faire supprimer vos données personnelles à tout moment depuis votre compte, ou en nous écrivant à contact@resto237.online.",
+      "Vous pouvez consulter ou corriger les informations de votre compte dans l'application, supprimer votre compte depuis les paramètres ou nous écrire à contact@resto237.online pour une demande concernant vos données personnelles conservées dans les dossiers de transaction.",
     "leg.privacy.droits.p2":
       "Vous pouvez également refuser les emails non essentiels depuis vos paramètres de notification, sans perdre les messages liés à vos commandes en cours.",
 
@@ -177,37 +179,39 @@ export const legalDict = defineDict({
 
     "leg.privacy.donnees": "Data we collect",
     "leg.privacy.donnees.p1":
-      "When you create an account, we collect your name, email address and phone number. This information is needed to identify you and to let the restaurant reach you about your order.",
+      "When you create an account, we collect your name, email address and phone number to manage your account and let restaurants contact you about your orders or reservations.",
     "leg.privacy.donnees.p2":
-      "When you place an order, we record the items ordered, the amount, your delivery address and any instructions. These are kept with the order.",
+      "We record details of your orders and reservations, including items, amounts, delivery or booking contact details and instructions you provide. For Mobile Money payments, we also record the number used and transaction information.",
 
     "leg.privacy.utilisation": "How we use your data",
     "leg.privacy.utilisation.p1":
       "Your data is used to process your orders and reservations, keep you informed of their progress, run your loyalty programme and answer your support requests.",
     "leg.privacy.utilisation.p2":
-      "We never sell your data to third parties. Restaurants only see the information needed to fulfil your orders with them.",
+      "We do not sell your data. The relevant restaurants receive the information needed to handle your orders and reservations; payment providers receive the data needed to process your payments.",
+    "leg.privacy.utilisation.p3":
+      "The website uses Firebase Analytics to measure usage when supported. If you enable push notifications, device or browser identifiers are used to deliver them.",
 
     "leg.privacy.conservation": "Retention and deletion",
     "leg.privacy.conservation.p1":
-      "You can ask to delete your account at any time from your settings. Your personal data — name, email, phone — is then permanently anonymised.",
+      "You can delete your account from your settings. This anonymises the name, email and phone fields in your profile and ends access to the account.",
     "leg.privacy.conservation.p2":
-      "Order history is kept in anonymised form. This retention is necessary: orders are the restaurant's accounting history and the basis for the platform's commission calculations. They can no longer be linked to your identity.",
+      "Past orders, reservations and payments remain on record for transaction tracking, accounting and dispute handling. These records may still contain the name, contact details or address entered for the transaction; deleting your account does not automatically anonymise them. Contact us about data held in these records.",
 
     "leg.privacy.securite": "Security",
     "leg.privacy.securite.p1":
       "Passwords are stored as cryptographic hashes and are never readable, including by our teams. Traffic with the platform is encrypted.",
     "leg.privacy.securite.p2":
-      "If you suspend or change your password, all your open sessions are immediately invalidated on every device.",
+      "Suspending an account blocks access to the application. After changing your password, you must sign in again.",
 
     "leg.privacy.paiement": "Payments",
     "leg.privacy.paiement.p1":
-      "Orders are paid in cash on delivery or directly at the restaurant. We do not store any customer bank details.",
+      "Depending on the service and available options, orders may be paid in cash, by Mobile Money or with your Resto237 wallet balance. Mobile Money is also used for reservations, table payments, wallet top-ups and restaurant subscriptions.",
     "leg.privacy.paiement.p2":
-      "Restaurant subscriptions are paid by Mobile Money through our payment provider. We keep the transaction reference and the amount, never your mobile account credentials.",
+      "For a Mobile Money payment, we send the provider the information needed to process it, including the phone number and amount. We keep the number, provider, reference, amount and transaction status. We do not ask for your Mobile Money PIN.",
 
     "leg.privacy.droits": "Your rights",
     "leg.privacy.droits.p1":
-      "You can view, correct or delete your personal data at any time from your account, or by writing to contact@resto237.online.",
+      "You can view or correct your account details in the app, delete your account from settings, or write to contact@resto237.online about personal data retained in transaction records.",
     "leg.privacy.droits.p2":
       "You can also opt out of non-essential emails from your notification settings, without losing messages about your current orders.",
 

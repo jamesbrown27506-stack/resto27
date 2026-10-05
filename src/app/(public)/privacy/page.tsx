@@ -30,7 +30,7 @@ export default async function PrivacyPage() {
   const sections: LegalSection[] = SECTION_IDS.map((id) => ({
     id,
     heading: t(`leg.privacy.${id}` as TranslationKey),
-    paragraphs: [1, 2]
+    paragraphs: [1, 2, 3]
       .map((n) => t(`leg.privacy.${id}.p${n}` as TranslationKey))
       .filter((p) => !p.startsWith("leg.privacy.")),
   })).filter((s) => s.paragraphs.length > 0);
@@ -39,7 +39,7 @@ export default async function PrivacyPage() {
     <LegalPage
       title={t("leg.privacy.title")}
       intro={t("leg.privacy.intro")}
-      updatedAt="2026-07-01T00:00:00Z"
+      updatedAt="2026-10-05T00:00:00Z"
       sections={sections}
     />
   );

@@ -57,13 +57,13 @@ export const custSettingsDict = defineDict({
     "cst.delete": "Supprimer mon compte",
     "cst.deleteBody": "Action définitive.",
     "cst.deleteWhat": "Ce qui se passe exactement",
-    "cst.deletePoint1": "Votre nom, votre email et votre téléphone sont définitivement anonymisés.",
+    "cst.deletePoint1": "Les champs nom, email et téléphone de votre profil sont anonymisés.",
     "cst.deletePoint2": "Vous ne pouvez plus vous connecter et vos points sont perdus.",
     "cst.deletePoint3":
-      "Vos commandes passées sont conservées sous forme anonyme : elles font partie de la comptabilité des restaurants et ne peuvent pas être effacées.",
+      "Vos commandes, réservations et paiements passés restent conservés. Ces dossiers peuvent encore contenir les coordonnées saisies lors de la transaction.",
     "cst.deleteTitle": "Supprimer définitivement votre compte",
     "cst.deleteMessage":
-      "Vos données personnelles seront anonymisées et vous ne pourrez plus vous connecter. Vos commandes passées restent dans la comptabilité des restaurants, sans lien avec votre identité.",
+      "Les coordonnées de votre profil seront anonymisées et vous ne pourrez plus vous connecter. Vos anciens dossiers de commande, réservation et paiement peuvent encore contenir les coordonnées fournies à ce moment-là.",
     "cst.deletePhrase": "SUPPRIMER",
     "cst.deleteHint": "Cette action ne peut pas être annulée.",
     "cst.deleted": "Votre compte a été supprimé. Au revoir.",
@@ -113,13 +113,13 @@ export const custSettingsDict = defineDict({
     "cst.delete": "Delete my account",
     "cst.deleteBody": "Permanent.",
     "cst.deleteWhat": "Exactly what happens",
-    "cst.deletePoint1": "Your name, email and phone number are permanently anonymised.",
+    "cst.deletePoint1": "The name, email and phone fields in your profile are anonymised.",
     "cst.deletePoint2": "You can no longer sign in, and your points are lost.",
     "cst.deletePoint3":
-      "Your past orders are kept in anonymised form: they are part of the restaurants' accounts and cannot be erased.",
+      "Your past orders, reservations and payments remain on record. These records may still contain contact details entered for the transaction.",
     "cst.deleteTitle": "Permanently delete your account",
     "cst.deleteMessage":
-      "Your personal data will be anonymised and you will no longer be able to sign in. Your past orders stay in the restaurants' accounts, with no link to your identity.",
+      "Your profile contact details will be anonymised and you will no longer be able to sign in. Past order, reservation and payment records may still contain the contact details provided at the time.",
     "cst.deletePhrase": "DELETE",
     "cst.deleteHint": "This action cannot be undone.",
     "cst.deleted": "Your account has been deleted. Goodbye.",
