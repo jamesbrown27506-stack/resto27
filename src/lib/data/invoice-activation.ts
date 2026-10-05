@@ -38,7 +38,14 @@ export type ActivationResult =
 /** One plan month. */
 const PERIOD_DAYS = 30;
 
-export async function activateFromInvoice(invoiceId: string): Promise<ActivationResult> {
+export async function activateFromInvoice(
+  invoiceId: string,
+  /**
+   * What the payment that settles it actually moved. Omitted only by an
+   * admin confirming by hand. See "THE AMOUNT PAID IS THE AMOUNT BILLED".
+   */
+  options: { paidAmount?: number } = {},
+): Promise<ActivationResult> {
   const supabase = createAdminClient();
 
   /**
@@ -84,23 +91,56 @@ export async function activateFromInvoice(invoiceId: string): Promise<Activation
     return { ok: false, reason: "noSubscription", error: "Aucun abonnement pour cet établissement." };
   }
 
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     THE AMOUNT PAID IS THE AMOUNT BILLED (security review 2026-10-05).
+
+     An unpaid invoice is re-priced when branches open or close (0072), and
+     activation used to honour the invoice as it stood when the money
+     landed. Start paying the base price, let that attempt lapse, reopen
+     branches (the invoice grows), then complete the old Orange code: the
+     cheap payment settled the dear invoice — N branches for the price of
+     none. The claim now includes the amount the payment moved; a mismatch
+     activates nothing and the caller hands the payment to an admin.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  if (options.paidAmount !== undefined && Number(invoice.amount) !== Number(options.paidAmount)) {
+    return {
+      ok: false,
+      reason: "invoiceRepriced",
+      error: "Le montant payé ne correspond plus à la facture. Notre équipe va régulariser.",
+    };
+  }
+
   const paidAt = new Date().toISOString();
 
   // THE CLAIM. Two concurrent activations both reach here; one gets a row back
-  // and grants the month, the other gets nothing and grants nothing.
-  const { data: claimed, error: claimError } = await supabase
+  // and grants the month, the other gets nothing and grants nothing. It also
+  // pins the amount read above, so a re-price in between wins nothing.
+  let claim = supabase
     .from("invoices")
     .update({ status: "paid", paid_at: paidAt })
     .eq("id", invoiceId)
-    .eq("status", "unpaid")
-    .select("id")
-    .maybeSingle();
+    .eq("status", "unpaid");
+  if (options.paidAmount !== undefined) claim = claim.eq("amount", options.paidAmount);
+  const { data: claimed, error: claimError } = await claim.select("id").maybeSingle();
 
   if (claimError) {
     console.error("[subscribe:activate] invoice", claimError.message);
     return { ok: false, reason: "invoiceClaimFailed", error: "La facture n'a pas pu être réglée." };
   }
-  if (!claimed) return { ok: true, note: "Cette facture était déjà réglée." };
+  if (!claimed) {
+    // Lost the claim: settled by a racing path — or re-priced in between.
+    const { data: now } = await supabase.from("invoices").select("status, amount").eq("id", invoiceId).maybeSingle();
+    if (now?.status === "unpaid" && options.paidAmount !== undefined && Number(now.amount) !== Number(options.paidAmount)) {
+      return {
+        ok: false,
+        reason: "invoiceRepriced",
+        error: "Le montant payé ne correspond plus à la facture. Notre équipe va régulariser.",
+      };
+    }
+    return { ok: true, note: "Cette facture était déjà réglée." };
+  }
 
   /**
    * A BRANCH TOP-UP BUYS BRANCHES, NOT TIME (0072).

@@ -132,7 +132,7 @@ export async function addAdministrator(input: {
 
   const { data: matches, error: lookupError } = await supabase
     .from("profiles")
-    .select("id, name, email, role, status, deleted_at")
+    .select("id, auth_user_id, name, email, role, status, deleted_at")
     .ilike("email", likeLiteral(email))
     .is("deleted_at", null)
     .limit(2);
@@ -147,10 +147,39 @@ export async function addAdministrator(input: {
   }
 
   const existing = matches?.[0] as
-    | { id: string; name: string; email: string; role: string; status: string; deleted_at: string | null }
+    | {
+        id: string;
+        auth_user_id: string | null;
+        name: string;
+        email: string;
+        role: string;
+        status: string;
+        deleted_at: string | null;
+      }
     | undefined;
 
   if (existing) {
+    /*
+      THE SIGN-IN ACCOUNT MUST OWN THE ADDRESS, not just the profile row
+      (security review 2026-10-05). `profiles.email` was writable by its
+      owner through the REST API until 0076: a customer could set theirs to
+      an address a super admin was about to add, and be the account that got
+      promoted. The auth account's own email is what proves the match.
+    */
+    const { data: account, error: accountError } = existing.auth_user_id
+      ? await supabase.auth.admin.getUserById(existing.auth_user_id)
+      : { data: null, error: null };
+    if (accountError) {
+      console.error("[admins:add] auth lookup", accountError.message);
+      return { ok: false, error: "Could not look up that email. Nothing was changed." };
+    }
+    if (normaliseEmail(account?.user?.email ?? "") !== email) {
+      return {
+        ok: false,
+        error: "That address is on a profile whose sign-in account uses a different email. Nothing was changed.",
+      };
+    }
+
     // A customer who is ALSO active staff somewhere is a restaurant login in
     // all but name (syncStaffRole would promote them on their next request).
     const { data: staff } = await supabase

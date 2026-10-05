@@ -18,9 +18,9 @@ import {
   getPayoutAccount,
   notifyOwners,
   savePin,
-  verifyAccountPassword,
   withdrawControlsReady,
 } from "@/lib/wallet/controls";
+import { verifyAccountPassword } from "@/lib/auth/verify-password";
 import { canReceiveWithdrawRight, maskPhone, pinProblem, type BranchRoleName } from "@/lib/wallet/withdraw-rules";
 import type { ActionResult } from "./admin-actions";
 
@@ -69,7 +69,7 @@ export async function setWithdrawalPin(input: { password: string; pin: string })
   const limited = await rateLimit({ key: "wallet:pin-set", identifier: profile.id, limit: 5, windowMs: 60 * 60_000 });
   if (!limited.ok) return { ok: false, reason: "rateLimited", error: t("mwd.err.tooMany") };
 
-  const password = await verifyAccountPassword(profile.email, input.password);
+  const password = await verifyAccountPassword(profile.authUserId, input.password);
   if (password === "wrong") return { ok: false, reason: "password", error: t("mwd.err.password") };
   if (password === "unavailable") return { ok: false, reason: "unavailable", error: t("mwd.err.unavailable") };
 

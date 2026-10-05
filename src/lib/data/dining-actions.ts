@@ -16,6 +16,7 @@ import { getTranslator } from "@/lib/i18n/locale-server";
 import { paymentErrorMessage } from "@/lib/payments/payment-error";
 import { normaliseVoucherCode } from "@/lib/reservations/voucher";
 import { voucherErrorKey } from "@/lib/reservations/voucher-errors";
+import { isPushServiceEndpoint } from "@/lib/push-endpoint";
 
 /*
   ─────────────────────────────────────────────────────────────────────────
@@ -590,7 +591,7 @@ export async function saveGuestDiningPush(raw: string, input: { endpoint: string
     return { ok: false, error: t("tbg.err.visitInactive") };
   }
   const endpoint = input.endpoint.trim();
-  if (!endpoint.startsWith("https://") || endpoint.length > 2048 ||
+  if (!isPushServiceEndpoint(endpoint) ||
       !/^[A-Za-z0-9_+/=-]{40,}$/.test(input.p256dh) ||
       !/^[A-Za-z0-9_+/=-]{8,}$/.test(input.auth)) {
     return { ok: false, error: t("tbg.err.badSubscription") };

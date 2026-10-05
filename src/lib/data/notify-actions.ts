@@ -5,6 +5,7 @@ import { capProfileSubscriptions, sendPushWithReport, type PushDeviceResult } fr
 import { createAdminClient } from "@/lib/supabase/server";
 import { getCurrentProfile, requireUser } from "@/lib/auth/session";
 import { notify, type NotifyTone } from "@/lib/notify";
+import { isPushServiceEndpoint } from "@/lib/push-endpoint";
 import {
   fetchNotificationChannels,
   saveNotificationChannels,
@@ -285,7 +286,7 @@ export async function savePushSubscription(input: {
   const p256dh = input.p256dh.trim();
   const auth = input.auth.trim();
 
-  if (!endpoint.startsWith("https://") || !p256dh || !auth) {
+  if (!isPushServiceEndpoint(endpoint) || !p256dh || !auth) {
     return { ok: false, error: "Invalid subscription." };
   }
 

@@ -290,7 +290,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
         .from("menu_options")
         // Only options belonging to this restaurant's menu items, proven by the
         // join — menu_options has no restaurant_id of its own.
-        .select("id, name, price_delta, is_available, group_id, menu_option_groups!inner(menu_item_id)")
+        .select("id, name, price_delta, is_available, group_id, menu_option_groups!inner(menu_item_id, max_select)")
         .in("id", optionIds)
     : { data: [] };
 
@@ -300,7 +300,8 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       name: string;
       price_delta: number;
       is_available: boolean;
-      menu_option_groups: { menu_item_id: string };
+      group_id: string;
+      menu_option_groups: { menu_item_id: string; max_select: number | null };
     }[]).map((o) => [o.id, o]),
   );
 
@@ -319,8 +320,19 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       return { ok: false, reason: "notEnoughStock", detail: item.name };
     }
 
+    /*
+      EACH OPTION ONCE, AND NO MORE PER GROUP THAN THE GROUP ALLOWS
+      (security review 2026-10-05). The ids were summed as sent: a
+      negative option ("sans viande −500") repeated four times priced a
+      2 000 FCFA dish at 0, and only a total below zero was refused. The
+      screen never sends a repeat, so any repeat is a forged request.
+    */
+    const lineOptionIds = line.optionIds ?? [];
+    if (new Set(lineOptionIds).size !== lineOptionIds.length) return { ok: false, reason: "optionMismatch" };
+    const perGroup = new Map<string, number>();
+
     const chosen: { name: string; price_delta: number }[] = [];
-    for (const id of line.optionIds ?? []) {
+    for (const id of lineOptionIds) {
       const option = options.get(id);
       // An option that does not exist, is unavailable, or belongs to a
       // DIFFERENT dish is refused rather than silently dropped — dropping it
@@ -328,6 +340,12 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       if (!option) return { ok: false, reason: "optionGone" };
       if (!option.is_available) return { ok: false, reason: "optionUnavailable", detail: option.name };
       if (option.menu_option_groups?.menu_item_id !== line.menuItemId) {
+        return { ok: false, reason: "optionMismatch" };
+      }
+      const inGroup = (perGroup.get(option.group_id) ?? 0) + 1;
+      perGroup.set(option.group_id, inGroup);
+      const maxInGroup = Number(option.menu_option_groups?.max_select ?? 1);
+      if (Number.isFinite(maxInGroup) && maxInGroup > 0 && inGroup > maxInGroup) {
         return { ok: false, reason: "optionMismatch" };
       }
       chosen.push({ name: option.name, price_delta: option.price_delta });
@@ -706,6 +724,44 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     return { ok: false, reason: "failed" };
   }
 
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     POINTS ARE SPENT HERE, THEN THE BALANCE IS READ AGAIN
+     (security review 2026-10-05).
+
+     The balance was read near the top and the redeem row written at the very
+     end, as a non-fatal extra. Ten orders sent at once each saw the whole
+     balance and each spent it: ten discounts, a balance of −9×, and the
+     restaurants carried the cost. The ledger is append-only, so the check is
+     made AFTER this order's row exists: of two racing orders at least one
+     sees both rows, finds the balance below zero and takes its order back.
+     A failed redeem row is fatal too — a discount nobody paid for is not a
+     "reconciliation problem".
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  if (pointsUsed > 0 && profile) {
+    const { data: redeemRow, error: redeemError } = await supabase
+      .from("loyalty_ledger")
+      .insert({
+        profile_id: profile.id,
+        order_id: created.id,
+        restaurant_id: input.restaurantId,
+        points: -pointsUsed,
+        kind: "redeem",
+        note: `Commande ${created.reference}`,
+      })
+      .select("id")
+      .single();
+    const { data: after } = redeemError ? { data: null } : await supabase.rpc("loyalty_balance", { p_profile: profile.id });
+    if (redeemError || !redeemRow || Number(after ?? 0) < 0) {
+      if (redeemError) console.error("[checkout:placeOrder] redeem", redeemError.message);
+      if (redeemRow) await supabase.from("loyalty_ledger").delete().eq("id", redeemRow.id);
+      await supabase.from("order_items").delete().eq("order_id", created.id);
+      await supabase.from("orders").delete().eq("id", created.id);
+      return { ok: false, reason: redeemError ? "failed" : "notEnoughPoints" };
+    }
+  }
+
   // Payment is deliberately deferred until the restaurant confirms that the
   // requested dishes are available. The selected wallet is charged only then.
 
@@ -793,17 +849,6 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
         .update({ used_count: ((couponRow?.used_count as number | undefined) ?? 0) + 1 })
         .eq("id", promoId);
     }
-  }
-
-  if (pointsUsed > 0 && profile) {
-    await supabase.from("loyalty_ledger").insert({
-      profile_id: profile.id,
-      order_id: created.id,
-      restaurant_id: input.restaurantId,
-      points: -pointsUsed,
-      kind: "redeem",
-      note: `Commande ${created.reference}`,
-    });
   }
 
   /**

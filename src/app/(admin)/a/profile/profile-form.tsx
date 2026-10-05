@@ -30,6 +30,7 @@ export function ProfileForm({ profile }: { profile: OwnProfile }) {
 
   const [name, setName] = useState(profile.name);
   const [phone, setPhone] = useState(profile.phone ?? "");
+  const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
 
@@ -53,6 +54,7 @@ export function ProfileForm({ profile }: { profile: OwnProfile }) {
 
   const detailsDirty = name !== profile.name || phone !== (profile.phone ?? "");
   const passwordReady =
+    current.length > 0 &&
     password.length >= 8 && /[A-Z]/.test(password) && /[0-9]/.test(password) && password === confirm;
   const mismatch = confirm.length > 0 && confirm !== password;
 
@@ -156,6 +158,16 @@ export function ProfileForm({ profile }: { profile: OwnProfile }) {
 
       <Panel title="Password" description="Use one you do not use anywhere else.">
         <CardBody className="flex flex-col gap-5">
+          <Field label="Current password" htmlFor="pf-current" required>
+            <Input
+              id="pf-current"
+              type="password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              autoComplete="current-password"
+            />
+          </Field>
+
           <Field
             label="New password"
             htmlFor="pf-password"
@@ -194,10 +206,12 @@ export function ProfileForm({ profile }: { profile: OwnProfile }) {
               onClick={() =>
                 startTransition(async () => {
                   const formData = new FormData();
+                  formData.append("current", current);
                   formData.append("password", password);
                   formData.append("confirm", confirm);
                   const result = await changeOwnPassword(formData);
                   if (result.ok) {
+                    setCurrent("");
                     setPassword("");
                     setConfirm("");
                     toast("Password changed. Your other sessions were signed out.", "success");

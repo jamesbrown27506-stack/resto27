@@ -23,6 +23,7 @@ export function ProfileClient({ user }: { user: SessionUser }) {
 
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone ?? "");
+  const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -43,11 +44,13 @@ export function ProfileClient({ user }: { user: SessionUser }) {
   async function savePassword() {
     setBusy(true);
     const formData = new FormData();
+    formData.set("current", current);
     formData.set("password", password);
     formData.set("confirm", confirm);
     const result = await changeOwnPassword(formData);
     setBusy(false);
     if (result.ok) {
+      setCurrent("");
       setPassword("");
       setConfirm("");
       toast(t("cpf.passwordChanged"), "success");
@@ -150,6 +153,15 @@ export function ProfileClient({ user }: { user: SessionUser }) {
           description={t("cpf.passwordBody")}
         >
           <div className="grid gap-5 p-5 sm:grid-cols-2">
+            <Field label={t("cpf.currentPassword")} htmlFor="pf-current" required className="sm:col-span-2">
+              <PasswordInput
+                id="pf-current"
+                autoComplete="current-password"
+                value={current}
+                onChange={(e) => setCurrent(e.target.value)}
+              />
+            </Field>
+
             <Field label={t("cpf.newPassword")} htmlFor="pf-new" required className="sm:col-span-2">
               <PasswordInput
                 id="pf-new"
@@ -179,7 +191,7 @@ export function ProfileClient({ user }: { user: SessionUser }) {
 
           <div className="flex flex-wrap items-center gap-4 border-t border-border p-5">
             <Button
-              disabled={busy || !passwordMeetsPolicy(password) || password !== confirm}
+              disabled={busy || !current || !passwordMeetsPolicy(password) || password !== confirm}
               onClick={savePassword}
             >
               {t("cpf.changePassword")}

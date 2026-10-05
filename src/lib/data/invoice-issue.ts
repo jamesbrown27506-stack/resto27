@@ -129,7 +129,34 @@ export async function invoiceHasPaymentInFlight(invoiceId: string): Promise<bool
     console.error("[invoice:paymentInFlight]", invoiceId, error.message);
     return true;
   }
-  return (data ?? []).length > 0;
+  if ((data ?? []).length > 0) return true;
+
+  /*
+    AN EXPIRED ORANGE CODE IS STILL IN FLIGHT until its one late check has
+    run (security review 2026-10-05). A `failed` customer-dial attempt with no
+    `lateCheck` can still be dialled and is then reopened and settled
+    (recheckExpiredDialAttempt) — re-pricing under it let a base-price code
+    pay for an invoice that had grown. activateFromInvoice also refuses a
+    mismatched amount; this keeps the honest case from reaching that.
+  */
+  // Only within the window the late check still runs in (reconcile.ts,
+  // LATE_DIAL_UNTIL_MS): past it nothing can reopen the attempt.
+  const { data: dialled, error: dialError } = await supabase
+    .from("payment_attempts")
+    .select("raw_response")
+    .eq("invoice_id", invoiceId)
+    .eq("status", "failed")
+    .is("settled_at", null)
+    .gt("created_at", new Date(Date.now() - 3 * 60 * 60_000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(5);
+  if (dialError) {
+    console.error("[invoice:paymentInFlight] dial", invoiceId, dialError.message);
+    return true;
+  }
+  return ((dialled ?? []) as { raw_response: { customerDial?: unknown; lateCheck?: unknown } | null }[]).some(
+    (row) => row.raw_response?.customerDial === true && !row.raw_response?.lateCheck,
+  );
 }
 
 /**

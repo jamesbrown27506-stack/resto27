@@ -907,13 +907,19 @@ export async function inviteStaff(input: {
   if (existingProfile) {
     const { data: already } = await supabase
       .from("restaurant_staff")
-      .select("id, status")
+      .select("id, status, role")
       .eq("restaurant_id", active.restaurantId)
       .eq("profile_id", existingProfile.id)
       .maybeSingle();
 
     if (already) {
       if (already.status === "active") return { ok: false, error: t("est.alreadyWorksHere") };
+      // An owner an owner suspended stays suspended until an OWNER says
+      // otherwise — the same rule as reinstateStaff (security review
+      // 2026-10-05: a manager used this path to bring them back).
+      if (already.role === "owner" && active.role !== "owner") {
+        return { ok: false, error: t("est.onlyOwnerActsOnOwner") };
+      }
 
       // Reinstating a suspended colleague is the same gesture as inviting one
       // — they accepted this team once already.
@@ -1198,11 +1204,15 @@ export async function addStaffToBranch(input: {
 
   const { data: existing } = await supabase
     .from("restaurant_staff")
-    .select("id, status")
+    .select("id, status, role")
     .eq("restaurant_id", target.restaurantId)
     .eq("profile_id", member.profile_id)
     .maybeSingle();
   if (existing?.status === "active") return { ok: false, error: t("est.alreadyWorksThere") };
+  // A suspended owner there is reinstated by an owner only (see inviteStaff).
+  if (existing?.role === "owner" && target.role !== "owner") {
+    return { ok: false, error: t("est.onlyOwnerActsOnOwner") };
+  }
 
   const now = new Date().toISOString();
   const { error } = existing
@@ -2362,18 +2372,26 @@ export async function setRestaurantDeposit(
 }
 
 /**
- * Mark a booking's acompte as collected — the moment the money is actually
- * received, the restaurant's wallet is credited (migration 0024).
- *
- * The manager is not an admin, so the credit happens through the same RPC the
- * admin action uses, scoped to their own branch by the reservation lookup.
+ * Mark a booking's percentage acompte as collected at the counter.
  *
  * Two kinds of deposit (migration 0031):
- *   · fixed/per-seat — the customer normally pays online after acceptance;
- *     this action is only the fallback for cash that was actually received.
+ *   · fixed/per-seat — paid ONLINE by the customer, never recorded here;
  *   · percent — the customer pays nothing online; the deposit is a percentage
  *     of their actual bill, which is only known once they are eating. The
  *     manager enters the bill total and `amount = bill × pct / 100`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ *  IT RECORDS CASH; IT NEVER CREDITS THE WALLET (security review 2026-10-05).
+ *
+ *  This used to call wallet_credit with an amount computed from a bill
+ *  total the restaurant typed, with no ceiling and no link to a real bill.
+ *  The wallet holds money the PLATFORM received and pays out as Mobile
+ *  Money — but this deposit is cash already in the restaurant's drawer. So
+ *  an honest collection paid the restaurant twice, and a dishonest owner
+ *  could book their own table, type a bill of 2 000 000 000 and withdraw
+ *  it from the platform's float. Cash taken on site stays off the wallet,
+ *  exactly like record_dining_cash; the audit row keeps the amount.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 export async function collectReservationDeposit(
   reservationId: string,
@@ -2434,50 +2452,18 @@ export async function collectReservationDeposit(
     };
   }
 
-  if (row.deposit_percent <= 0) {
-    const { data: openAttempt } = await supabase
-      .from("payment_attempts")
-      .select("id")
-      .eq("reservation_id", row.id)
-      .in("status", ["pending", "succeeded"])
-      .is("settled_at", null)
-      .limit(1)
-      .maybeSingle();
-    if (openAttempt) {
-      return {
-        ok: false,
-        error: t("est.momoConfirmingNoCash"),
-      };
-    }
-  }
+  // The percentage of the bill the manager is entering is what was collected.
+  if (billTotal === undefined) return { ok: false, error: t("est.billTotalRequired") };
+  const bill = Math.round(billTotal);
+  if (!Number.isInteger(bill) || bill <= 0) return { ok: false, error: t("est.billTotalPositive") };
+  const amount = Math.round((bill * row.deposit_percent) / 100);
+  if (amount <= 0) return { ok: false, error: t("est.depositZero") };
 
-  // Percent bookings carry no fixed amount — the percentage of the bill the
-  // manager is entering is what must be collected.
-  let amount = row.deposit_amount;
-  if (row.deposit_percent > 0) {
-    if (billTotal === undefined) return { ok: false, error: t("est.billTotalRequired") };
-    const bill = Math.round(billTotal);
-    if (!Number.isInteger(bill) || bill <= 0) return { ok: false, error: t("est.billTotalPositive") };
-    amount = Math.round((bill * row.deposit_percent) / 100);
-    if (amount <= 0) return { ok: false, error: t("est.depositZero") };
-  }
-
-  if (amount <= 0) return { ok: false, error: t("est.noDeposit") };
-
-  /*
-   * Claim the unpaid row before moving money. Two cashiers tapping together
-   * cannot both credit the wallet; only the compare-and-swap winner proceeds.
-   * A fixed cash fallback also performs the awaiting_payment → confirmed
-   * transition in that same claim.
-   */
-  const isOnlineFallback = row.deposit_percent <= 0;
+  // Compare-and-swap on the unpaid row: two cashiers tapping together record
+  // it once.
   const { data: claimed, error: claimError } = await supabase
     .from("reservations")
-    .update(
-      isOnlineFallback
-        ? { deposit_paid: true, status: "confirmed" }
-        : { deposit_paid: true },
-    )
+    .update({ deposit_paid: true })
     .eq("id", reservationId)
     .eq("restaurant_id", active.restaurantId)
     .eq("status", row.status)
@@ -2489,52 +2475,14 @@ export async function collectReservationDeposit(
     return { ok: false, error: t("est.bookingChangedDeposit") };
   }
 
-  const { error: creditError } = await supabase.rpc("wallet_credit", {
-    p_restaurant_id: active.restaurantId,
-    p_amount: amount,
-    p_kind: "deposit",
-    p_note: `Acompte ${row.reference}`,
-    p_reference: row.reference,
-  });
-
-  if (creditError) {
-    console.error("[manager:collectReservationDeposit]", creditError.message);
-    await supabase
-      .from("reservations")
-      .update(
-        isOnlineFallback
-          ? { deposit_paid: false, status: "awaiting_payment" }
-          : { deposit_paid: false },
-      )
-      .eq("id", reservationId)
-      .eq("deposit_paid", true)
-      .eq("status", isOnlineFallback ? "confirmed" : row.status);
-    return { ok: false, error: t("est.walletCreditFailed") };
-  }
-
-  if (isOnlineFallback && row.customer_id) {
-    await notify({
-      event: "reservation_decision",
-      tone: "success",
-      customerId: row.customer_id,
-      href: "/reservations",
-      params: {
-        reference: row.reference,
-        restaurantName: active.restaurantName,
-        status: "confirmed",
-      },
-    });
-  }
-
   await writeAudit(profile, {
     action: "reservation.deposit_collected",
     entityType: "reservation",
     entityId: reservationId,
-    summary: `Collected ${amount.toLocaleString("fr-CM")} FCFA deposit for ${row.reference}`,
+    summary: `Collected ${amount.toLocaleString("fr-CM")} FCFA deposit in cash for ${row.reference} (bill ${bill.toLocaleString("fr-CM")} FCFA)`,
   });
 
   revalidatePath("/m/reservations");
-  revalidatePath("/m/wallet");
   revalidatePath("/reservations");
   revalidatePath("/account");
   return { ok: true };

@@ -1,14 +1,14 @@
 import "server-only";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/server";
 import { isMissingColumn } from "@/lib/data/missing-column";
 import { mainRestaurantId } from "@/lib/branches/account";
 import { notify } from "@/lib/notify";
-import { signInFailureReason } from "@/lib/auth/sign-in-failure";
+import { rateLimit } from "@/lib/rate-limit";
 import type { BranchContext } from "@/lib/auth/branch";
 import { hashPin, verifyPin } from "./pin-hash";
 import {
   DAILY_WINDOW_MS,
+  PIN_LOCK_MINUTES,
   PIN_MAX_ATTEMPTS,
   afterWrongPin,
   maskPhone,
@@ -167,6 +167,29 @@ export async function checkWithdrawalPin(
   pin: string,
   where: { restaurantId: string; personName: string },
 ): Promise<PinCheck> {
+  /*
+    ─────────────────────────────────────────────────────────────────────────
+     GUESSES SENT TOGETHER ARE COUNTED TOGETHER (security review 2026-10-05).
+
+     The wrong-PIN count was a compare-and-swap on the value read: a hundred
+     guesses fired at once all read "0", one write landed, and the hundred
+     cost a single attempt — a 4-digit code fell in hours to anyone holding
+     a signed-in session. Two layers now: every check, right or wrong, is
+     counted first by the shared rate limiter (a database upsert, so
+     parallel calls each count), and a wrong code is counted by a locked
+     database function (0076), not by a read-then-write.
+    ─────────────────────────────────────────────────────────────────────────
+  */
+  const limited = await rateLimit({
+    key: "wallet:pin-check",
+    identifier: profileId,
+    limit: PIN_MAX_ATTEMPTS * 2,
+    windowMs: PIN_LOCK_MINUTES * 60_000,
+  });
+  if (!limited.ok) {
+    return { ok: false, reason: "locked", lockedUntil: new Date(Date.now() + limited.retryAfterMs).toISOString() };
+  }
+
   const supabase = db();
   const { data } = await supabase
     .from("withdrawal_pins")
@@ -189,45 +212,55 @@ export async function checkWithdrawalPin(
     return { ok: true };
   }
 
-  const next = afterWrongPin(attempts, now);
-  // Compare-and-swap on the count read: two wrong codes racing still count
-  // as two, the loser simply re-reads on its next try.
-  await supabase
-    .from("withdrawal_pins")
-    .update({ failed_attempts: next.attempts, locked_until: next.lockedUntil })
-    .eq("profile_id", profileId)
-    .eq("failed_attempts", attempts);
+  const next = await countWrongPin(profileId, attempts, now);
 
-  if (next.lockedUntil) {
+  if (next.lockedUntil && next.justLocked) {
     const detail = `Le code de retrait de ${where.personName} est bloqué 30 minutes après ${PIN_MAX_ATTEMPTS} essais incorrects.`;
     await notify({ event: "withdrawal", tone: "error", profileId, href: "/m/wallet", params: { withdrawalKind: "security", detail } });
     await notifyOwners(where.restaurantId, { tone: "error", withdrawalKind: "security", detail }, profileId);
     return { ok: false, reason: "locked", lockedUntil: next.lockedUntil };
   }
+  if (next.lockedUntil) return { ok: false, reason: "locked", lockedUntil: next.lockedUntil };
 
-  return { ok: false, reason: "wrong", attemptsLeft: PIN_MAX_ATTEMPTS - next.attempts };
+  return { ok: false, reason: "wrong", attemptsLeft: Math.max(1, PIN_MAX_ATTEMPTS - next.attempts) };
 }
 
 /**
- * Re-check the signed-in person's account password, for setting a PIN.
- *
- * On a throwaway client that keeps no session and touches no cookie, so the
- * browser's own session is never replaced; the session this sign-in opens
- * is closed again at once (`scope: "local"` ends only that one).
+ * Count one wrong PIN atomically — withdrawal_pin_wrong() (0076) locks the
+ * row, so concurrent wrong codes each count. Before 0076 is run, the old
+ * compare-and-swap is the fallback; the rate limiter above still caps it.
  */
-export async function verifyAccountPassword(email: string, password: string): Promise<"ok" | "wrong" | "unavailable"> {
-  const client = createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
-    { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } },
-  );
-
-  const { data, error } = await client.auth.signInWithPassword({ email, password });
-  if (error || !data.session) {
-    return signInFailureReason(error) === "invalid" ? "wrong" : "unavailable";
+async function countWrongPin(
+  profileId: string,
+  attemptsRead: number,
+  now: Date,
+): Promise<{ attempts: number; lockedUntil: string | null; justLocked: boolean }> {
+  const supabase = db();
+  const { data, error } = await supabase.rpc("withdrawal_pin_wrong", {
+    p_profile_id: profileId,
+    p_max: PIN_MAX_ATTEMPTS,
+    p_lock_minutes: PIN_LOCK_MINUTES,
+  });
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { out_attempts: number; out_locked_until: string | null; out_just_locked: boolean }
+    | null
+    | undefined;
+  if (!error && row) {
+    return {
+      attempts: Number(row.out_attempts ?? 0),
+      lockedUntil: row.out_locked_until ?? null,
+      justLocked: Boolean(row.out_just_locked),
+    };
   }
-  await client.auth.signOut({ scope: "local" }).catch(() => undefined);
-  return "ok";
+  if (error) console.error("[wallet:pinWrong] falling back", error.message);
+
+  const next = afterWrongPin(attemptsRead, now);
+  await supabase
+    .from("withdrawal_pins")
+    .update({ failed_attempts: next.attempts, locked_until: next.lockedUntil })
+    .eq("profile_id", profileId)
+    .eq("failed_attempts", attemptsRead);
+  return { ...next, justLocked: next.lockedUntil !== null };
 }
 
 /* ── The numbers ───────────────────────────────────────────────────────── */

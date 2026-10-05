@@ -48,6 +48,7 @@ const REASON_KEYS: Record<string, TranslationKey> = {
   noSubscription: "est.noSubscription",
   invoiceClaimFailed: "ecu.pay.invoiceClaimFailed",
   subscriptionExtendFailed: "ecu.pay.subscriptionExtendFailed",
+  invoiceRepriced: "ecu.pay.invoiceRepriced",
 };
 
 /**

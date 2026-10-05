@@ -77,6 +77,11 @@ loadtest.mjs
 # Download these native Firebase credentials per environment; never commit them.
 /android/app/google-services.json
 /ios/App/App/GoogleService-Info.plist
+# Server credentials that arrive as files: Firebase Admin service accounts and
+# Apple push (APNs) keys.
+*firebase-adminsdk*.json
+*service-account*.json
+*.p8
 
 # Throwaway browser profiles from mobile QA runs. They hold cookies, saved
 # passwords and session storage — never commit them.

@@ -28,6 +28,7 @@ export const custProfileDict = defineDict({
 
     "cpf.password": "Mot de passe",
     "cpf.passwordBody": "Choisissez un mot de passe que vous n'utilisez nulle part ailleurs.",
+    "cpf.currentPassword": "Mot de passe actuel",
     "cpf.newPassword": "Nouveau mot de passe",
     "cpf.confirm": "Confirmer",
     "cpf.mismatch": "Les deux mots de passe ne correspondent pas.",
@@ -56,6 +57,7 @@ export const custProfileDict = defineDict({
 
     "cpf.password": "Password",
     "cpf.passwordBody": "Choose a password you do not use anywhere else.",
+    "cpf.currentPassword": "Current password",
     "cpf.newPassword": "New password",
     "cpf.confirm": "Confirm",
     "cpf.mismatch": "The two passwords do not match.",

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCurrentProfile } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/server";
 import { capProfileSubscriptions } from "@/lib/push";
+import { isPushServiceEndpoint } from "@/lib/push-endpoint";
 
 /**
  * Push subscription repair, over HTTP rather than a Server Action.
@@ -105,7 +106,7 @@ export async function POST(request: Request) {
     typeof auth !== "string" ||
     // The same validation savePushSubscription applies: an endpoint is always
     // an https URL on the browser vendor's push service.
-    !endpoint.startsWith("https://") ||
+    !isPushServiceEndpoint(endpoint) ||
     !p256dh ||
     !auth
   ) {

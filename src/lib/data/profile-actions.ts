@@ -10,6 +10,8 @@ import { deleteUpload, localizeUploadError, saveAudioUpload, saveUpload, type Up
 import { firstIssueMessage } from "@/lib/i18n/issue-message";
 import { isCustomSound } from "@/lib/notification-sound";
 import { writeAudit } from "@/lib/audit";
+import { rateLimit } from "@/lib/rate-limit";
+import { verifyAccountPassword } from "@/lib/auth/verify-password";
 import type { ActionResult } from "./admin-actions";
 
 /* ── Uploads ───────────────────────────────────────────────────────────── */
@@ -363,16 +365,32 @@ export async function uploadOwnAvatar(formData: FormData): Promise<UploadActionR
  */
 export async function changeOwnPassword(formData: FormData): Promise<ActionResult> {
   const t = await getTranslator();
-  await requireUser();
+  const profile = await requireUser();
 
+  const current = String(formData.get("current") ?? "");
   const password = String(formData.get("password") ?? "");
   const confirm = String(formData.get("confirm") ?? "");
 
+  if (!current) return { ok: false, error: t("ecu.currentPasswordRequired") };
   if (password.length < 8) return { ok: false, error: t("ecu.passwordLength") };
   if (!/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
     return { ok: false, error: t("ecu.passwordStrength") };
   }
   if (password !== confirm) return { ok: false, error: t("ecu.passwordMismatch") };
+
+  /*
+    THE CURRENT PASSWORD FIRST (security review 2026-10-05). A session alone
+    used to be enough, so whoever picked up an unlocked phone could replace
+    the password — and with it every check that asks for it (the withdrawal
+    PIN is set with the account password). Counted per person, so it is not
+    a guessing oracle either.
+  */
+  const limited = await rateLimit({ key: "profile:password-change", identifier: profile.id, limit: 5, windowMs: 60 * 60_000 });
+  if (!limited.ok) return { ok: false, error: t("ecu.authTooManyAttemptsHour") };
+
+  const check = await verifyAccountPassword(profile.authUserId, current);
+  if (check === "wrong") return { ok: false, error: t("ecu.currentPasswordWrong") };
+  if (check === "unavailable") return { ok: false, error: t("ecu.authPasswordChangeFailed") };
 
   const supabase = await createClient();
   const { error } = await supabase.auth.updateUser({ password });

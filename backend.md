@@ -121,7 +121,7 @@ Each phase ends with something you can look at. Fixtures are retired as they are
 
 Nothing is built. This is the purge.
 
-- Delete test accounts: `diag-probe-8842@example.com`, `ethegreat17@gmail.com`, and anything else under **Authentication → Users**.
+- Delete test accounts: `diag-probe-8842@example.com`, the personal test account, and anything else under **Authentication → Users**.
 - Run [0002_backfill_profiles.sql](supabase/migrations/0002_backfill_profiles.sql) §1 — expect zero rows.
 - Confirm `0001_auth_profiles.sql` is applied: `public.profiles` exists and is empty.
 

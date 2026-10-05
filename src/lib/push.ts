@@ -3,6 +3,7 @@ import webpush from "web-push";
 import { createAdminClient } from "@/lib/supabase/server";
 import { sendFirebasePush, sendGuestFirebasePush, firebaseDeliveryConfigured } from "@/lib/firebase/server";
 import { notificationProvider } from "@/lib/notification-provider";
+import { isPushServiceEndpoint } from "@/lib/push-endpoint";
 
 /**
  * Web push delivery — the closed-tab / closed-app layer.
@@ -287,7 +288,11 @@ export async function sendWebPushWithReport(
     return { configured, platformEnabled, devices: [], queryFailed: true };
   }
 
-  const rows = (subs ?? []) as { id: string; endpoint: string; p256dh: string; auth: string }[];
+  // Only real push services are ever POSTed to — rows saved before the
+  // endpoint allow-list (security review 2026-10-05) are skipped, not sent.
+  const rows = ((subs ?? []) as { id: string; endpoint: string; p256dh: string; auth: string }[]).filter((sub) =>
+    isPushServiceEndpoint(sub.endpoint),
+  );
   if (rows.length === 0) return { configured, platformEnabled, devices: [] };
 
   setVapidDetails();
@@ -503,9 +508,10 @@ export async function sendGuestDiningPush(guestId: string, payload: PushPayload)
     console.error("[push:guest] subscriptions", error.message);
     return;
   }
-  if (!data?.length) return;
+  const guestRows = (data ?? []).filter((row) => isPushServiceEndpoint(String(row.endpoint)));
+  if (!guestRows.length) return;
   setVapidDetails();
-  await Promise.allSettled(data.map(async (row) => {
+  await Promise.allSettled(guestRows.map(async (row) => {
     try {
       await webpush.sendNotification(
         { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },

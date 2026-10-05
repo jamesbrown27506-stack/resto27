@@ -1495,11 +1495,44 @@ export async function settlePayment(attemptId: string): Promise<SettleResult> {
   let reason: string | undefined;
 
   if (row.kind === "subscription" && row.invoiceId) {
-    const result = await activateFromInvoice(row.invoiceId);
+    const result = await activateFromInvoice(row.invoiceId, { paidAmount: row.amount });
     ok = result.ok;
     if (!result.ok) {
       error = result.error;
       reason = result.reason ?? "activationFailed";
+    }
+    /*
+      Paid for a price the invoice no longer has (activateFromInvoice: "THE
+      AMOUNT PAID IS THE AMOUNT BILLED"). Nothing was granted; the money is
+      real. Closed with the debt written on it so the sweeps stop retrying,
+      and the admins are told once — the same handling as a late deposit.
+    */
+    if (!result.ok && result.reason === "invoiceRepriced") {
+      const stamp = new Date().toISOString();
+      const { data: flagged } = await supabase
+        .from("payment_attempts")
+        .update({
+          settled_at: stamp,
+          raw_response: { ...(row.rawResponse ?? {}), refund_due: { reason: "invoiceRepriced", at: stamp, manual: true } },
+        })
+        .eq("id", attemptId)
+        .is("settled_at", null)
+        .select("id")
+        .maybeSingle();
+      if (flagged) {
+        console.error("[pay:settle:subscription] INVOICE RE-PRICED — settle by hand", attemptId, row.amount);
+        await notify({
+          event: "broadcast",
+          tone: "error",
+          admins: true,
+          href: "/a/payments",
+          params: {
+            reference: `invoice-repriced:${attemptId}`,
+            subject: `Subscription payment ${row.reference} needs a decision`,
+            bodyText: `A payment of ${row.amount} FCFA arrived for invoice ${row.reference}, whose amount changed after the payment started (branches added or closed). Nothing was activated. Either refund it, or confirm the invoice by hand from Subscriptions once the difference is paid.`,
+          },
+        });
+      }
     }
   } else if (row.kind === "wallet") {
     const settledAt = new Date().toISOString();
