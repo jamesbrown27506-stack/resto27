@@ -609,6 +609,8 @@ export async function fetchPublicStats(): Promise<PublicStats> {
 }
 
 export interface FeaturedReview {
+  /** The review's own id — the only unique thing about it (names repeat). */
+  id: string;
   body: string;
   /** Snapshot from the review — the name it was written under. */
   name: string;
@@ -629,7 +631,7 @@ export async function fetchFeaturedReviews(limit = 3): Promise<FeaturedReview[]>
 
   const { data, error } = await supabase
     .from("reviews")
-    .select("body, rating, customer_name, created_at, restaurants!inner ( name )")
+    .select("id, body, rating, customer_name, created_at, restaurants!inner ( name )")
     .is("removed_at", null)
     .gte("rating", 4)
     .eq("restaurants.status", "active")
@@ -643,11 +645,13 @@ export async function fetchFeaturedReviews(limit = 3): Promise<FeaturedReview[]>
   }
 
   return ((data ?? []) as unknown as {
+    id: string;
     body: string;
     rating: number;
     customer_name: string;
     restaurants: { name: string }[];
   }[]).map((r) => ({
+    id: r.id,
     body: r.body,
     name: r.customer_name,
     meta: relationOne(r.restaurants)?.name ?? "",

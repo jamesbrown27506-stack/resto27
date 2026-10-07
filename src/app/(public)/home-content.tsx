@@ -365,6 +365,7 @@ export function HomeContent({
           <SectionHeader tag={t("home.testimonials.tag")} title={t("home.testimonials.title")} />
           <TestimonialGrid
             items={testimonials.map((r) => ({
+              id: r.id,
               body: r.body,
               name: r.name,
               meta: r.meta,

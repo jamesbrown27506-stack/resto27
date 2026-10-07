@@ -192,13 +192,14 @@ import { Avatar } from "@/components/ui/avatar";
 export function TestimonialGrid({
   items,
 }: {
-  items: { body: string; name: string; meta: string; rating: number }[];
+  items: { id: string; body: string; name: string; meta: string; rating: number }[];
 }) {
   return (
     <div className="stagger-in grid gap-6 md:grid-cols-3">
+      {/* Keyed by the review id: two reviewers can share a name ("customer"). */}
       {items.map((t) => (
         <figure
-          key={t.name}
+          key={t.id}
           className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-7"
         >
           <RatingStars value={t.rating} size="sm" />

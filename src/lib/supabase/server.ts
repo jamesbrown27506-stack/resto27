@@ -108,12 +108,34 @@ export function createAdminClient() {
    * invalid fallback Bearer value. A real user access token, should a future
    * caller explicitly provide one, is left untouched.
    */
-  const fetchWithApiKeyOnly: typeof fetch = (input, init) => {
+  const fetchWithApiKeyOnly: typeof fetch = async (input, init) => {
     const headers = new Headers(init?.headers);
     if (headers.get("Authorization") === `Bearer ${key}`) {
       headers.delete("Authorization");
     }
-    return fetch(input, { ...init, headers });
+
+    /*
+      ─────────────────────────────────────────────────────────────────────
+       "JWT issued at future" STILL ARRIVES WITHOUT THE BEARER — RETRY IT.
+
+       With the header gone, the gateway mints its own short-lived token
+       from the secret key, and now and then the database's clock reads
+       that token's `iat` as a moment ahead of its own. The refusal is
+       intermittent and on Supabase's side (local and server clocks agree
+       to within a second), but it failed whole reads: the settings map
+       fell back to defaults — logo, palette, fees. A second later the same
+       request passes, and a 401 is refused before anything runs, so
+       resending a write is safe. Not a streamed body: it cannot be re-sent.
+      ─────────────────────────────────────────────────────────────────────
+    */
+    const resendable = !(init?.body instanceof ReadableStream);
+    for (let attempt = 0; ; attempt += 1) {
+      const response = await fetch(input, { ...init, headers });
+      if (response.status !== 401 || !resendable || attempt >= 2) return response;
+      const text = await response.clone().text().catch(() => "");
+      if (!/issued at future|not yet valid/i.test(text)) return response;
+      await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+    }
   };
 
   return createSupabaseClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, key, {
