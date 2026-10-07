@@ -1,0 +1,29 @@
+Loyalty funding and withdrawal UX — 2026-10-06
+
+The platform pays redeemed loyalty value. A 1,000 FCFA food order using 500 FCFA of points credits 1,000 FCFA to the restaurant wallet. The customer pays the remaining 500 FCFA plus the existing payment service fee. Promotions still reduce the food sale; delivery remains cash payable to the rider. Commission invoicing is unchanged.
+
+Apply `supabase/migrations/0079_platform_funded_loyalty.sql` in the production Supabase SQL editor, then deploy this version. Run the complete file, including BEGIN and COMMIT. It is tested as executable PostgreSQL and can be rerun without duplicate credits. A failed statement rolls back the migration; do not bypass validation or remove its transaction.
+
+The live read-only preflight found two loyalty orders: one paid, non-cancelled order missing 500 FCFA, and one cancelled order excluded from repair. Both the redemption and amount snapshots validate. Migration 0079 credits the missing 500 FCFA once and records the platform expense. It does not transfer money through CamerPay or fund the provider account.
+
+Settlement, subsidy and paid status commit together. Cancelling an order reverses the collected food credit and loyalty subsidy atomically, refunds only what the customer actually paid, and restores the redeemed points once. The entire restaurant entitlement stays reserved until delivery. Orders covered entirely by points work without a zero-amount wallet credit/refund. Restaurant sales reports and dashboard count the full food value after promotions.
+
+Admin → Finance → Loyalty & reserves (`/a/loyalty`) displays outstanding points and their current FCFA value, reserved redemptions, funded/reversed subsidies, restaurant and customer wallet liabilities, pending refunds, unconfirmed payouts, the live CamerPay balance and the recommended top-up. Totals aggregate in PostgreSQL rather than truncating at the API's 1,000-row limit. Pending withdrawals and already-funded points are inside restaurant balances and are not added twice. Unconfirmed payouts are conservatively reserved until resolved.
+
+A live CamerPay withdrawal checks provider liquidity before the atomic wallet debit. Insufficient or unavailable liquidity leaves the request pending and balance untouched. The restaurant is told that funding is the platform's responsibility. A concurrent transfer can still change provider liquidity after this read; existing definitive-refusal reversal and uncertain-outcome reconciliation remain in place. Keep additional cash for gateway charges and new points. The dashboard cannot top up CamerPay automatically.
+
+New withdrawal PIN hashes record their digit count without exposing the PIN or hash to the browser. Four-, five- and six-digit codes display exactly that many masked boxes. Legacy hashes cannot reveal the original length: users choose their existing digit count, and successful verification records it for subsequent visits. Leading zeroes are preserved; the field opens the numeric keypad and strips non-digits. Existing locks, password proof and withdrawal authorization remain.
+
+The PIN length selector described above was superseded by the later [mobile wallet and PIN entry fix](mobile-wallet-pin-fix-2026-10-06.md). The current interface uses a built-in numeric keypad, displays known lengths automatically, accepts complete legacy codes without a selector, and uses four digits for new codes.
+
+Validation before rollout: 849 tests across 103 files passed; TypeScript, changed-file ESLint and whitespace checks passed. Financial tests execute migration 0079 in isolated PostgreSQL. No live customer charges, withdrawals, refunds or PIN changes were performed during testing.
+
+Production rollout completed on 2026-10-06. The owner applied the complete migration 0079 and the read-only verification reports schema version 79. Order CMD-15D94E has exactly one 500 FCFA funding record and one matching wallet credit. No eligible paid loyalty order remains unfunded. The restaurant wallet displays 2,600 FCFA, including the restored 500 FCFA.
+
+Deployment `dpl_3BjopmJrp9K1bVT5aqPgKdSPkUdp` was built and promoted to https://resto237.online. Its deployment URL is https://resto237-4ixsrwpnz-emmanuel-legrands-projects.vercel.app. All 29 security HTTP checks and four loyalty access checks passed on both the staged deployment and the canonical site. The live HTTP checks completed at 2026-10-06 12:17:24 UTC. Anonymous users cannot access the loyalty ledger, aggregate RPC, admin page or restaurant wallet.
+
+The signed-in production browser verified exactly four, five and six PIN boxes, matching min/max lengths and patterns, numeric keypad attributes and non-digit filtering. An unsent dummy input was cleared and the withdrawal review closed. Legacy PIN length selection is displayed until successful verification records the length. No payout, PIN verification or credential change was submitted.
+
+At 2026-10-06 12:10:59 UTC, the live read-only comparison showed 20 outstanding points worth 100 FCFA, restaurant balances of 12,600 FCFA, and no customer balances, pending refunds or unconfirmed payouts. The pending 2,000 FCFA withdrawal is already included in the restaurant balances. CamerPay reported 900 FCFA, against the 12,700 FCFA recommended reserve: an 11,800 FCFA top-up gap before additional gateway charges or new activity. These are a timestamped snapshot; refresh the admin page before funding the provider account. No top-up was performed by the agent.
+
+Separate reconciliation finding: the restaurant's displayed wallet balance and existing ledger breakdown differ by 1,600 FCFA. This difference predates the 500 FCFA loyalty repair. The repair adds the same amount to the wallet and ledger and does not resolve or increase that historical difference. Do not create balancing credits/debits without establishing the source of the prior balance; the admin reserve calculation uses the recorded wallet liabilities.

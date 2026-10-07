@@ -123,11 +123,17 @@ export async function rateLimit(opts: {
   windowMs: number;
   /** Signed-in callers pass their profile id; anonymous callers omit it. */
   identifier?: string;
+  /** Sensitive operations must not become unlimited across server instances. */
+  failClosed?: boolean;
 }): Promise<RateLimitResult> {
   const id = opts.identifier ?? (await ipIdentifier());
   const mapKey = `${opts.key}:${id}`;
 
   const shared = await sharedLimit(mapKey, opts.limit, opts.windowMs);
   if (shared) return shared;
+  const sensitive = /^(auth|wallet|security|admins|payouts):/.test(opts.key);
+  if (opts.failClosed || (sensitive && process.env.NODE_ENV === "production")) {
+    return { ok: false, retryAfterMs: 60_000 };
+  }
   return memoryLimit(mapKey, opts.limit, opts.windowMs);
 }

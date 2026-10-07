@@ -10,12 +10,14 @@ import {
 } from "@/lib/realtime/restaurant-signal";
 import { getManagerNavCounts, type ManagerNavCounts } from "@/lib/data/notify-actions";
 import { cn } from "@/lib/utils";
+import type { BranchWalletSummary } from "@/lib/wallet/summary";
+import { latestBranchWalletSummary } from "@/lib/wallet/summary";
 
 /** Counts refresh during service and immediately when the app regains focus. */
-export function useManagerNavCounts(restaurantId: string | null) {
+export function useManagerNavCounts(restaurantId: string | null, initialWallet: BranchWalletSummary | null = null) {
   const empty: ManagerNavCounts = { orders: 0, kitchen: 0, tableOrder: 0, reservations: 0, messages: 0 };
-  const [snapshot, setSnapshot] = useState<{ restaurantId: string | null; counts: ManagerNavCounts }>({
-    restaurantId: null, counts: empty,
+  const [snapshot, setSnapshot] = useState<{ restaurantId: string | null; counts: ManagerNavCounts; wallet: BranchWalletSummary | null }>({
+    restaurantId: null, counts: empty, wallet: null,
   });
 
   /*
@@ -39,9 +41,9 @@ export function useManagerNavCounts(restaurantId: string | null) {
       void getManagerNavCounts(restaurantId)
         .then((next) => {
           if (cancelled) return;
-          const { signals, ...counts } = next;
+          const { signals, wallet, ...counts } = next;
           reportSignalsAvailable(signals === true);
-          setSnapshot({ restaurantId, counts });
+          setSnapshot({ restaurantId, counts, wallet });
         })
         .catch((error) => console.error("[nav:refresh]", error))
         .finally(() => { inFlight = false; });
@@ -65,7 +67,9 @@ export function useManagerNavCounts(restaurantId: string | null) {
 
   useRestaurantSignal(() => refreshRef.current());
 
-  return restaurantId && snapshot.restaurantId === restaurantId ? snapshot.counts : empty;
+  const current = snapshot.restaurantId === restaurantId;
+  const wallet = latestBranchWalletSummary(restaurantId, initialWallet, snapshot);
+  return { ...(current ? snapshot.counts : empty), wallet };
 }
 
 /** The little number bubble beside a nav link — the tab badge in miniature. */

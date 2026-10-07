@@ -8,6 +8,11 @@ import { rateLimit } from "./rate-limit";
  */
 
 describe("rateLimit", () => {
+  it("refuses sensitive operations when shared enforcement is unavailable", async () => {
+    const result = await rateLimit({ key: "test:durable-required", identifier: "unit", limit: 5, windowMs: 60_000, failClosed: true });
+    expect(result.ok).toBe(false);
+    expect(result.retryAfterMs).toBeGreaterThan(0);
+  });
   it("allows calls up to the limit", async () => {
     for (let i = 0; i < 5; i++) {
       const result = await rateLimit({

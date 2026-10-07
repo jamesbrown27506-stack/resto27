@@ -60,7 +60,7 @@ export default async function WalletPage() {
         listPayoutAccounts(active.restaurantId),
         isOwnerHere ? listWithdrawDelegates(active.restaurantId) : Promise.resolve([]),
       ])
-    : [null, { hasPin: false, lockedUntil: null }, [], []];
+    : [null, { hasPin: false, lockedUntil: null, length: null }, [], []];
 
   // Scheduled payouts (0074): the owner's panel, on the REAL plan.
   const [schedule, entitled] =

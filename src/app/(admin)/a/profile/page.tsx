@@ -2,6 +2,8 @@ import { AdminPage } from "@/components/layout/admin-shell";
 import { ProfileForm } from "./profile-form";
 import { createAdminClient } from "@/lib/supabase/server";
 import { requireRole } from "@/lib/auth/session";
+import Link from "next/link";
+import { buttonClasses } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +21,7 @@ export default async function AdminProfilePage() {
 
   return (
     <AdminPage title="My profile" description="Your own details and sign-in credentials.">
+      <Link href="/security?next=/a/profile" className={buttonClasses({ variant: "outline", className: "mb-6" })}>Email verification and optional 2FA</Link>
       <ProfileForm
         profile={{
           name: admin.name,

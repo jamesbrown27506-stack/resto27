@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { PauseCircle } from "lucide-react";
@@ -27,6 +27,9 @@ import { useManagerNavCounts } from "@/components/notifications/nav-counts";
 import { PendingOrderAlarm } from "@/components/notifications/pending-order-alarm";
 import { AlertHealth } from "@/components/notifications/alert-health";
 import { can } from "@/lib/capabilities";
+import { BranchNavigationContext, BranchSwitchTransition } from "./branch-navigation";
+import { WalletShortcut } from "./wallet-shortcut";
+import type { BranchWalletSummary } from "@/lib/wallet/summary";
 
 /**
  * Manager chrome: sidebar, branch context, subscription banner.
@@ -49,6 +52,7 @@ export function ManagerShell({
   impersonating,
   freeMode,
   freeModeEndsAt,
+  initialWallet,
   children,
 }: {
   branches: Branch[];
@@ -60,6 +64,7 @@ export function ManagerShell({
   freeMode: boolean;
   /** When free mode ends — shown by the subscription banner while it runs. */
   freeModeEndsAt?: string | null;
+  initialWallet: BranchWalletSummary | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -67,9 +72,12 @@ export function ManagerShell({
   const { t } = useLocale();
   const { toast } = useToast();
   const [switchingBranch, startTransition] = useTransition();
+  const [switchTarget, setSwitchTarget] = useState<{ from: string; to: string } | null>(null);
 
   // The "N orders need you" bubbles on the bottom tabs and the sidebar.
-  const navCounts = useManagerNavCounts(active.restaurantId);
+  const navCounts = useManagerNavCounts(active.restaurantId, initialWallet);
+  const wallet = can(active.role, "finance.manage") && navCounts.wallet?.restaurantId === active.restaurantId
+    ? navCounts.wallet : null;
 
   // The SAME bar the public site draws for this person (lib/mobile-tabs),
   // from the same branch role: the dashboard and the site never change shape
@@ -77,16 +85,32 @@ export function ManagerShell({
   // bar's "Plus" sheet carries the rest of the menu and the branch switcher.
   const { items: tabItems, more } = tabsFor("manager", active.role);
 
-  function onSwitchBranch(id: string) {
-    if (id === active.restaurantId) return;
+  function onSwitchBranch(id: string, destination?: string) {
+    if (switchingBranch) return;
+    if (id === active.restaurantId) {
+      if (destination) router.push(destination);
+      return;
+    }
+    const target = branches.find(branch => branch.restaurantId === id);
+    if (!target) return;
+    setSwitchTarget({ from: active.branchLabel || active.restaurantName, to: target.branchLabel || target.restaurantName });
 
     startTransition(async () => {
-      const result = await switchBranch(id);
-      if (!result.ok) return toast(result.error, "error");
-      // Refresh rather than navigate: every Server Component on the current
-      // page re-reads with the new branch cookie, and the user stays where
-      // they were instead of being bounced to the dashboard.
-      router.refresh();
+      try {
+        const result = await switchBranch(id);
+        if (!result.ok) return toast(result.error, "error");
+        // Refresh rather than navigate: every Server Component on the current
+        // page re-reads with the new branch cookie, and the user stays where
+        // they were instead of being bounced to the dashboard.
+        // Router work after an awaited action needs its own transition so
+        // feedback remains visible until the new server data has committed.
+        startTransition(() => {
+          if (destination) router.push(destination);
+          else router.refresh();
+        });
+      } catch {
+        toast(t("mbr.switch.failed"), "error");
+      }
     });
   }
 
@@ -98,6 +122,8 @@ export function ManagerShell({
       freeMode={freeMode}
       onSwitchBranch={onSwitchBranch}
       navCounts={navCounts}
+      switchingBranch={switchingBranch}
+      wallet={wallet}
     />
   );
 
@@ -107,6 +133,7 @@ export function ManagerShell({
       failure mode is silence, and no page could previously ask whether the
       channel was actually connected. See the admin shell for the full note.
     */
+    <BranchNavigationContext.Provider value={{ switchTo: onSwitchBranch, switching: switchingBranch }}>
     <NotificationProvider>
       {/*
         ─────────────────────────────────────────────────────────────────────
@@ -251,7 +278,7 @@ export function ManagerShell({
           </div>
         </header>
 
-        <main id="main" key={pathname} className="min-w-0 flex-1">
+        <main id="main" key={`${pathname}:${active.restaurantId}`} className="min-w-0 flex-1 motion-safe:animate-[rl-fade_180ms_ease-out]">
           {children}
         </main>
       </div>
@@ -262,13 +289,20 @@ export function ManagerShell({
           items={tabItems}
           more={more}
           counts={navCounts}
+          sheetFeaturedItem={wallet ? {
+            href: "/m/wallet",
+            content: <WalletShortcut summary={wallet} variant="mobile"
+              disabled={active.subscriptionState === "locked" && active.status !== "paused"} />,
+          } : undefined}
           sheetHeader={
-            <BranchSwitcher branches={branches} activeId={active.restaurantId} onSwitch={onSwitchBranch} />
+            <BranchSwitcher branches={branches} activeId={active.restaurantId} onSwitch={onSwitchBranch} disabled={switchingBranch} />
           }
         />
       </div>
       </div>
     </NotificationProvider>
+    <BranchSwitchTransition open={switchingBranch && switchTarget !== null} from={switchTarget?.from ?? ""} to={switchTarget?.to ?? ""} />
+    </BranchNavigationContext.Provider>
   );
 }
 

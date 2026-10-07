@@ -21,8 +21,8 @@ const INITIAL: AuthState = { ok: false };
  * Set a new password.
  *
  * Reached from the emailed link via /auth/callback, which exchanges the
- * one-time code for a session. There is no token in this URL — the session IS
- * the proof, which is why an expired or already-used link lands on
+ * one-time code for a session and a short-lived, single-use server recovery
+ * grant. An ordinary session is insufficient; an expired link lands on
  * /reset-password/expired instead of here.
  */
 export default function ResetPasswordPage() {

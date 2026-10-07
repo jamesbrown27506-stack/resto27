@@ -68,7 +68,7 @@ export async function GET() {
   let unread: number | undefined;
   try {
     const profile = await getCurrentProfile();
-    if (profile) {
+    if (profile && profile.status === "active" && !profile.deletedAt) {
       const supabase = createAdminClient();
       const { count, error } = await supabase
         .from("notifications")
@@ -87,6 +87,7 @@ export async function GET() {
 export async function POST(request: Request) {
   const profile = await getCurrentProfile();
   if (!profile) return NextResponse.json({ ok: false }, { status: 401 });
+  if (profile.status !== "active" || profile.deletedAt) return NextResponse.json({ ok: false }, { status: 403 });
 
   let body: unknown;
   try {

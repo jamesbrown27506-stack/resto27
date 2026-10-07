@@ -7,6 +7,9 @@ import { defineDict } from "../define";
  */
 export const withdrawalsDict = defineDict({
   fr: {
+    "mwd.nav.available": "Disponible au retrait",
+    "mwd.nav.unavailable": "Solde temporairement indisponible",
+    "mwd.nav.held": "Réservé pour remboursements : {amount}",
     "mwd.right.owner": "Vous êtes propriétaire : vous pouvez retirer.",
     "mwd.right.delegate": "Le propriétaire vous autorise à retirer, sans plafond.",
     "mwd.right.delegateLimit": "Le propriétaire vous autorise à retirer jusqu'à {limit} par 24 h — reste : {left}.",
@@ -18,16 +21,20 @@ export const withdrawalsDict = defineDict({
 
     "mwd.pin.title": "Votre code de retrait",
     "mwd.pin.bodyNew":
-      "Chaque retrait se confirme avec votre code personnel de 4 à 6 chiffres. Choisissez-en un que vous seul connaissez — pas votre code Mobile Money.",
+      "Chaque retrait se confirme avec votre code personnel à 4 chiffres. Choisissez-en un que vous seul connaissez — pas votre code Mobile Money.",
     "mwd.pin.bodySet": "Votre code est en place. Oublié ? Choisissez-en un nouveau avec le mot de passe de votre compte.",
     "mwd.pin.locked": "Code bloqué jusqu'à {time} après trop d'essais incorrects.",
     "mwd.pin.password": "Mot de passe du compte",
-    "mwd.pin.new": "Nouveau code (4 à 6 chiffres)",
+    "mwd.pin.new": "Nouveau code (4 chiffres)",
     "mwd.pin.confirm": "Confirmer le code",
     "mwd.pin.mismatch": "Les deux codes ne correspondent pas.",
     "mwd.pin.save": "Enregistrer le code",
     "mwd.pin.change": "Changer de code",
     "mwd.pin.enter": "Votre code de retrait",
+    "mwd.pin.keypad": "Clavier du code de retrait",
+    "mwd.pin.erase": "Effacer le dernier chiffre",
+    "mwd.pin.enterComplete": "Saisissez votre code de retrait complet.",
+    "mwd.pin.exact": "Saisissez les {count} chiffres de votre code.",
 
     "mwd.num.title": "Numéros de retrait",
     "mwd.num.bodyOwner":
@@ -77,7 +84,7 @@ export const withdrawalsDict = defineDict({
     "mwd.note.numberAdded": "Numéro enregistré.",
     "mwd.note.numberRemoved": "Numéro retiré.",
 
-    "mwd.err.pinFormat": "Le code doit compter 4 à 6 chiffres.",
+    "mwd.err.pinFormat": "Le nouveau code doit compter exactement 4 chiffres.",
     "mwd.err.pinWeak": "Code trop facile à deviner (chiffres identiques ou qui se suivent).",
     "mwd.err.tooMany": "Trop d'essais. Réessayez dans une heure.",
     "mwd.err.password": "Mot de passe incorrect.",
@@ -130,6 +137,9 @@ export const withdrawalsDict = defineDict({
     "mwd.num.phoneRequired": "Entrez un numéro Mobile Money valide.",
   },
   en: {
+    "mwd.nav.available": "Available for withdrawals",
+    "mwd.nav.unavailable": "Balance temporarily unavailable",
+    "mwd.nav.held": "Held for refunds: {amount}",
     "mwd.right.owner": "You are the owner: you can withdraw.",
     "mwd.right.delegate": "The owner lets you withdraw, with no ceiling.",
     "mwd.right.delegateLimit": "The owner lets you withdraw up to {limit} per 24 h — left: {left}.",
@@ -141,16 +151,20 @@ export const withdrawalsDict = defineDict({
 
     "mwd.pin.title": "Your withdrawal PIN",
     "mwd.pin.bodyNew":
-      "Every withdrawal is confirmed with your own 4–6 digit PIN. Choose one only you know — not your Mobile Money PIN.",
+      "Every withdrawal is confirmed with your own 4-digit PIN. Choose one only you know — not your Mobile Money PIN.",
     "mwd.pin.bodySet": "Your PIN is set. Forgot it? Choose a new one with your account password.",
     "mwd.pin.locked": "PIN locked until {time} after too many wrong tries.",
     "mwd.pin.password": "Account password",
-    "mwd.pin.new": "New PIN (4 to 6 digits)",
+    "mwd.pin.new": "New PIN (4 digits)",
     "mwd.pin.confirm": "Confirm the PIN",
     "mwd.pin.mismatch": "The two PINs do not match.",
     "mwd.pin.save": "Save the PIN",
     "mwd.pin.change": "Change PIN",
     "mwd.pin.enter": "Your withdrawal PIN",
+    "mwd.pin.keypad": "Withdrawal PIN keypad",
+    "mwd.pin.erase": "Erase the last digit",
+    "mwd.pin.enterComplete": "Enter your complete withdrawal PIN.",
+    "mwd.pin.exact": "Enter all {count} digits of your PIN.",
 
     "mwd.num.title": "Payout numbers",
     "mwd.num.bodyOwner":
@@ -200,7 +214,7 @@ export const withdrawalsDict = defineDict({
     "mwd.note.numberAdded": "Number saved.",
     "mwd.note.numberRemoved": "Number removed.",
 
-    "mwd.err.pinFormat": "The PIN must have 4 to 6 digits.",
+    "mwd.err.pinFormat": "The new PIN must have exactly 4 digits.",
     "mwd.err.pinWeak": "Too easy to guess (repeated or consecutive digits).",
     "mwd.err.tooMany": "Too many tries. Try again in an hour.",
     "mwd.err.password": "Wrong password.",

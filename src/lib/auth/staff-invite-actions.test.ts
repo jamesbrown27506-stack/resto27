@@ -12,7 +12,7 @@ import { fetchStaffInvitation } from "./staff-invitations";
 import { createAdminClient } from "@/lib/supabase/server";
 import { syncStaffRole } from "./staff-access";
 const token = "c5e3cde0-9a7e-46e4-bccf-28a518adbac1";
-const user = { email: "staff@example.com", email_confirmed_at: "2026-09-18" } as NonNullable<Awaited<ReturnType<typeof getSessionUser>>>;
+const user: NonNullable<Awaited<ReturnType<typeof getSessionUser>>> = { id: "auth-id", email: "staff@example.com", email_confirmed_at: "2026-09-18", user_metadata: {}, aud: "authenticated", created_at: "2026-09-18", app_metadata: { security_email: "staff@example.com", security_email_verified_at: "2026-09-18" } };
 const profile = { id: "profile-id", role: "customer", status: "active", deletedAt: null } as NonNullable<Awaited<ReturnType<typeof getActiveProfile>>["profile"]>;
 const invitation = { id: "staff-id", status: "invited", invited_email: "staff@example.com", invite_expires: "2099-01-01T00:00:00Z" } as NonNullable<Awaited<ReturnType<typeof fetchStaffInvitation>>>;
 describe("accept staff invitation authorization", () => {
@@ -28,8 +28,8 @@ describe("accept staff invitation authorization", () => {
     expect(createAdminClient).not.toHaveBeenCalled();
   });
   it("requires verified email and an active profile", async () => {
-    vi.mocked(getSessionUser).mockResolvedValue({ ...user, email_confirmed_at: undefined });
-    await expect(acceptStaffInvitation(token)).rejects.toThrow("error=account");
+    vi.mocked(getSessionUser).mockResolvedValue({ ...user, app_metadata: {} });
+    await expect(acceptStaffInvitation(token)).rejects.toThrow("/security?step=email");
     expect(createAdminClient).not.toHaveBeenCalled();
     vi.mocked(getSessionUser).mockResolvedValue(user);
     vi.mocked(getActiveProfile).mockResolvedValue({ reason: "suspended" });
@@ -37,7 +37,7 @@ describe("accept staff invitation authorization", () => {
     expect(createAdminClient).not.toHaveBeenCalled();
   });
   it("rejects another account holding a forwarded invite", async () => {
-    vi.mocked(getSessionUser).mockResolvedValue({ ...user, email: "other@example.com" });
+    vi.mocked(getSessionUser).mockResolvedValue({ ...user, email: "other@example.com", app_metadata: { ...user.app_metadata, security_email: "other@example.com" } });
     await expect(acceptStaffInvitation(token)).rejects.toThrow("error=invalid");
     expect(createAdminClient).not.toHaveBeenCalled();
   });

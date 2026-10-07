@@ -1,0 +1,15 @@
+Mobile wallet layout and PIN entry — 2026-10-06
+
+The withdrawal history previously placed the details, status and action in one flex row. At phone widths the action squeezed the details into a narrow column, wrapping the phone one digit per line. Details now occupy the whole row below 640px, with fee, status and action grouped underneath. Amount and phone stay intact; long names wrap normally. Desktop keeps the compact horizontal layout.
+
+PIN entry has no length selector. New and replacement PINs use four digits, enforced by the server creation rule as well as the interface. Existing five- and six-digit PINs continue to verify against their complete original hashes. Known lengths are displayed automatically from metadata; legacy codes without metadata expand from four to six boxes as entered, and a successful server verification records their length. No partial code is automatically submitted and no existing credential is shortened, reset or guessed.
+
+Some Android keyboards ignore inputMode/type hints. The PIN fields now use a built-in digits-only keypad with backspace, alongside a read-only masked field with inputMode=none. The device alphabet keyboard is suppressed. Physical keyboard entry and paste are supported, non-digits are removed and leading zeroes are preserved. The operation's existing confirmation button submits the code once. Password proof, hashing, permission checks, rate limits and attempt locks remain in force.
+
+No migration or new mobile APK is required: the Capacitor application loads the updated live website. Existing users do not need to reset their PIN.
+
+Validation: all 849 tests across 103 files passed, including new-PIN creation rules and existing 4/5/6-digit hash compatibility. TypeScript, changed-file ESLint and the local/remote production builds passed. No real PIN change or financial transaction was performed during testing.
+
+Deployment `dpl_6apvt3Xe4WnpsqCoaivpNjvEDMq5` was promoted successfully to https://resto237.online. Its deployment URL is https://resto237-4911s4apl-emmanuel-legrands-projects.vercel.app. All 29 security HTTP checks passed on the staged deployment at 2026-10-06 12:42:37 UTC and on the live domain at 2026-10-06 12:47:36 UTC. The first live check encountered a network fetch failure; the complete retry passed.
+
+The signed-in live browser verified 320px, 360px and 390px viewport widths: no horizontal document overflow, the phone occupies one text line, and actions sit below the details. The desktop viewport keeps the horizontal arrangement. The withdrawal confirmation has no length selector and automatically displays the account's known four-digit length. Its read-only masked field suppresses the system keyboard and its numeric keypad accepts digits and backspace. The fifth digit is ignored for a known four-digit code; physical digits work and letters do not change the code. Dummy digits were cleared, the confirmation was closed, and the temporary viewport override was reset. No PIN verification or payout was submitted.

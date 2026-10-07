@@ -259,20 +259,11 @@ async function runOne(schedule: ScheduleRow, mode: "sandbox" | "live"): Promise<
     recipientName = gate.name;
   }
 
-  const { data: created, error } = await supabase
-    .from("withdrawal_requests")
-    .insert({
-      restaurant_id: restaurantId,
-      requested_by: schedule.setBy,
-      amount,
-      phone: account.phone,
-      note: "Retrait programmé",
-      recipient_name: recipientName,
-      requester_role: "owner",
-      payout_account_id: account.id,
-    })
-    .select("id")
-    .single();
+  const { createQueuedWithdrawal } = await import("@/lib/payments/withdraw-execute");
+  const { data: created, error } = await createQueuedWithdrawal({
+    restaurantId, profileId: schedule.setBy, amount, payoutAccountId: account.id,
+    note: "Retrait programmé", recipientName, keep: schedule.keepAmount,
+  });
   if (error || !created) {
     console.error("[payouts:run] insert", restaurantId, error?.message);
     await record(restaurantId, "Le retrait n'a pas pu être créé.");

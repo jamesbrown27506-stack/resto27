@@ -85,6 +85,7 @@ export const CRITICAL_SETTING_KEYS: ReadonlySet<string> = new Set([
   "cron_base_url",
   "cron_secret",
   "push_provider",
+  "email_verification_roles",
   // Locks every installed Android app out until it updates.
   "app_update_required",
 ]);

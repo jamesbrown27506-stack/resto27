@@ -169,6 +169,8 @@ export const errCustomerDict = defineDict({
     "ecu.pay.subscriptionExtendFailed": "Le paiement a abouti mais l'abonnement n'a pas été prolongé.",
     // Upload rejections, keyed by lib/uploads.ts `reason`.
     "ecu.up.tooLarge": "Le fichier fait {size} Mo. La limite est de 2 Mo.",
+    "ecu.up.quota": "Votre limite de photos est atteinte. Réessayez demain ou remplacez votre avatar.",
+    "ecu.up.verification": "Vérifiez votre adresse e-mail depuis votre profil avant d'envoyer des photos.",
     "ecu.up.notImage": "Ce fichier n'est ni un PNG, ni un JPEG, GIF, WebP ou ICO. C'est le contenu qui est vérifié, pas le nom du fichier — le SVG n'est pas accepté car il peut contenir des scripts.",
     "ecu.up.storageFailed": "Impossible d'enregistrer le fichier. Sur un nouveau déploiement, vérifiez que la migration 0016 a été exécutée — elle crée l'espace de stockage.",
   },
@@ -326,6 +328,8 @@ export const errCustomerDict = defineDict({
     "ecu.pay.invoiceClaimFailed": "The invoice could not be settled.",
     "ecu.pay.subscriptionExtendFailed": "The payment went through but the subscription was not extended.",
     "ecu.up.tooLarge": "File is {size} MB. The limit is 2 MB.",
+    "ecu.up.quota": "Your photo limit has been reached. Try again tomorrow or replace your avatar.",
+    "ecu.up.verification": "Verify your email from your profile before uploading photos.",
     "ecu.up.notImage": "That file is not a PNG, JPEG, GIF, WebP or ICO. The contents are checked, not the file name — SVG is not accepted because it can carry scripts.",
     "ecu.up.storageFailed": "Could not store the file. If this is a fresh deployment, check that migration 0016 has been run — it creates the storage bucket.",
   },

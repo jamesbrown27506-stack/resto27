@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isPublicPage } from "@/lib/seo-config";
 import { updateSession } from "@/lib/supabase/middleware";
+import { contentSecurityPolicy } from "@/lib/security/csp";
 
 /**
  * Root proxy — refreshes the Supabase session and does the cheap redirect.
@@ -42,6 +43,7 @@ const PROTECTED = [
   "/reviews",
   "/profile",
   "/settings",
+  "/security",
   "/m",
   "/a",
 ];
@@ -54,18 +56,28 @@ function matches(pathname: string, prefixes: string[]): boolean {
 }
 
 export async function proxy(request: NextRequest) {
+  // Replace incoming nonce/CSP headers. A visitor cannot choose a trusted script.
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+  const policy = contentSecurityPolicy({ production: process.env.NODE_ENV === "production", nonce, supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL });
+  request.headers.set("x-nonce", nonce);
+  request.headers.set("content-security-policy", policy);
   request.headers.delete("x-resto-public-locale");
   if (isPublicPage(request.nextUrl.pathname)) {
     request.headers.set("x-resto-public-locale", request.nextUrl.searchParams.get("lang") === "en" ? "en" : "fr");
   }
   const { supabaseResponse, user } = await updateSession(request);
+  const finish = (response: NextResponse) => {
+    response.headers.set("Content-Security-Policy", policy);
+    if (response !== supabaseResponse) for (const cookie of supabaseResponse.cookies.getAll()) response.cookies.set(cookie);
+    return response;
+  };
   const publicLocale = request.headers.get("x-resto-public-locale");
   if (publicLocale) supabaseResponse.cookies.set("restolink-locale", publicLocale, { path: "/", sameSite: "lax", maxAge: 31536000 });
   const { pathname, search } = request.nextUrl;
 
   // /a/health is a machine endpoint for uptime monitoring — it must answer
   // without a session, or the monitor reports the site down whenever it is up.
-  if (pathname === "/a/health") return supabaseResponse;
+  if (pathname === "/a/health") return finish(supabaseResponse);
 
   if (!user && matches(pathname, PROTECTED)) {
     const url = request.nextUrl.clone();
@@ -74,17 +86,17 @@ export async function proxy(request: NextRequest) {
     // Carry the destination so sign-in returns them where they were going,
     // rather than dumping everyone on the same dashboard.
     url.searchParams.set("next", `${pathname}${search}`);
-    return NextResponse.redirect(url);
+    return finish(NextResponse.redirect(url));
   }
 
   if (user && matches(pathname, AUTH_ONLY)) {
     const url = request.nextUrl.clone();
     url.pathname = "/account";
     url.search = "";
-    return NextResponse.redirect(url);
+    return finish(NextResponse.redirect(url));
   }
 
-  return supabaseResponse;
+  return finish(supabaseResponse);
 }
 
 export const config = {

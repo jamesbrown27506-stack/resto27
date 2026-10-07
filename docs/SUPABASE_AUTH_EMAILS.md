@@ -20,10 +20,14 @@ In the dashboard, open **Authentication → URL Configuration** and set:
 | Setting | Value |
 |---|---|
 | Site URL | `https://resto237.online` |
-| Redirect URLs | `https://resto237.online/**` |
+| Redirect URLs | `https://resto237.online/auth/callback` |
+| | `https://resto237.online/auth/callback?next=**` |
 | | `http://localhost:3000/**` (local testing) |
 
 The templates build their links from `{{ .SiteURL }}`, so the Site URL must be the real domain.
+The production entries keep the callback path fixed while allowing the app's
+validated `next` destination in the query string. Do not allow every production
+path or every Vercel hostname.
 
 ## 2. Email templates
 
@@ -33,6 +37,7 @@ In **Authentication → Emails → Templates**, set the subject and paste the HT
 |---|---|---|
 | Reset Password | `Votre code Resto237 : {{ .Token }}` | `supabase/email-templates/reset-password.html` |
 | Confirm signup | `Confirmez votre adresse email — Resto237` | `supabase/email-templates/confirm-signup.html` |
+| Magic link or OTP | `Vérifiez votre adresse / Verify your Resto237 email` | `supabase/email-templates/verify-email.html` |
 
 ## 3. Code settings
 

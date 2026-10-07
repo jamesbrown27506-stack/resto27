@@ -403,6 +403,7 @@ const baseFr = {
   "auth.signInLink": "Se connecter",
   "auth.checkEmail": "Vérifiez vos emails",
   "auth.accountCreated": "Compte créé",
+  "auth.customerReadyBody": "Votre compte est prêt. Connectez-vous avec votre adresse email et votre mot de passe. Aucune confirmation par email n’est nécessaire.",
   "auth.checkEmailBody":
     "Un lien de confirmation vient de vous être envoyé. Cliquez dessus pour activer votre compte, puis connectez-vous.",
   "auth.checkSpam": "Rien reçu au bout de quelques minutes ? Regardez dans vos indésirables.",
@@ -1240,6 +1241,7 @@ const baseEn: Record<keyof typeof baseFr, string> = {
   "auth.signInLink": "Sign in",
   "auth.checkEmail": "Check your emails",
   "auth.accountCreated": "Account created",
+  "auth.customerReadyBody": "Your account is ready. Sign in with your email and password. No email confirmation is needed.",
   "auth.checkEmailBody":
     "A confirmation link was just sent to you. Click it to activate your account, then sign in.",
   "auth.checkSpam": "Nothing received after a few minutes? Check your spam folder.",

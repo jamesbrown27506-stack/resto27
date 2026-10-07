@@ -1,0 +1,39 @@
+# Local secrets and generated files must never enter Vercel source uploads.
+.git
+.vercel
+.env*
+node_modules
+.next
+out
+build
+coverage
+*.tsbuildinfo
+*.log
+*.pem
+*.p8
+*.p12
+*.jks
+*.keystore
+*firebase-adminsdk*.json
+*service-account*.json
+
+# Browser profiles contain cookies, passwords and session storage.
+.chrome-mobile-qa
+.edge-mobile-qa*
+resto237.online-audit
+mobile-*-qa*.png
+instrument.cjs
+loadtest.mjs
+
+# Native sources and signing material are not inputs to the web build.
+# The published APK under public/downloads remains available.
+android
+ios
+native
+mobile-shell
+resources
+supabase/.temp
+
+# Local upload experiments are not production assets.
+public/uploads/*
+!public/uploads/.gitkeep

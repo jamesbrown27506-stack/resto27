@@ -5,7 +5,7 @@ import { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 import { NavIcon, type IconName } from "./icon";
-import { NavMenuSheet, type NavMenuItem } from "./nav-menu-sheet";
+import { NavMenuSheet, type NavMenuItem, type NavMenuFeaturedItem } from "./nav-menu-sheet";
 import { useCart } from "@/components/cart/cart-provider";
 import { useLocale } from "@/lib/i18n/use-locale";
 import { cn } from "@/lib/utils";
@@ -101,6 +101,7 @@ export function MobileTabBar({
   more,
   counts,
   sheetHeader,
+  sheetFeaturedItem,
   ariaLabel,
 }: {
   items: TabItem[];
@@ -108,6 +109,8 @@ export function MobileTabBar({
   counts?: Partial<Record<TabCountKey, number>>;
   /** Shown at the top of the sheet — the manager's branch switcher. */
   sheetHeader?: ReactNode;
+  /** A prominent replacement for a destination, with its active state retained. */
+  sheetFeaturedItem?: NavMenuFeaturedItem;
   ariaLabel?: string;
 }) {
   const pathname = usePathname();
@@ -220,6 +223,7 @@ export function MobileTabBar({
           items={moreItems}
           actions={more.actions}
           header={sheetHeader}
+          featuredItem={sheetFeaturedItem}
         />
       )}
     </>

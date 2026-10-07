@@ -25,6 +25,8 @@ export interface NavItem {
   allowLocked?: boolean;
   /** Match child routes too, e.g. /m/orders/123 highlights /m/orders. */
   matchPrefix?: boolean;
+  /** A primary destination in the mobile menu. Does not grant access. */
+  prominent?: boolean;
 }
 
 export interface NavGroup {
@@ -66,7 +68,7 @@ export const MANAGER_NAV: NavGroup[] = [
       { href: "/m/tables", labelKey: "nav.m.tables", icon: "Armchair", capability: "tables.view" },
       // No capability gate: every active staff member may answer customers.
       { href: "/m/messages", labelKey: "nav.m.messages", icon: "MessageSquare" },
-      { href: "/m/wallet", labelKey: "nav.m.wallet", icon: "Wallet", capability: "finance.manage" },
+      { href: "/m/wallet", labelKey: "nav.m.wallet", icon: "Wallet", capability: "finance.manage", prominent: true },
     ],
   },
   {
@@ -177,6 +179,7 @@ export const ADMIN_NAV: NavGroup[] = [
       { href: "/a/saspay", label: "SasPay", icon: "Smartphone" },
       { href: "/a/coupons", label: "Coupons", icon: "TicketPercent" },
       { href: "/a/wallet", label: "Wallet", icon: "Wallet" },
+      { href: "/a/loyalty", label: "Loyalty & reserves", icon: "Gift" },
     ],
   },
   {

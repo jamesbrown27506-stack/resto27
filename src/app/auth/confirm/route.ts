@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { safeNextPath } from "@/lib/auth/safe-next";
+import { issueRecoveryGrant, recordMailboxProof } from "@/lib/auth/security";
 
 /**
  * Where the links in Supabase's own emails land — confirming an account,
@@ -57,10 +58,20 @@ export async function GET(request: NextRequest) {
   if (!tokenHash || !type || !TYPES.includes(type)) return NextResponse.redirect(failed);
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
+  const { data, error } = await supabase.auth.verifyOtp({ type, token_hash: tokenHash });
 
   // Expired, already used, or tampered with.
   if (error) return NextResponse.redirect(failed);
+
+  try {
+    if (data.user && type !== "email_change") await recordMailboxProof(data.user);
+    if (type === "recovery") {
+      if (!data.session) return NextResponse.redirect(failed);
+      await issueRecoveryGrant(data.session);
+    }
+  } catch {
+    return NextResponse.redirect(failed);
+  }
 
   return NextResponse.redirect(`${origin}${safeNext}`);
 }

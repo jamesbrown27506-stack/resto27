@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import release from "./src/lib/app-release.json";
+import { contentSecurityPolicy } from "./src/lib/security/csp";
 
 /**
  * Every upload is served from the Supabase CDN, and next/image refuses any
@@ -21,65 +22,6 @@ const supabaseHostname = (() => {
     return null;
   }
 })();
-
-/**
- * Content-Security-Policy for the whole app.
- *
- * The three concessions, each deliberate:
- *  · `'unsafe-inline'` for script — the first-visit theme probe in layout.tsx
- *    must run before hydration and is therefore an inline tag. Next.js also
- *    inlines RSC flight data. This is the standard trade-off for a theme
- *    script; everything else still has to come from our origin.
- *  · `'unsafe-eval'` — needed by Turbopack in development; the production
- *    bundle does not require it, but a config that breaks `next dev` is worse
- *    than a CSP that is slightly looser in prod.
- *  · `connect-src` is widened to the Supabase project (REST + Realtime
- *    websocket); `img-src` and `media-src` to the Supabase storage bucket.
- *
- * ─────────────────────────────────────────────────────────────────────────
- *  WHY `media-src` IS SPELLED OUT RATHER THAN LEFT TO `default-src`.
- *
- *  It was left to `default-src 'self'`, and that silently broke the custom
- *  notification sound the day the feature shipped. The six built-in sounds
- *  are same-origin files in public/sounds, so they satisfied `'self'` and
- *  everything looked fine; an UPLOADED sound is served from the Supabase
- *  CDN, and `Audio.play()` rejected with nothing to say for itself — the
- *  file was stored perfectly, publicly readable, correct bytes and correct
- *  content type, and the browser would still not touch it.
- *
- *  `img-src` had already been widened for exactly this reason. Audio needed
- *  the same widening and did not get it, because no audio had ever come from
- *  off-origin before.
- * ─────────────────────────────────────────────────────────────────────────
- *
- * Everything else is locked down: no frames, no plugin objects, no external
- * fonts/scripts, base-uri and form-action pinned to self.
- */
-function contentSecurityPolicy(production: boolean): string {
-  // The REST/CDN origin, and the websocket origin Realtime dials. Only
-  // `connect-src` has any use for the wss:// form.
-  const https = supabaseHostname ? ` https://${supabaseHostname}` : "";
-  const sockets = supabaseHostname ? ` wss://${supabaseHostname}` : "";
-  const upgrade = production ? " upgrade-insecure-requests;" : "";
-  return [
-    "default-src 'self'",
-    `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.googletagmanager.com https://www.gstatic.com`,
-    "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: blob: https://images.unsplash.com${https} https://*.google-analytics.com https://*.googletagmanager.com`,
-    // The notification sound: the built-ins from our own origin, an uploaded
-    // one from the storage bucket.
-    `media-src 'self' data: blob:${https}`,
-    "font-src 'self' data:",
-    `connect-src 'self' https://firebaseinstallations.googleapis.com https://firebase.googleapis.com https://fcm.googleapis.com https://fcmregistrations.googleapis.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com${https}${sockets}`,
-    "object-src 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-    upgrade,
-  ]
-    .filter(Boolean)
-    .join("; ");
-}
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
@@ -107,7 +49,7 @@ const nextConfig: NextConfig = {
 
   /**
    * Security headers on every response, including /sw.js and other public
-   * assets. The CSP above is the centrepiece; the rest are the cheap ones.
+   * assets. Page CSP nonces are supplied by the request proxy.
    */
   async headers() {
     return [
@@ -119,6 +61,7 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
           { key: "Service-Worker-Allowed", value: "/" },
+          { key: "Content-Security-Policy", value: contentSecurityPolicy({ production: process.env.NODE_ENV === "production", supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL }) },
         ],
       },
       {
@@ -147,10 +90,7 @@ const nextConfig: NextConfig = {
           // and `()` disables navigator.geolocation for our own pages as well.
           // Third-party frames stay blocked.
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(self)" },
-          {
-            key: "Content-Security-Policy",
-            value: contentSecurityPolicy(process.env.NODE_ENV === "production"),
-          },
+
         ],
       },
     ];

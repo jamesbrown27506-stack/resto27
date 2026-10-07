@@ -5,12 +5,11 @@ import { mainRestaurantId } from "@/lib/branches/account";
 import { notify } from "@/lib/notify";
 import { rateLimit } from "@/lib/rate-limit";
 import type { BranchContext } from "@/lib/auth/branch";
-import { hashPin, verifyPin } from "./pin-hash";
+import { hashPin, pinLength, verifyPin } from "./pin-hash";
 import {
   DAILY_WINDOW_MS,
   PIN_LOCK_MINUTES,
   PIN_MAX_ATTEMPTS,
-  afterWrongPin,
   maskPhone,
   pinLocked,
   withdrawRight,
@@ -71,13 +70,13 @@ export async function resolveWithdrawRight(context: BranchContext): Promise<With
 /** What a delegate already took out at this branch in the last 24 hours. */
 export async function withdrawnInLast24h(restaurantId: string, profileId: string): Promise<number> {
   const since = new Date(Date.now() - DAILY_WINDOW_MS).toISOString();
-  const { data } = await db()
+  const { data, error } = await db()
     .from("withdrawal_requests")
     .select("amount")
     .eq("restaurant_id", restaurantId)
     .eq("requested_by", profileId)
-    .in("status", ["pending", "paid"])
-    .gte("requested_at", since);
+    .or(`status.eq.pending,and(status.eq.paid,debited_at.gte.${since})`);
+  if (error) throw new Error("Withdrawal allowance could not be verified.");
   return ((data ?? []) as { amount: number }[]).reduce((sum, row) => sum + Number(row.amount), 0);
 }
 
@@ -125,17 +124,18 @@ export async function listWithdrawDelegates(restaurantId: string): Promise<Withd
 export interface PinStatus {
   hasPin: boolean;
   lockedUntil: string | null;
+  length: 4 | 5 | 6 | null;
 }
 
 export async function pinStatus(profileId: string): Promise<PinStatus> {
   const { data } = await db()
     .from("withdrawal_pins")
-    .select("locked_until")
+    .select("pin_hash, locked_until")
     .eq("profile_id", profileId)
     .maybeSingle();
-  if (!data) return { hasPin: false, lockedUntil: null };
+  if (!data) return { hasPin: false, lockedUntil: null, length: null };
   const lockedUntil = (data.locked_until as string | null) ?? null;
-  return { hasPin: true, lockedUntil: pinLocked(lockedUntil, new Date()) ? lockedUntil : null };
+  return { hasPin: true, lockedUntil: pinLocked(lockedUntil, new Date()) ? lockedUntil : null, length: pinLength(String(data.pin_hash)) };
 }
 
 /** Set (or replace) a person's PIN. The caller has re-checked their password. */
@@ -206,13 +206,19 @@ export async function checkWithdrawalPin(
   const attempts = Number(data.failed_attempts ?? 0);
 
   if (verifyPin(pin, String(data.pin_hash))) {
+    // Learn a legacy code's length only after verifying it. The hash guard
+    // prevents a concurrent password-authorized PIN change being overwritten.
+    if (pinLength(String(data.pin_hash)) === null) {
+      await supabase.from("withdrawal_pins").update({ pin_hash: `${data.pin_hash}$${pin.length}` })
+        .eq("profile_id", profileId).eq("pin_hash", data.pin_hash);
+    }
     if (attempts > 0 || lockedUntil) {
       await supabase.from("withdrawal_pins").update({ failed_attempts: 0, locked_until: null }).eq("profile_id", profileId);
     }
     return { ok: true };
   }
 
-  const next = await countWrongPin(profileId, attempts, now);
+  const next = await countWrongPin(profileId, now);
 
   if (next.lockedUntil && next.justLocked) {
     const detail = `Le code de retrait de ${where.personName} est bloqué 30 minutes après ${PIN_MAX_ATTEMPTS} essais incorrects.`;
@@ -227,12 +233,11 @@ export async function checkWithdrawalPin(
 
 /**
  * Count one wrong PIN atomically — withdrawal_pin_wrong() (0076) locks the
- * row, so concurrent wrong codes each count. Before 0076 is run, the old
- * compare-and-swap is the fallback; the rate limiter above still caps it.
+ * row, so concurrent wrong codes each count. An unavailable counter refuses
+ * the check instead of falling back to a racy read/write.
  */
 async function countWrongPin(
   profileId: string,
-  attemptsRead: number,
   now: Date,
 ): Promise<{ attempts: number; lockedUntil: string | null; justLocked: boolean }> {
   const supabase = db();
@@ -252,15 +257,8 @@ async function countWrongPin(
       justLocked: Boolean(row.out_just_locked),
     };
   }
-  if (error) console.error("[wallet:pinWrong] falling back", error.message);
-
-  const next = afterWrongPin(attemptsRead, now);
-  await supabase
-    .from("withdrawal_pins")
-    .update({ failed_attempts: next.attempts, locked_until: next.lockedUntil })
-    .eq("profile_id", profileId)
-    .eq("failed_attempts", attemptsRead);
-  return { ...next, justLocked: next.lockedUntil !== null };
+  if (error) console.error("[wallet:pinWrong] durable counter unavailable", error.message);
+  return { attempts: PIN_MAX_ATTEMPTS, lockedUntil: new Date(now.getTime() + PIN_LOCK_MINUTES * 60_000).toISOString(), justLocked: false };
 }
 
 /* ── The numbers ───────────────────────────────────────────────────────── */

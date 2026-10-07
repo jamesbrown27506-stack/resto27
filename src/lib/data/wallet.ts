@@ -82,48 +82,15 @@ export interface WalletState {
  * ─────────────────────────────────────────────────────────────────────────
  */
 export async function ordersInProgressHold(restaurantId: string): Promise<number> {
-  const { data, error } = await createAdminClient()
-    .from("orders")
-    .select("total, service_charge")
-    .eq("restaurant_id", restaurantId)
-    .eq("is_paid", true)
-    .in("payment_method", ["mobile_money", "wallet"])
-    .in("status", ["confirmed", "preparing", "shipped"]);
-  if (error) {
-    console.error("[wallet:hold]", error.message);
-    return 0;
+  // The database also uses this reserve during the atomic payout claim.
+  // Sharing the RPC prevents the UI from omitting platform-funded loyalty.
+  const { data, error } = await createAdminClient().rpc("wallet_refund_hold", { p_restaurant_id: restaurantId });
+  const held = Number(data);
+  if (error || data === null || !Number.isSafeInteger(held) || held < 0) {
+    console.error("[wallet:hold]", error?.code ?? "invalid_reserve");
+    throw new Error("Refund reserves could not be verified.");
   }
-  const orders = ((data ?? []) as { total: number; service_charge: number | null }[]).reduce(
-    (sum, o) => sum + Math.max(0, Number(o.total) - Number(o.service_charge ?? 0)),
-    0,
-  );
-
-  // Same reasoning for a deposit paid ONLINE on a booking still to come: the
-  // restaurant may cancel it (full refund, 0060) or the customer may (0050),
-  // and both debit the wallet. Cash deposits never entered the wallet.
-  const { data: bookings } = await createAdminClient()
-    .from("reservations")
-    .select("id")
-    .eq("restaurant_id", restaurantId)
-    .eq("status", "confirmed")
-    .eq("deposit_paid", true)
-    .gt("reserved_for", new Date().toISOString());
-  const ids = ((bookings ?? []) as { id: string }[]).map((b) => b.id);
-  let deposits = 0;
-  if (ids.length > 0) {
-    const { data: attempts } = await createAdminClient()
-      .from("payment_attempts")
-      .select("reservation_id, amount")
-      .in("reservation_id", ids)
-      .eq("status", "succeeded");
-    const perBooking = new Map<string, number>();
-    for (const a of (attempts ?? []) as { reservation_id: string; amount: number }[]) {
-      perBooking.set(a.reservation_id, Math.max(perBooking.get(a.reservation_id) ?? 0, Number(a.amount)));
-    }
-    deposits = [...perBooking.values()].reduce((sum, n) => sum + n, 0);
-  }
-
-  return orders + deposits;
+  return held;
 }
 
 /**

@@ -180,6 +180,13 @@ export async function addAdministrator(input: {
       };
     }
 
+    // Autoconfirmed Auth emails do not prove mailbox ownership. The target
+    // must complete the actual email OTP at /security before a privilege grant.
+    const { hasVerifiedMailbox } = await import("@/lib/auth/security-rules");
+    if (!account?.user || !hasVerifiedMailbox(account.user)) {
+      return { ok: false, error: "Ask this person to verify their email at /security before granting administrator access." };
+    }
+
     // A customer who is ALSO active staff somewhere is a restaurant login in
     // all but name (syncStaffRole would promote them on their next request).
     const { data: staff } = await supabase

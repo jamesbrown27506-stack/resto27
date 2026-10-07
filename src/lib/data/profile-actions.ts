@@ -6,7 +6,7 @@ import { z } from "zod";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
 import { requireCapability } from "@/lib/auth/branch";
 import { requireRole, requireUser } from "@/lib/auth/session";
-import { deleteUpload, localizeUploadError, saveAudioUpload, saveUpload, type UploadKind } from "@/lib/uploads";
+import { deleteOwnedAvatar, deleteUpload, localizeUploadError, saveAudioUpload, saveUpload, type UploadKind } from "@/lib/uploads";
 import { firstIssueMessage } from "@/lib/i18n/issue-message";
 import { isCustomSound } from "@/lib/notification-sound";
 import { writeAudit } from "@/lib/audit";
@@ -340,7 +340,7 @@ export async function uploadOwnAvatar(formData: FormData): Promise<UploadActionR
   const file = formData.get("file");
   if (!(file instanceof File)) return { ok: false, error: t("ecu.noFile") };
 
-  const result = await saveUpload(file, "avatars" satisfies UploadKind);
+  const result = await saveUpload(file, "avatars" satisfies UploadKind, user.id);
   if (!result.ok) return { ok: false, error: localizeUploadError(result, t) };
 
   const supabase = createAdminClient();
@@ -349,7 +349,11 @@ export async function uploadOwnAvatar(formData: FormData): Promise<UploadActionR
     .update({ avatar_url: result.url })
     .eq("id", user.id);
 
-  if (error) return { ok: false, error: t("ecu.avatarNotSaved") };
+  if (error) {
+    await deleteOwnedAvatar(result.url, user.id);
+    return { ok: false, error: t("ecu.avatarNotSaved") };
+  }
+  await deleteOwnedAvatar(user.avatarUrl, user.id);
 
   revalidatePath("/", "layout");
   return { ok: true, url: result.url };
@@ -385,7 +389,7 @@ export async function changeOwnPassword(formData: FormData): Promise<ActionResul
     PIN is set with the account password). Counted per person, so it is not
     a guessing oracle either.
   */
-  const limited = await rateLimit({ key: "profile:password-change", identifier: profile.id, limit: 5, windowMs: 60 * 60_000 });
+  const limited = await rateLimit({ key: "profile:password-change", identifier: profile.id, limit: 5, windowMs: 60 * 60_000, failClosed: true });
   if (!limited.ok) return { ok: false, error: t("ecu.authTooManyAttemptsHour") };
 
   const check = await verifyAccountPassword(profile.authUserId, current);
@@ -393,7 +397,7 @@ export async function changeOwnPassword(formData: FormData): Promise<ActionResul
   if (check === "unavailable") return { ok: false, error: t("ecu.authPasswordChangeFailed") };
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.updateUser({ password });
+  const { error } = await supabase.auth.updateUser({ password, current_password: current });
 
   if (error) {
     console.error("[profile:changeOwnPassword]", error.message);

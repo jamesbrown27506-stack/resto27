@@ -1,4 +1,5 @@
 import "server-only";
+import { computeTotals } from "@/lib/orders/totals";
 import { isDishCourse, type DishCourse } from "@/lib/menu/course";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { BranchRole } from "@/lib/capabilities";
@@ -747,7 +748,7 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
     await Promise.all([
       supabase
         .from("orders")
-        .select("total, status")
+        .select("subtotal, discount_amount, status")
         .eq("restaurant_id", restaurantId)
         .gte("created_at", since),
       count("orders").in("status", ["pending", "awaiting_customer", "confirmed", "preparing"]),
@@ -760,7 +761,7 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
       supabase.from("restaurants").select("rating, review_count").eq("id", restaurantId).maybeSingle(),
     ]);
 
-  const todayRows = (today.data ?? []) as { total: number; status: string }[];
+  const todayRows = (today.data ?? []) as { subtotal: number; discount_amount: number; status: string }[];
 
   /*
     ────────────────────────────────────────────────────────────────────────
@@ -791,7 +792,8 @@ export async function fetchBranchOverview(restaurantId: string): Promise<BranchO
 
   const revenueToday = todayRows
     .filter((o) => EARNED.includes(o.status))
-    .reduce((sum, o) => sum + o.total, 0);
+    // Points are funded by the platform; the restaurant still earns the food value.
+    .reduce((sum, o) => sum + computeTotals({ subtotal: o.subtotal, discount: o.discount_amount }).netFood, 0);
 
   // Shown beside the revenue so the gap between "orders today" and the money
   // is explained rather than left to look like a bug.

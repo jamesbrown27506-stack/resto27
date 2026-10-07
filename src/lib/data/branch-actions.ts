@@ -21,6 +21,9 @@ import {
 } from "@/lib/branches/account";
 import { includedBranchSlots, planAllowsBranches } from "@/lib/branches/coverage";
 import { entitlementsFor } from "@/lib/billing/entitlements";
+import { announceBranchTeam, installBranchTeam, loadBranchTeam } from "@/lib/branches/team";
+import { resolveBranchTeam } from "@/lib/branches/team-rules";
+import type { BranchTeamChoice } from "@/lib/branches/team-types";
 
 /**
  * Opening, closing and paying for branches — the owner's side of 0072.
@@ -55,6 +58,7 @@ interface OwnerScope {
   mainId: string;
   account: BranchAccount;
   profile: Awaited<ReturnType<typeof requireBranch>>["profile"];
+  impersonating: boolean;
 }
 
 /**
@@ -80,7 +84,7 @@ async function ownerScope(): Promise<{ ok: true; scope: OwnerScope } | { ok: fal
   if (!account) return { ok: false, reason: "notFound", error: t("mbr.err.notFound") };
   if (!account.migrated) return { ok: false, reason: "migration", error: t("mbr.err.migration") };
 
-  return { ok: true, scope: { mainId, account, profile: context.profile } };
+  return { ok: true, scope: { mainId, account, profile: context.profile, impersonating: context.impersonating } };
 }
 
 /** URL-safe form of a name: accents folded, punctuation dropped (as at signup). */
@@ -162,11 +166,13 @@ export async function createBranch(input: {
   phone?: string;
   /** Start from the main's menu instead of an empty one. */
   copyMenu?: boolean;
+  manager?: BranchTeamChoice;
+  coOwner?: BranchTeamChoice;
 }): Promise<BranchActionResult> {
   const t = await getTranslator();
   const owner = await ownerScope();
   if (!owner.ok) return owner;
-  const { mainId, account, profile } = owner.scope;
+  const { mainId, account, profile, impersonating } = owner.scope;
 
   // A restaurant row per click: cheap to abuse, so budgeted like signup.
   const limited = await rateLimit({ key: "branch:create", identifier: mainId, limit: 5, windowMs: 60 * 60_000 });
@@ -198,13 +204,34 @@ export async function createBranch(input: {
   if (taken) return { ok: false, reason: "labelTaken", error: t("mbr.err.labelTaken") };
 
   const address = input.address.trim();
-  if (address.length < 4) return { ok: false, reason: "address", error: t("mbr.err.address") };
+  if (address.length < 4 || address.length > 300 || /^\+?[\d\s().-]{9,}$/.test(address)) {
+    return { ok: false, reason: "address", error: t("mbr.err.address") };
+  }
 
   let phone = (account.main.row.phone as string | null | undefined) ?? null;
   if (input.phone && input.phone.trim()) {
     const parsed = phoneSchema.safeParse(input.phone);
     if (!parsed.success) return { ok: false, reason: "phone", error: t("mbr.err.phone") };
     phone = parsed.data;
+  }
+
+  if (!account.main.ownerId) return { ok: false, reason: "ownerUnavailable", error: t("mbr.err.ownerUnavailable") };
+  const team = await loadBranchTeam([mainId, ...account.branches.map(branch => branch.id)]);
+  if (!team.available) return { ok: false, reason: "teamUnavailable", error: t("mbr.err.teamUnavailable") };
+  const selectedTeam = resolveBranchTeam({
+    members: team.members,
+    mainOwnerId: account.main.ownerId,
+    actorOwnerId: impersonating ? null : profile.id,
+    manager: input.manager,
+    coOwner: input.coOwner,
+  });
+  if (!selectedTeam.ok) return { ok: false, reason: "teamInvalid", error: t(selectedTeam.errorKey) };
+  if (selectedTeam.assignments.length > 0) {
+    const limits = await entitlementsFor({ planTier: plan.tier, subscriptionState: sub.state === "grace" ? "grace" : "active" });
+    if (limits && !limits.staffManagement) return { ok: false, reason: "staffNotInPlan", error: t("est.staffNotInPlan") };
+    if (limits && selectedTeam.assignments.some(person => person.role === "manager") && limits.staffLimit < 1) {
+      return { ok: false, reason: "staffLimit", error: t("est.staffLimitReached", { limit: limits.staffLimit }) };
+    }
   }
 
   const quartierId = await resolveOrCreateQuartier(input.quartier, account.main.serviceAreaId);
@@ -244,6 +271,9 @@ export async function createBranch(input: {
       branch_label: label,
       slug,
       status: "paused",
+      // Closed until the selected team is installed. Even a failed rollback
+      // cannot let the coverage sweep publish this incomplete new location.
+      branch_closed_at: new Date().toISOString(),
       service_area_id: account.main.serviceAreaId,
       quartier_id: quartierId,
       address_line: address,
@@ -259,6 +289,20 @@ export async function createBranch(input: {
 
   const branchId = created.id as string;
 
+  const installedTeam = await installBranchTeam(branchId, selectedTeam.assignments, profile);
+  if (!installedTeam.ok) {
+    // Still unpublished, with no menu, invoices or invitations sent. Undo
+    // this new row rather than report a branch whose chosen team was lost.
+    const { error: rollbackError } = await supabase.from("restaurants").delete()
+      .eq("id", branchId).eq("parent_id", mainId).eq("status", "paused");
+    if (rollbackError) {
+      console.error("[branches:rollbackTeam]", branchId, rollbackError.code);
+      revalidateBranchScreens();
+      return { ok: false, reason: "teamSavedPaused", error: t("mbr.err.teamSavedPaused", { label }) };
+    }
+    return { ok: false, reason: "teamSaveFailed", error: t("mbr.err.teamSaveFailed") };
+  }
+
   // The menu is copied BEFORE the branch can run, so it never opens to
   // customers with an empty card. A failed copy does not undo the branch —
   // the owner can retry from the Branches page.
@@ -268,12 +312,18 @@ export async function createBranch(input: {
     menuNote = copied.ok ? t("mbr.note.menuCopied", { count: copied.dishes }) : t("mbr.note.menuNotCopied");
   }
 
+  const { data: readyBranch, error: readyError } = await supabase.from("restaurants")
+    .update({ branch_closed_at: null }).eq("id", branchId).eq("parent_id", mainId)
+    .eq("status", "paused").select("id").maybeSingle();
+  const activationFailed = Boolean(readyError || !readyBranch);
+  if (activationFailed) console.error("[branches:ready]", branchId, readyError?.code);
+
   await writeAudit(profile, {
-    action: "restaurant.branch_opened",
+    action: activationFailed ? "restaurant.branch_created" : "restaurant.branch_opened",
     entityType: "restaurant",
     entityId: branchId,
     summary: `${account.main.name} opened the branch ${label}${input.copyMenu ? " (menu copied)" : ""}`,
-    metadata: { mainId, copyMenu: Boolean(input.copyMenu) },
+    metadata: { mainId, copyMenu: Boolean(input.copyMenu), team: selectedTeam.assignments.map(person => ({ profileId: person.profileId, role: person.role })) },
   });
   await notify({
     event: "billing",
@@ -283,10 +333,19 @@ export async function createBranch(input: {
     params: { restaurantName: account.main.name, detail: `${account.main.name} opened a branch: ${label}.` },
   });
 
-  const outcome = await settleCoverage(mainId);
+  const outcome = activationFailed ? { kind: "held" as const } : await settleCoverage(mainId);
   revalidateBranchScreens();
 
-  const withMenu = (note: string) => (menuNote ? `${note} ${menuNote}` : note);
+  const invitationsSent = await announceBranchTeam({
+    branchId, label, restaurantName: account.main.name, actor: profile,
+    assignments: selectedTeam.assignments, invitations: installedTeam.invitations,
+  });
+  const teamNote = !invitationsSent
+    ? t("mbr.note.inviteMailFailed")
+    : installedTeam.invitations.length > 0 ? t("mbr.note.teamInvited") : null;
+
+  const withMenu = (note: string) => [note, menuNote, teamNote].filter(Boolean).join(" ");
+  if (outcome.kind === "held") return { ok: true, branchId, note: withMenu(t("mbr.note.createdClosed", { label })) };
   if (outcome.kind === "invoice") {
     return {
       ok: true,

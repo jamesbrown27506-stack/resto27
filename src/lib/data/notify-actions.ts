@@ -6,6 +6,9 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { getCurrentProfile, requireUser } from "@/lib/auth/session";
 import { notify, type NotifyTone } from "@/lib/notify";
 import { isPushServiceEndpoint } from "@/lib/push-endpoint";
+import { BRANCH_ROLES, can, type BranchRole } from "@/lib/capabilities";
+import { readBranchWalletSummary } from "@/lib/data/wallet-summary";
+import type { BranchWalletSummary } from "@/lib/wallet/summary";
 import {
   fetchNotificationChannels,
   saveNotificationChannels,
@@ -212,13 +215,13 @@ export interface ManagerNavCounts {
 export async function getManagerNavCounts(
   restaurantId: string,
   // `signals`: migration 0066 is in, so the back office can listen live.
-): Promise<ManagerNavCounts & { signals?: boolean }> {
+): Promise<ManagerNavCounts & { signals?: boolean; wallet: BranchWalletSummary | null }> {
   const profile = await requireUser();
   const supabase = createAdminClient();
 
   const { data: staff, error: staffError } = await supabase
     .from("restaurant_staff")
-    .select("id, restaurants!inner ( status )")
+    .select("id, role, restaurants!inner ( status )")
     .eq("restaurant_id", restaurantId)
     .eq("profile_id", profile.id)
     .eq("status", "active")
@@ -226,11 +229,17 @@ export async function getManagerNavCounts(
     // ordered there — its team keeps the badges and the conversations.
     .in("restaurants.status", ["active", "paused"])
     .maybeSingle();
-  const empty = { orders: 0, kitchen: 0, tableOrder: 0, reservations: 0, messages: 0 };
+  const empty = { orders: 0, kitchen: 0, tableOrder: 0, reservations: 0, messages: 0, wallet: null };
   if (staffError) { console.error("[nav:staff]", staffError.message); return empty; }
   if (!staff) return empty;
 
-  const [orders, kitchen, access, dishes, reservations, messages, support, announcements, signal] = await Promise.all([
+  // A real membership is not enough: only this branch's finance role sees money.
+  // The role is read from the database; the client never selects it.
+  const role = staff.role as BranchRole;
+  const seesWallet = (profile.role === "manager" || profile.role === "admin")
+    && BRANCH_ROLES.includes(role) && can(role, "finance.manage");
+
+  const [orders, kitchen, access, dishes, reservations, messages, support, announcements, signal, wallet] = await Promise.all([
     supabase.from("orders").select("id", { count: "exact", head: true })
       .eq("restaurant_id", restaurantId).in("status", ["pending", "confirmed", "preparing", "shipped"]),
     supabase.from("orders").select("id", { count: "exact", head: true })
@@ -251,6 +260,7 @@ export async function getManagerNavCounts(
     // Does the live-signal table exist (0066)? An error means "not yet".
     supabase.from("restaurant_signals").select("restaurant_id", { count: "exact", head: true })
       .eq("restaurant_id", restaurantId),
+    seesWallet ? readBranchWalletSummary({ restaurantId, role }) : Promise.resolve(null),
   ]);
   for (const [name, result] of Object.entries({ orders, kitchen, access, dishes, reservations, messages, support, announcements })) {
     if (result.error) console.error(`[nav:${name}]`, result.error.message);
@@ -262,6 +272,7 @@ export async function getManagerNavCounts(
     reservations: reservations.count ?? 0,
     messages: (messages.count ?? 0) + (support.count ?? 0) + (announcements.count ?? 0),
     signals: !signal.error,
+    wallet,
   };
 }
 

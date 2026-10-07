@@ -23,6 +23,10 @@ import { getManagerRestaurantRejection, type RejectionReason } from "./session";
 import { syncStaffRole } from "./staff-access";
 import { signInFailureReason } from "./sign-in-failure";
 import { safeNextPath } from "./safe-next";
+import { consumeRecoveryGrant, issueRecoveryGrant, recordMailboxProof } from "./security";
+import { sessionIdentity } from "./security-rules";
+import { emailVerificationRequired } from "./email-policy";
+import { confirmOptionalEmailAccount } from "./optional-email";
 
 /**
  * The profile behind a sign-in that just succeeded, read with the SERVER's
@@ -64,6 +68,8 @@ export interface AuthState {
   fieldErrors?: Record<string, string>;
   /** Set on flows that end on a confirmation screen rather than a redirect. */
   done?: boolean;
+  /** Customer signup only: whether the account still needs an email confirmation. */
+  confirmEmail?: boolean;
 }
 
 /**
@@ -178,10 +184,16 @@ export async function signIn(_prev: AuthState, formData: FormData): Promise<Auth
   }
 
   const supabase = await createClient();
-  const { data, error } = await supabase.auth.signInWithPassword({
+  const credentials = {
     email: parsed.data.email,
     password: parsed.data.password,
-  });
+  };
+  let { data, error } = await supabase.auth.signInWithPassword(credentials);
+  if (error?.code === "email_not_confirmed") {
+    const confirmation = await confirmOptionalEmailAccount(parsed.data.email);
+    if (confirmation === "unavailable") return { ok: false, reason: "unavailable" };
+    if (confirmation === "confirmed") ({ data, error } = await supabase.auth.signInWithPassword(credentials));
+  }
 
   if (error || !data.user) {
     // Not every refusal is a wrong password — see sign-in-failure.ts. The
@@ -265,7 +277,7 @@ export async function signUpCustomer(
   const t = await getTranslator();
   // Account-creation spam: a handful of real people can register in an hour;
   // a botnet can register thousands. Per IP, per hour.
-  const limited = await rateLimit({ key: "auth:signup-customer", limit: 5, windowMs: 60 * 60_000 });
+  const limited = await rateLimit({ key: "auth:signup-customer", limit: 5, windowMs: 60 * 60_000, failClosed: true });
   if (!limited.ok) {
     return { ok: false, error: t("ecu.authTooManySignups") };
   }
@@ -299,11 +311,30 @@ export async function signUpCustomer(
     ─────────────────────────────────────────────────────────────────────────
   */
   const safeNext = safeNextPath(formData.get("next"));
+  let requiresEmail: boolean;
+  try { requiresEmail = await emailVerificationRequired("customer"); }
+  catch { return { ok: false, error: t("ecu.authCreateFailed") }; }
+  const supabase = await createClient();
+  if (!requiresEmail) {
+    // Provider-wide email confirmation stays on. Only this validated customer
+    // signup may create an immediately usable account; it never establishes
+    // mailbox ownership or changes an existing account's password/role.
+    const created = await createAdminClient().auth.admin.createUser({
+      email: parsed.data.email, password: parsed.data.password, email_confirm: true,
+      user_metadata: { name: parsed.data.name, phone: parsed.data.phone, role: "customer" },
+    });
+    if (created.error || !created.data.user) return { ok: false, error: describeAuthError(created.error ?? {}, "signup-customer", t) };
+    const signedIn = await supabase.auth.signInWithPassword({ email: parsed.data.email, password: parsed.data.password });
+    if (!signedIn.error && signedIn.data.session) {
+      revalidatePath("/", "layout");
+      redirect(safeNext ?? "/account");
+    }
+    return { ok: true, done: true, confirmEmail: false };
+  }
   const callback = safeNext
     ? `${await siteUrl()}/auth/callback?next=${encodeURIComponent(safeNext)}`
     : `${await siteUrl()}/auth/callback`;
 
-  const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
@@ -341,7 +372,7 @@ export async function signUpCustomer(
     redirect(safeNext ?? "/account");
   }
 
-  return { ok: true, done: true };
+  return { ok: true, done: true, confirmEmail: true };
 }
 
 /* ── Sign up — restaurant ──────────────────────────────────────────────── */
@@ -599,7 +630,7 @@ export async function verifyResetCode(_prev: AuthState, formData: FormData): Pro
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.verifyOtp({
+  const { data, error } = await supabase.auth.verifyOtp({
     email: parsed.data.email,
     token: parsed.data.code,
     type: "recovery",
@@ -608,15 +639,20 @@ export async function verifyResetCode(_prev: AuthState, formData: FormData): Pro
   // Wrong, expired or already used — one answer for all three.
   if (error) return { ok: false, error: "code" };
 
+  if (!data.session || !data.user) return { ok: false, error: "code" };
+  try {
+    await recordMailboxProof(data.user);
+    await issueRecoveryGrant(data.session);
+  } catch { return { ok: false, error: "code" }; }
+
   redirect("/reset-password");
 }
 
 /**
  * Sets a new password for the session established by the reset link.
  *
- * `updateUser` revokes the account's other refresh tokens, so every other
- * device is signed out — which is the point of a reset: if someone else had
- * the old password, changing it must also end whatever they were logged into.
+ * Requires a single-use recovery grant from a verified email OTP and revokes
+ * the account's refresh sessions after changing the password.
  */
 export async function updatePassword(
   _prev: AuthState,
@@ -651,12 +687,21 @@ export async function updatePassword(
     return { ok: false, error: "expired" };
   }
 
-  const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
+  // Identity is verified above; this token is only used to bind and revoke
+  // the server-issued recovery session, never as an unverified identity.
+  const { data: { session } } = await supabase.auth.getSession();
+  const identity = session ? sessionIdentity(session.access_token) : null;
+  if (!identity || identity.userId !== user.id || !(await consumeRecoveryGrant(user.id, identity.sessionId))) {
+    return { ok: false, error: "expired" };
+  }
+  const admin = createAdminClient();
+  const { error } = await admin.auth.admin.updateUserById(user.id, { password: parsed.data.password });
 
   if (error) {
     return { ok: false, error: t("ecu.authPasswordChangeFailed") };
   }
 
+  await admin.auth.admin.signOut(session!.access_token, "global");
   await supabase.auth.signOut();
   return { ok: true, done: true };
 }

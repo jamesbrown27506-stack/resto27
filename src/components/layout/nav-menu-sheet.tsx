@@ -47,10 +47,17 @@ export interface NavMenuItem {
   label?: string;
   /** Highlight on child routes too. */
   matchPrefix?: boolean;
+  prominent?: boolean;
   badge?: number;
   /** Heading of the group this item opens — a key, or plain text for the admin area. */
   groupKey?: TranslationKey;
   group?: string;
+}
+
+/** Replace an existing destination with a full-width card, keeping one link. */
+export interface NavMenuFeaturedItem {
+  href: string;
+  content: ReactNode;
 }
 
 export function NavMenuSheet({
@@ -61,6 +68,7 @@ export function NavMenuSheet({
   items,
   actions,
   header,
+  featuredItem,
 }: {
   open: boolean;
   onClose: () => void;
@@ -71,9 +79,13 @@ export function NavMenuSheet({
   actions?: "account" | "guest";
   /** Above everything else — the manager's branch switcher. */
   header?: ReactNode;
+  featuredItem?: NavMenuFeaturedItem;
 }) {
   const pathname = usePathname();
   const { t } = useLocale();
+  // The card may only replace a destination already allowed by this menu.
+  const featured = featuredItem && items.some(item => item.href === featuredItem.href) ? featuredItem : undefined;
+  const regularItems = featured ? items.filter(item => item.href !== featured.href) : items;
 
   function isActive(item: NavMenuItem): boolean {
     if (item.matchPrefix) return pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -96,6 +108,7 @@ export function NavMenuSheet({
         }}
       >
         {header && <div className="mb-4">{header}</div>}
+        {featured && <div className="mb-4">{featured.content}</div>}
 
         {actions === "guest" && (
           <div className="mb-5 grid grid-cols-2 gap-2">
@@ -109,12 +122,12 @@ export function NavMenuSheet({
         )}
 
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {items.map((item, index) => {
+          {regularItems.map((item, index) => {
             const active = isActive(item);
             const group = groupOf(item);
             return (
               <Fragment key={item.href}>
-                {group && groupOf(items[index - 1]) !== group && (
+                {group && groupOf(regularItems[index - 1]) !== group && (
                   <li className="col-span-full pt-3 text-xs font-semibold text-text-secondary">{group}</li>
                 )}
                 <li>
@@ -129,12 +142,13 @@ export function NavMenuSheet({
                       active
                         ? "border-primary bg-primary-light/50 text-primary"
                         : "border-border bg-surface text-text-secondary hover:bg-surface-2 hover:text-text",
+                      item.prominent && "border-primary/40 bg-primary-light/50 font-semibold text-primary hover:border-primary hover:bg-primary-light",
                     )}
                   >
                     <span
                       className={cn(
                         "relative grid size-9 shrink-0 place-items-center rounded-full",
-                        active ? "bg-primary text-primary-fg" : "bg-surface-2 text-text-light",
+                        active || item.prominent ? "bg-primary text-primary-fg" : "bg-surface-2 text-text-light",
                       )}
                     >
                       <NavIcon name={item.icon} className="size-4.5" />

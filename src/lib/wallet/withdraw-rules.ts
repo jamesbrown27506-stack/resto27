@@ -31,6 +31,8 @@
 
 export const PIN_MIN_LENGTH = 4;
 export const PIN_MAX_LENGTH = 6;
+/** New codes use one familiar length; older 5/6-digit codes remain valid. */
+export const PIN_STANDARD_LENGTH = 4;
 /** Wrong PINs in a row before the code locks. */
 export const PIN_MAX_ATTEMPTS = 5;
 /** How long a locked code stays locked. */
@@ -43,13 +45,14 @@ export type PinProblem = "format" | "weak";
 /**
  * Why this PIN is refused, or null.
  *
- * 4 to 6 digits — what a Mobile Money user already types every day. The
- * codes anyone tries first are refused: one digit repeated (0000, 111111)
- * and straight runs (1234, 98765). Advice on the screen: not your Mobile
+ * New codes use four digits, without a length choice. Existing longer codes
+ * are still checked by verifyPin; they are never silently shortened. The
+ * codes anyone tries first are refused: one digit repeated (0000, 1111)
+ * and straight runs (1234, 9876). Advice on the screen: not your Mobile
  * Money PIN either — that one is known to whoever has watched you pay.
  */
 export function pinProblem(pin: string): PinProblem | null {
-  if (!new RegExp(`^\\d{${PIN_MIN_LENGTH},${PIN_MAX_LENGTH}}$`).test(pin)) return "format";
+  if (!new RegExp(`^[0-9]{${PIN_STANDARD_LENGTH}}$`).test(pin)) return "format";
 
   const digits = [...pin].map(Number);
   if (digits.every((d) => d === digits[0])) return "weak";

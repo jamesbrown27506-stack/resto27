@@ -73,6 +73,7 @@ function toMenuItem(item: NavItem, group?: NavGroup): NavMenuItem {
     labelKey: item.labelKey,
     label: item.label,
     matchPrefix: item.matchPrefix,
+    prominent: item.prominent,
     groupKey: group?.labelKey,
     group: group?.label,
   };

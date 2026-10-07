@@ -17,6 +17,7 @@ import { doualaDay } from "@/lib/wallet/schedule-rules";
 import { createAdminClient } from "@/lib/supabase/server";
 import { DICTIONARIES } from "@/lib/i18n/dictionaries";
 import { getLocale } from "@/lib/i18n/locale-server";
+import { loadBranchLeaders, loadBranchTeam } from "@/lib/branches/team";
 
 // Opening, closing or paying for a branch changes this page under the owner;
 // a cached copy would offer to pay for one already running.
@@ -61,6 +62,7 @@ export default async function BranchesPage() {
   // main's (0073). Head counts — a handful of branches, never the rows.
   const supabase = createAdminClient();
   const locationIds = [account.main.id, ...account.branches.map((branch) => branch.id)];
+  const [team, leaders] = await Promise.all([loadBranchTeam(locationIds), loadBranchLeaders(locationIds)]);
 
   /*
     THE GROUP AT A GLANCE (owners of several locations): balance, today's and
@@ -121,7 +123,11 @@ export default async function BranchesPage() {
           name: account.main.name,
           label: account.main.label,
           dishes: dishCounts.get(account.main.id) ?? 0,
+          owner: { id: account.main.ownerId, name: team.members.find(member => member.profileId === account.main.ownerId)?.name ?? DICTIONARIES[await getLocale()]["mbr.add.mainOwner"] },
         }}
+        team={team}
+        leaders={leaders}
+        actorProfileId={context.impersonating ? null : context.profile.id}
         plan={
           plan
             ? {

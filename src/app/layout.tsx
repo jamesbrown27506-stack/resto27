@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import localFont from "next/font/local";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { THEME_COOKIE, THEME_EXPLICIT_COOKIE, themeScript } from "@/components/theme/theme-provider";
 import { LocaleProvider } from "@/lib/i18n/locale-provider";
 import { getLocale } from "@/lib/i18n/locale-server";
@@ -153,6 +153,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const explicitTheme = cookieStore.get(THEME_EXPLICIT_COOKIE)?.value === "1";
   const stored = explicitTheme ? cookieStore.get(THEME_COOKIE)?.value : undefined;
   const theme = stored === "dark" ? "dark" : "light";
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
 
   return (
     <html
@@ -184,6 +185,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         */}
         <Script
           id="theme-probe"
+          nonce={nonce}
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: themeScript }}
         />

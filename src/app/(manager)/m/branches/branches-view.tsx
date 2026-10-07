@@ -8,7 +8,7 @@ import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button, buttonClasses } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/dialog";
-import { Field, Input, Switch } from "@/components/ui/input";
+import { Field, Input, Select, Switch } from "@/components/ui/input";
 import { Sheet, SheetActions } from "@/components/ui/sheet";
 import { useToast } from "@/components/ui/toast";
 import { formatMoney } from "@/lib/format/currency";
@@ -23,8 +23,15 @@ import {
   reopenBranch,
   syncBranchMenu,
 } from "@/lib/data/branch-actions";
-import { switchBranch } from "@/lib/data/manager-actions";
 import { cn } from "@/lib/utils";
+import { useBranchNavigation } from "@/components/layout/branch-navigation";
+import type { BranchLeader, BranchTeamChoice, BranchTeamMember } from "@/lib/branches/team-types";
+
+const EMPTY_FORM = { label: "", quartier: "", address: "", phone: "", copyMenu: true, manager: "", managerEmail: "", coOwner: "", coOwnerEmail: "" };
+
+function teamChoice(value: string, email: string): BranchTeamChoice {
+  return value === "invite" ? { kind: "invite", email } : value ? { kind: "member", profileId: value } : { kind: "none" };
+}
 
 interface BranchItem {
   id: string;
@@ -67,12 +74,18 @@ export function BranchesView({
   nextCost,
   branches,
   overview,
+  team,
+  leaders,
+  actorProfileId,
 }: {
   /** Each location's money and orders, for the group view. */
   overview: { id: string; balance: number; ordersToday: number; orders7d: number; income7d: number }[];
   migrated: boolean;
   activeId: string;
-  main: { id: string; name: string; label: string; dishes: number };
+  main: { id: string; name: string; label: string; dishes: number; owner: { id: string | null; name: string } };
+  team: { available: boolean; members: BranchTeamMember[] };
+  leaders: Record<string, BranchLeader[]>;
+  actorProfileId: string | null;
   plan: { name: string; tier: string; includedBranches: number; extraBranchPrice: number | null } | null;
   subscriptionLive: boolean;
   paidExtra: number;
@@ -88,10 +101,11 @@ export function BranchesView({
   const { t } = useLocale();
   const { toast } = useToast();
   const router = useRouter();
+  const { switchTo, switching } = useBranchNavigation();
   const [pending, startTransition] = useTransition();
 
   const [adding, setAdding] = useState(false);
-  const [form, setForm] = useState({ label: "", quartier: "", address: "", phone: "", copyMenu: true });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [closing, setClosing] = useState<BranchItem | null>(null);
   const [syncing, setSyncing] = useState<BranchItem | null>(null);
   // The refusal of the open sheet or dialog, shown in it (ui/form-error).
@@ -105,32 +119,31 @@ export function BranchesView({
    * the active branch, like every billing screen. An owner standing on a
    * branch is switched over first, then sent to pay.
    */
-  async function goPay(invoiceId: string) {
-    if (activeId !== main.id) {
-      const switched = await switchBranch(main.id);
-      if (!switched.ok) return toast(switched.error, "error");
-    }
-    router.push(`/m/billing/pay/${invoiceId}`);
+  function goPay(invoiceId: string) {
+    switchTo(main.id, `/m/billing/pay/${invoiceId}`);
   }
 
   function openBranch(id: string) {
-    startTransition(async () => {
-      if (id !== activeId) {
-        const switched = await switchBranch(id);
-        if (!switched.ok) return toast(switched.error, "error");
-      }
-      router.push("/m");
-    });
+    switchTo(id, "/m");
   }
 
   function submit() {
     setFormError(null);
+    if (form.label.trim().length < 2) return setFormError(t("mbr.err.label"));
+    if (!form.quartier.trim()) return setFormError(t("mbr.err.quartier"));
+    if (form.address.trim().length < 4 || /^\+?[\d\s().-]{9,}$/.test(form.address.trim())) return setFormError(t("mbr.err.address"));
+    if ([form.manager === "invite" ? form.managerEmail : null, form.coOwner === "invite" ? form.coOwnerEmail : null]
+      .some(email => email !== null && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()))) return setFormError(t("est.emailInvalid"));
     startTransition(async () => {
-      const result = await createBranch({ ...form, copyMenu: form.copyMenu && main.dishes > 0 });
+      const result = await createBranch({
+        label: form.label, quartier: form.quartier, address: form.address, phone: form.phone,
+        copyMenu: form.copyMenu && main.dishes > 0,
+        manager: teamChoice(form.manager, form.managerEmail), coOwner: teamChoice(form.coOwner, form.coOwnerEmail),
+      });
       if (!result.ok) return setFormError(result.error);
 
       setAdding(false);
-      setForm({ label: "", quartier: "", address: "", phone: "", copyMenu: true });
+      setForm(EMPTY_FORM);
       if (result.note) toast(result.note, "success");
       if (result.invoiceId) return goPay(result.invoiceId);
       router.refresh();
@@ -240,6 +253,15 @@ export function BranchesView({
   })();
 
   const canAdd = subscriptionLive && nextCost.kind !== "unavailable";
+  const busy = pending || switching;
+  const candidates = team.members.filter(member => member.profileId !== main.owner.id);
+
+  function teamLine(id: string, role: "owner" | "manager") {
+    const people = (leaders[id] ?? []).filter(person => person.role === role);
+    return people.length > 0
+      ? people.map(person => person.invited ? t("mbr.list.invitedPerson", { name: person.name }) : person.name).join(", ")
+      : role === "owner" ? main.owner.name : t("mbr.list.noManager");
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -310,6 +332,7 @@ export function BranchesView({
       {/* ── The locations ─────────────────────────────────────────────── */}
       <div className="flex flex-col gap-3">
         <h2 className="font-display text-base font-bold">{t("mbr.list.title")}</h2>
+        <p className="-mt-1 text-sm text-text-secondary">{t("mbr.list.help")}</p>
 
         <ul className="flex flex-col gap-2">
           <li className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -321,6 +344,7 @@ export function BranchesView({
                   {main.label && main.label !== "Principal" && <span className="font-normal text-text-secondary"> — {main.label}</span>}
                 </p>
                 <p className="text-xs text-text-light">{t("mbr.list.main")}</p>
+                <p className="mt-1 text-xs text-text-secondary">{t("mbr.list.owner", { names: teamLine(main.id, "owner") })}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -328,7 +352,7 @@ export function BranchesView({
               {activeId === main.id ? (
                 <Badge tone="primary">{t("mbr.action.current")}</Badge>
               ) : (
-                <Button variant="outline" size="sm" disabled={pending} onClick={() => openBranch(main.id)}>
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => openBranch(main.id)}>
                   <span>{t("mbr.action.open")}</span>
                 </Button>
               )}
@@ -353,7 +377,11 @@ export function BranchesView({
                     {branch.status === "paused" && !branch.closed && (
                       <p className="mt-1 text-xs text-warning">{t("mbr.status.pausedHint")}</p>
                     )}
+                    {branch.closed && <p className="mt-1 text-xs text-text-secondary">{t("mbr.status.closedHint")}</p>}
                     <p className="mt-0.5 text-xs text-text-light">{t("mbr.list.dishes", { count: branch.dishes })}</p>
+                    <p className="mt-1 text-xs text-text-secondary">{t("mbr.list.owner", { names: teamLine(branch.id, "owner") })}</p>
+                    <p className="text-xs text-text-secondary">{t("mbr.list.manager", { names: teamLine(branch.id, "manager") })}</p>
+                    {branch.canOpen && <button type="button" className="mt-1 text-xs font-semibold text-primary underline underline-offset-2 disabled:opacity-60" disabled={busy} onClick={() => switchTo(branch.id, "/m/staff")}>{t("mbr.action.team")}</button>}
                   </div>
                 </div>
 
@@ -375,7 +403,7 @@ export function BranchesView({
                     <Badge tone="primary">{t("mbr.action.current")}</Badge>
                   ) : (
                     branch.canOpen && (
-                      <Button variant="outline" size="sm" disabled={pending} onClick={() => openBranch(branch.id)}>
+                      <Button variant="outline" size="sm" disabled={busy} onClick={() => openBranch(branch.id)}>
                         <span>{t("mbr.action.open")}</span>
                       </Button>
                     )
@@ -468,7 +496,7 @@ export function BranchesView({
       <Sheet
         error={formError}
         open={adding}
-        onClose={() => setAdding(false)}
+        onClose={() => { if (!pending) setAdding(false); }}
         title={t("mbr.add.title")}
         description={t("mbr.add.body", { name: main.name })}
         footer={
@@ -478,7 +506,7 @@ export function BranchesView({
             </Button>
             <Button
               loading={pending}
-              disabled={!canAdd || form.label.trim().length < 2 || form.quartier.trim() === "" || form.address.trim().length < 4}
+              disabled={!canAdd || !team.available}
               onClick={submit}
             >
               <span>
@@ -488,26 +516,32 @@ export function BranchesView({
           </SheetActions>
         }
       >
-        <div className="flex flex-col gap-4">
+        <fieldset disabled={pending} className="flex min-w-0 flex-col gap-4">
           <Field label={t("mbr.add.label")} htmlFor="branch-label" required hint={t("mbr.add.labelHint")}>
             <Input
               id="branch-label"
               value={form.label}
               maxLength={60}
+              placeholder={t("mbr.add.labelPlaceholder")}
               onChange={(e) => setForm((prev) => ({ ...prev, label: e.target.value }))}
             />
           </Field>
-          <Field label={t("mbr.add.quartier")} htmlFor="branch-quartier" required>
+          <Field label={t("mbr.add.quartier")} htmlFor="branch-quartier" required hint={t("mbr.add.quartierHint")}>
             <Input
               id="branch-quartier"
               value={form.quartier}
+              placeholder={t("mbr.add.quartierPlaceholder")}
+              maxLength={120}
               onChange={(e) => setForm((prev) => ({ ...prev, quartier: e.target.value }))}
             />
           </Field>
-          <Field label={t("mbr.add.address")} htmlFor="branch-address" required>
+          <Field label={t("mbr.add.address")} htmlFor="branch-address" required hint={t("mbr.add.addressHint")}>
             <Input
               id="branch-address"
               value={form.address}
+              placeholder={t("mbr.add.addressPlaceholder")}
+              autoComplete="street-address"
+              maxLength={300}
               onChange={(e) => setForm((prev) => ({ ...prev, address: e.target.value }))}
             />
           </Field>
@@ -525,9 +559,37 @@ export function BranchesView({
               type="tel"
               inputMode="tel"
               value={form.phone}
+              placeholder={t("mbr.add.phonePlaceholder")}
               onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))}
             />
           </Field>
+
+          <fieldset className="mt-1 flex flex-col gap-4 border-t border-border pt-4">
+            <legend className="px-0 font-display text-base font-bold">{t("mbr.add.teamTitle")}</legend>
+            <p className="-mt-2 text-xs leading-relaxed text-text-secondary">{t("mbr.add.teamIntro")}</p>
+            {!team.available && <p role="alert" className="text-sm text-error">{t("mbr.err.teamUnavailable")}</p>}
+            <Field label={t("mbr.add.manager")} htmlFor="branch-manager" hint={t("mbr.add.managerHint")}>
+              <Select id="branch-manager" value={form.manager} disabled={!team.available || pending} onChange={event => setForm(prev => ({ ...prev, manager: event.target.value, managerEmail: "" }))}>
+                <option value="">{t("mbr.add.managerLater")}</option>
+                {candidates.filter(member => member.profileId !== actorProfileId && member.profileId !== form.coOwner).map(member => <option key={member.profileId} value={member.profileId}>{member.name} · {member.email}</option>)}
+                <option value="invite">{t("mbr.add.inviteManager")}</option>
+              </Select>
+            </Field>
+            {form.manager === "invite" && <Field label={t("mbr.add.managerEmail")} htmlFor="branch-manager-email" required hint={t("mbr.add.inviteHint")}>
+              <Input id="branch-manager-email" type="email" autoComplete="off" maxLength={254} placeholder={t("mbr.add.emailPlaceholder")} value={form.managerEmail} onChange={event => setForm(prev => ({ ...prev, managerEmail: event.target.value }))} />
+            </Field>}
+            <Field label={t("mbr.add.owner")} htmlFor="branch-owner" hint={t("mbr.add.ownerHint", { name: main.owner.name })}>
+              <Select id="branch-owner" value={form.coOwner} disabled={!team.available || pending} onChange={event => setForm(prev => ({ ...prev, coOwner: event.target.value, coOwnerEmail: "" }))}>
+                <option value="">{t("mbr.add.keepOwner", { name: main.owner.name })}</option>
+                {candidates.filter(member => member.profileId !== form.manager && member.profileId !== actorProfileId).map(member => <option key={member.profileId} value={member.profileId}>{t("mbr.add.coOwnerPerson", { name: member.name })}</option>)}
+                <option value="invite">{t("mbr.add.inviteCoOwner")}</option>
+              </Select>
+            </Field>
+            {form.coOwner && <p className="rounded-md border border-warning/25 bg-warning-light p-3 text-xs leading-relaxed text-warning">{t("mbr.add.coOwnerAccess")}</p>}
+            {form.coOwner === "invite" && <Field label={t("mbr.add.coOwnerEmail")} htmlFor="branch-owner-email" required hint={t("mbr.add.inviteHint")}>
+              <Input id="branch-owner-email" type="email" autoComplete="off" maxLength={254} placeholder={t("mbr.add.emailPlaceholder")} value={form.coOwnerEmail} onChange={event => setForm(prev => ({ ...prev, coOwnerEmail: event.target.value }))} />
+            </Field>}
+          </fieldset>
 
           {/* The price BEFORE the commitment, from the same arithmetic the
               invoice will use (lib/branches/coverage). */}
@@ -543,7 +605,7 @@ export function BranchesView({
           >
             {costLine}
           </p>
-        </div>
+        </fieldset>
       </Sheet>
 
       <ConfirmDialog

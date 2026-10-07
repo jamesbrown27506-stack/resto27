@@ -480,20 +480,11 @@ export async function requestWithdrawal(input: {
     recipientName = recipient.name;
   }
 
-  const { data: created, error } = await supabase
-    .from("withdrawal_requests")
-    .insert({
-      restaurant_id: active.restaurantId,
-      requested_by: profile.id,
-      amount,
-      phone,
-      note: input.note?.trim() || null,
-      recipient_name: recipientName,
-      requester_role: active.role,
-      payout_account_id: account.id,
-    })
-    .select("id")
-    .single();
+  const { createQueuedWithdrawal } = await import("@/lib/payments/withdraw-execute");
+  const { data: created, error } = await createQueuedWithdrawal({
+    restaurantId: active.restaurantId, profileId: profile.id, amount,
+    payoutAccountId: account.id, note: input.note?.trim(), recipientName,
+  });
 
   if (error || !created) {
     console.error("[wallet:requestWithdrawal]", error?.message ?? "missing row");

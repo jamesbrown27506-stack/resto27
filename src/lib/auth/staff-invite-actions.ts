@@ -5,13 +5,15 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { getSessionUser, getActiveProfile } from "./session";
 import { canClaimInvitation, fetchStaffInvitation } from "./staff-invitations";
 import { syncStaffRole } from "./staff-access";
+import { hasVerifiedMailbox } from "./security-rules";
 
 export async function acceptStaffInvitation(token: string) {
   const path = "/invite/" + encodeURIComponent(token);
   const user = await getSessionUser();
   if (!user) redirect("/login?next=" + encodeURIComponent(path));
   const result = await getActiveProfile();
-  if (!result.profile || !user.email || !user.email_confirmed_at) redirect(path + "?error=account");
+  if (!result.profile || !user.email) redirect(path + "?error=account");
+  if (!hasVerifiedMailbox(user)) redirect("/security?step=email&next=" + encodeURIComponent(path));
   const invite = await fetchStaffInvitation(token);
   if (!invite || !canClaimInvitation(invite, user.email)) redirect(path + "?error=invalid");
   const admin = createAdminClient();

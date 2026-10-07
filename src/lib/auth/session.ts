@@ -1,4 +1,6 @@
 import { syncStaffRole } from "./staff-access";
+import { requireAccountAssurance } from "./security";
+import { emailVerificationRequired } from "./email-policy";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { createAdminClient, createClient } from "@/lib/supabase/server";
@@ -259,6 +261,9 @@ export async function requireUser(): Promise<AuthProfile> {
     redirect(`/login?reason=${result.reason}`);
   }
 
+  const user = await getSessionUser();
+  if (!user) redirect("/login?reason=invalid");
+  await requireAccountAssurance(user, await emailVerificationRequired(result.profile.role));
   return result.profile;
 }
 

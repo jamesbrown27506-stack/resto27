@@ -45,11 +45,11 @@ function RegisterForm() {
   if (state.done) {
     return (
       <>
-        <AuthHeading title={t("auth.checkEmail")} />
+        <AuthHeading title={t(state.confirmEmail === false ? "auth.accountCreated" : "auth.checkEmail")} />
         <AuthNotice tone="success" title={t("auth.accountCreated")}>
-          <p>{t("auth.checkEmailBody")}</p>
+          <p>{t(state.confirmEmail === false ? "auth.customerReadyBody" : "auth.checkEmailBody")}</p>
         </AuthNotice>
-        <p className="mt-5 text-sm leading-relaxed text-text-secondary">{t("auth.checkSpam")}</p>
+        {state.confirmEmail !== false && <p className="mt-5 text-sm leading-relaxed text-text-secondary">{t("auth.checkSpam")}</p>}
         {/* With `next`, confirming in this browser and signing in lands
             them back on the checkout with their basket still in it. */}
         <Link

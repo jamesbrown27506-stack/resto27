@@ -378,6 +378,11 @@
   }
 }
 
+@keyframes rl-branch-travel {
+  0%, 100% { transform: translateX(-3px); opacity: 0.55; }
+  50% { transform: translateX(3px); opacity: 1; }
+}
+
 @keyframes rl-fade {
   from {
     opacity: 0;

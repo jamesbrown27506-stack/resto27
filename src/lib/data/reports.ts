@@ -13,8 +13,8 @@ import { createAdminClient } from "@/lib/supabase/server";
  *  as every read layer here, one level lower. The id comes from
  *  requireCapability(), never from a URL or a form field.
  *
- *  REVENUE IS `total - delivery_fee`, WITH CANCELLED ORDERS EXCLUDED (0011
- *  §2). The delivery fee is the rider's money, not the kitchen's, and a
+ *  REVENUE IS `subtotal - discount_amount`, WITH CANCELLED ORDERS EXCLUDED
+ *  (0079). Platform-funded points do not reduce restaurant sales. The delivery fee is the rider's money, not the kitchen's, and a
  *  restaurant that delivers would otherwise look like it out-earns one that
  *  does not at identical volume. Buckets are cut in Africa/Douala, so a peak
  *  at 20:00 is a Cameroonian dinner rush rather than a UTC artefact.

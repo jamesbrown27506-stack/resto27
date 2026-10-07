@@ -575,12 +575,12 @@ export async function rateOwnDelivery(orderId: string, rating: number): Promise<
  */
 export async function uploadReviewPhoto(formData: FormData): Promise<UploadActionResult> {
   const t = await getTranslator();
-  await requireUser();
+  const user = await requireUser();
 
   const file = formData.get("file");
   if (!(file instanceof File)) return { ok: false, error: t("ecu.noFile") };
 
-  const result = await saveUpload(file, "reviews" satisfies UploadKind);
+  const result = await saveUpload(file, "reviews" satisfies UploadKind, user.id);
   if (!result.ok) return { ok: false, error: localizeUploadError(result, t) };
 
   return { ok: true, url: result.url };
@@ -621,9 +621,15 @@ export async function submitOwnReview(
 
   // Photos are capped at three and must be URLs on our own storage — a
   // review must not embed arbitrary external content.
-  const photos = photoUrls
-    .filter((url): url is string => typeof url === "string" && url.includes("/storage/v1/object/public/"))
-    .slice(0, 3);
+  if (!Array.isArray(photoUrls) || photoUrls.length > 3 || photoUrls.some((url) => typeof url !== "string")) {
+    return { ok: false, error: t("ecu.publishFailed") };
+  }
+  const photos = [...new Set(photoUrls)];
+  if (photos.length) {
+    const { data: owned, error: ownershipError } = await supabase.from("customer_uploads").select("public_url")
+      .eq("profile_id", user.id).eq("kind", "reviews").eq("ready", true).in("public_url", photos);
+    if (ownershipError || owned?.length !== photos.length) return { ok: false, error: t("ecu.publishFailed") };
+  }
 
   const { data: created, error: insertError } = await supabase
     .from("reviews")

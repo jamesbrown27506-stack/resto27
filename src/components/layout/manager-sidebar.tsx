@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils";
 import type { Branch } from "@/lib/branch-types";
 import { CountBadge } from "@/components/notifications/nav-counts";
 import type { ManagerNavCounts } from "@/lib/data/notify-actions";
+import { WalletShortcut } from "./wallet-shortcut";
+import type { BranchWalletSummary } from "@/lib/wallet/summary";
 
 /** Which nav links carry a live "needs you" count. */
 const BADGED_LINKS: Partial<Record<string, keyof ManagerNavCounts>> = {
@@ -48,6 +50,8 @@ export function ManagerSidebar({
   freeMode,
   onSwitchBranch,
   navCounts,
+  switchingBranch = false,
+  wallet,
 }: {
   branches: Branch[];
   activeBranch: Branch;
@@ -56,6 +60,8 @@ export function ManagerSidebar({
   freeMode: boolean;
   onSwitchBranch?: (id: string) => void;
   navCounts: ManagerNavCounts;
+  switchingBranch?: boolean;
+  wallet: BranchWalletSummary | null;
 }) {
   const { t } = useLocale();
   const pathname = usePathname();
@@ -84,13 +90,18 @@ export function ManagerSidebar({
           branches={branches}
           activeId={activeBranch.restaurantId}
           onSwitch={onSwitchBranch}
+          disabled={switchingBranch}
         />
       </div>
+
+      {wallet && can(activeBranch.role, "finance.manage") && <div className="px-3 pb-4">
+        <WalletShortcut summary={wallet} variant="sidebar" disabled={locked} />
+      </div>}
 
       <nav aria-label={t("nav.managerNav")} className="flex-1 overflow-y-auto px-3 pb-4">
         {MANAGER_NAV.map((group) => {
           const visible = group.items.filter(
-            (item) => !item.capability || can(activeBranch.role, item.capability),
+            (item) => item.href !== "/m/wallet" && (!item.capability || can(activeBranch.role, item.capability)),
           );
           if (visible.length === 0) return null;
 

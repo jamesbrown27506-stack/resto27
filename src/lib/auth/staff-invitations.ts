@@ -1,6 +1,7 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getSessionUser } from "./session";
+import { hasVerifiedMailbox } from "./security-rules";
 
 export function validInviteToken(token: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token);
@@ -21,7 +22,7 @@ export async function fetchStaffInvitation(token: string) {
 }
 export async function fetchMyStaffInvitations() {
   const user = await getSessionUser();
-  if (!user?.email || !user.email_confirmed_at) return [];
+  if (!user?.email || !hasVerifiedMailbox(user)) return [];
   const { data, error } = await createAdminClient().from("restaurant_staff")
     .select("id, invite_token, restaurants(name)")
     .eq("invited_email", user.email.toLowerCase()).eq("status", "invited")

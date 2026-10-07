@@ -1,6 +1,10 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/server";
 import type { TranslationKey } from "@/lib/i18n/dictionaries";
+import { getCurrentProfile, getSessionUser } from "@/lib/auth/session";
+import { hasVerifiedMailbox } from "@/lib/auth/security-rules";
+import { emailVerificationRequired } from "@/lib/auth/email-policy";
+import { rateLimit } from "@/lib/rate-limit";
 
 /**
  * File uploads, into Supabase Storage.
@@ -97,7 +101,7 @@ export interface UploadResult {
  * restaurant-facing actions can answer in the reader's language. `error` stays
  * the English sentence the admin area shows as-is.
  */
-export type UploadRejection = "empty" | "tooLarge" | "notImage" | "storageFailed";
+export type UploadRejection = "empty" | "tooLarge" | "notImage" | "storageFailed" | "quota" | "verification";
 
 export interface UploadError {
   ok: false;
@@ -117,6 +121,10 @@ export function localizeUploadError(
   t: (key: TranslationKey, vars?: Record<string, string | number>) => string,
 ): string {
   switch (result.reason) {
+    case "quota":
+      return t("ecu.up.quota");
+    case "verification":
+      return t("ecu.up.verification");
     case "empty":
       return t("ecu.noFile");
     case "tooLarge":
@@ -133,6 +141,7 @@ export function localizeUploadError(
 export async function saveUpload(
   file: File,
   kind: UploadKind,
+  profileId?: string,
 ): Promise<UploadResult | UploadError> {
   if (!file || file.size === 0) return { ok: false, reason: "empty", error: "No file received." };
 
@@ -165,6 +174,23 @@ export async function saveUpload(
   const objectPath = `${kind}/${crypto.randomUUID()}.${detected.ext}`;
 
   const supabase = createAdminClient();
+  const customerUpload = kind === "avatars" || kind === "reviews";
+  const { data: { publicUrl } } = supabase.storage.from(BUCKET).getPublicUrl(objectPath);
+  if (customerUpload) {
+    const sessionUser = await getSessionUser();
+    const profile = await getCurrentProfile();
+    if (!profileId || !sessionUser || profile?.id !== profileId || ((await emailVerificationRequired(profile.role)) && !hasVerifiedMailbox(sessionUser))) {
+      return { ok: false, reason: "verification", error: "Verify your email at /security before uploading photos." };
+    }
+    // The database checks the profile/Auth association as well as the quota.
+    const limited = await rateLimit({ key: "uploads:customer", identifier: profileId, limit: 10, windowMs: 60 * 60_000, failClosed: true });
+    if (!limited.ok) return { ok: false, reason: "quota", error: "Your photo upload limit has been reached." };
+    const { error: quotaError } = await supabase.rpc("reserve_customer_upload", {
+      p_profile_id: profileId, p_auth_user_id: sessionUser!.id, p_object_path: objectPath,
+      p_kind: kind, p_bytes: buffer.length, p_public_url: publicUrl,
+    });
+    if (quotaError) return { ok: false, reason: quotaError.message.includes("upload_quota") ? "quota" : "storageFailed", error: "Photo uploads are unavailable or your storage limit has been reached." };
+  }
 
   const { error } = await supabase.storage.from(BUCKET).upload(objectPath, buffer, {
     contentType: detected.mime,
@@ -178,6 +204,7 @@ export async function saveUpload(
   });
 
   if (error) {
+    if (customerUpload) await supabase.from("customer_uploads").delete().eq("object_path", objectPath).eq("profile_id", profileId!);
     console.error("[upload] storage rejected the object", error.message);
     return {
       ok: false,
@@ -187,9 +214,14 @@ export async function saveUpload(
     };
   }
 
-  const {
-    data: { publicUrl },
-  } = supabase.storage.from(BUCKET).getPublicUrl(objectPath);
+  if (customerUpload) {
+    const { error: recordError } = await supabase.from("customer_uploads").update({ ready: true }).eq("object_path", objectPath).eq("profile_id", profileId!);
+    if (recordError) {
+      const removed = await supabase.storage.from(BUCKET).remove([objectPath]);
+      if (!removed.error) await supabase.from("customer_uploads").delete().eq("object_path", objectPath).eq("profile_id", profileId!);
+      return { ok: false, reason: "storageFailed", error: "Photo ownership could not be saved." };
+    }
+  }
 
   return { ok: true, url: publicUrl, mime: detected.mime, bytes: buffer.length };
 }
@@ -303,6 +335,10 @@ export async function deleteUpload(publicUrl: string | null | undefined): Promis
 
   // Only ever delete things that look like ours. A URL from anywhere else —
   // including the Unsplash defaults — must not reach a delete call.
+  const expectedOrigin = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL!).origin;
+  let parsed: URL;
+  try { parsed = new URL(publicUrl); } catch { return; }
+  if (parsed.origin !== expectedOrigin || parsed.search || parsed.hash) return;
   const marker = `/storage/v1/object/public/${BUCKET}/`;
   const index = publicUrl.indexOf(marker);
   if (index === -1) return;
@@ -313,4 +349,15 @@ export async function deleteUpload(publicUrl: string | null | undefined): Promis
   const supabase = createAdminClient();
   const { error } = await supabase.storage.from(BUCKET).remove([objectPath]);
   if (error) console.warn("[upload] could not remove", objectPath, error.message);
+}
+
+/** A customer can remove only an avatar recorded against their own profile. */
+export async function deleteOwnedAvatar(publicUrl: string | null | undefined, profileId: string): Promise<void> {
+  if (!publicUrl) return;
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.from("customer_uploads").select("object_path")
+    .eq("profile_id", profileId).eq("kind", "avatars").eq("public_url", publicUrl).maybeSingle();
+  if (error || !data) return;
+  const removed = await supabase.storage.from(BUCKET).remove([data.object_path]);
+  if (!removed.error) await supabase.from("customer_uploads").delete().eq("profile_id", profileId).eq("object_path", data.object_path);
 }

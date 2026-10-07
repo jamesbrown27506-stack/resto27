@@ -71,6 +71,8 @@ describe("who sees what", () => {
       expect(hrefs(items).includes("/m/reservations"), role).toBe(can(role, "reservations.view"));
       expect(hrefs(more.items).includes("/m/staff"), role).toBe(can(role, "staff.manage"));
       expect(hrefs(more.items).includes("/m/billing"), role).toBe(can(role, "billing.manage"));
+      expect(hrefs(more.items).includes("/m/wallet"), role).toBe(can(role, "finance.manage"));
+      if (can(role, "finance.manage")) expect(more.items.find((item) => item.href === "/m/wallet")?.prominent).toBe(true);
     }
   });
 

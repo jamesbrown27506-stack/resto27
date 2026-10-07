@@ -18,7 +18,7 @@
     "mobile:build:ios": "node scripts/mobile-check.mjs ios && cap sync ios && cap build ios"
   },
   "dependencies": {
-    "@capacitor-firebase/messaging": "^8.5.1",
+    "@capacitor-firebase/messaging": "^8.5.2",
     "@capacitor/android": "^8.5.1",
     "@capacitor/app": "^8.1.1",
     "@capacitor/browser": "^8.0.4",
@@ -41,10 +41,10 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "date-fns-tz": "^3.2.0",
-    "firebase": "^12.18.0",
+    "firebase": "^12.19.0",
     "lucide-react": "^1.28.0",
-    "next": "16.2.12",
-    "nodemailer": "^9.0.4",
+    "next": "16.3.8",
+    "nodemailer": "^10.0.15",
     "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -55,7 +55,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.5.1",
+    "@capacitor/cli": "^8.5.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/nodemailer": "^8.0.1",
@@ -65,10 +65,24 @@
     "@types/web-push": "^3.6.4",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.2.12",
-    "sharp": "^0.34.5",
+    "eslint-config-next": "16.3.8",
+    "sharp": "^0.35.5",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11",
+    "@electric-sql/pglite": "^0.5.8"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.5",
+    "nanoid@^3": "^3.3.18",
+    "js-yaml@^4": "^4.3.2",
+    "brace-expansion@^1": "^1.1.21",
+    "brace-expansion@>=4": "^5.0.12",
+    "xcode": {
+      "uuid": "^11.1.1"
+    },
+    "@next/eslint-plugin-next": {
+      "fast-glob": "npm:tinyglobby@^0.2.17"
+    }
   }
 }

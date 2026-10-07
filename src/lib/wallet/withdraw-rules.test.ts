@@ -10,7 +10,7 @@ import {
   pinProblem,
   withdrawRight,
 } from "./withdraw-rules";
-import { hashPin, verifyPin } from "./pin-hash";
+import { hashPin, pinLength, verifyPin } from "./pin-hash";
 
 describe("who may withdraw", () => {
   it("lets the owner withdraw, always", () => {
@@ -46,9 +46,11 @@ describe("who may withdraw", () => {
 });
 
 describe("the withdrawal PIN", () => {
-  it("takes 4 to 6 digits", () => {
+  it("creates only four-digit codes while preserving leading zeroes", () => {
     expect(pinProblem("2580")).toBeNull();
-    expect(pinProblem("739164")).toBeNull();
+    expect(pinProblem("0258")).toBeNull();
+    expect(pinProblem("73916")).toBe("format");
+    expect(pinProblem("739164")).toBe("format");
     expect(pinProblem("123")).toBe("format");
     expect(pinProblem("1234567")).toBe("format");
     expect(pinProblem("12a4")).toBe("format");
@@ -56,9 +58,9 @@ describe("the withdrawal PIN", () => {
 
   it("refuses the codes anyone tries first", () => {
     expect(pinProblem("0000")).toBe("weak");
-    expect(pinProblem("111111")).toBe("weak");
+    expect(pinProblem("1111")).toBe("weak");
     expect(pinProblem("1234")).toBe("weak");
-    expect(pinProblem("98765")).toBe("weak");
+    expect(pinProblem("9876")).toBe("weak");
   });
 
   it("hashes with a salt and verifies only the right code", () => {
@@ -69,6 +71,17 @@ describe("the withdrawal PIN", () => {
     expect(verifyPin("2580", stored)).toBe(true);
     expect(verifyPin("2581", stored)).toBe(false);
     expect(verifyPin("2580", "garbage")).toBe(false);
+  });
+
+  it.each(["0258", "02581", "025813"])("keeps the exact digit count and leading zero for %s", (pin) => {
+    const stored = hashPin(pin);
+    expect(pinLength(stored)).toBe(pin.length);
+    expect(verifyPin(pin, stored)).toBe(true);
+    expect(verifyPin(pin.slice(1), stored)).toBe(false);
+    const legacy = stored.split("$").slice(0, 6).join("$");
+    expect(pinLength(legacy)).toBeNull();
+    expect(verifyPin(pin, legacy)).toBe(true);
+    expect(verifyPin(pin, `${legacy}$9`)).toBe(false);
   });
 
   it("locks after five wrong codes in a row, for half an hour", () => {

@@ -467,6 +467,7 @@ export async function updateSettings(changes: Record<string, string>): Promise<A
   const supabase = createAdminClient();
 
   if ("push_provider" in changes) return { ok: false, error: "Use the Notification delivery panel to change providers." };
+  if ("email_verification_roles" in changes) return { ok: false, error: "Use the Account security panel to change email verification requirements." };
   if (Object.keys(changes).some(isGatewaySettingKey)) return { ok: false, error: GATEWAY_SETTING_ERROR };
   if (Object.keys(changes).length === 0) return { ok: true };
 

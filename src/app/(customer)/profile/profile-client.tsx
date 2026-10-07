@@ -1,11 +1,12 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { Camera, Mail, Phone, ShieldCheck, User } from "lucide-react";
 import { AccountShell } from "@/components/layout/account-shell";
 import { PasswordInput, PasswordStrength, passwordMeetsPolicy } from "@/components/auth/auth-parts";
 import { Avatar } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClasses } from "@/components/ui/button";
 import { Panel } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
@@ -19,7 +20,7 @@ import type { SessionUser } from "@/lib/session";
 
 export function ProfileClient({ user }: { user: SessionUser }) {
   const { toast } = useToast();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
 
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone ?? "");
@@ -72,6 +73,10 @@ export function ProfileClient({ user }: { user: SessionUser }) {
   return (
     <AccountShell user={user} title={t("cpf.title")} description={t("cpf.subtitle")}>
       <div className="flex flex-col gap-6">
+        <Link href="/security?next=/profile" className={buttonClasses({ variant: "outline" })}>
+          <ShieldCheck className="size-4" aria-hidden />
+          {locale === "fr" ? "Sécurité du compte · Email et 2FA facultative" : "Account security · Email and optional 2FA"}
+        </Link>
         <Panel title={t("cpf.photo")}>
           <div className="flex flex-wrap items-center gap-5 p-5">
             <Avatar name={user.name} src={user.avatarUrl} size="xl" />

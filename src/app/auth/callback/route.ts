@@ -1,5 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { safeNextPath } from "@/lib/auth/safe-next";
+import { issueRecoveryGrant, recordMailboxProof } from "@/lib/auth/security";
+import { sessionIdentity } from "@/lib/auth/security-rules";
 
 /**
  * Where Supabase sends people back after they click a link in an email —
@@ -22,14 +25,14 @@ export async function GET(request: NextRequest) {
    * chain. Only same-site paths are allowed, and `//` is rejected because
    * `//evil.example` is a protocol-relative URL, not a path.
    */
-  const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "/account";
+  const safeNext = safeNextPath(next) ?? "/account";
 
   if (!code) {
     return NextResponse.redirect(`${origin}/login?reason=invalid`);
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
     // Expired, already used, or tampered with. The reset screen has a dedicated
@@ -37,5 +40,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${origin}/reset-password/expired`);
   }
 
+  const identity = data.session ? sessionIdentity(data.session.access_token) : null;
+  try {
+    if (identity?.recentOtp && data.user && identity.userId === data.user.id) await recordMailboxProof(data.user);
+    if (safeNext === "/reset-password") {
+      if (!identity?.recentOtp || !data.session) return NextResponse.redirect(`${origin}/reset-password/expired`);
+      await issueRecoveryGrant(data.session);
+    }
+  } catch {
+    return NextResponse.redirect(`${origin}/reset-password/expired`);
+  }
   return NextResponse.redirect(`${origin}${safeNext}`);
 }

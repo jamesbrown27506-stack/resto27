@@ -39,6 +39,7 @@ describe("critical settings", () => {
     "cron_base_url",
     "cron_secret",
     "push_provider",
+    "email_verification_roles",
     "order_response_minutes",
     "reservation_response_minutes",
     "subscription_grace_days",

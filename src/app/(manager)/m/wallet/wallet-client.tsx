@@ -31,6 +31,7 @@ import {
 } from "@/lib/data/withdraw-control-actions";
 import type { WalletState } from "@/lib/data/wallet";
 import type { WithdrawDelegate } from "@/lib/wallet/withdraw-rules";
+import { PIN_MIN_LENGTH, PIN_MAX_LENGTH, PIN_STANDARD_LENGTH } from "@/lib/wallet/withdraw-rules";
 import { DEFAULT_PAYOUT_HOUR, nextScheduledRun } from "@/lib/wallet/schedule-rules";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n/use-locale";
@@ -65,7 +66,7 @@ export interface WalletControls {
     | { kind: "owner" }
     | { kind: "delegate"; dailyLimit: number | null; left: number | null }
     | { kind: "none"; reason: "impersonating" | "notGranted" | "role" };
-  pin: { hasPin: boolean; lockedUntil: string | null };
+  pin: { hasPin: boolean; lockedUntil: string | null; length: 4 | 5 | 6 | null };
   /** Owner of the main restaurant: manages the saved numbers. */
   ownsAccount: boolean;
   /** Owner at this branch: decides which managers may withdraw here. */
@@ -90,9 +91,11 @@ export interface WalletControls {
   } | null;
 }
 
-/** A PIN field: six boxes over a number-pad input — digits never shown (ui/pin-field). */
-function PinInput({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
-  return <PinField id={id} value={value} onChange={onChange} />;
+/** A known length is automatic; legacy codes grow as their owner enters them. */
+function PinInput({ id, value, onChange, length }: {
+  id: string; value: string; onChange: (value: string) => void; length?: 4 | 5 | 6;
+}) {
+  return <PinField id={id} value={value} onChange={onChange} length={length} />;
 }
 
 /** Which form a refusal belongs to — shown in THAT form, never behind its backdrop. */
@@ -145,6 +148,15 @@ export function WalletClient({
   // The PIN form.
   const [pinOpen, setPinOpen] = useState(false);
   const [pinForm, setPinForm] = useState({ password: "", pin: "", again: "" });
+  const newPinLength = PIN_STANDARD_LENGTH;
+  const withdrawalPinLength = controls.pin.length;
+  const existingPinProps = { length: withdrawalPinLength ?? undefined };
+  const validExistingPin = (pin: string) => withdrawalPinLength
+    ? new RegExp(`^[0-9]{${withdrawalPinLength}}$`).test(pin)
+    : new RegExp(`^[0-9]{${PIN_MIN_LENGTH},${PIN_MAX_LENGTH}}$`).test(pin);
+  const existingPinError = () => withdrawalPinLength
+    ? t("mwd.pin.exact", { count: withdrawalPinLength })
+    : t("mwd.pin.enterComplete");
 
   // Adding a number: phone → holder looked up → owner's PIN → saved.
   const [numberOpen, setNumberOpen] = useState(false);
@@ -284,7 +296,7 @@ export function WalletClient({
     const target = confirmTarget;
     if (!target) return;
     const pin = confirmPin;
-    if (pin.length < 4) return refuse("confirm", t("mwd.pin.required"));
+    if (!validExistingPin(pin)) return refuse("confirm", existingPinError());
     setFormError(null);
     startTransition(async () => {
       const result = target.requestId
@@ -308,7 +320,7 @@ export function WalletClient({
 
   function savePin() {
     if (!pinForm.password) return refuse("pin", t("mwd.err.password"));
-    if (pinForm.pin.length < 4) return refuse("pin", t("mwd.pin.required"));
+    if (pinForm.pin.length !== newPinLength) return refuse("pin", t("mwd.pin.exact", { count: newPinLength }));
     if (pinForm.pin !== pinForm.again) return refuse("pin", t("mwd.pin.mismatch"));
     setFormError(null);
     startTransition(async () => {
@@ -341,7 +353,7 @@ export function WalletClient({
 
   function saveNumber() {
     if (!checkedHolder) return;
-    if (numberForm.pin.length < 4) return refuse("number", t("mwd.pin.required"));
+    if (!validExistingPin(numberForm.pin)) return refuse("number", existingPinError());
     setFormError(null);
     startTransition(async () => {
       const result = await addPayoutAccount({
@@ -388,7 +400,7 @@ export function WalletClient({
   function saveGrant() {
     const target = granting;
     if (!target) return;
-    if (grantForm.pin.length < 4) return refuse("grant", t("mwd.pin.required"));
+    if (!validExistingPin(grantForm.pin)) return refuse("grant", existingPinError());
     setFormError(null);
     const limit = grantForm.limit.trim() === "" ? null : Number(grantForm.limit);
     startTransition(async () => {
@@ -407,7 +419,7 @@ export function WalletClient({
   function saveSchedule() {
     // Said in the form, not by a dead button: what is missing, and where.
     if (!scheduleAccountId) return refuse("schedule", t("mwd.sch.err.noAccount"));
-    if (scheduleForm.pin.length < 4) return refuse("schedule", t("mwd.pin.required"));
+    if (!validExistingPin(scheduleForm.pin)) return refuse("schedule", existingPinError());
     setFormError(null);
     startTransition(async () => {
       const result = await saveScheduledPayout({
@@ -955,6 +967,7 @@ export function WalletClient({
                   <Field label={t("mwd.pin.enter")} htmlFor="wl-sch-pin" required>
                     <PinInput
                       id="wl-sch-pin"
+                      {...existingPinProps}
                       value={scheduleForm.pin}
                       onChange={(pin) => setScheduleForm((prev) => ({ ...prev, pin }))}
                     />
@@ -993,18 +1006,18 @@ export function WalletClient({
                 ? { label: "mops.wal.status.processing" as TranslationKey, tone: "warning" as const }
                 : REQUEST_STATUS[request.status];
               return (
-                <li key={request.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
-                  <div className="min-w-0 flex-1">
-                    <p className="tnum text-sm font-semibold">
-                      {money(request.amount)}
-                      <span className="ml-2 font-normal break-all text-text-light">→ {request.phone}</span>
+                <li key={request.id} className="flex flex-col items-start gap-3 px-5 py-4 sm:flex-row sm:items-center sm:gap-4">
+                  <div className="w-full min-w-0 sm:flex-1">
+                    <p className="tnum flex flex-wrap gap-x-2 gap-y-1 text-sm font-semibold">
+                      <span className="whitespace-nowrap">{money(request.amount)}</span>
+                      <span className="font-normal whitespace-nowrap text-text-light">→ {request.phone}</span>
                     </p>
                     <p className="tnum mt-0.5 text-xs text-text-light">
                       {formatDateTime(request.requestedAt)}
                     </p>
                     {/* Who took it out, and whose account it reached (0073). */}
                     {(request.requestedByName || request.recipientName) && (
-                      <p className="mt-0.5 text-xs text-text-secondary">
+                      <p className="mt-0.5 text-xs break-words text-text-secondary">
                         {request.requestedByName &&
                           t("mwd.hist.by", {
                             name: request.requestedByName,
@@ -1017,19 +1030,21 @@ export function WalletClient({
                       </p>
                     )}
                   </div>
-                  {request.fee !== null && (
-                    <span className="tnum text-xs text-text-light">
-                      {t("mops.wal.requestFee", { amount: money(request.fee) })}
-                    </span>
-                  )}
-                  <Badge tone={displayStatus?.tone ?? "neutral"}>
-                    {displayStatus ? t(displayStatus.label) : request.status}
-                  </Badge>
-                  {request.status === "pending" && mayWithdraw && pinReady && (
-                    <Button size="sm" loading={pending} disabled={pending} onClick={() => reviewQueued(request)}>
-                      {t("mops.wal.sendNow")}
-                    </Button>
-                  )}
+                  <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+                    {request.fee !== null && (
+                      <span className="tnum text-xs text-text-light">
+                        {t("mops.wal.requestFee", { amount: money(request.fee) })}
+                      </span>
+                    )}
+                    <Badge tone={displayStatus?.tone ?? "neutral"}>
+                      {displayStatus ? t(displayStatus.label) : request.status}
+                    </Badge>
+                    {request.status === "pending" && mayWithdraw && pinReady && (
+                      <Button size="sm" loading={pending} disabled={pending} onClick={() => reviewQueued(request)}>
+                        {t("mops.wal.sendNow")}
+                      </Button>
+                    )}
+                  </div>
                 </li>
               );
             })}
@@ -1137,7 +1152,7 @@ export function WalletClient({
             )}
 
             <Field label={t("mwd.pin.enter")} htmlFor="wl-confirm-pin" required>
-              <PinInput id="wl-confirm-pin" value={confirmPin} onChange={setConfirmPin} />
+              <PinInput id="wl-confirm-pin" {...existingPinProps} value={confirmPin} onChange={setConfirmPin} />
             </Field>
           </div>
         )}
@@ -1177,7 +1192,7 @@ export function WalletClient({
             />
           </Field>
           <Field label={t("mwd.pin.new")} htmlFor="wl-pin-new" required>
-            <PinInput id="wl-pin-new" value={pinForm.pin} onChange={(pin) => setPinForm((prev) => ({ ...prev, pin }))} />
+            <PinInput id="wl-pin-new" length={newPinLength} value={pinForm.pin} onChange={(pin) => setPinForm((prev) => ({ ...prev, pin }))} />
           </Field>
           <Field
             label={t("mwd.pin.confirm")}
@@ -1185,7 +1200,7 @@ export function WalletClient({
             required
             error={pinForm.again.length >= 4 && pinForm.again !== pinForm.pin ? t("mwd.pin.mismatch") : undefined}
           >
-            <PinInput id="wl-pin-again" value={pinForm.again} onChange={(again) => setPinForm((prev) => ({ ...prev, again }))} />
+            <PinInput id="wl-pin-again" length={newPinLength} value={pinForm.again} onChange={(again) => setPinForm((prev) => ({ ...prev, again }))} />
           </Field>
         </div>
       </Dialog>
@@ -1253,7 +1268,7 @@ export function WalletClient({
                 </p>
               )}
               <Field label={t("mwd.pin.enter")} htmlFor="wl-num-pin" required>
-                <PinInput id="wl-num-pin" value={numberForm.pin} onChange={(pin) => setNumberForm((prev) => ({ ...prev, pin }))} />
+                <PinInput id="wl-num-pin" {...existingPinProps} value={numberForm.pin} onChange={(pin) => setNumberForm((prev) => ({ ...prev, pin }))} />
               </Field>
             </>
           )}
@@ -1303,7 +1318,7 @@ export function WalletClient({
             />
           </Field>
           <Field label={t("mwd.pin.enter")} htmlFor="wl-grant-pin" required>
-            <PinInput id="wl-grant-pin" value={grantForm.pin} onChange={(pin) => setGrantForm((prev) => ({ ...prev, pin }))} />
+            <PinInput id="wl-grant-pin" {...existingPinProps} value={grantForm.pin} onChange={(pin) => setGrantForm((prev) => ({ ...prev, pin }))} />
           </Field>
         </div>
       </Dialog>

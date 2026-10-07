@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getCurrentProfile } from "@/lib/auth/session";
+import { requireUser } from "@/lib/auth/session";
 import { writeAudit } from "@/lib/audit";
 import { csvResponse, toCsv, type CsvColumn } from "@/lib/csv";
 
@@ -206,6 +207,7 @@ export async function GET(
     // caller something they did not know a moment ago.
     return new NextResponse("Not found", { status: 404 });
   }
+  await requireUser();
 
   const { report: key } = await params;
   const report = REPORTS[key];

@@ -1,13 +1,10 @@
 "use client";
 
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody } from "@/components/ui/card";
-import { useToast } from "@/components/ui/toast";
-import { switchBranch } from "@/lib/data/manager-actions";
 import { useLocale } from "@/lib/i18n/use-locale";
+import { useBranchNavigation } from "@/components/layout/branch-navigation";
 
 /**
  * /m/billing, seen from a branch (0072).
@@ -29,16 +26,10 @@ export function BranchBillingNotice({
   canSwitch: boolean;
 }) {
   const { t } = useLocale();
-  const { toast } = useToast();
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const { switchTo, switching } = useBranchNavigation();
 
   function goToMain() {
-    startTransition(async () => {
-      const result = await switchBranch(mainId);
-      if (!result.ok) return toast(result.error, "error");
-      router.refresh();
-    });
+    switchTo(mainId);
   }
 
   return (
@@ -52,7 +43,7 @@ export function BranchBillingNotice({
           {t("mbr.billing.body", { label, plan: planName })}
         </p>
         {canSwitch && (
-          <Button size="lg" className="mt-6 w-full sm:w-auto" loading={pending} onClick={goToMain}>
+          <Button size="lg" className="mt-6 w-full sm:w-auto" loading={switching} onClick={goToMain}>
             <span>{t("mbr.billing.cta")}</span>
           </Button>
         )}

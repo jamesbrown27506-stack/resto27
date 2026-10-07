@@ -9,6 +9,7 @@ import { computeWithdrawalFee } from "@/lib/payments/withdrawal-fee";
 import { normalisePhone, recordWithdrawalFee } from "@/lib/payments/camerpay/client";
 import { gatewayRange, payoutGateway, sendGatewayPayout } from "@/lib/payments/gateway";
 import { requireConfirmedRecipient, type RecipientGate } from "@/lib/payments/recipient";
+import { readCamerPayBalance } from "@/lib/payments/camerpay/balance";
 import type { ActionResult } from "@/lib/data/admin-actions";
 import type { getTranslator } from "@/lib/i18n/locale-server";
 
@@ -83,6 +84,15 @@ export function recipientRefusal(gate: Extract<RecipientGate, { ok: false }>, t:
   }
 }
 
+
+export async function createQueuedWithdrawal(input: { restaurantId: string; profileId: string; amount: number; payoutAccountId: string; note?: string | null; recipientName?: string | null; keep?: number }) {
+  const { data, error } = await createAdminClient().rpc("request_withdrawal_secure", {
+    p_restaurant_id: input.restaurantId, p_profile_id: input.profileId, p_amount: input.amount,
+    p_payout_account_id: input.payoutAccountId, p_note: input.note ?? null,
+    p_recipient_name: input.recipientName ?? null, p_keep: input.keep ?? 0,
+  });
+  return { data: !error && typeof data === "string" ? { id: data } : null, error };
+}
 
 export async function executeWithdrawal(
   requestId: string,
@@ -183,46 +193,44 @@ export async function executeWithdrawal(
     };
   }
 
+  // Check platform liquidity before debiting the restaurant. A wallet is a
+  // debt the platform owes; adding loyalty credit does not top up CamerPay.
+  // The provider remains authoritative if another payout races this snapshot.
+  if (mode === "live" && (await payoutGateway()) === "camerpay") {
+    const balance = await readCamerPayBalance();
+    if (balance === null) return { ok: false, reason: "providerBalanceUnavailable", error: t("est.providerBalanceUnavailable") };
+    if (balance < net) {
+      await writeAudit(actor, { action: "wallet.withdrawal_funding_needed", entityType: "withdrawal_request", entityId: requestId,
+        summary: "Withdrawal queued: platform CamerPay balance does not cover the payout", metadata: { net, balance } });
+      return { ok: false, reason: "platformFundingNeeded", error: t("est.platformFundingNeeded") };
+    }
+  }
+
   /* ── Claim ─────────────────────────────────────────────────────────────
    * Nothing above touched money. Everything below is guarded by winning
-   * this one update. */
+   * one atomic claim, policy check and debit. */
   const { data: claimed, error: claimError } = await supabase
-    .from("withdrawal_requests")
-    .update({ status: "paid", decided_at: null, decided_by: actor.id })
-    .eq("id", requestId)
-    .eq("status", "pending")
-    .select("id")
-    .maybeSingle();
+    .rpc("claim_withdrawal_secure", { p_request_id: requestId, p_actor_id: actor.id });
 
   if (claimError) {
     console.error("[wallet:approveWithdrawal] claim failed", claimError.message);
+    if (claimError.message.includes("insufficient_balance")) return { ok: false, reason: "insufficientBalance", error: t("est.walletNoLongerCovers") };
+    if (claimError.message.includes("daily_limit")) return { ok: false, reason: "dailyLimit", error: t("est.withdrawNotAllowed") };
     return { ok: false, reason: "claimFailed", error: t("est.claimFailed") };
   }
-  if (!claimed) {
+  if (claimed !== true) {
     return { ok: false, reason: "alreadyDecided", error: t("est.requestDecided") };
-  }
-
-  /** Hand the request back to the queue — guarded, so only our own claim. */
-  async function releaseClaim(): Promise<void> {
-    const { error } = await supabase
-      .from("withdrawal_requests")
-      .update({ status: "pending", decided_at: null, decided_by: null })
-      .eq("id", requestId)
-      .eq("status", "paid");
-    if (error) console.error("[wallet:approveWithdrawal] release failed", error.message);
   }
 
   /** Put the gross back: the transfer did NOT go out. */
   async function reverseDebit(why: string): Promise<boolean> {
-    const { error } = await supabase.rpc("wallet_credit", {
-      p_restaurant_id: restaurantId,
-      p_amount: gross,
-      p_kind: "adjustment",
-      p_note: `Withdrawal ${requestId} reversed — ${why}`,
-      p_reference: requestId,
+    const { data, error } = await supabase.rpc("release_withdrawal_secure", {
+      p_request_id: requestId,
+      p_actor_id: actor.id,
+      p_reason: why,
     });
     if (error) console.error("[wallet:approveWithdrawal] reversal failed", error.message);
-    return !error;
+    return !error && data === true;
   }
 
   /**
@@ -250,30 +258,7 @@ export async function executeWithdrawal(
   /* ── Debit, against the claim ──────────────────────────────────────────
    * The FULL gross leaves the wallet: the fee comes out of what the
    * restaurant is owed and stays with the platform. */
-  const { error: debitError } = await supabase.rpc("wallet_debit", {
-    p_restaurant_id: restaurantId,
-    p_amount: gross,
-    p_kind: "withdrawal",
-    p_note: `Withdrawal ${requestId}`,
-    p_reference: requestId,
-  });
-
-  if (debitError) {
-    await releaseClaim();
-    console.error("[wallet:approveWithdrawal] debit refused", debitError.message);
-    return debitError.message.includes("insufficient")
-      ? {
-          ok: false,
-          reason: "insufficientBalance",
-          error: t("est.walletNoLongerCovers"),
-        }
-      : {
-          ok: false,
-          reason: "debitFailed",
-          error: t("est.walletDebitFailed"),
-        };
-  }
-
+  // The secure claim RPC has already debited under the wallet lock.
   let replyTo: string;
 
   if (mode === "sandbox") {
@@ -323,7 +308,6 @@ export async function executeWithdrawal(
         };
       }
 
-      await releaseClaim();
       await writeAudit(actor, {
         action: "wallet.withdrawal_payout_refused",
         entityType: "withdrawal_request",

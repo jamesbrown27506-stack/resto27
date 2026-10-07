@@ -6,6 +6,7 @@ import { getBranchContext } from "@/lib/auth/branch";
 import { NoBranch } from "@/components/layout/no-branch";
 import { getBranding } from "@/lib/branding";
 import { freeModeEndsAt, isFreeMode } from "@/lib/data/billing";
+import { readBranchWalletSummary } from "@/lib/data/wallet-summary";
 
 /**
  * Manager area guard — BOTH permission levels (§2).
@@ -65,6 +66,7 @@ export default async function ManagerLayout({ children }: { children: React.Reac
       }
       freeMode={freeMode}
       freeModeEndsAt={freeEnds}
+      initialWallet={await readBranchWalletSummary(context.active)}
     >
       {children}
     </ManagerShell>

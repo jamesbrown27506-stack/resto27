@@ -201,7 +201,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   if (idempotencyKey) {
     const { data: already, error: lookupError } = await supabase
       .from("orders")
-      .select("id, reference")
+      .select("id, reference, checkout_finalized")
       .eq("idempotency_key", idempotencyKey)
       // Only the caller's own orders: a key someone else used must not hand
       // back their order id and reference.
@@ -213,11 +213,12 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       // rather than refusing to take it.
       idempotencyKey = null;
     } else if (already) {
-      return { ok: true, orderId: already.id, reference: already.reference };
+      return already.checkout_finalized ? { ok: true, orderId: already.id, reference: already.reference } : { ok: false, reason: "failed" };
     }
   }
 
   if (!input.lines?.length) return { ok: false, reason: "emptyBasket" };
+  if (input.lines.length > 100) return { ok: false, reason: "badQuantity" };
   const paymentMethod = input.paymentMethod === "wallet" ? "wallet" : "mobile_money";
   if (paymentMethod === "wallet" && !profile) return { ok: false, reason: "loginRequired" };
   if (input.type !== "delivery" && input.type !== "pickup") {
@@ -505,6 +506,9 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   let loyaltyValue = 0;
 
   if (config.loyaltyEnabled && profile && (input.loyaltyPoints ?? 0) > 0) {
+    // Do not accept a platform-funded redemption on the old settlement schema.
+    const { data: version, error: readinessError } = await supabase.rpc("security_invariants_version");
+    if (readinessError || Number(version) < 79) return { ok: false, reason: "failed" };
     const requested = Math.floor(input.loyaltyPoints ?? 0);
     const { data: balanceData } = await supabase.rpc("loyalty_balance", { p_profile: profile.id });
     const balance = Number(balanceData ?? 0);
@@ -624,6 +628,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
   */
   const orderRow = {
     reference,
+    checkout_finalized: false,
     restaurant_id: input.restaurantId,
     customer_id: profile?.id ?? null,
     type: input.type,
@@ -661,7 +666,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     const attempt = await supabase
       .from("orders")
       .insert(idempotencyKey ? rowWithKey : orderRow)
-      .select("id, reference")
+      .select("id, reference, checkout_finalized")
       .single();
     created = attempt.data as { id: string; reference: string } | null;
     error = attempt.error;
@@ -676,7 +681,7 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
       const retry = await supabase
         .from("orders")
         .insert(orderRow)
-        .select("id, reference")
+        .select("id, reference, checkout_finalized")
         .single();
       created = retry.data as { id: string; reference: string } | null;
       error = retry.error;
@@ -693,10 +698,10 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     if (error?.code === "23505" && idempotencyKey) {
       const { data: winner } = await supabase
         .from("orders")
-        .select("id, reference")
+        .select("id, reference, checkout_finalized")
         .eq("idempotency_key", idempotencyKey)
         .maybeSingle();
-      if (winner) return { ok: true, orderId: winner.id, reference: winner.reference };
+      if (winner?.checkout_finalized) return { ok: true, orderId: winner.id, reference: winner.reference };
     }
     console.error("[checkout:placeOrder]", error?.message);
     return { ok: false, reason: "failed" };
@@ -724,42 +729,13 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     return { ok: false, reason: "failed" };
   }
 
-  /*
-    ─────────────────────────────────────────────────────────────────────────
-     POINTS ARE SPENT HERE, THEN THE BALANCE IS READ AGAIN
-     (security review 2026-10-05).
-
-     The balance was read near the top and the redeem row written at the very
-     end, as a non-fatal extra. Ten orders sent at once each saw the whole
-     balance and each spent it: ten discounts, a balance of −9×, and the
-     restaurants carried the cost. The ledger is append-only, so the check is
-     made AFTER this order's row exists: of two racing orders at least one
-     sees both rows, finds the balance below zero and takes its order back.
-     A failed redeem row is fatal too — a discount nobody paid for is not a
-     "reconciliation problem".
-    ─────────────────────────────────────────────────────────────────────────
-  */
-  if (pointsUsed > 0 && profile) {
-    const { data: redeemRow, error: redeemError } = await supabase
-      .from("loyalty_ledger")
-      .insert({
-        profile_id: profile.id,
-        order_id: created.id,
-        restaurant_id: input.restaurantId,
-        points: -pointsUsed,
-        kind: "redeem",
-        note: `Commande ${created.reference}`,
-      })
-      .select("id")
-      .single();
-    const { data: after } = redeemError ? { data: null } : await supabase.rpc("loyalty_balance", { p_profile: profile.id });
-    if (redeemError || !redeemRow || Number(after ?? 0) < 0) {
-      if (redeemError) console.error("[checkout:placeOrder] redeem", redeemError.message);
-      if (redeemRow) await supabase.from("loyalty_ledger").delete().eq("id", redeemRow.id);
-      await supabase.from("order_items").delete().eq("order_id", created.id);
-      await supabase.from("orders").delete().eq("id", created.id);
-      return { ok: false, reason: redeemError ? "failed" : "notEnoughPoints" };
-    }
+  // Inventory, discount usage and loyalty are claimed together under DB locks.
+  const { data: finalized, error: finalizeError } = await supabase.rpc("finalize_checkout_secure", { p_order_id: created.id, p_promo_id: promoId });
+  if (finalizeError || !finalized || typeof finalized !== "object" || !Array.isArray(finalized.low_stock)) {
+    await supabase.from("orders").delete().eq("id", created.id);
+    const message = finalizeError?.message ?? "checkout_finalize_unavailable";
+    const reason = message.includes("insufficient_stock") ? "notEnoughStock" : message.includes("promo_invalid") ? "promoInvalid" : message.includes("not_enough_points") ? "notEnoughPoints" : "failed";
+    return { ok: false, reason };
   }
 
   // Payment is deliberately deferred until the restaurant confirms that the
@@ -777,78 +753,8 @@ export async function placeOrder(input: CheckoutInput): Promise<CheckoutResult> 
     note: "Order placed",
   });
 
-  const lowStockNotified = new Set<string>();
-  for (const line of input.lines) {
-    const item = menu.get(line.menuItemId);
-    if (item?.track_stock && item.stock_quantity !== null) {
-      const remaining = Math.max(0, item.stock_quantity - line.quantity);
-      await supabase
-        .from("menu_items")
-        .update({ stock_quantity: remaining })
-        .eq("id", line.menuItemId)
-        .eq("restaurant_id", input.restaurantId);
-
-      // Stock crossed its threshold because of THIS order → the branch should
-      // know, once per item, not once per line.
-      if (
-        item.low_stock_threshold !== null &&
-        remaining <= item.low_stock_threshold &&
-        item.stock_quantity > item.low_stock_threshold &&
-        !lowStockNotified.has(item.id)
-      ) {
-        lowStockNotified.add(item.id);
-        await notify({
-          event: "low_stock",
-          tone: "warning",
-          restaurantId: input.restaurantId,
-          href: "/m/menu",
-          // The item name keys the push collapse tag: two dishes running low
-          // are two banners, while the same dish dropping again replaces its
-          // own earlier warning.
-          params: { itemName: item.name, count: remaining, reference: item.name },
-        });
-      }
-    }
-  }
-
-  if (promoId) {
-    // The counter `usage_limit` is checked against. Without this increment the
-    // limit is decorative — a single-use code would be redeemable for ever.
-    // Read-then-write rather than an atomic bump because PostgREST has no
-    // expression update; two simultaneous redemptions of the last use is a
-    // narrow race worth accepting over a stored procedure for this.
-    const { data: current } = await supabase
-      .from("promotions")
-      .select("used_count")
-      .eq("id", promoId)
-      .maybeSingle();
-
-    if (current) {
-      await supabase
-        .from("promotions")
-        .update({ used_count: ((current.used_count as number | undefined) ?? 0) + 1 })
-        .eq("id", promoId);
-
-      await supabase.from("promotion_redemptions").insert({
-        promotion_id: promoId,
-        order_id: created.id,
-        customer_id: profile?.id ?? null,
-        amount: totals.discount,
-      });
-    } else {
-      // The promo came from the PLATFORM coupon table — its id is not a
-      // promotion_redemptions fk. Bump the platform counter instead.
-      const { data: couponRow } = await supabase
-        .from("platform_coupons")
-        .select("used_count")
-        .eq("id", promoId)
-        .maybeSingle();
-
-      await supabase
-        .from("platform_coupons")
-        .update({ used_count: ((couponRow?.used_count as number | undefined) ?? 0) + 1 })
-        .eq("id", promoId);
-    }
+  for (const item of ((finalized as { low_stock?: { name: string; remaining: number }[] } | null)?.low_stock ?? [])) {
+    await notify({ event: "low_stock", tone: "warning", restaurantId: input.restaurantId, href: "/m/menu", params: { itemName: item.name, count: item.remaining, reference: item.name } });
   }
 
   /**

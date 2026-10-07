@@ -230,6 +230,8 @@ export const errStaffDict = defineDict({
     "est.payoutUnknown": "L'appel de versement a échoué et son résultat est inconnu. La demande est considérée comme payée et {amount} FCFA ont été débités — vérifiez auprès de CamerPay pour le {phone} avant toute autre action.",
     "est.payoutRefusedNoReversal": "CamerPay a refusé le versement ({refusal}) mais le débit du portefeuille n'a pas pu être annulé — recréditez {amount} FCFA manuellement.",
     "est.payoutRefused": "CamerPay a refusé le versement : {refusal}. Le portefeuille a été recrédité et la demande est de nouveau en attente.",
+    "est.platformFundingNeeded": "La plateforme doit recharger son compte de versement. Votre solde reste intact et votre demande est en attente. Vous n'avez rien à recharger : contactez le support Resto237.",
+    "est.providerBalanceUnavailable": "Impossible de vérifier le solde du compte de versement pour le moment. Votre solde reste intact et votre demande est en attente. Réessayez plus tard.",
     "est.payoutNoReplyTo": "CamerPay a accepté le versement sans replyTo : il ne peut pas être suivi. La demande est considérée comme payée — vérifiez auprès de CamerPay pour le {phone} avant de renvoyer.",
     "est.payoutRefundNotRecorded": "Le versement a échoué, mais le remboursement du portefeuille n'a pas pu être enregistré.",
     // Success notes (`note:` on an ok ActionResult).
@@ -472,6 +474,8 @@ export const errStaffDict = defineDict({
     "est.payoutUnknown": "The payout call failed and the outcome is unknown. The request is held as paid and {amount} FCFA is debited — check CamerPay for {phone} before doing anything else.",
     "est.payoutRefusedNoReversal": "CamerPay refused the payout ({refusal}) but the wallet debit could not be reversed — credit {amount} FCFA back by hand.",
     "est.payoutRefused": "CamerPay refused the payout: {refusal}. The wallet was credited back and the request is pending again.",
+    "est.platformFundingNeeded": "The platform needs to top up its payout account. Your balance is unchanged and your request is pending. You do not need to top up anything: contact Resto237 support.",
+    "est.providerBalanceUnavailable": "The payout account balance could not be checked right now. Your balance is unchanged and your request is pending. Try again later.",
     "est.payoutNoReplyTo": "CamerPay accepted the payout without a replyTo, so it cannot be tracked. The request is held as paid — check CamerPay for {phone} before resending.",
     "est.payoutRefundNotRecorded": "Payout failed, but the wallet refund could not be recorded.",
     "est.categoryDeletedOne": "Category deleted. {count} dish is now uncategorised.",

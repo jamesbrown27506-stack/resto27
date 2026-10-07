@@ -27,10 +27,12 @@ export function BranchSwitcher({
   branches,
   activeId,
   onSwitch,
+  disabled = false,
 }: {
   branches: Branch[];
   activeId: string | null;
   onSwitch?: (restaurantId: string) => void;
+  disabled?: boolean;
 }) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
@@ -61,6 +63,7 @@ export function BranchSwitcher({
       <button
         type="button"
         onClick={() => setOpen(true)}
+        disabled={disabled}
         aria-haspopup="dialog"
         className="flex w-full items-center gap-2.5 rounded-md border border-border bg-surface-2 px-3 py-2 text-left transition-colors hover:border-border-strong"
       >
@@ -92,6 +95,7 @@ export function BranchSwitcher({
               <li key={branch.restaurantId}>
                 <button
                   type="button"
+                  disabled={disabled}
                   onClick={() => {
                     onSwitch?.(branch.restaurantId);
                     setOpen(false);
